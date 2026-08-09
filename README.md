@@ -174,7 +174,8 @@ Commercial use requires a separate agreement.
 ---
 
 **南方星火 · SouthernSpark**  
-📧 xiaoyaotsyx@gmail.com  
+📧 walter.x@qq.com  
 🔗 [github.com/southernspark-nfxh](https://github.com/southernspark-nfxh)  
+📕 小红书：**南方星火 SouthernSpark**  
 
 *AI-powered storytelling & agent tools. 开源 AI Agent 技能包 & 浏览器自动化工具箱.*
