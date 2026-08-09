@@ -1,0 +1,18 @@
+node_modules/
+out/
+dist/
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+
+# Local secrets — never commit
+settings.json
+**/settings.json
+mcp-auth.json
+**/mcp-auth.json
+*.pem
+*.key
+credentials*
+secrets*

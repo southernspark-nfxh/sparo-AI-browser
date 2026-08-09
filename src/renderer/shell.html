@@ -1,0 +1,1077 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Sparo Agent Browser</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #1a1a1e;
+        --bg2: #25252b;
+        --side: #161618;
+        --card: #222226;
+        --line: #33333a;
+        --text: #e8e8ea;
+        --muted: #9a9aa3;
+        --accent: #3d7eff;
+        --tab: #2a2a30;
+        --tab-active: #35353d;
+        --ok: #3dd68c;
+        --warn: #ffb020;
+        --bad: #ff5c5c;
+        --chrome-h: 104px;
+        --side-w: 300px;
+        font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #111;
+        color: var(--text);
+        user-select: none;
+      }
+      input, textarea {
+        user-select: text;
+        -webkit-user-select: text;
+      }
+      .app {
+        display: grid;
+        grid-template-columns: 1fr var(--side-w);
+        grid-template-rows: var(--chrome-h) 1fr;
+        height: 100%;
+        width: 100%;
+      }
+      .chrome {
+        grid-column: 1;
+        grid-row: 1;
+        display: flex;
+        flex-direction: column;
+        background: var(--bg);
+        border-bottom: 1px solid var(--line);
+        z-index: 2;
+        position: relative;
+      }
+      .page-hole {
+        grid-column: 1;
+        grid-row: 2;
+        background: #0c0c0e;
+      }
+      .sidebar {
+        grid-column: 2;
+        grid-row: 1 / 3;
+        background: var(--side);
+        border-left: 1px solid var(--line);
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 10px;
+        overflow: hidden;
+        z-index: 5;
+        position: relative;
+      }
+      .tabs-row {
+        display: flex;
+        align-items: stretch;
+        gap: 0;
+        height: 36px;
+        background: #121215;
+        min-width: 0;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex: 0 0 auto;
+        padding: 0 10px 0 8px;
+        border-right: 1px solid var(--line);
+        height: 100%;
+      }
+      .brand img {
+        width: 18px;
+        height: 18px;
+        border-radius: 4px;
+        object-fit: cover;
+        display: block;
+      }
+      .brand span {
+        font-size: 12px;
+        font-weight: 650;
+        letter-spacing: 0.02em;
+        color: #f2f2f4;
+      }
+      .tabs {
+        display: flex;
+        align-items: stretch;
+        gap: 2px;
+        padding: 4px 6px 0;
+        height: 36px;
+        background: #121215;
+        overflow-x: auto;
+        flex: 1;
+        min-width: 0;
+      }
+      .tab {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        max-width: 180px;
+        min-width: 80px;
+        padding: 0 8px 0 10px;
+        background: var(--tab);
+        border-radius: 8px 8px 0 0;
+        font-size: 12px;
+        border: 1px solid transparent;
+        border-bottom: 0;
+      }
+      .tab.active {
+        background: var(--tab-active);
+        border-color: var(--line);
+      }
+      .tab .title {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .tab .x, .new-tab, .nav button, .go, .icon-btn, .sidebar button, .bm-chip, .menu-item {
+        border: 0;
+        cursor: default;
+      }
+      .tab .x {
+        width: 16px;
+        height: 16px;
+        border-radius: 4px;
+        background: transparent;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1;
+        padding: 0;
+      }
+      .tab .x:hover { background: #444; color: #fff; }
+      .new-tab {
+        width: 28px;
+        background: transparent;
+        color: var(--muted);
+        font-size: 18px;
+      }
+      .new-tab:hover { color: #fff; }
+      .bar {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        height: 40px;
+        padding: 0 8px;
+        background: var(--bg2);
+      }
+      .nav { display: flex; gap: 2px; }
+      .nav button, .icon-btn {
+        width: 32px;
+        height: 28px;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--text);
+        font-size: 14px;
+      }
+      .nav button:disabled { opacity: 0.35; }
+      .nav button:hover:not(:disabled),
+      .icon-btn:hover { background: #333; }
+      .icon-btn.on { color: #f5c542; }
+      .url {
+        flex: 1;
+        height: 28px;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: #121215;
+        color: var(--text);
+        padding: 0 12px;
+        font-size: 13px;
+        outline: none;
+      }
+      .url:focus { border-color: var(--accent); }
+      .go {
+        height: 28px;
+        padding: 0 12px;
+        border-radius: 6px;
+        background: var(--accent);
+        color: #fff;
+        font-size: 12px;
+      }
+      .bm-bar {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        height: 28px;
+        padding: 0 8px;
+        background: var(--bg);
+        border-top: 1px solid #2a2a30;
+        overflow: hidden;
+        width: 100%;
+        min-width: 0;
+      }
+      .bm-chip {
+        max-width: 160px;
+        height: 22px;
+        padding: 0 8px;
+        border-radius: 4px;
+        background: transparent;
+        color: var(--text);
+        font-size: 12px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        flex: 0 0 auto;
+      }
+      .bm-chip:hover { background: #2e2e36; }
+      .bm-more {
+        flex: 0 0 auto;
+        height: 22px;
+        padding: 0 8px;
+        border-radius: 4px;
+        background: #2a2a32;
+        color: var(--text);
+        font-size: 11px;
+        border: 0;
+      }
+      .bm-more:hover { background: #3a3a44; }
+      .bm-empty {
+        color: var(--muted);
+        font-size: 11px;
+        padding-left: 4px;
+      }
+      .bm-menu-wrap { position: relative; }
+      .bm-menu {
+        display: none;
+        position: absolute;
+        right: 0;
+        top: 32px;
+        width: 280px;
+        max-height: 360px;
+        overflow: auto;
+        background: #2a2a30;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        box-shadow: 0 8px 24px rgba(0,0,0,.45);
+        padding: 6px;
+        z-index: 20;
+      }
+      .bm-menu.open { display: block; }
+      .menu-item {
+        display: block;
+        width: 100%;
+        text-align: left;
+        background: transparent;
+        color: var(--text);
+        font-size: 12px;
+        padding: 8px 10px;
+        border-radius: 6px;
+      }
+      .menu-item:hover { background: #3a3a44; }
+      .menu-item:disabled { opacity: 0.4; }
+      .menu-sep {
+        height: 1px;
+        background: var(--line);
+        margin: 4px 0;
+      }
+      .menu-hint {
+        font-size: 10px;
+        color: var(--muted);
+        padding: 4px 10px 6px;
+      }
+      .toast {
+        display: none;
+        position: absolute;
+        left: 50%;
+        bottom: -36px;
+        transform: translateX(-50%);
+        background: #2f6fed;
+        color: #fff;
+        font-size: 12px;
+        padding: 6px 12px;
+        border-radius: 6px;
+        white-space: nowrap;
+        z-index: 30;
+      }
+      .toast.show { display: block; }
+      .sidebar h1 {
+        font-size: 14px;
+        font-weight: 600;
+        margin: 0;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .sidebar h1 img {
+        width: 22px;
+        height: 22px;
+        border-radius: 5px;
+        object-fit: cover;
+        display: block;
+      }
+      .product-tag {
+        margin: -2px 0 4px;
+        font-size: 11px;
+        color: var(--muted);
+        letter-spacing: 0.01em;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 8px 10px;
+      }
+      .label {
+        font-size: 11px;
+        color: var(--muted);
+        margin-bottom: 4px;
+      }
+      .value { font-size: 12px; word-break: break-all; }
+      .dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-right: 6px;
+        background: var(--ok);
+      }
+      .dot.paused { background: var(--warn); }
+      .dot.rec { background: #e35d6a; box-shadow: 0 0 0 3px rgba(227,93,106,.25); }
+      .sidebar button {
+        border-radius: 8px;
+        padding: 8px 10px;
+        background: var(--accent);
+        color: white;
+        font-size: 12px;
+      }
+      .sidebar button.ghost { background: #333; }
+      .sidebar button.danger { background: #8b2e2e; }
+      .sidebar button.ok { background: #1f6b45; }
+      .row { display: flex; gap: 6px; }
+      .row button { flex: 1; }
+      .skill-item {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 6px;
+        padding: 6px 0;
+        border-bottom: 1px solid #2a2a32;
+        font-size: 11px;
+      }
+      .skill-item:last-child { border-bottom: none; }
+      .skill-meta { color: var(--muted); font-size: 10px; margin-top: 2px; }
+      .skill-del {
+        flex-shrink: 0;
+        background: transparent !important;
+        color: var(--muted) !important;
+        padding: 2px 6px !important;
+        font-size: 11px !important;
+      }
+      .skill-del:hover { color: var(--bad) !important; }
+      .hint {
+        font-size: 11px;
+        color: var(--muted);
+        line-height: 1.45;
+        margin: 0;
+      }
+      .scroll {
+        flex: 1;
+        overflow: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        min-height: 0;
+      }
+      .approval {
+        border: 1px solid #4a3a1a;
+        background: #2a2418;
+        border-radius: 8px;
+        padding: 8px;
+        margin-top: 6px;
+      }
+      .qa-item { font-size: 11px; margin: 2px 0; }
+      .qa-item.pass { color: var(--ok); }
+      .qa-item.fail { color: var(--bad); }
+      .qa-item.warn { color: var(--warn); }
+      .chat-log {
+        flex: 1;
+        min-height: 160px;
+        max-height: 280px;
+        overflow: auto;
+        font-size: 12px;
+        line-height: 1.45;
+        background: #121215;
+        border-radius: 8px;
+        padding: 8px;
+        margin-bottom: 8px;
+      }
+      .chat-log .u { color: #9ec1ff; }
+      .chat-log .a { color: #c8c8d0; white-space: pre-wrap; }
+      .chat-card {
+        flex: 0 0 auto;
+        display: flex;
+        flex-direction: column;
+        min-height: 280px;
+      }
+      .chat-input {
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .chat-input textarea {
+        width: 100%;
+        min-height: 72px;
+        max-height: 140px;
+        resize: vertical;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: #121215;
+        color: var(--text);
+        padding: 8px 10px;
+        font-size: 13px;
+        line-height: 1.4;
+        font-family: inherit;
+        box-sizing: border-box;
+      }
+      .chat-input textarea:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+      .chat-actions {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .chat-actions button { flex: 0 0 auto; min-width: 64px; }
+      .chat-actions .spacer { flex: 1; }
+      .ds-row {
+        display: flex;
+        gap: 6px;
+        margin-top: 6px;
+        align-items: center;
+      }
+      .ds-row input, .ds-row select {
+        flex: 1;
+        min-width: 0;
+        height: 28px;
+        border-radius: 6px;
+        border: 1px solid var(--line);
+        background: #121215;
+        color: var(--text);
+        padding: 0 8px;
+        font-size: 11px;
+      }
+      .ds-row label.mini {
+        flex: 0 0 52px;
+        font-size: 10px;
+        color: var(--muted);
+      }
+      .ds-status { font-size: 11px; color: var(--muted); margin-top: 4px; }
+      .ds-status.ok { color: var(--ok); }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div class="chrome">
+        <div class="tabs-row">
+          <div class="brand" title="Sparo Agent Browser — humans stay in control">
+            <img src="/icon.png" alt="" />
+            <span>Sparo</span>
+          </div>
+          <div class="tabs" id="tabs"></div>
+        </div>
+        <div class="bar">
+          <div class="nav">
+            <button id="back" title="后退">◀</button>
+            <button id="forward" title="前进">▶</button>
+            <button id="reload" title="刷新">⟳</button>
+          </div>
+          <input class="url" id="url" type="text" spellcheck="false" placeholder="输入网址，例如 baidu.com" />
+          <button class="icon-btn" id="btnStar" title="收藏此页">☆</button>
+          <button class="icon-btn" id="btnBmMenu" title="书签">▤</button>
+          <button class="go" id="go">前往</button>
+        </div>
+        <div class="bm-bar" id="bmBar">
+          <span class="bm-empty" id="bmEmpty">书签栏为空 · 点 ▤ 可按需从 Chrome / Edge 导入</span>
+        </div>
+        <div class="toast" id="toast"></div>
+      </div>
+      <div class="page-hole" id="pageHole"></div>
+      <aside class="sidebar">
+        <h1><img src="/icon.png" alt="" />Sparo</h1>
+        <p class="product-tag" title="Sparo 人机同窗浏览器">Agent Browser · AI 驾驭网页，你驾驭 AI</p>
+        <div class="card chat-card">
+          <div class="label">Sparo chat</div>
+          <div class="chat-log" id="chat"></div>
+          <div class="chat-input">
+            <textarea id="chatInput" placeholder="Goal: open weibo.com / automate a task…"></textarea>
+            <div class="chat-actions">
+              <span class="hint" id="chatHint">BYO model · MCP agents welcome</span>
+              <span class="spacer"></span>
+              <button id="chatSend">Send</button>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="label">Model</div>
+          <div class="ds-status" id="dsStatus">No API key</div>
+          <div class="ds-row">
+            <label class="mini">Brand</label>
+            <select id="dsProvider">
+              <option value="deepseek">DeepSeek (default)</option>
+              <option value="openai">OpenAI</option>
+              <option value="custom">Custom / compatible</option>
+            </select>
+          </div>
+          <div class="ds-row">
+            <label class="mini">Model</label>
+            <input id="dsModel" type="text" placeholder="deepseek-v4-flash" autocomplete="off" />
+          </div>
+          <div class="ds-row" id="dsBaseRow">
+            <label class="mini">Base</label>
+            <input id="dsBase" type="text" placeholder="https://api.deepseek.com" autocomplete="off" />
+          </div>
+          <div class="ds-row">
+            <label class="mini">Key</label>
+            <input id="dsKey" type="password" placeholder="sk-… API Key" autocomplete="off" />
+            <button class="ghost" id="btnDsSave">Save</button>
+          </div>
+          <p class="hint" id="dsHint" style="margin-top:6px">
+            Default: DeepSeek V4 Flash. Switching brand fills the matching API host — a GPT key will not work on DeepSeek’s server.
+          </p>
+        </div>
+        <div class="scroll">
+          <div class="card">
+            <div class="label">状态</div>
+            <div class="value" id="status"><span class="dot" id="dot"></span>就绪</div>
+            <div class="row" style="margin-top:8px">
+              <button id="btnPause">暂停 / 人接管</button>
+              <button class="ghost" id="btnResume">恢复 Agent</button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="label">教一遍 · 妙招</div>
+            <div class="value" id="recStatus"><span class="dot" id="recDot"></span>未录制</div>
+            <div class="row" style="margin-top:8px">
+              <button class="ok" id="btnRecStart">开始录制</button>
+              <button class="danger" id="btnRecStop">结束并保存</button>
+            </div>
+            <p class="hint" style="margin-top:6px">也可对话：「开始录制」→ 操作 →「结束录制并保存为改尺寸」</p>
+          </div>
+          <div class="card">
+            <div class="label">当前页</div>
+            <div class="value" id="pageUrl">about:blank</div>
+            <div class="label" style="margin-top:6px">标题</div>
+            <div class="value" id="pageTitle">—</div>
+          </div>
+          <div class="card">
+            <div class="label">我的妙招</div>
+            <div id="skills"><p class="hint">暂无 · 录制一次成功操作后会出现在这里</p></div>
+          </div>
+          <div class="card">
+            <div class="label">概念说明</div>
+            <p class="hint" id="explain">
+              暂停：Agent 立刻停手，人可自由操作。<br />
+              审批：Agent 请求确认后才继续（如提交）。<br />
+              等待 wait_for：Agent 等页面元素出现，不是等人。<br />
+              妙招：录制成功操作并沉淀，回放下一阶段上线。
+            </p>
+          </div>
+          <div class="card">
+            <div class="label">审批队列</div>
+            <div id="approvals"><p class="hint">暂无待审批项</p></div>
+          </div>
+          <div class="card">
+            <div class="label">Page check</div>
+            <button id="btnQa" style="width:100%;margin-bottom:6px">Check page</button>
+            <div id="qa"><p class="hint">Not run yet</p></div>
+          </div>
+        </div>
+      </aside>
+    </div>
+    <script>
+      const tabsEl = document.getElementById("tabs");
+      const urlEl = document.getElementById("url");
+      const backEl = document.getElementById("back");
+      const forwardEl = document.getElementById("forward");
+      const reloadEl = document.getElementById("reload");
+      const goEl = document.getElementById("go");
+      const starEl = document.getElementById("btnStar");
+      const bmBarEl = document.getElementById("bmBar");
+      const bmEmptyEl = document.getElementById("bmEmpty");
+      const toastEl = document.getElementById("toast");
+
+      let chromeState = {
+        tabs: [],
+        activeId: null,
+        url: "",
+        canGoBack: false,
+        canGoForward: false,
+        barAll: [],
+        barTotal: 0,
+        total: 0,
+        currentBookmarked: false,
+        canImportChrome: false,
+        canImportEdge: false,
+      };
+      let paused = false;
+      let toastTimer = null;
+      let overflowUrls = [];
+
+      function toast(text) {
+        toastEl.textContent = text;
+        toastEl.classList.add("show");
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => toastEl.classList.remove("show"), 2600);
+      }
+      window.__sparkToast = toast;
+
+      function openBmMenu() {
+        window.sparkShell.openBookmarksMenu({ overflowUrls });
+      }
+
+      function packBookmarkBar() {
+        bmBarEl.querySelectorAll(".bm-chip, .bm-more").forEach((n) => n.remove());
+        const all = chromeState.barAll || [];
+        overflowUrls = [];
+        if (!all.length) {
+          bmEmptyEl.style.display = "";
+          return;
+        }
+        bmEmptyEl.style.display = "none";
+
+        const avail = Math.max(80, bmBarEl.clientWidth - 4);
+        const moreW = 68;
+        const gap = 2;
+        const widths = all.map((b) => {
+          const probe = document.createElement("button");
+          probe.className = "bm-chip";
+          probe.textContent = b.title || b.url;
+          probe.style.cssText = "position:absolute;visibility:hidden;left:-9999px";
+          bmBarEl.appendChild(probe);
+          const w = probe.offsetWidth;
+          probe.remove();
+          return w;
+        });
+
+        const fitted = [];
+        let used = 0;
+        for (let i = 0; i < all.length; i++) {
+          const w = widths[i];
+          const hasMoreAfter = i < all.length - 1;
+          const reserve = hasMoreAfter ? moreW : 0;
+          const next = used + (fitted.length ? gap : 0) + w;
+          if (fitted.length > 0 && next + reserve > avail) {
+            overflowUrls = all.slice(i).map((x) => x.url);
+            break;
+          }
+          fitted.push(all[i]);
+          used = next;
+        }
+        if (!overflowUrls.length && fitted.length < all.length) {
+          overflowUrls = all.slice(fitted.length).map((x) => x.url);
+        }
+
+        for (const b of fitted) {
+          const chip = document.createElement("button");
+          chip.className = "bm-chip";
+          chip.textContent = b.title || b.url;
+          chip.title = b.url;
+          chip.onclick = () => window.sparkShell.openBookmark(b.url);
+          bmBarEl.appendChild(chip);
+        }
+        if (overflowUrls.length) {
+          const more = document.createElement("button");
+          more.className = "bm-more";
+          more.textContent = "» " + overflowUrls.length;
+          more.title = "其余 " + overflowUrls.length + " 个书签";
+          more.onclick = (e) => {
+            e.stopPropagation();
+            openBmMenu();
+          };
+          bmBarEl.appendChild(more);
+        }
+      }
+
+      function renderChrome() {
+        tabsEl.innerHTML = "";
+        for (const t of chromeState.tabs) {
+          const el = document.createElement("div");
+          el.className = "tab" + (t.id === chromeState.activeId ? " active" : "");
+          el.title = t.url || "";
+          const title = document.createElement("span");
+          title.className = "title";
+          title.textContent = t.title || t.url || "新标签页";
+          const x = document.createElement("button");
+          x.className = "x";
+          x.textContent = "×";
+          x.onclick = (e) => {
+            e.stopPropagation();
+            window.sparkShell.closeTab(t.id);
+          };
+          el.onclick = () => window.sparkShell.switchTab(t.id);
+          el.appendChild(title);
+          el.appendChild(x);
+          tabsEl.appendChild(el);
+        }
+        const add = document.createElement("button");
+        add.className = "new-tab";
+        add.textContent = "+";
+        add.title = "新标签页";
+        add.onclick = () => window.sparkShell.newTab();
+        tabsEl.appendChild(add);
+
+        if (document.activeElement !== urlEl) {
+          urlEl.value = chromeState.url || "";
+        }
+        backEl.disabled = !chromeState.canGoBack;
+        forwardEl.disabled = !chromeState.canGoForward;
+        starEl.textContent = chromeState.currentBookmarked ? "★" : "☆";
+        starEl.classList.toggle("on", !!chromeState.currentBookmarked);
+        packBookmarkBar();
+      }
+
+      function navigateFromBar() {
+        const v = urlEl.value.trim();
+        if (!v || !window.sparkShell) return;
+        window.sparkShell.navigate(v).catch((err) => console.error(err));
+      }
+      goEl.onclick = navigateFromBar;
+      urlEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") navigateFromBar();
+      });
+      backEl.onclick = () => window.sparkShell.goBack();
+      forwardEl.onclick = () => window.sparkShell.goForward();
+      reloadEl.onclick = () => window.sparkShell.reload();
+
+      function renderApprovals(list) {
+        const root = document.getElementById("approvals");
+        if (!list || !list.length) {
+          root.innerHTML = '<p class="hint">暂无待审批项</p>';
+          return;
+        }
+        root.innerHTML = "";
+        for (const a of list) {
+          const box = document.createElement("div");
+          box.className = "approval";
+          box.innerHTML =
+            '<div class="value"><b>' +
+            (a.action || "") +
+            "</b></div><div class='hint'>" +
+            (a.reason || "") +
+            '</div><div class="row" style="margin-top:6px"></div>';
+          const row = box.querySelector(".row");
+          const ok = document.createElement("button");
+          ok.className = "ok";
+          ok.textContent = "批准";
+          ok.onclick = () => window.sparkShell.resolveApproval(a.id, true);
+          const no = document.createElement("button");
+          no.className = "danger";
+          no.textContent = "拒绝";
+          no.onclick = () => window.sparkShell.resolveApproval(a.id, false);
+          row.appendChild(ok);
+          row.appendChild(no);
+          root.appendChild(box);
+        }
+      }
+
+      function renderQa(qa) {
+        const root = document.getElementById("qa");
+        if (!qa) {
+          root.innerHTML = '<p class="hint">尚未检查</p>';
+          return;
+        }
+        let html = '<div class="value">' + (qa.summary || "") + "</div>";
+        for (const it of qa.items || []) {
+          html +=
+            '<div class="qa-item ' +
+            it.status +
+            '">[' +
+            it.status +
+            "] " +
+            it.label +
+            (it.detail ? " — " + String(it.detail).slice(0, 80) : "") +
+            "</div>";
+        }
+        root.innerHTML = html;
+      }
+
+      function renderChat(log) {
+        const root = document.getElementById("chat");
+        root.innerHTML = "";
+        for (const m of log || []) {
+          const div = document.createElement("div");
+          div.className = m.role === "user" ? "u" : "a";
+          div.textContent = (m.role === "user" ? "You: " : "Sparo: ") + m.text;
+          root.appendChild(div);
+        }
+        root.scrollTop = root.scrollHeight;
+      }
+
+      function renderSkills(skills) {
+        const root = document.getElementById("skills");
+        if (!skills || !skills.length) {
+          root.innerHTML = '<p class="hint">暂无 · 录制一次成功操作后会出现在这里</p>';
+          return;
+        }
+        root.innerHTML = "";
+        for (const s of skills) {
+          const row = document.createElement("div");
+          row.className = "skill-item";
+          const left = document.createElement("div");
+          left.innerHTML =
+            "<div>" +
+            escapeHtml(s.title) +
+            '</div><div class="skill-meta">' +
+            (s.stepCount || 0) +
+            " 步 · " +
+            (s.source === "taught" ? "教的" : s.source || "") +
+            "</div>";
+          const del = document.createElement("button");
+          del.className = "skill-del";
+          del.title = "删除";
+          del.textContent = "×";
+          del.onclick = async () => {
+            if (!confirm("删除妙招「" + s.title + "」？")) return;
+            try {
+              await window.sparkShell.deleteSkill(s.id);
+            } catch (err) {
+              console.error(err);
+            }
+          };
+          row.appendChild(left);
+          row.appendChild(del);
+          root.appendChild(row);
+        }
+      }
+
+      function escapeHtml(str) {
+        return String(str || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+
+      function applySidebar(payload) {
+        if (!payload) return;
+        paused = !!payload.paused;
+        const recording = !!payload.recording;
+        document.getElementById("status").innerHTML =
+          '<span class="dot' +
+          (paused ? " paused" : "") +
+          '" id="dot"></span>' +
+          (paused ? "已暂停（人接管）" : "Agent 可操控");
+        document.getElementById("recStatus").innerHTML =
+          '<span class="dot' +
+          (recording ? " rec" : "") +
+          '" id="recDot"></span>' +
+          (recording
+            ? "录制中" + (payload.recordingTask ? " · " + payload.recordingTask : "")
+            : "未录制");
+        document.getElementById("btnRecStart").disabled = recording;
+        document.getElementById("btnRecStop").disabled = !recording;
+        document.getElementById("pageUrl").textContent = payload.url || "—";
+        document.getElementById("pageTitle").textContent = payload.title || "—";
+        const ds = payload.deepseek;
+        const dsEl = document.getElementById("dsStatus");
+        const hint = document.getElementById("chatHint");
+        const presets = (ds && ds.presets) || {
+          deepseek: { baseUrl: "https://api.deepseek.com", model: "deepseek-v4-flash", hint: "DeepSeek" },
+          openai: { baseUrl: "https://api.openai.com/v1", model: "gpt-4.1-mini", hint: "OpenAI" },
+          custom: { baseUrl: "https://api.openai.com/v1", model: "gpt-4.1-mini", hint: "Custom" },
+        };
+        if (ds) {
+          const provEl = document.getElementById("dsProvider");
+          const modelEl = document.getElementById("dsModel");
+          const baseEl = document.getElementById("dsBase");
+          if (provEl && document.activeElement !== provEl) provEl.value = ds.provider || "deepseek";
+          if (modelEl && document.activeElement !== modelEl) modelEl.value = ds.model || "";
+          if (baseEl && document.activeElement !== baseEl) baseEl.value = ds.baseUrl || "";
+          const p = presets[ds.provider || "deepseek"];
+          const hintEl = document.getElementById("dsHint");
+          if (hintEl && p) {
+            hintEl.textContent =
+              (p.hint || "") +
+              " · Key alone is not enough — brand selects the API host.";
+          }
+        }
+        if (ds && ds.configured) {
+          dsEl.className = "ds-status ok";
+          dsEl.textContent =
+            "Ready · " +
+            (ds.provider || "deepseek") +
+            " · " +
+            (ds.model || "deepseek-v4-flash") +
+            (ds.fromEnv ? " (env)" : "") +
+            (ds.apiKeyMasked ? " · " + ds.apiKeyMasked : "");
+          hint.textContent = "Agent acts · you review";
+        } else {
+          dsEl.className = "ds-status";
+          dsEl.textContent = "No API key — pick brand, then paste key";
+          hint.textContent = "Save a key · or connect MCP agent";
+        }
+        if (payload.explain) {
+          document.getElementById("explain").innerHTML =
+            "暂停：" +
+            payload.explain.pause +
+            "<br/>审批：" +
+            payload.explain.approval +
+            "<br/>等待：" +
+            payload.explain.wait +
+            (payload.explain.skill ? "<br/>妙招：" + payload.explain.skill : "") +
+            (payload.explain.workflow
+              ? "<br/>工作流：" + payload.explain.workflow
+              : "");
+        }
+        renderApprovals(payload.approvals);
+        renderQa(payload.qa);
+        renderChat(payload.chat);
+        renderSkills(payload.skills);
+      }
+
+      function bindShell() {
+        if (!window.sparkShell) {
+          console.error("[shell] sparkShell missing");
+          document.getElementById("status").textContent = "壳层 API 未加载，请重启";
+          return;
+        }
+        window.sparkShell.onChromeState((s) => {
+          chromeState = { ...chromeState, ...(s || {}) };
+          renderChrome();
+        });
+        window.sparkShell.onSidebarState(applySidebar);
+        window.sparkShell.listTabs().then((s) => {
+          if (s) {
+            chromeState = { ...chromeState, ...s };
+            renderChrome();
+          }
+        });
+        window.sparkShell.listBookmarks().then((s) => {
+          if (s) {
+            chromeState = { ...chromeState, ...s };
+            renderChrome();
+          }
+        });
+        window.sparkShell.getStatus().then(applySidebar);
+
+        document.getElementById("btnPause").onclick = () => window.sparkShell.setPaused(true);
+        document.getElementById("btnResume").onclick = () => window.sparkShell.setPaused(false);
+        document.getElementById("btnRecStart").onclick = async () => {
+          try {
+            const r = await window.sparkShell.startRecording();
+            if (r && !r.ok) toast(r.message || "无法开始录制");
+          } catch (err) {
+            console.error(err);
+          }
+        };
+        document.getElementById("btnRecStop").onclick = async () => {
+          const title = prompt("妙招名称（可留空用默认名）", "") || undefined;
+          try {
+            const r = await window.sparkShell.stopRecording(title);
+            toast(r && r.message ? r.message : "已保存");
+          } catch (err) {
+            console.error(err);
+          }
+        };
+        document.getElementById("btnQa").onclick = async () => {
+          try {
+            const r = await window.sparkShell.runQa();
+            if (r && r.data) renderQa(r.data);
+            else if (r) renderQa({ summary: r.message, items: [] });
+          } catch (err) {
+            console.error(err);
+          }
+        };
+        async function sendChat() {
+          const input = document.getElementById("chatInput");
+          const text = input.value.trim();
+          if (!text) return;
+          input.value = "";
+          const sendBtn = document.getElementById("chatSend");
+          sendBtn.disabled = true;
+          sendBtn.textContent = "…";
+          try {
+            await window.sparkShell.chat(text);
+          } catch (err) {
+            console.error(err);
+          } finally {
+            sendBtn.disabled = false;
+            sendBtn.textContent = "发送";
+            input.focus();
+          }
+        }
+        document.getElementById("chatSend").onclick = sendChat;
+        document.getElementById("chatInput").addEventListener("keydown", (e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            sendChat();
+          }
+        });
+        const PRESETS = {
+          deepseek: {
+            baseUrl: "https://api.deepseek.com",
+            model: "deepseek-v4-flash",
+            hint: "Recommended. Key from platform.deepseek.com",
+          },
+          openai: {
+            baseUrl: "https://api.openai.com/v1",
+            model: "gpt-4.1-mini",
+            hint: "Key from platform.openai.com — uses OpenAI API host",
+          },
+          custom: {
+            baseUrl: "https://api.openai.com/v1",
+            model: "gpt-4.1-mini",
+            hint: "Any OpenAI-compatible gateway — set Base URL + Model yourself",
+          },
+        };
+        function applyProviderPreset(localOnly) {
+          const provider = document.getElementById("dsProvider").value || "deepseek";
+          const p = PRESETS[provider] || PRESETS.deepseek;
+          document.getElementById("dsModel").value = p.model;
+          document.getElementById("dsBase").value = p.baseUrl;
+          document.getElementById("dsHint").textContent =
+            p.hint + " · Switching brand fills the matching API host.";
+          if (!localOnly) {
+            /* wait for Save to persist */
+          }
+        }
+        document.getElementById("dsProvider").onchange = () => applyProviderPreset(true);
+
+        document.getElementById("btnDsSave").onclick = async () => {
+          const provider = document.getElementById("dsProvider").value || "deepseek";
+          const model = document.getElementById("dsModel").value.trim();
+          const baseUrl = document.getElementById("dsBase").value.trim();
+          const key = document.getElementById("dsKey").value.trim();
+          try {
+            const r = await window.sparkShell.saveSettings({
+              provider,
+              model,
+              baseUrl,
+              apiKey: key || undefined,
+              applyPreset: false,
+            });
+            if (key) document.getElementById("dsKey").value = "";
+            toast(r && r.message ? r.message : "Saved");
+          } catch (err) {
+            console.error(err);
+            toast("Save failed");
+          }
+        };
+
+        async function toggleStar() {
+          const r = await window.sparkShell.toggleBookmark();
+          toast(r.message || (r.ok ? "已更新书签" : "失败"));
+        }
+        starEl.onclick = toggleStar;
+        document.getElementById("btnBmMenu").onclick = (e) => {
+          e.stopPropagation();
+          openBmMenu();
+        };
+        window.addEventListener("resize", () => packBookmarkBar());
+      }
+      bindShell();
+    </script>
+  </body>
+</html>
