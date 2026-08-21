@@ -1,0 +1,34 @@
+{
+  "id": "cs-semi-auto-reply",
+  "title": "客服半自动：扫描会话 → 草稿填入（人不点发送不发出）",
+  "platform": "any",
+  "version": 1,
+  "distilled": true,
+  "aliases": [
+    "客服回复",
+    "自动客服",
+    "半自动客服",
+    "帮我回客户",
+    "cs_draft",
+    "customer service"
+  ],
+  "createdAt": "2026-08-12T00:00:00.000Z",
+  "updatedAt": "2026-08-12T00:00:00.000Z",
+  "intent": "任意站点聊天页：动机分析 + 填入回复草稿，发送留给人",
+  "notes": [
+    "NEVER click 发送 / Send.",
+    "Works on any open chat-like page (旺旺/企微网页/自建 IM…).",
+    "Optional params.draft to force text."
+  ],
+  "params": {
+    "draft": { "type": "string", "optional": true }
+  },
+  "steps": [
+    { "tool": "cs_scan", "optional": true },
+    { "tool": "cs_draft_reply", "args": {} }
+  ],
+  "agentPlaybook": [
+    "run_skill({ query:'客服回复' }) or cs_draft_reply()",
+    "Human clicks Send on the page"
+  ]
+}

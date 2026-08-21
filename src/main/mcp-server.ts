@@ -4,6 +4,12 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { ToolHandlers } from "./tools/index.js";
+import {
+  applyCors,
+  checkRateLimit,
+  jsonError,
+  logMcpRequest,
+} from "./mcp-security.js";
 
 const DEFAULT_PORT = Number(process.env.SPARO_MCP_PORT || process.env.SPARK_MCP_PORT || 3920);
 
@@ -21,39 +27,9 @@ function textResult(payload: unknown) {
 function registerTools(server: McpServer, handlers: ToolHandlers): void {
   server.tool(
     "sparo_info",
-    "FIRST TOOL for new agents: what Sparo is + fastest way to open a URL. Call this once before exploring.",
+    "FIRST TOOL for new agents: what Sparo is, skill catalog, and fastest paths. Call once before exploring. Prefer run_skill for known flows (e.g. 小红书发布).",
     {},
-    async () =>
-      textResult({
-        ok: true,
-        name: "sparo",
-        what: "Sparo Agent Browser — local Electron Chromium controlled via MCP. Shared window with the human. The browser built for AI agents — humans stay in control.",
-        product: {
-          en: "Sparo Agent Browser",
-          tagline: "The browser built for AI agents — humans stay in control.",
-          zh: "Sparo 人机同窗浏览器",
-          zh_tagline: "AI 驾驭网页，你驾驭 AI",
-        },
-        fast_path: [
-          "If Sparo is running, call navigate then get_url.",
-          "If not running: from repo root run `npm run start`, wait for GET /health.",
-          "Or one shot: `npm run open -- https://weibo.com`",
-          "Auth file: %APPDATA%/sparo/mcp-auth.json",
-          "Read AGENTS.md — do not scan the whole codebase.",
-        ],
-        health: `http://127.0.0.1:${DEFAULT_PORT}/health`,
-        core_tools: [
-          "navigate",
-          "get_url",
-          "get_title",
-          "snapshot",
-          "click",
-          "fill",
-          "click_text",
-          "pause",
-          "resume",
-        ],
-      }),
+    async () => textResult(await handlers.sparo_info()),
   );
 
   server.tool(
@@ -104,14 +80,19 @@ function registerTools(server: McpServer, handlers: ToolHandlers): void {
 
   server.tool(
     "execute",
-    "P0: Run JavaScript in the page and return a JSON-serializable result. Use for CKEditor, React internals, modal probing. Example: document.querySelectorAll('iframe').length",
+    "P0: Run JavaScript in the page (or a cross-origin iframe via frame index) and return a JSON-serializable result. Example: document.querySelectorAll('iframe').length. For CDP frames from snapshot, pass frame: 0 for x0.* refs.",
     {
       script: z
         .string()
         .min(1)
         .describe("JS expression or statements; return value is JSON-cloned back"),
+      frame: z
+        .union([z.number(), z.string()])
+        .optional()
+        .describe("CDP frame index (0 for x0) or frameId — required for cross-origin iframe DOM"),
     },
-    async ({ script }) => textResult(await handlers.execute(script)),
+    async ({ script, frame }) =>
+      textResult(await handlers.execute(script, frame !== undefined ? { frame } : undefined)),
   );
 
   server.tool(
@@ -198,9 +179,224 @@ function registerTools(server: McpServer, handlers: ToolHandlers): void {
 
   server.tool(
     "list_skills",
-    "List saved 妙招 (skills) distilled from recordings.",
+    "List saved 妙招 (skills). For execution use match_skill + run_skill.",
     {},
     async () => textResult(await handlers.list_skills()),
+  );
+
+  server.tool(
+    "match_skill",
+    "Match a natural-language goal to a saved skill (e.g. 发小红书 → xhs-longform-publish). Call before run_skill when id is unknown.",
+    { query: z.string().min(1).describe("User goal or skill name") },
+    async ({ query }) => textResult(await handlers.match_skill(query)),
+  );
+
+  server.tool(
+    "get_skill",
+    "Get full skill JSON (steps/params) by id or fuzzy query.",
+    {
+      id: z.string().optional().describe("Skill id"),
+      query: z.string().optional().describe("Fuzzy title/intent if id unknown"),
+    },
+    async ({ id, query }) =>
+      textResult(await handlers.get_skill(String(id || query || ""))),
+  );
+
+  server.tool(
+    "run_skill",
+    "FAST PATH: execute a saved 妙招 in the shared Sparo window (navigate/click/fill/…). Prefer this over inventing click sequences. Pauses before publish. Params: title, body, topics[], mdPath.",
+    {
+      id: z.string().optional().describe("Skill id, e.g. xhs-longform-publish"),
+      query: z
+        .string()
+        .optional()
+        .describe("Fuzzy match, e.g. 小红书发布 / 发小红书"),
+      params: z
+        .record(z.string(), z.unknown())
+        .optional()
+        .describe("Skill params: title, body, topics, mdPath, …"),
+      dryRun: z
+        .boolean()
+        .optional()
+        .describe("If true, only resolve skill + list steps"),
+    },
+    async ({ id, query, params, dryRun }) =>
+      textResult(
+        await handlers.run_skill({
+          id,
+          query,
+          params: params as Record<string, unknown> | undefined,
+          dryRun,
+        }),
+      ),
+  );
+
+  server.tool(
+    "xhs_scroll_bottom",
+    "Xiaohongshu: scroll long-form editor so 下一步 is on-screen.",
+    {},
+    async () => textResult(await handlers.xhs_scroll_bottom()),
+  );
+
+  server.tool(
+    "xhs_ensure_editor",
+    "Xiaohongshu: open long-form editor (写长文 → 新的创作 → 空白创作). Do NOT fill content here.",
+    {},
+    async () => textResult(await handlers.xhs_ensure_editor()),
+  );
+
+  server.tool(
+    "xhs_page_stage",
+    "Xiaohongshu: detect stage only (chooser|compose|layout|publish). AI should route on this — never type into fields.",
+    {},
+    async () => textResult(await handlers.xhs_page_stage()),
+  );
+
+  server.tool(
+    "xhs_inject_compose",
+    "ATOMIC: inject pre-baked title+body into compose editors ONCE (clears then writes). Prefer this over fill. Pass full title/body in args — do not type character by character.",
+    {
+      title: z.string().optional(),
+      body: z.string().optional(),
+      force: z
+        .boolean()
+        .optional()
+        .describe("Overwrite even if fields non-empty (default true)"),
+    },
+    async ({ title, body, force }) =>
+      textResult(await handlers.xhs_inject_compose({ title, body, force })),
+  );
+
+  server.tool(
+    "xhs_inject_publish",
+    "ATOMIC: inject pre-baked summary + topics on publish page ONCE. Prefer over fill/click_text loops for tags.",
+    {
+      summary: z.string().optional().describe("Short description / 简介"),
+      topics: z.array(z.string()).optional(),
+    },
+    async ({ summary, topics }) =>
+      textResult(await handlers.xhs_inject_publish({ summary, topics })),
+  );
+
+  server.tool(
+    "xhs_layout_next",
+    "Xiaohongshu: 一键排版 → wait for template panel (often 10–20s) → pick template → 下一步 → publish page. Prefer over manual click_text loops.",
+    {
+      template: z
+        .string()
+        .optional()
+        .describe("Template name, default 简约基础"),
+      timeoutMs: z.number().optional().describe("Wait for layout panel, default 32000"),
+    },
+    async ({ template, timeoutMs }) =>
+      textResult(await handlers.xhs_layout_next({ template, timeoutMs })),
+  );
+
+  server.tool(
+    "xhs_add_topics",
+    "Xiaohongshu: add topics (prefer xhs_inject_publish which includes topics).",
+    {
+      topics: z
+        .array(z.string())
+        .min(1)
+        .describe("Topic labels, e.g. ['#ai','#ai浏览器']"),
+    },
+    async ({ topics }) => textResult(await handlers.xhs_add_topics(topics)),
+  );
+
+  server.tool(
+    "xhs_pick_cover",
+    "Xiaohongshu: pick first cover suggestion card if present.",
+    {},
+    async () => textResult(await handlers.xhs_pick_cover()),
+  );
+
+  server.tool(
+    "xhs_click_publish",
+    "Xiaohongshu: click content-area 发布 (x>360), NOT sidebar 发布笔记.",
+    {},
+    async () => textResult(await handlers.xhs_click_publish()),
+  );
+
+  server.tool(
+    "screenshot",
+    "Capture active page PNG under %APPDATA%/sparo/diag/ for debugging.",
+    { label: z.string().optional().describe("Filename label") },
+    async ({ label }) => textResult(await handlers.screenshot(label)),
+  );
+
+  server.tool(
+    "diagnose",
+    "On failure: url + title + page_text slice + screenshot path. Call after wait_for/fill fails.",
+    { label: z.string().optional() },
+    async ({ label }) => textResult(await handlers.diagnose(label)),
+  );
+
+  server.tool(
+    "save_sessions",
+    "Flush browser cookies to disk and record login status for sites (xiaohongshu/weibo/zhihu). Call after human logs in — agents then reuse cookies without passwords.",
+    {
+      sites: z
+        .array(z.string())
+        .optional()
+        .describe("Optional site ids: xiaohongshu, weibo, zhihu"),
+    },
+    async ({ sites }) => textResult(await handlers.save_sessions(sites)),
+  );
+
+  server.tool(
+    "list_sessions",
+    "List saved login session metadata (cookie counts/names only, no secrets).",
+    {},
+    async () => textResult(await handlers.list_sessions()),
+  );
+
+  server.tool(
+    "analyze_page",
+    "FIRST step for unknown forms: classify inputs/buttons, detect required (红星/required/aria), stamp data-spark-ref. Then call execute_primitives with a label→value payload. Prefer run_skill query 通用填表. Do NOT start with blind fill loops.",
+    {},
+    async () => textResult(await handlers.analyze_page()),
+  );
+
+  server.tool(
+    "execute_primitives",
+    "Fill ANY page from a Chinese/English label→value payload (re-analyzes if needed). Fuzzy-matches 标题/正文/搜索… → fill/click/upload + mini-QA + strategy cache. Prefer over repeated fill/click. Xiaohongshu long-form: use xhs_* instead. Or run_skill query 通用填表.",
+    {
+      payload: z
+        .record(z.unknown())
+        .describe('Map of field labels to values, e.g. {"标题":"hi","正文":"…","话题":["AI"]}'),
+      url: z.string().optional().describe("Optional navigate before analyze"),
+      includeOptional: z.boolean().optional(),
+      maxAttempts: z.number().optional(),
+    },
+    async ({ payload, url, includeOptional, maxAttempts }) =>
+      textResult(
+        await handlers.execute_primitives({
+          payload: payload as Record<string, unknown>,
+          url,
+          includeOptional,
+          maxAttempts,
+        }),
+      ),
+  );
+
+  server.tool(
+    "cs_scan",
+    "Customer-service helper (any site): detect chat-like UI, extract recent messages, locate composer. Does NOT send. Follow with cs_draft_reply.",
+    {},
+    async () => textResult(await handlers.cs_scan()),
+  );
+
+  server.tool(
+    "cs_draft_reply",
+    "SEMI-AUTO customer reply for ANY open chat page: classify intent → generate draft (LLM if key configured, else template) → fill composer. NEVER clicks Send — human must confirm on page. Optional draft override.",
+    {
+      draft: z.string().optional().describe("Optional pre-written reply; skips generation"),
+      fill: z.boolean().optional().describe("Fill composer (default true)"),
+      preferLlm: z.boolean().optional().describe("Try LLM draft when API key set (default true)"),
+    },
+    async ({ draft, fill, preferLlm }) =>
+      textResult(await handlers.cs_draft_reply({ draft, fill, preferLlm })),
   );
 
   server.tool(
@@ -248,9 +444,13 @@ function registerTools(server: McpServer, handlers: ToolHandlers): void {
       text: z.string().optional(),
       ref: z.string().optional(),
       timeoutMs: z.number().optional(),
+      all: z
+        .boolean()
+        .optional()
+        .describe("If true with comma selectors, require ALL parts visible (AND)"),
     },
-    async ({ selector, text, ref, timeoutMs }) =>
-      textResult(await handlers.wait_for({ selector, text, ref, timeoutMs })),
+    async ({ selector, text, ref, timeoutMs, all }) =>
+      textResult(await handlers.wait_for({ selector, text, ref, timeoutMs, all })),
   );
 
   server.tool(
@@ -343,9 +543,30 @@ export async function startMcpServer(handlers: ToolHandlers): Promise<{
   close: () => Promise<void>;
 }> {
   const token = process.env.SPARO_MCP_TOKEN || process.env.SPARK_MCP_TOKEN || randomBytes(24).toString("hex");
+  const TOOL_NAMES = Object.keys(handlers).sort();
 
   const httpServer = http.createServer(async (req, res) => {
+    const started = Date.now();
     const url = new URL(req.url || "/", `http://127.0.0.1:${DEFAULT_PORT}`);
+    const method = req.method || "GET";
+    let logged = false;
+    const logOnce = () => {
+      if (logged) return;
+      logged = true;
+      logMcpRequest({
+        method,
+        path: url.pathname,
+        status: res.statusCode || 0,
+        latencyMs: Date.now() - started,
+        clientIp: req.socket.remoteAddress,
+      });
+    };
+    res.on("finish", logOnce);
+    res.on("close", logOnce);
+
+    if (applyCors(req, res)) {
+      return;
+    }
 
     if (url.pathname === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
@@ -356,6 +577,9 @@ export async function startMcpServer(handlers: ToolHandlers): Promise<{
           product: "Sparo Agent Browser",
           tagline: "The browser built for AI agents — humans stay in control.",
           endpoint: "/mcp",
+          toolCount: TOOL_NAMES.length,
+          tools: TOOL_NAMES,
+          xhs_tools: TOOL_NAMES.filter((t) => t.startsWith("xhs_")),
           agent: {
             read: "AGENTS.md",
             open_example: "npm run open -- https://weibo.com",
@@ -366,15 +590,29 @@ export async function startMcpServer(handlers: ToolHandlers): Promise<{
       return;
     }
 
+    if (url.pathname === "/tools") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, count: TOOL_NAMES.length, tools: TOOL_NAMES }));
+      return;
+    }
+
     if (url.pathname !== "/mcp") {
-      res.writeHead(404).end("Not found");
+      jsonError(res, 404, "Not found");
       return;
     }
 
     const auth = req.headers.authorization || "";
     if (auth !== `Bearer ${token}`) {
-      res.writeHead(401, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Unauthorized" }));
+      jsonError(res, 401, "Unauthorized", "unauthorized");
+      return;
+    }
+
+    const limit = checkRateLimit(token);
+    if (!limit.ok) {
+      if (limit.retryAfterMs !== undefined) {
+        res.setHeader("Retry-After", String(Math.max(1, Math.ceil(limit.retryAfterMs / 1000))));
+      }
+      jsonError(res, 429, "Too Many Requests", "rate_limited");
       return;
     }
 
@@ -394,11 +632,10 @@ export async function startMcpServer(handlers: ToolHandlers): Promise<{
     } catch (error) {
       console.error("[sparo-mcp] request error:", error);
       if (!res.headersSent) {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(
-          JSON.stringify({
-            error: error instanceof Error ? error.message : String(error),
-          }),
+        jsonError(
+          res,
+          500,
+          error instanceof Error ? error.message : String(error),
         );
       }
     } finally {

@@ -34,4 +34,33 @@ $auth = Get-Content "$env:APPDATA\sparo\mcp-auth.json" | ConvertFrom-Json
 2. Agent plans and calls Sparo tools · Agent 规划并调用工具  
 3. Human watches the shared window; Pause / Approval when needed · 人围观同窗；必要时暂停/审批  
 
-Full tool list: [`MCP-API.md`](./MCP-API.md)
+### Publishing · 发帖 / 发小红书
+
+**AI detects stage; scripts inject content once.** Do not loop `fill`.
+
+```text
+run_skill({ query: "发小红书", params: { title, body, topics } })
+# or: xhs_ensure_editor → xhs_inject_compose → … → xhs_inject_publish → pause
+```
+
+Full playbook: [`PUBLISHING.md`](./PUBLISHING.md)  
+Universal forms: [`UNIVERSAL-ANALYZER.md`](./UNIVERSAL-ANALYZER.md) · Hermes: [`HERMES-PLAYBOOK.md`](./HERMES-PLAYBOOK.md)  
+Full tool list: [`MCP-API.md`](./MCP-API.md)  
+Skills: [`../strategies/skills/README.md`](../strategies/skills/README.md)
+
+### Forms · 通用填表
+
+```text
+run_skill({ query: "通用填表", params: { payload: { 标题, 正文, … } } })
+# or: analyze_page → execute_primitives({ payload })
+```
+
+Do **not** loop `fill` on multi-field pages.
+
+### Customer service · 客服半自动
+
+```text
+cs_draft_reply()   # or run_skill query 客服回复 — fills draft only
+```
+
+See [`CUSTOMER-SERVICE.md`](./CUSTOMER-SERVICE.md).

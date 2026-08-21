@@ -1,0 +1,57 @@
+{
+  "id": "site-publish-template",
+  "title": "TEMPLATE：任意站点发布（AI 认阶段 + 脚本投递）",
+  "intent": "Copy this file to add a new site. AI must not type content field-by-field.",
+  "aliases": ["TEMPLATE_ONLY"],
+  "platform": "example.com",
+  "version": 1,
+  "enabled": false,
+  "productModel": {
+    "ai": ["detect stage", "click next/publish", "pause"],
+    "script": ["ensure editor", "inject content once"],
+    "forbid": ["loop fill", "character-by-character typing"]
+  },
+  "params": {
+    "title": { "type": "string", "required": true },
+    "body": { "type": "string", "required": true },
+    "tags": { "type": "string[]", "default": [] },
+    "summary": { "type": "string", "optional": true }
+  },
+  "steps": [
+    {
+      "id": "open",
+      "tool": "navigate",
+      "args": { "url": "https://EXAMPLE.com/compose" }
+    },
+    {
+      "id": "wait",
+      "tool": "wait_for",
+      "args": { "text": "标题或占位文案", "timeoutMs": 20000 }
+    },
+    {
+      "id": "inject",
+      "tool": "execute",
+      "args": {
+        "script": "/* Replace with site-specific clear+write for title+body once */ (() => ({ ok: false, message: 'implement inject' }))()"
+      },
+      "note": "Prefer a dedicated MCP helper like xhs_inject_compose for popular sites"
+    },
+    {
+      "id": "submit-or-next",
+      "tool": "click_text",
+      "args": { "text": "发布", "exact": true },
+      "optional": true
+    },
+    {
+      "id": "human",
+      "tool": "pause",
+      "hint": "Human confirms irreversible publish"
+    }
+  ],
+  "agentPlaybook": [
+    "1. Copy to strategies/skills/<site>-publish.json and %APPDATA%/sparo/skills/",
+    "2. Set aliases users will say (发微博 / 发飞书…)",
+    "3. Implement one-shot inject; ban fill loops",
+    "4. Document in docs/PUBLISHING.md"
+  ]
+}

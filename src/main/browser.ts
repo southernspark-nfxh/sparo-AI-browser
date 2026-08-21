@@ -18,6 +18,7 @@ import type {
   FillConfirm,
   NavigateConfirm,
   PageSnapshot,
+  SnapshotElement,
   ToolResult,
 } from "../shared/types.js";
 import { parseLocalIntent } from "./agent/stub.js";
@@ -29,10 +30,17 @@ import {
   createSkillFromTrace,
   deleteSkill,
   listSkills,
+  seedBundledSkills,
   skillSummary,
   type Skill,
   type SkillStep,
 } from "./skills/store.js";
+import {
+  matchSkills,
+  runSkill,
+  skillCatalog,
+  resolveSkill,
+} from "./skills/runner.js";
 import {
   loadSettings,
   saveSettings,
@@ -62,6 +70,12 @@ import {
   type BookmarkItem,
 } from "./bookmarks/import-chromium.js";
 import {
+  DEFAULT_SESSION_SITES,
+  loadSessions,
+  saveSessionsFile,
+  type SessionSite,
+} from "./sessions/store.js";
+import {
   CLICK_HITTEST_SCRIPT,
   DISMISS_OVERLAYS_SCRIPT,
   FILL_SCRIPT,
@@ -77,7 +91,40 @@ import {
   RECORD_STOP_SCRIPT,
   SELECT_SCRIPT,
   SNAPSHOT_SCRIPT,
+  XHS_ADD_TOPICS_SCRIPT,
+  XHS_CLICK_PUBLISH_SCRIPT,
+  XHS_ENSURE_EDITOR_SCRIPT,
+  XHS_INJECT_COMPOSE_SCRIPT,
+  XHS_INJECT_PUBLISH_SCRIPT,
+  XHS_LAYOUT_NEXT_SCRIPT,
+  XHS_PAGE_STAGE_SCRIPT,
+  XHS_PICK_COVER_SCRIPT,
+  XHS_SCROLL_BOTTOM_SCRIPT,
+  ANALYZE_PAGE_SCRIPT,
 } from "./page-scripts.js";
+import { executePrimitivesOnBrowser } from "./analyzer/execute-primitives.js";
+import type { AnalyzedPage } from "./analyzer/types.js";
+import { runCsDraft, runCsScan } from "./cs/service.js";
+import type { CsDraftData, CsScanData } from "./cs/types.js";
+import {
+  FRAME_COLLECT_SCRIPT,
+  FRAME_FILL_SCRIPT,
+  FRAME_FIND_TEXT_SCRIPT,
+  FRAME_HIT_SCRIPT,
+  FRAME_WAIT_SCRIPT,
+  cdpEvaluate,
+  cdpCall,
+  cdpUtf8Expr,
+  listChildFrames,
+  matchFrameOffsets,
+  parseCrossFrameRef,
+  prefixFrameElements,
+  withDebugger,
+  type CdpFrameInfo,
+  type IframeMeta,
+} from "./cdp-frames.js";
+import { isMojibake, softFillMatch, sleep } from "./browser-helpers.js";
+import { attachPageContextMenu } from "./page-context-menu.js";
 
 function resolveAppIconPath(): string {
   const candidates = [
@@ -122,16 +169,33 @@ type ApprovalRequest = {
   resolve: (approved: boolean) => void;
 };
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/** Drop approvals older than SPARO_APPROVAL_MAX_AGE_MS (default 10min). */
+function pruneStaleApprovals(
+  map: Map<string, ApprovalRequest>,
+  maxAgeMs = Number(process.env.SPARO_APPROVAL_MAX_AGE_MS || 600_000),
+): number {
+  if (!(maxAgeMs > 0)) return 0;
+  const now = Date.now();
+  let n = 0;
+  for (const [id, req] of map) {
+    const created = Date.parse(req.createdAt);
+    if (!Number.isFinite(created) || now - created <= maxAgeMs) continue;
+    try {
+      req.resolve(false);
+    } catch {
+      /* ignore */
+    }
+    map.delete(id);
+    n += 1;
+  }
+  return n;
 }
 
 function normalizeUrl(url: string): string {
   let target = url.trim();
   if (!target) return DEFAULT_URL;
-  if (!/^https?:\/\//i.test(target) && !target.startsWith("about:")) {
-    target = `https://${target}`;
-  }
+  if (/^(https?:|file:|data:|about:)/i.test(target)) return target;
+  target = `https://${target}`;
   return target;
 }
 
@@ -142,6 +206,8 @@ export class SparkBrowser {
   private activeTabId = "";
   private shellReady = false;
   private lastSnapshot: PageSnapshot | null = null;
+  /** Cross-origin CDP frames from last snapshot (x{i}.* refs) */
+  private cdpFrames: CdpFrameInfo[] = [];
   private paused = false;
   private approvals = new Map<string, ApprovalRequest>();
   private lastQa: QaReport | null = null;
@@ -150,6 +216,7 @@ export class SparkBrowser {
   private bookmarks: BookmarkItem[] = [];
   private recording = false;
   private recordingTask = "";
+  private lastCs: CsDraftData | CsScanData | null = null;
   private skillsCache: Skill[] = [];
   private settings!: SparkSettings;
   private deepseek: DeepSeekAgentProvider | null = null;
@@ -165,7 +232,8 @@ export class SparkBrowser {
     return tab.view;
   }
 
-  private configDir(): string {
+  /** Config + cookie + strategy cache root (%APPDATA%/sparo). */
+  configDir(): string {
     return (
       process.env.SPARO_CONFIG_DIR ||
       process.env.SPARK_CONFIG_DIR ||
@@ -173,6 +241,11 @@ export class SparkBrowser {
         ? join(process.env.APPDATA, "sparo")
         : join(homedir(), ".config", "sparo"))
     );
+  }
+
+  /** @deprecated use configDir() */
+  getConfigDir(): string {
+    return this.configDir();
   }
 
   constructor() {
@@ -200,6 +273,7 @@ export class SparkBrowser {
     }
 
     this.bookmarks = loadSavedBookmarks(this.configDir());
+    seedBundledSkills(this.configDir());
     this.skillsCache = listSkills(this.configDir());
     this.settings = loadSettings(this.configDir());
     this.rebuildDeepSeek();
@@ -273,6 +347,11 @@ export class SparkBrowser {
     this.window.contentView.addChildView(view);
 
     const wc = view.webContents;
+    attachPageContextMenu(wc, {
+      openInNewTab: (openUrl) => {
+        this.createTab(openUrl, true);
+      },
+    });
     wc.setWindowOpenHandler(({ url: openUrl }) => {
       this.createTab(openUrl, true);
       return { action: "deny" };
@@ -289,7 +368,20 @@ export class SparkBrowser {
     });
     wc.on("did-navigate", sync);
     wc.on("did-navigate-in-page", sync);
-    wc.on("did-finish-load", sync);
+    wc.on("did-finish-load", () => {
+      sync();
+      if (this.recording && this.activeTabId === id) {
+        void wc
+          .executeJavaScript(
+            `(${RECORD_START_SCRIPT})(${JSON.stringify({
+              platform: "spark",
+              task: this.recordingTask || undefined,
+            })})`,
+            true,
+          )
+          .catch(() => undefined);
+      }
+    });
     wc.on("did-start-loading", () => this.pushChromeState());
 
     void wc.loadURL(normalizeUrl(url));
@@ -446,6 +538,10 @@ export class SparkBrowser {
     );
     handle("spark:qa-check", async () => this.qaCheck());
     handle("spark:chat", async (_e, text: string) => this.handleChat(String(text || "")));
+    handle("spark:cs-scan", async () => this.csScan());
+    handle("spark:cs-draft", async (_e, opts?: { draft?: string; fill?: boolean }) =>
+      this.csDraftReply(opts || {}),
+    );
     handle("spark:get-settings", async () => ({
       ok: true,
       settings: settingsPublicView(this.settings),
@@ -456,8 +552,8 @@ export class SparkBrowser {
       this.pushSidebarState();
       return {
         ok: true,
-        message: this.settings.deepseekApiKey
-          ? "DeepSeek 已配置"
+        message: this.settings.apiKey || this.settings.deepseekApiKey
+          ? "API 已配置"
           : "已保存（未设置 API Key）",
         settings: settingsPublicView(this.settings),
       };
@@ -641,6 +737,7 @@ export class SparkBrowser {
   }
 
   private getSidebarPayload() {
+    pruneStaleApprovals(this.approvals);
     return {
       paused: this.paused,
       recording: this.recording,
@@ -658,11 +755,32 @@ export class SparkBrowser {
       chat: this.chatLog.slice(-40),
       skills: this.skillsCache.map(skillSummary).slice(0, 30),
       deepseek: settingsPublicView(this.settings),
+      cs: this.lastCs
+        ? "intent" in this.lastCs && (this.lastCs as CsDraftData).intent
+          ? {
+              mode: "draft",
+              intent: (this.lastCs as CsDraftData).intent,
+              draft: (this.lastCs as CsDraftData).draft,
+              source: (this.lastCs as CsDraftData).source,
+              filled: (this.lastCs as CsDraftData).filled,
+              sendBlocked: true,
+              looksLikeChat: (this.lastCs as CsDraftData).scan?.looksLikeChat,
+              score: (this.lastCs as CsDraftData).scan?.score,
+            }
+          : {
+              mode: "scan",
+              looksLikeChat: (this.lastCs as CsScanData).looksLikeChat,
+              score: (this.lastCs as CsScanData).score,
+              msgCount: (this.lastCs as CsScanData).messages?.length || 0,
+              lastCustomerText: (this.lastCs as CsScanData).lastCustomerText,
+            }
+        : null,
       explain: {
         pause: "暂停：Agent 立刻停手，人可自由操作页面",
         approval: "审批：Agent 请求做人确认后才继续（如提交）",
         wait: "等待 wait_for：Agent 等页面元素出现，不是等人",
         skill: "妙招：录制成功操作并沉淀；对话说「开始录制 / 结束录制并保存为某某」",
+        cs: "客服半自动：扫描会话 → AI/模板草稿填入输入框 → 人点发送（永不自动发送）",
         workflow:
           "Agent-First：说「登录店小蜜」会打开后台；编辑页说「处理好」全自动，做完暂停等你审",
       },
@@ -742,6 +860,201 @@ export class SparkBrowser {
     };
   }
 
+  /**
+   * Flush Chromium cookies to disk and write sessions.json metadata
+   * (cookie names/counts only — never values). Used so agents reopen sites logged-in.
+   */
+  async saveSessions(siteIds?: string[]): Promise<ToolResult> {
+    try {
+      const ses = this.pageView.webContents.session;
+      await ses.cookies.flushStore();
+      const all = await ses.cookies.get({});
+      const want = new Set(
+        (siteIds?.length ? siteIds : DEFAULT_SESSION_SITES.map((s) => s.id)).map(String),
+      );
+      const sites: SessionSite[] = [];
+      const now = new Date().toISOString();
+      for (const base of DEFAULT_SESSION_SITES) {
+        if (!want.has(base.id)) continue;
+        const matched = all.filter((c) => {
+          const dom = String(c.domain || "").replace(/^\./, "").toLowerCase();
+          return base.domains.some((d) => {
+            const host = d.replace(/^\./, "").toLowerCase();
+            return dom === host || dom.endsWith("." + host) || host.endsWith("." + dom);
+          });
+        });
+        const names = [...new Set(matched.map((c) => c.name))].sort();
+        sites.push({
+          ...base,
+          cookieCount: matched.length,
+          cookieNames: names.slice(0, 40),
+          verifiedAt: matched.length > 0 ? now : undefined,
+          note:
+            matched.length > 0
+              ? `${base.note || ""} · 已保存登录 Cookie`.trim()
+              : `${base.note || ""} · 未检测到 Cookie（可能未登录）`.trim(),
+        });
+      }
+
+      // Ensure bookmarks for logged-in homes (add only — never toggle-remove)
+      for (const s of sites) {
+        if ((s.cookieCount || 0) < 1) continue;
+        const homeBase = s.homeUrl.split("?")[0] || s.homeUrl;
+        const exists = this.bookmarks.some(
+          (b) => b.url === s.homeUrl || (b.url || "").startsWith(homeBase),
+        );
+        if (!exists) {
+          this.bookmarks = [
+            {
+              id: randomBytes(4).toString("hex"),
+              title: s.title,
+              url: s.homeUrl,
+              folder: "书签栏",
+              bar: true,
+              source: "manual",
+            },
+            ...this.bookmarks,
+          ];
+        } else {
+          this.bookmarks = this.bookmarks.map((b) =>
+            b.url === s.homeUrl || (b.url || "").startsWith(homeBase)
+              ? { ...b, bar: true, title: s.title || b.title }
+              : b,
+          );
+        }
+      }
+      saveBookmarks(this.configDir(), this.bookmarks);
+      this.pushChromeState();
+
+      const file = {
+        updatedAt: now,
+        userDataHint: this.configDir(),
+        sites: (() => {
+          const prev = loadSessions(this.configDir()).sites;
+          const byId = new Map(prev.map((s) => [s.id, s]));
+          for (const s of sites) byId.set(s.id, s);
+          // keep defaults for any missing
+          for (const d of DEFAULT_SESSION_SITES) {
+            if (!byId.has(d.id)) byId.set(d.id, { ...d });
+          }
+          return DEFAULT_SESSION_SITES.map((d) => byId.get(d.id)!);
+        })(),
+      };
+      saveSessionsFile(this.configDir(), file);
+
+      const loggedIn = sites.filter((s) => (s.cookieCount || 0) > 0).map((s) => s.title);
+      const missing = sites.filter((s) => (s.cookieCount || 0) < 1).map((s) => s.title);
+      return {
+        ok: loggedIn.length > 0,
+        message:
+          loggedIn.length > 0
+            ? `已落盘登录态：${loggedIn.join("、")}${missing.length ? `；未检测到：${missing.join("、")}` : ""}`
+            : `未检测到登录 Cookie（${missing.join("、") || "无"}）`,
+        data: file,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  listSessions(): ToolResult {
+    const file = loadSessions(this.configDir());
+    return {
+      ok: true,
+      message: `sessions ${file.sites.length}`,
+      data: file,
+    };
+  }
+
+  /**
+   * Universal page analyzer — classify fields/buttons + required markers (红星).
+   * Stamps data-spark-ref for subsequent execute_primitives.
+   */
+  async analyzePage(): Promise<ToolResult & { data?: AnalyzedPage }> {
+    try {
+      const data = (await this.pageView.webContents.executeJavaScript(
+        ANALYZE_PAGE_SCRIPT,
+        true,
+      )) as AnalyzedPage;
+      if (!data?.ok) {
+        return { ok: false, message: "analyze_page failed", data };
+      }
+      return {
+        ok: true,
+        message: `analyze_page ${data.page_type} · fields=${data.field_count} · required=${data.required_fields?.length || 0}`,
+        data,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /**
+   * Map payload keys → analyzed fields → fill/click/upload with mini-QA + strategy learning.
+   */
+  async executePrimitives(input: {
+    payload: Record<string, unknown>;
+    url?: string;
+    includeOptional?: boolean;
+    maxAttempts?: number;
+  }): Promise<ToolResult> {
+    if (input.url) {
+      const nav = await this.navigate(input.url);
+      if (!nav.ok) return nav;
+    }
+    return executePrimitivesOnBrowser(this, input);
+  }
+
+  /** Expose settings for CS draft LLM (same object Chat uses). */
+  getSettings(): SparkSettings {
+    return this.settings;
+  }
+
+  /**
+   * Semi-auto CS: scan any page for chat-like UI + recent messages.
+   * Does not send.
+   */
+  async csScan(): Promise<ToolResult & { data?: CsScanData }> {
+    const res = await runCsScan({
+      pageView: this.pageView,
+      assertNotPaused: () => this.assertNotPaused(),
+      fill: (t, v) => this.fill(t, v),
+      getSettings: () => this.settings,
+    });
+    if (res.data) this.lastCs = res.data;
+    this.pushSidebarState();
+    return res;
+  }
+
+  /**
+   * Semi-auto CS: classify intent → draft → fill composer.
+   * Never clicks 发送 — human confirms on page.
+   */
+  async csDraftReply(input?: {
+    draft?: string;
+    fill?: boolean;
+    preferLlm?: boolean;
+  }): Promise<ToolResult & { data?: CsDraftData }> {
+    const res = await runCsDraft(
+      {
+        pageView: this.pageView,
+        assertNotPaused: () => this.assertNotPaused(),
+        fill: (t, v) => this.fill(t, v),
+        getSettings: () => this.settings,
+      },
+      input || {},
+    );
+    if (res.data) this.lastCs = res.data;
+    this.pushSidebarState();
+    return res;
+  }
+
   getWebContents(): WebContents {
     return this.pageView.webContents;
   }
@@ -770,27 +1083,64 @@ export class SparkBrowser {
     action: string;
     reason: string;
     risk?: string;
+    timeoutMs?: number;
   }): Promise<ToolResult> {
     const blocked = this.assertNotPaused();
     if (blocked) return blocked;
+    pruneStaleApprovals(this.approvals);
     const id = randomBytes(6).toString("hex");
-    const approved = await new Promise<boolean>((resolve) => {
+    const timeoutMs =
+      input.timeoutMs ??
+      Number(process.env.SPARO_APPROVAL_TIMEOUT_MS || 300_000);
+    let settled = false;
+    const approved = await new Promise<boolean | "timeout">((resolve) => {
+      const timer =
+        timeoutMs > 0
+          ? setTimeout(() => {
+              if (settled) return;
+              settled = true;
+              resolve("timeout");
+            }, timeoutMs)
+          : null;
       this.approvals.set(id, {
         id,
         action: input.action,
         reason: input.reason,
         risk: input.risk,
         createdAt: new Date().toISOString(),
-        resolve,
+        resolve: (ok: boolean) => {
+          if (settled) return;
+          settled = true;
+          if (timer) clearTimeout(timer);
+          resolve(ok);
+        },
       });
       this.pushSidebarState();
     });
     this.approvals.delete(id);
     this.pushSidebarState();
+    if (approved === "timeout") {
+      await this.dismissOverlays().catch(() => undefined);
+      this.lastSnapshot = null;
+      return {
+        ok: false,
+        message: `Approval timeout (${Math.round(timeoutMs / 1000)}s): ${input.action}`,
+        data: { id, approved: false, approval: "timeout", action: input.action },
+      };
+    }
+    if (!approved) {
+      await this.dismissOverlays().catch(() => undefined);
+      this.lastSnapshot = null;
+      return {
+        ok: false,
+        message: `Rejected: ${input.action}`,
+        data: { id, approved: false, approval: "rejected", action: input.action },
+      };
+    }
     return {
-      ok: approved,
-      message: approved ? `Approved: ${input.action}` : `Rejected: ${input.action}`,
-      data: { id, approved, action: input.action },
+      ok: true,
+      message: `Approved: ${input.action}`,
+      data: { id, approved: true, approval: "granted", action: input.action },
     };
   }
 
@@ -806,6 +1156,7 @@ export class SparkBrowser {
     text?: string;
     ref?: string;
     timeoutMs?: number;
+    all?: boolean;
   }): Promise<ToolResult> {
     const blocked = this.assertNotPaused();
     if (blocked) return blocked;
@@ -818,19 +1169,41 @@ export class SparkBrowser {
           const ref = ${JSON.stringify(input.ref ?? null)};
           const selector = ${JSON.stringify(input.selector ?? null)};
           const text = ${JSON.stringify(input.text ?? null)};
+          const requireAll = ${JSON.stringify(Boolean(input.all))};
+          function visible(el) {
+            if (!el) return false;
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && r.height > 0;
+          }
           let el = null;
           if (ref) el = document.querySelector('[data-spark-ref="' + CSS.escape(ref) + '"]');
-          if (!el && selector) { try { el = document.querySelector(selector); } catch (_) {} }
+          if (!el && selector) {
+            try {
+              const nodes = Array.from(document.querySelectorAll(selector));
+              if (requireAll && selector.includes(',')) {
+                const parts = selector.split(',').map((s) => s.trim()).filter(Boolean);
+                const ok = parts.every((part) => {
+                  try {
+                    return Array.from(document.querySelectorAll(part)).some(visible);
+                  } catch (_) { return false; }
+                });
+                if (ok) {
+                  el = nodes.find(visible) || document.querySelector(parts[0]);
+                  return { ok: true, tag: el && el.tagName, text: el && (el.innerText||el.getAttribute('placeholder')||'').trim().slice(0,60), all: true };
+                }
+                return { ok: false };
+              }
+              el = nodes.find(visible) || null;
+            } catch (_) {}
+          }
           if (!el && text) {
-            el = Array.from(document.querySelectorAll('a,button,span,div,input,label,li')).find((n) => {
-              const t = (n.innerText || n.textContent || '').trim();
-              const r = n.getBoundingClientRect();
-              return t.includes(text) && r.width > 0 && r.height > 0;
+            el = Array.from(document.querySelectorAll('a,button,span,div,input,label,li,textarea,[contenteditable=true]')).find((n) => {
+              const t = (n.innerText || n.textContent || n.getAttribute('placeholder') || '').trim();
+              return t.includes(text) && visible(n);
             }) || null;
           }
           if (!el) return { ok: false };
-          const r = el.getBoundingClientRect();
-          return { ok: r.width > 0 && r.height > 0, tag: el.tagName, text: (el.innerText||'').trim().slice(0,60) };
+          return { ok: visible(el), tag: el.tagName, text: (el.innerText||el.getAttribute('placeholder')||'').trim().slice(0,60) };
         })()`,
         true,
       )) as { ok: boolean; tag?: string; text?: string };
@@ -840,6 +1213,61 @@ export class SparkBrowser {
           message: `wait_for ok after ${Date.now() - started}ms`,
           data: { ...hit, waitedMs: Date.now() - started },
         };
+      }
+      const tryCdpFrames =
+        (input.ref && /^x(\d+)\.(.+)$/i.test(input.ref)) ||
+        Boolean(input.selector) ||
+        Boolean(input.text);
+      if (tryCdpFrames) {
+        try {
+          const parsed = parseCrossFrameRef(input.ref);
+          const localRef = parsed?.localRef ?? (input.ref && !/^x\d+\./i.test(input.ref) ? input.ref : null);
+          const cdpHit = await withDebugger(wc, async (send) => {
+            let frames = await listChildFrames(send);
+            if (parsed && parsed.frameIndex >= 0 && parsed.frameIndex < frames.length) {
+              const preferred = frames[parsed.frameIndex];
+              frames = [
+                preferred,
+                ...frames.filter((_, i) => i !== parsed.frameIndex),
+              ];
+            }
+            for (const frame of frames.slice(0, 8)) {
+              try {
+                const found = await cdpCall<{
+                  ok: boolean;
+                  tag?: string;
+                  text?: string;
+                  all?: boolean;
+                }>(send, frame.frameId, FRAME_WAIT_SCRIPT, [
+                  localRef,
+                  input.selector ?? null,
+                  input.text ?? null,
+                  Boolean(input.all),
+                ]);
+                if (found?.ok) {
+                  return {
+                    ...found,
+                    frameId: frame.frameId,
+                    frameUrl: frame.url,
+                    via: "cdp" as const,
+                  };
+                }
+              } catch {
+                /* try next frame */
+              }
+            }
+            return null;
+          });
+          if (cdpHit?.ok) {
+            return {
+              ok: true,
+              message: `wait_for ok (cdp) after ${Date.now() - started}ms`,
+              data: { ...cdpHit, waitedMs: Date.now() - started },
+            };
+          }
+        } catch {
+          /* continue polling */
+        }
       }
       await sleep(200);
     }
@@ -889,14 +1317,19 @@ export class SparkBrowser {
   }
 
   private rebuildDeepSeek(): void {
-    if (!this.settings.deepseekApiKey) {
+    const apiKey = (this.settings.apiKey || this.settings.deepseekApiKey || "").trim();
+    if (!apiKey) {
       this.deepseek = null;
       return;
     }
     const cfg = {
-      apiKey: this.settings.deepseekApiKey,
-      baseUrl: this.settings.deepseekBaseUrl || "https://api.deepseek.com",
-      model: this.settings.deepseekModel || "deepseek-v4-flash",
+      apiKey,
+      baseUrl:
+        (this.settings.baseUrl || this.settings.deepseekBaseUrl || "").trim().replace(/\/$/, "") ||
+        "https://api.deepseek.com",
+      model:
+        (this.settings.model || this.settings.deepseekModel || "").trim() ||
+        "deepseek-v4-flash",
     };
     if (this.deepseek) {
       this.deepseek.updateConfig(cfg);
@@ -972,6 +1405,20 @@ export class SparkBrowser {
         return this.stopRecording(args.title ? String(args.title) : undefined);
       case "list_skills":
         return this.listSkillsTool();
+      case "get_skill":
+        return this.getSkillTool(String(args.id || args.query || ""));
+      case "match_skill":
+        return this.matchSkillTool(String(args.query || args.id || ""));
+      case "run_skill":
+        return this.runSkillTool({
+          id: args.id ? String(args.id) : undefined,
+          query: args.query ? String(args.query) : undefined,
+          params:
+            args.params && typeof args.params === "object"
+              ? (args.params as Record<string, unknown>)
+              : undefined,
+          dryRun: Boolean(args.dryRun),
+        });
       default:
         return { ok: false, message: `unsupported tool: ${name}` };
     }
@@ -985,6 +1432,105 @@ export class SparkBrowser {
       data: {
         skills: this.skillsCache.map(skillSummary),
         recording: this.recording,
+        tip: "Intent match: match_skill(query) → run_skill({id|query, params}). Prefer run_skill for 小红书/发文 flows.",
+      },
+    };
+  }
+
+  getSkillTool(idOrQuery: string): ToolResult {
+    this.skillsCache = listSkills(this.configDir());
+    const skill = resolveSkill(this.configDir(), idOrQuery);
+    if (!skill) {
+      return {
+        ok: false,
+        message: `skill not found: ${idOrQuery}`,
+        data: { suggestions: matchSkills(this.configDir(), idOrQuery, 5) },
+      };
+    }
+    return {
+      ok: true,
+      message: `skill: ${skill.title}`,
+      data: { skill },
+    };
+  }
+
+  matchSkillTool(query: string): ToolResult {
+    const matches = matchSkills(this.configDir(), query, 8);
+    return {
+      ok: true,
+      message: matches.length
+        ? `best: ${matches[0].title} (${matches[0].score})`
+        : "no skill matched",
+      data: { query, matches },
+    };
+  }
+
+  async runSkillTool(input: {
+    id?: string;
+    query?: string;
+    params?: Record<string, unknown>;
+    dryRun?: boolean;
+  }): Promise<ToolResult> {
+    this.skillsCache = listSkills(this.configDir());
+    return runSkill(this, this.configDir(), input);
+  }
+
+  sparoInfoTool(): ToolResult {
+    this.skillsCache = listSkills(this.configDir());
+    const skills = skillCatalog(this.configDir());
+    return {
+      ok: true,
+      message: "sparo_info",
+      data: {
+        name: "sparo",
+        what: "Sparo Agent Browser — local Electron Chromium controlled via MCP. Shared window with the human.",
+        product: {
+          en: "Sparo Agent Browser",
+          tagline: "The browser built for AI agents — humans stay in control.",
+          zh: "Sparo 人机同窗浏览器",
+          zh_tagline: "AI 驾驭网页，你驾驭 AI",
+        },
+        fast_path: [
+          "Publishing: read docs/PUBLISHING.md — run_skill or xhs_inject_* (never loop fill).",
+          "Xiaohongshu: run_skill({ query:'发小红书', params:{ title, body, summary, topics } }).",
+          "Or: xhs_ensure_editor → xhs_inject_compose → xhs_layout_next → xhs_inject_publish → pause.",
+          "Unknown forms: run_skill({ query:'通用填表', params:{ payload:{ 标题, 正文, … } } }) OR analyze_page → execute_primitives.",
+          "Do NOT loop fill/click on multi-field forms — use execute_primitives.",
+          "Customer service (any site, semi-auto): cs_scan → cs_draft_reply (fills composer; NEVER auto-send).",
+          "Detect only: xhs_page_stage. Auth: %APPDATA%/sparo/mcp-auth.json · GET /health · /tools",
+          "Playbook: docs/HERMES-PLAYBOOK.md",
+        ],
+        skills,
+        skill_tools: [
+          "list_skills",
+          "match_skill",
+          "get_skill",
+          "run_skill",
+          "analyze_page",
+          "execute_primitives",
+          "cs_scan",
+          "cs_draft_reply",
+          "xhs_page_stage",
+          "xhs_inject_compose",
+          "xhs_inject_publish",
+          "xhs_layout_next",
+          "xhs_ensure_editor",
+        ],
+        core_tools: [
+          "navigate",
+          "analyze_page",
+          "execute_primitives",
+          "cs_scan",
+          "cs_draft_reply",
+          "xhs_page_stage",
+          "xhs_inject_compose",
+          "xhs_layout_next",
+          "xhs_inject_publish",
+          "run_skill",
+          "click_text",
+          "pause",
+          "diagnose",
+        ],
       },
     };
   }
@@ -1139,15 +1685,29 @@ export class SparkBrowser {
     } else if (action.type === "list_skills") {
       this.skillsCache = listSkills(this.configDir());
       if (!this.skillsCache.length) {
-        reply = "还没有妙招。可以说「开始录制」演示一遍，再「结束录制并保存为改尺寸」。";
+        reply = "还没有妙招。可以说「开始录制」演示一遍，再「结束录制并保存为某某」。";
       } else {
         reply =
           `已有 ${this.skillsCache.length} 个妙招：\n` +
           this.skillsCache
             .slice(0, 12)
             .map((s, i) => `${i + 1}. ${s.title}（${s.stepCount} 步）`)
-            .join("\n");
+            .join("\n") +
+          "\n\n直接说「发小红书」或「运行妙招 小红书发布」即可自动执行。";
       }
+    } else if (action.type === "run_skill") {
+      const label = action.id || action.query;
+      this.chatLog.push({
+        role: "assistant",
+        text: `正在按妙招「${label}」执行…`,
+      });
+      this.pushSidebarState();
+      const r = await this.runSkillTool({
+        id: action.id,
+        query: action.query,
+      });
+      reply = r.message;
+      this.pushSidebarState();
     } else if (action.type === "run") {
       const map =
         action.script === "dxm-resize"
@@ -1166,19 +1726,28 @@ export class SparkBrowser {
         reply =
           "未配置 DeepSeek API Key。请在侧栏「DeepSeek」保存 Key（platform.deepseek.com），" +
           "或设置环境变量 DEEPSEEK_API_KEY。\n" +
+          "也可直接说「发小红书」自动跑妙招，或连接 MCP Agent。\n" +
           dxmGuideMessage(this.getUrl(), "help");
       } else {
         try {
           const url = this.getUrl();
+          this.skillsCache = listSkills(this.configDir());
+          const catalog = skillCatalog(this.configDir())
+            .slice(0, 8)
+            .map((s) => `- ${s.id}: ${s.title}`)
+            .join("\n");
           const dxmCtx =
             /店小[蜜秘]|dianxiaomi|速卖通|改标题|改尺寸|图片翻译/i.test(action.text) ||
             /dianxiaomi\.com/i.test(url);
+          const skillHint =
+            `【妙招优先】若用户要发小红书/长文/已知流程，立刻 run_skill（可用 query 或 id），不要逐步瞎点。目录：\n${catalog || "(无)"}`;
           const prompt = dxmCtx
-            ? `【执行优先】当前 URL：${url}\n动手，不要讲功能清单。要登录/打开店小蜜就 navigate 到 https://www.dianxiaomi.com/web/home；要上品/上架/处理好且在编辑页就 run_workflow(dxm_full_listing)；不在编辑页就 navigate 到 https://www.dianxiaomi.com/web/productCrawl 并短说一句让用户点进编辑页。\n用户说：${action.text}`
-            : action.text;
+            ? `【执行优先】当前 URL：${url}\n${skillHint}\n动手，不要讲功能清单。要登录/打开店小蜜就 navigate 到 https://www.dianxiaomi.com/web/home；要上品/上架/处理好且在编辑页就 run_workflow(dxm_full_listing)；不在编辑页就 navigate 到 https://www.dianxiaomi.com/web/productCrawl 并短说一句让用户点进编辑页。\n用户说：${action.text}`
+            : `${skillHint}\n当前页：${url}\n用户说：${action.text}`;
           reply = await this.deepseek.chat(prompt, {
             url,
             title: this.getTitle(),
+            skills: catalog,
           });
         } catch (error) {
           reply =
@@ -1215,14 +1784,41 @@ export class SparkBrowser {
   /** Read visible page text for hard verification (e.g. Weibo timeline). */
   async pageText(): Promise<ToolResult & { data?: { text: string; length: number } }> {
     try {
-      const data = (await this.pageView.webContents.executeJavaScript(
+      const wc = this.pageView.webContents;
+      const data = (await wc.executeJavaScript(
         PAGE_TEXT_SCRIPT,
         true,
       )) as { text: string; length: number };
+      let text = data.text || "";
+      // Append cross-origin iframe text via CDP
+      try {
+        const extras = await withDebugger(wc, async (send) => {
+          const frames = await listChildFrames(send);
+          const parts: string[] = [];
+          for (const f of frames.slice(0, 8)) {
+            try {
+              const chunk = await cdpEvaluate<{ text?: string }>(
+                send,
+                f.frameId,
+                `(() => ({ text: String((document.body && document.body.innerText) || '').slice(0, 20000) }))()`,
+              );
+              if (chunk?.text) parts.push(chunk.text);
+            } catch {
+              /* skip frame */
+            }
+          }
+          return parts;
+        });
+        if (extras.length) {
+          text = [text, ...extras].filter(Boolean).join("\n\n---iframe---\n\n");
+        }
+      } catch {
+        /* CDP optional */
+      }
       return {
         ok: true,
-        message: `page_text ${data.length} chars`,
-        data,
+        message: `page_text ${text.length} chars`,
+        data: { text: text.slice(0, 80000), length: text.length },
       };
     } catch (error) {
       return {
@@ -1234,10 +1830,11 @@ export class SparkBrowser {
 
   /**
    * P0: run arbitrary JS in the page, always return JSON-serializable result.
-   * Use for CKEditor APIs, React internals, modal probing, etc.
+   * Optional frame: CDP frame index from snapshot (x0 → frame 0) or frameId string.
    */
   async execute(
     script: string,
+    opts?: { frame?: number | string },
   ): Promise<ToolResult & { data?: { result: unknown; error?: string } }> {
     const blocked = this.assertNotPaused();
     if (blocked) {
@@ -1250,9 +1847,64 @@ export class SparkBrowser {
     }
 
     try {
+      if (opts?.frame !== undefined && opts.frame !== null && opts.frame !== "") {
+        const wc = this.pageView.webContents;
+        const result = await withDebugger(wc, async (send) => {
+          let frameId: string | undefined;
+          if (typeof opts.frame === "number") {
+            frameId = this.cdpFrames[opts.frame]?.frameId;
+          } else if (typeof opts.frame === "string") {
+            if (/^\d+$/.test(opts.frame)) {
+              frameId = this.cdpFrames[Number(opts.frame)]?.frameId;
+            } else if (/^x\d+$/i.test(opts.frame)) {
+              frameId = this.cdpFrames[parseInt(opts.frame.slice(1), 10)]?.frameId;
+            } else {
+              frameId = opts.frame;
+            }
+          }
+          if (!frameId) {
+            const frames = await listChildFrames(send);
+            if (typeof opts.frame === "number") frameId = frames[opts.frame]?.frameId;
+            else if (typeof opts.frame === "string" && /^\d+$/.test(opts.frame)) {
+              frameId = frames[Number(opts.frame)]?.frameId;
+            }
+          }
+          if (!frameId) {
+            throw new Error(
+              `Unknown frame ${String(opts.frame)} — run snapshot first (use x* refs / frame index)`,
+            );
+          }
+          const expression = `(() => {
+            try {
+              const __src = ${cdpUtf8Expr(script)};
+              const __r = (0, eval)(__src);
+              let safe;
+              try { safe = JSON.parse(JSON.stringify(__r === undefined ? null : __r)); }
+              catch (_) { safe = String(__r); }
+              return { ok: true, result: safe };
+            } catch (e) {
+              return { ok: false, result: null, error: String(e && e.message ? e.message : e) };
+            }
+          })()`;
+          return cdpEvaluate<{ ok: boolean; result: unknown; error?: string }>(
+            send,
+            frameId,
+            expression,
+          );
+        });
+        return {
+          ok: Boolean(result?.ok),
+          message: result?.ok
+            ? "execute ok (cdp frame)"
+            : `execute failed: ${result?.error || "unknown"}`,
+          data: { result: result?.result, error: result?.error },
+        };
+      }
+
       const wrapped = `(() => {
         try {
-          const __r = (0, eval)(${JSON.stringify(script)});
+          const __src = ${cdpUtf8Expr(script)};
+          const __r = (0, eval)(__src);
           let safe;
           try {
             safe = JSON.parse(JSON.stringify(__r === undefined ? null : __r));
@@ -1306,7 +1958,10 @@ export class SparkBrowser {
     try {
       const wc = this.pageView.webContents;
       const opened = (await wc.executeJavaScript(
-        `(${SELECT_SCRIPT})(${JSON.stringify(target.ref ?? null)}, ${JSON.stringify(target.selector ?? null)}, ${JSON.stringify(value)})`,
+        `(() => {
+          const __v = ${cdpUtf8Expr(value)};
+          return (${SELECT_SCRIPT})(${JSON.stringify(target.ref ?? null)}, ${JSON.stringify(target.selector ?? null)}, __v);
+        })()`,
         true,
       )) as {
         ok: boolean;
@@ -1342,7 +1997,10 @@ export class SparkBrowser {
       }
 
       const opt = (await wc.executeJavaScript(
-        `(${FIND_OPTION_SCRIPT})(${JSON.stringify(value)})`,
+        `(() => {
+          const __v = ${cdpUtf8Expr(value)};
+          return (${FIND_OPTION_SCRIPT})(__v);
+        })()`,
         true,
       )) as {
         ok: boolean;
@@ -1468,28 +2126,37 @@ export class SparkBrowser {
   private async trustedClickAt(
     x: number,
     y: number,
-    opts?: { hoverOnly?: boolean },
+    opts?: {
+      hoverOnly?: boolean;
+      doubleClick?: boolean;
+      button?: "left" | "right" | "middle";
+      downDelayMs?: number;
+    },
   ): Promise<void> {
     const wc = this.pageView.webContents;
     this.window.focus();
     wc.focus();
     const cx = Math.round(x);
     const cy = Math.round(y);
+    const button = opts?.button || "left";
+    const clickCount = opts?.doubleClick ? 2 : 1;
+    const downDelayMs = opts?.downDelayMs ?? 30;
     wc.sendInputEvent({ type: "mouseMove", x: cx, y: cy } as Electron.MouseInputEvent);
     if (opts?.hoverOnly) return;
     wc.sendInputEvent({
       type: "mouseDown",
       x: cx,
       y: cy,
-      button: "left",
-      clickCount: 1,
+      button,
+      clickCount,
     } as Electron.MouseInputEvent);
+    if (downDelayMs > 0) await sleep(downDelayMs);
     wc.sendInputEvent({
       type: "mouseUp",
       x: cx,
       y: cy,
-      button: "left",
-      clickCount: 1,
+      button,
+      clickCount,
     } as Electron.MouseInputEvent);
   }
 
@@ -1515,17 +2182,83 @@ export class SparkBrowser {
         inPortal?: boolean;
         ref?: string;
       };
-      if (!found.ok || found.x == null || found.y == null) {
+
+      let hit = found;
+      // Fallback: search cross-origin frames via CDP
+      if (!hit.ok) {
+        try {
+          const cdpHit = await withDebugger(wc, async (send) => {
+            let frames = this.cdpFrames;
+            if (!frames.length) {
+              const childFrames = await listChildFrames(send);
+              const meta = (await wc.executeJavaScript(
+                `(() => Array.from(document.querySelectorAll('iframe')).map((iframe, i) => {
+                  const box = iframe.getBoundingClientRect();
+                  let sameOrigin = false;
+                  try { sameOrigin = !!(iframe.contentDocument && iframe.contentDocument.documentElement); } catch (_) {}
+                  return { index: i, src: iframe.src || '', sameOrigin, x: box.x, y: box.y, w: box.width, h: box.height };
+                }))()`,
+                true,
+              )) as IframeMeta[];
+              frames = matchFrameOffsets(childFrames, meta);
+              this.cdpFrames = frames;
+            }
+            let best: {
+              ok: boolean;
+              x: number;
+              y: number;
+              w?: number;
+              text?: string;
+              message?: string;
+            } | null = null;
+            for (const frame of frames) {
+              try {
+                const local = await cdpCall<{
+                  ok: boolean;
+                  x?: number;
+                  y?: number;
+                  w?: number;
+                  text?: string;
+                  message?: string;
+                }>(send, frame.frameId, FRAME_FIND_TEXT_SCRIPT, [
+                  text,
+                  Boolean(opts?.exact),
+                ]);
+                if (local?.ok && local.x != null && local.y != null) {
+                  best = {
+                    ok: true,
+                    x: local.x + frame.offsetX,
+                    y: local.y + frame.offsetY,
+                    w: local.w,
+                    text: local.text,
+                  };
+                  break;
+                }
+              } catch {
+                /* next frame */
+              }
+            }
+            return best;
+          });
+          if (cdpHit?.ok) {
+            hit = cdpHit;
+          }
+        } catch {
+          /* ignore CDP fallback errors */
+        }
+      }
+
+      if (!hit.ok || hit.x == null || hit.y == null) {
         return {
           ok: false,
-          message: found.message || `text not found: ${text}`,
-          data: found,
+          message: hit.message || `text not found: ${text}`,
+          data: hit,
         };
       }
-      let x = Math.round(found.x);
-      const y = Math.round(found.y);
-      if (opts?.caret && found.w && found.w > 24) {
-        x = Math.round(found.x + found.w / 2 - 8);
+      let x = Math.round(hit.x);
+      const y = Math.round(hit.y);
+      if (opts?.caret && hit.w && hit.w > 24) {
+        x = Math.round(hit.x + hit.w / 2 - 8);
       }
       await this.trustedClickAt(x, y, { hoverOnly: true });
       await sleep(60);
@@ -1535,8 +2268,8 @@ export class SparkBrowser {
       this.lastSnapshot = null;
       return {
         ok: true,
-        message: `click_text 「${found.text || text}」 @ ${x},${y}`,
-        data: { ...found, clickPoint: { x, y }, portals },
+        message: `click_text 「${hit.text || text}」 @ ${x},${y}`,
+        data: { ...hit, clickPoint: { x, y }, portals },
       };
     } catch (error) {
       return {
@@ -1620,6 +2353,302 @@ export class SparkBrowser {
     }
   }
 
+  /** Scroll long-form editor so 下一步 is on-screen. */
+  async xhsScrollBottom(): Promise<ToolResult> {
+    try {
+      const data = await this.pageView.webContents.executeJavaScript(
+        XHS_SCROLL_BOTTOM_SCRIPT,
+        true,
+      );
+      return { ok: true, message: "scrolled to bottom", data };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /** Xiaohongshu topic chips via overlay suggestions. */
+  async xhsAddTopics(topics: string[]): Promise<ToolResult> {
+    try {
+      const run = this.pageView.webContents.executeJavaScript(
+        `(${XHS_ADD_TOPICS_SCRIPT})(${JSON.stringify(topics)})`,
+        true,
+      );
+      const data = (await Promise.race([
+        run,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("xhs_add_topics timeout 35s")), 35000),
+        ),
+      ])) as { ok?: boolean; results?: unknown };
+      return {
+        ok: Boolean(data?.ok),
+        message: data?.ok ? "topics added" : "topics partially failed",
+        data,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /** AI: detect stage only — chooser | compose | publish. */
+  async xhsPageStage(): Promise<ToolResult> {
+    try {
+      const data = await this.pageView.webContents.executeJavaScript(
+        XHS_PAGE_STAGE_SCRIPT,
+        true,
+      );
+      return {
+        ok: true,
+        message: `stage=${(data as { stage?: string })?.stage || "unknown"}`,
+        data,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /**
+   * Atomic title+body inject (once). Prefer this over fill loops.
+   * Content is passed as JSON args — AI must not type into the page.
+   */
+  async xhsInjectCompose(input: {
+    title?: string;
+    body?: string;
+    force?: boolean;
+  }): Promise<ToolResult> {
+    try {
+      let title = input.title || "";
+      let body = input.body || "";
+      if ((!title || !body) && input) {
+        /* keep empty — skill runner fills from params/md */
+      }
+      const run = this.pageView.webContents.executeJavaScript(
+        `(${XHS_INJECT_COMPOSE_SCRIPT})(${JSON.stringify({
+          title,
+          body,
+          force: input.force !== false,
+        })})`,
+        true,
+      );
+      const data = (await Promise.race([
+        run,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("inject_compose timeout 20s")), 20000),
+        ),
+      ])) as {
+        ok?: boolean;
+        message?: string;
+        titleLen?: number;
+        bodyLen?: number;
+        skipped?: boolean;
+      };
+      if (!data?.ok) {
+        const diag = await this.diagnose("inject-compose-fail");
+        return {
+          ok: false,
+          message: data?.message || "inject_compose failed",
+          data: { ...data, diagnose: diag.data },
+        };
+      }
+      return {
+        ok: true,
+        message: data.skipped
+          ? data.message || "inject_compose skipped"
+          : `inject_compose title=${data.titleLen || 0} body=${data.bodyLen || 0}`,
+        data,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /** Atomic publish-page summary + topics inject. */
+  async xhsInjectPublish(input: {
+    summary?: string;
+    topics?: string[];
+  }): Promise<ToolResult> {
+    try {
+      const run = this.pageView.webContents.executeJavaScript(
+        `(${XHS_INJECT_PUBLISH_SCRIPT})(${JSON.stringify({
+          summary: input.summary || "",
+          topics: input.topics || [],
+        })})`,
+        true,
+      );
+      const data = (await Promise.race([
+        run,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("inject_publish timeout 40s")), 40000),
+        ),
+      ])) as { ok?: boolean; message?: string };
+      return {
+        ok: Boolean(data?.ok),
+        message: data?.message || (data?.ok ? "inject_publish ok" : "inject_publish failed"),
+        data,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /**
+   * One-shot: 一键排版 → wait template panel → pick template → 下一步 → publish page.
+   * Layout generation often takes 10–20s; do not click_text「下一步」immediately.
+   */
+  async xhsLayoutNext(input?: {
+    template?: string;
+    timeoutMs?: number;
+  }): Promise<ToolResult> {
+    try {
+      const data = (await this.pageView.webContents.executeJavaScript(
+        `(${XHS_LAYOUT_NEXT_SCRIPT})(${JSON.stringify({
+          template: input?.template || "简约基础",
+          timeoutMs: input?.timeoutMs || 32000,
+        })})`,
+        true,
+      )) as { ok?: boolean; message?: string; stage?: string; log?: string[] };
+      return {
+        ok: Boolean(data?.ok),
+        message: data?.message || (data?.ok ? "layout_next ok" : "layout_next failed"),
+        data,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  async xhsPickCover(): Promise<ToolResult> {
+    try {
+      const data = (await this.pageView.webContents.executeJavaScript(
+        XHS_PICK_COVER_SCRIPT,
+        true,
+      )) as { ok?: boolean; message?: string; count?: number };
+      return {
+        ok: Boolean(data?.ok),
+        message: data?.ok
+          ? `cover picked (${data.count || 0})`
+          : data?.message || "cover pick failed",
+        data,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /** Click content-area 发布, not sidebar 发布笔记. */
+  async xhsClickPublish(): Promise<ToolResult> {
+    try {
+      const data = (await this.pageView.webContents.executeJavaScript(
+        XHS_CLICK_PUBLISH_SCRIPT,
+        true,
+      )) as { ok?: boolean; message?: string };
+      return {
+        ok: Boolean(data?.ok),
+        message: data?.ok ? "clicked 发布" : data?.message || "publish click failed",
+        data,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /** 写长文 → 新的创作 → 空白创作 until editors visible. */
+  async xhsEnsureEditor(): Promise<ToolResult> {
+    try {
+      const data = (await this.pageView.webContents.executeJavaScript(
+        XHS_ENSURE_EDITOR_SCRIPT,
+        true,
+      )) as { ok?: boolean; already?: boolean; log?: string[]; sample?: string; url?: string };
+      if (!data?.ok) {
+        const diag = await this.diagnose("xhs-ensure-editor-fail");
+        return {
+          ok: false,
+          message: "未能进入长文编辑器（可能需点「空白创作」）",
+          data: { ...data, diagnose: diag.data },
+        };
+      }
+      return {
+        ok: true,
+        message: data.already ? "editor already open" : "editor ready",
+        data,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  async screenshot(label?: string): Promise<ToolResult> {
+    try {
+      const wc = this.pageView.webContents;
+      const img = await wc.capturePage();
+      const dir = join(this.configDir(), "diag");
+      mkdirSync(dir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const safe = String(label || "shot")
+        .replace(/[\\/:*?"<>|]/g, "_")
+        .slice(0, 40);
+      const file = join(dir, `${safe}-${stamp}.png`);
+      writeFileSync(file, img.toPNG());
+      return {
+        ok: true,
+        message: `screenshot saved`,
+        data: { file, url: this.getUrl(), title: this.getTitle() },
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  async diagnose(label?: string): Promise<ToolResult> {
+    const page = await this.pageText();
+    const shot = await this.screenshot(label || "diagnose");
+    const text =
+      page.ok && page.data && typeof (page.data as { text?: string }).text === "string"
+        ? (page.data as { text: string }).text.slice(0, 1200)
+        : "";
+    return {
+      ok: true,
+      message: `diagnose ${label || ""}`.trim(),
+      data: {
+        url: this.getUrl(),
+        title: this.getTitle(),
+        pageText: text,
+        screenshot: shot.data,
+        screenshotOk: shot.ok,
+        screenshotMessage: shot.message,
+      },
+    };
+  }
+
   async startRecording(meta?: {
     platform?: string;
     task?: string;
@@ -1647,10 +2676,7 @@ export class SparkBrowser {
 
   async stopRecording(title?: string): Promise<ToolResult> {
     try {
-      const data = (await this.pageView.webContents.executeJavaScript(
-        RECORD_STOP_SCRIPT,
-        true,
-      )) as {
+      let data: {
         ok: boolean;
         platform?: string;
         task?: string;
@@ -1658,12 +2684,35 @@ export class SparkBrowser {
         steps?: SkillStep[];
         message?: string;
       };
+      try {
+        data = (await this.pageView.webContents.executeJavaScript(
+          RECORD_STOP_SCRIPT,
+          true,
+        )) as typeof data;
+      } catch (pageErr) {
+        this.recording = false;
+        this.recordingTask = "";
+        this.pushSidebarState();
+        return {
+          ok: false,
+          message:
+            "结束录制失败（页面可能已刷新）：" +
+            (pageErr instanceof Error ? pageErr.message : String(pageErr)),
+        };
+      }
       this.recording = false;
       const taskName = title || data?.task || this.recordingTask || "";
       this.recordingTask = "";
       if (!data?.ok) {
         this.pushSidebarState();
-        return { ok: false, message: data?.message || "当前没有在录制", data };
+        return {
+          ok: false,
+          message:
+            data?.message === "not recording"
+              ? "页面录制状态已丢失（可能刷新过），已停止。请重新「开始录制」。"
+              : data?.message || "当前没有在录制",
+          data,
+        };
       }
       const configDir = this.configDir();
       const traceDir = join(configDir, "traces");
@@ -1853,8 +2902,45 @@ export class SparkBrowser {
   async snapshot(selector?: string): Promise<ToolResult & { data?: PageSnapshot }> {
     try {
       const wc = this.pageView.webContents;
-      const raw = (await wc.executeJavaScript(SNAPSHOT_SCRIPT, true)) as PageSnapshot;
-      let elements = raw.elements;
+      const raw = (await wc.executeJavaScript(SNAPSHOT_SCRIPT, true)) as PageSnapshot & {
+        iframeMeta?: IframeMeta[];
+      };
+      let elements = raw.elements || [];
+      const iframeMeta = raw.iframeMeta || [];
+
+      try {
+        const merged = await withDebugger(wc, async (send) => {
+          const childFrames = await listChildFrames(send);
+          const mapped = matchFrameOffsets(childFrames, iframeMeta);
+          const needCdp = mapped.filter((f) => {
+            const meta = iframeMeta.find(
+              (m) =>
+                Math.abs(m.x - f.offsetX) < 2 && Math.abs(m.y - f.offsetY) < 2,
+            );
+            return !meta?.sameOrigin;
+          });
+          const targets = needCdp.length ? needCdp : mapped;
+          this.cdpFrames = targets;
+          const extra: typeof elements = [];
+          for (const frame of targets) {
+            try {
+              const collected = await cdpEvaluate<{
+                elements?: Array<SnapshotElement & { ref: string }>;
+              }>(send, frame.frameId, FRAME_COLLECT_SCRIPT);
+              if (collected?.elements?.length) {
+                extra.push(...prefixFrameElements(frame, collected.elements));
+              }
+            } catch {
+              /* frame not evaluable */
+            }
+          }
+          return extra;
+        });
+        if (merged.length) elements = elements.concat(merged);
+      } catch {
+        this.cdpFrames = [];
+      }
+
       if (selector) {
         elements = elements.filter(
           (el) =>
@@ -1864,11 +2950,17 @@ export class SparkBrowser {
             (el.placeholder || "").includes(selector),
         );
       }
-      this.lastSnapshot = { ...raw, elements };
+      this.lastSnapshot = {
+        ...raw,
+        elements,
+        iframeCount: iframeMeta.length || raw.iframeCount,
+      };
       this.pushStatus();
       return {
         ok: true,
-        message: `Snapshot: ${elements.length} interactive elements @ ${raw.url}`,
+        message:
+          `Snapshot: ${elements.length} interactive elements @ ${raw.url}` +
+          (this.cdpFrames.length ? ` (${this.cdpFrames.length} CDP frames)` : ""),
         data: this.lastSnapshot,
       };
     } catch (error) {
@@ -1899,7 +2991,7 @@ export class SparkBrowser {
       const before = await this.probe();
       const wc = this.pageView.webContents;
 
-      const hit = (await wc.executeJavaScript(
+      let hit = (await wc.executeJavaScript(
         `(${CLICK_HITTEST_SCRIPT})(${JSON.stringify(target.ref ?? null)}, ${JSON.stringify(target.selector ?? null)})`,
         true,
       )) as {
@@ -1913,6 +3005,41 @@ export class SparkBrowser {
         height?: number;
         isDropdownTrigger?: boolean;
       };
+
+      const cross = parseCrossFrameRef(target.ref);
+      if ((!hit.ok || hit.x == null) && cross) {
+        const frame = this.cdpFrames[cross.frameIndex];
+        if (frame) {
+          try {
+            const cdpHit = await withDebugger(wc, async (send) => {
+              const local = await cdpCall<{
+                ok: boolean;
+                x?: number;
+                y?: number;
+                width?: number;
+                height?: number;
+                disabled?: boolean;
+                message?: string;
+              }>(send, frame.frameId, FRAME_HIT_SCRIPT, [
+                cross.localRef,
+                target.selector ?? null,
+              ]);
+              if (!local?.ok || local.x == null || local.y == null) return local;
+              return {
+                ...local,
+                ok: true,
+                x: local.x + frame.offsetX,
+                y: local.y + frame.offsetY,
+              };
+            });
+            if (cdpHit?.ok && cdpHit.x != null) {
+              hit = cdpHit as typeof hit;
+            }
+          } catch {
+            /* keep original miss */
+          }
+        }
+      }
 
       if (!hit.ok || hit.x == null || hit.y == null) {
         return {
@@ -2066,8 +3193,8 @@ export class SparkBrowser {
 
   /**
    * P0: fill reads back actual value and reports matched.
-   * Uses React-aware DOM fill first; if sticky check fails or for textareas,
-   * falls back to real keyboard typing via sendInputEvent.
+   * Unicode: never embed raw CJK in injected JS source (use cdpUtf8Expr / callFunctionOn).
+   * Do NOT re-type with char events after a successful DOM fill — that caused Mojibake on Windows.
    */
   async fill(
     target: { ref?: string; selector?: string },
@@ -2079,18 +3206,80 @@ export class SparkBrowser {
       return { ok: false, message: "fill requires ref or selector" };
     }
 
+    const FIX = "fill-unicode-v2";
+
     try {
       const wc = this.pageView.webContents;
 
-      // Focus target first (do not full-click — that may hit wrong controls)
-      await wc.executeJavaScript(
-        `(${FOCUS_SCRIPT})(${JSON.stringify(target.ref ?? null)}, ${JSON.stringify(target.selector ?? null)})`,
-        true,
-      ).catch(() => undefined);
+      const cross = parseCrossFrameRef(target.ref);
+      if (cross) {
+        const frame = this.cdpFrames[cross.frameIndex];
+        if (!frame) {
+          return {
+            ok: false,
+            message: `Unknown CDP frame x${cross.frameIndex} — run snapshot first [${FIX}]`,
+          };
+        }
+        const filled = await withDebugger(wc, async (send) => {
+          const local = await cdpCall<{
+            ok: boolean;
+            x?: number;
+            y?: number;
+          }>(send, frame.frameId, FRAME_HIT_SCRIPT, [
+            cross.localRef,
+            target.selector ?? null,
+          ]);
+          if (local?.ok && local.x != null && local.y != null) {
+            await this.trustedClickAt(
+              local.x + frame.offsetX,
+              local.y + frame.offsetY,
+            );
+            await sleep(80);
+          }
+          return cdpCall<{
+            ok: boolean;
+            matched?: boolean;
+            value?: string;
+            message?: string;
+          }>(send, frame.frameId, FRAME_FILL_SCRIPT, [
+            cross.localRef,
+            target.selector ?? null,
+            value,
+          ]);
+        });
+        this.lastSnapshot = null;
+        const actual = filled?.value || "";
+        const matched =
+          Boolean(filled?.ok && filled.matched) && !isMojibake(value, actual);
+        return {
+          ok: matched,
+          message: matched
+            ? `已填入并回读确认 ${actual.length} 字（cdp-frame · ${FIX}）`
+            : filled?.message || `CDP fill failed / mojibake [${FIX}]`,
+          data: {
+            target: target.ref || "",
+            expected: value,
+            actual,
+            matched,
+            kind: "input" as const,
+            method: `cdp-frame:${FIX}`,
+          },
+        };
+      }
 
-      // React-aware script fill (includes _valueTracker reset)
+      await wc
+        .executeJavaScript(
+          `(${FOCUS_SCRIPT})(${JSON.stringify(target.ref ?? null)}, ${JSON.stringify(target.selector ?? null)})`,
+          true,
+        )
+        .catch(() => undefined);
+
+      // Value as base64→TextDecoder only (ASCII in the script source).
       let result = (await wc.executeJavaScript(
-        `(${FILL_SCRIPT})(${JSON.stringify(target.ref ?? null)}, ${JSON.stringify(target.selector ?? null)}, ${JSON.stringify(value)})`,
+        `(() => {
+          const __v = ${cdpUtf8Expr(value)};
+          return (${FILL_SCRIPT})(${JSON.stringify(target.ref ?? null)}, ${JSON.stringify(target.selector ?? null)}, __v);
+        })()`,
         true,
       )) as {
         ok: boolean;
@@ -2103,55 +3292,106 @@ export class SparkBrowser {
         method?: string;
       };
 
-      // Keyboard fallback — most reliable for React/Weibo
+      if (result.matched && isMojibake(value, result.actual)) {
+        result = { ...result, matched: false, ok: false, message: `mojibake detected [${FIX}]` };
+      }
+      if (!result.matched && softFillMatch(value, result.actual || "")) {
+        result = {
+          ...result,
+          matched: true,
+          ok: true,
+          message: `已填入并软确认 ${result.actual.length} 字（${result.method || result.kind} · ${FIX}）`,
+        };
+      }
+
+      // Fallback: CDP Input.insertText (true Unicode), not per-char sendInputEvent
       if (!result.matched) {
-        await this.typeWithKeyboard(value);
+        await this.insertTextUnicode(value);
         await sleep(200);
-        const actual = (await wc.executeJavaScript(
+        let actual = (await wc.executeJavaScript(
           `(${FILL_SCRIPT_READ})(${JSON.stringify(target.ref ?? null)}, ${JSON.stringify(target.selector ?? null)})`,
           true,
         )) as string;
-        result = {
-          ok: actual === value,
-          message:
-            actual === value
-              ? `已键盘输入并回读确认 ${actual.length} 字`
-              : `键盘输入后仍不匹配 expected=${value.length} actual=${actual.length}`,
-          expected: value,
-          actual,
-          matched: actual === value,
-          kind: result.kind,
-          target: result.target,
-          method: "sendInputEvent-keyboard",
-        };
-      } else {
-        // Even when DOM matched, force a keyboard nudge for React state on textarea
-        // by selecting-all and retyping if kind is textarea — Weibo needs this.
-        if (result.kind === "textarea" || result.kind === "input") {
-          await this.typeWithKeyboard(value);
-          await sleep(150);
-          const actual = (await wc.executeJavaScript(
-            `(${FILL_SCRIPT_READ})(${JSON.stringify(target.ref ?? null)}, ${JSON.stringify(target.selector ?? null)})`,
+        let matched = softFillMatch(value, actual);
+        // Last resort: focus visible selector + execCommand insertText (Pi-proven on XHS)
+        if (!matched || !actual) {
+          const fb = (await wc.executeJavaScript(
+            `(() => {
+              const __v = ${cdpUtf8Expr(value)};
+              const sel = ${JSON.stringify(target.selector ?? null)};
+              const ref = ${JSON.stringify(target.ref ?? null)};
+              let el = null;
+              if (ref) el = document.querySelector('[data-spark-ref="' + CSS.escape(ref) + '"]');
+              if (!el && sel) {
+                el = Array.from(document.querySelectorAll(sel)).find((n) => {
+                  const b = n.getBoundingClientRect();
+                  return b.width > 0 && b.height > 0;
+                }) || document.querySelector(sel);
+              }
+              if (!el) return { ok: false, actual: '', message: 'no visible target' };
+              const nested = el.querySelector('[contenteditable="true"],[contenteditable=""]');
+              if (nested) el = nested;
+              el.focus();
+              try {
+                const selApi = window.getSelection();
+                const range = document.createRange();
+                range.selectNodeContents(el);
+                selApi && selApi.removeAllRanges();
+                selApi && selApi.addRange(range);
+                document.execCommand('delete', false, undefined);
+              } catch (_) {}
+              const ok = document.execCommand('insertText', false, __v);
+              if (!ok && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
+                const win = window;
+                const proto = el.tagName === 'TEXTAREA' ? win.HTMLTextAreaElement.prototype : win.HTMLInputElement.prototype;
+                const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+                if (setter) setter.call(el, __v); else el.value = __v;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+              }
+              const actualNow = (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')
+                ? String(el.value || '')
+                : String(el.innerText || el.textContent || '').trim();
+              return { ok: actualNow.length > 0, actual: actualNow, method: 'execCommand-insertText-fallback' };
+            })()`,
             true,
-          )) as string;
-          if (actual === value) {
-            result = {
-              ...result,
-              actual,
-              matched: true,
-              ok: true,
-              method: `${result.method}+keyboard`,
-              message: `已填入并回读确认 ${actual.length} 字（${result.method}+keyboard）`,
-            };
-          }
+          )) as { ok?: boolean; actual?: string; method?: string; message?: string };
+          actual = fb?.actual || actual || "";
+          matched = softFillMatch(value, actual);
+          result = {
+            ok: matched,
+            message: matched
+              ? `已 execCommand 填入并软确认 ${actual.length} 字（${FIX}+fallback）`
+              : `fill fallback failed expected=${value.length} actual=${actual.length} [${FIX}]`,
+            expected: value,
+            actual,
+            matched,
+            kind: result.kind,
+            target: result.target,
+            method: fb?.method || `Input.insertText:${FIX}`,
+          };
+        } else {
+          result = {
+            ok: matched,
+            message: matched
+              ? `已 Input.insertText 并回读确认 ${actual.length} 字（${FIX}）`
+              : `insertText 后仍不匹配 expected=${value.length} actual=${actual.length} [${FIX}]`,
+            expected: value,
+            actual,
+            matched,
+            kind: result.kind,
+            target: result.target,
+            method: `Input.insertText:${FIX}`,
+          };
         }
       }
 
       this.pushStatus();
+      this.lastSnapshot = null;
       return {
         ok: result.matched,
         message: result.matched
-          ? `已填入并回读确认 ${result.actual.length} 字（${result.method || result.kind}）`
+          ? `已填入并回读确认 ${result.actual.length} 字（${result.method || result.kind} · ${FIX}）`
           : result.message,
         data: {
           target: result.target,
@@ -2168,6 +3408,16 @@ export class SparkBrowser {
         message: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  /** Insert Unicode text via CDP Input.insertText (avoids char-event Mojibake). */
+  private async insertTextUnicode(text: string): Promise<void> {
+    const wc = this.pageView.webContents;
+    this.window.focus();
+    wc.focus();
+    await withDebugger(wc, async (send) => {
+      await send("Input.insertText", { text });
+    });
   }
 
   /** Send a single key (Enter/Escape/…) via trusted keyboard events. */
@@ -2194,11 +3444,16 @@ export class SparkBrowser {
 
   /** Type text as real key events into the focused element. */
   private async typeWithKeyboard(value: string): Promise<void> {
+    // Prefer CDP Input.insertText for Unicode (Chinese). Per-char sendInputEvent
+    // has caused Mojibake on some Windows/Electron paths.
+    if (/[^\u0000-\u007f]/.test(value)) {
+      await this.insertTextUnicode(value);
+      return;
+    }
     const wc = this.pageView.webContents;
     this.window.focus();
     wc.focus();
 
-    // Select all + delete
     wc.sendInputEvent({
       type: "keyDown",
       keyCode: "A",

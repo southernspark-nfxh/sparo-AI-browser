@@ -1,21 +1,68 @@
 # Sparo Agent Browser
 
+
+
 > **Sparo Agent Browser** — The browser built for AI agents — humans stay in control.
+
 > **Sparo 人机同窗浏览器** — AI 驾驭网页，你驾驭 AI.
+
 > Shared Chromium window + MCP. Any agent can drive it; humans pause & approve.
+
+
 
 ## Why
 
+
+
 Browsers built only for humans constrain AI. Sparo Agent Browser explores an AI-first form humans can still accept: same window, same truth, agent as first-class operator.
+
+
 
 ## For agents (30s)
 
-1. Read ./AGENTS.md
-2. `npm run status` or GET http://127.0.0.1:3920/health
-3. `npm run open -- https://example.com`  OR  MCP `navigate` + `get_url`
-4. Call `sparo_info` if unsure
 
-Human product story: ./README.md  
-MCP setup: ./docs/AGENTS.md  
-API reference: ./docs/MCP-API.md  
-Architecture: ./docs/ARCHITECTURE.md
+
+1. Read ./AGENTS.md
+
+2. `npm run status` or GET http://127.0.0.1:3920/health
+
+3. **Publishing / 发小红书 / 发帖:** read ./docs/PUBLISHING.md then `run_skill` or `xhs_inject_*`
+
+4. Otherwise: `npm run open -- https://example.com` OR MCP `navigate` + `get_url`
+
+5. Call `sparo_info` if unsure
+
+
+
+## Publish rule (memorize)
+
+
+
+AI = stage detection + clicks. Script = inject pre-baked content **once**.  
+
+Do not loop `fill` on title/body.
+
+
+
+## Docs
+
+
+
+| Doc | Use |
+
+|-----|-----|
+
+| ./AGENTS.md | Boot + anti-patterns |
+
+| ./docs/PUBLISHING.md | **Xiaohongshu + generic site publish** |
+
+| ./docs/MCP-API.md | Tool reference |
+
+| ./docs/AGENTS.md | MCP connection |
+
+| ./docs/ARCHITECTURE.md | Internals |
+
+| ./strategies/skills/README.md | Skill catalog |
+
+| ./README.md | Human product story |
+

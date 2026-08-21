@@ -20,6 +20,7 @@ export type ChatAction =
   | { type: "record_start"; task?: string }
   | { type: "record_stop"; title?: string }
   | { type: "list_skills" }
+  | { type: "run_skill"; id?: string; query: string }
   | { type: "llm"; text: string };
 
 const DXM_ENABLED = process.env.SPARO_ENABLE_DXM === "1";
@@ -52,6 +53,24 @@ export function parseLocalIntent(input: string): ChatAction {
 
   if (/我的妙招|妙招列表|列出妙招|list\s*skills?/i.test(t)) {
     return { type: "list_skills" };
+  }
+
+  const runNamed =
+    t.match(/(?:运行|执行|打|用|按)\s*妙招\s*[「"']?(.+?)[」"']?\s*$/i) ||
+    t.match(/run\s*skill\s+(.+)$/i);
+  if (runNamed) {
+    return {
+      type: "run_skill",
+      query: runNamed[1].trim().replace(/^["'「」]+|["'「」]+$/g, ""),
+    };
+  }
+  // Fast path: Xiaohongshu publish intents → auto skill
+  if (
+    /发小红书|小红书发布|发布小红书|小红书长文|发一篇小红书|帮我发小红书|xhs\s*publish|publish\s*(on\s*)?(xhs|xiaohongshu|rednote)/i.test(
+      t,
+    )
+  ) {
+    return { type: "run_skill", query: "小红书发布", id: "xhs-longform-publish" };
   }
 
   // —— DXM vertical (hidden unless SPARO_ENABLE_DXM=1) ——

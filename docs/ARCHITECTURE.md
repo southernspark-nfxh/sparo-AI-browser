@@ -59,11 +59,14 @@ Aligned with `src/main/index.ts` (v0.1.0).
 
 ## Extra surfaces
 
-- **Skills**: `start_recording` / `stop_recording` / `list_skills` — teach a flow once, reuse.
+- **Skills / publish**: `run_skill`, `xhs_inject_compose`, `xhs_inject_publish` — AI detects stage; scripts inject content once. See [PUBLISHING.md](./PUBLISHING.md).
+- **Recording**: `start_recording` / `stop_recording` / `list_skills` — teach a flow once, reuse.
 - **Human protocol**: `pause` / `resume` / `request_approval` — agent stops or waits for sidebar decision.
 - **Vertical pack**: Dianxiaomi workflows only when `SPARO_ENABLE_DXM=1`; see [MCP-API.md](./MCP-API.md).
 
 ## Related docs
 
 - Agent onboarding: [`AGENTS.md`](../AGENTS.md), [`docs/AGENTS.md`](./AGENTS.md)
+- **Publishing**: [`docs/PUBLISHING.md`](./PUBLISHING.md)
 - Tool reference: [`docs/MCP-API.md`](./MCP-API.md)
+- Skills catalog: [`strategies/skills/README.md`](../strategies/skills/README.md)

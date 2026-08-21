@@ -1,0 +1,324 @@
+{
+
+  "id": "xhs-longform-publish",
+
+  "title": "小红书长文：认阶段 + 脚本投递（禁止 AI 逐字 fill）",
+
+  "intent": "AI 只认阶段并点按钮；标题/正文/简介/话题由预埋脚本一次注入",
+
+  "aliases": [
+
+    "小红书",
+
+    "发小红书",
+
+    "小红书发布",
+
+    "小红书长文",
+
+    "发布长文",
+
+    "写长文发布",
+
+    "xhs",
+
+    "xiaohongshu",
+
+    "rednote"
+
+  ],
+
+  "platform": "xiaohongshu-creator",
+
+  "version": 5,
+
+  "source": "distilled",
+
+  "productModel": {
+
+    "ai": ["xhs_page_stage", "pause"],
+
+    "script": [
+
+      "xhs_ensure_editor",
+
+      "xhs_inject_compose",
+
+      "xhs_layout_next",
+
+      "xhs_inject_publish",
+
+      "xhs_pick_cover"
+
+    ],
+
+    "forbid": ["多次 fill 标题/正文", "在输入框里逐字打字", "对同一字段循环 fill", "点完一键排版立刻点下一步"]
+
+  },
+
+  "fast_path": [
+
+    "run_skill({ query: '发小红书', params: { title, body, summary, topics } })",
+
+    "或：xhs_ensure_editor → xhs_inject_compose → xhs_layout_next → xhs_inject_publish → pause"
+
+  ],
+
+  "createdAt": "2026-08-09T11:30:00.000Z",
+
+  "updatedAt": "2026-08-09T15:30:00.000Z",
+
+  "qaNotes": [
+
+    "一键排版后模板面板常需 10–20s 才出现；下一步在选模板后才稳定可见。",
+
+    "必须点 button「一键排版」并等待；不要只点 span 后立刻找下一步。",
+
+    "发布页 caption 是 TipTap（0/1000），不是「简介」textarea。",
+
+    "发布按钮可能不在 DOM（人审后点）；autoPublish 默认 false。",
+
+    "话题建议只搜 overlay/popover，禁止整页 document（会超时）。"
+
+  ],
+
+  "notes": [
+
+    "标题 textarea.d-text / input.d-text（兼容）；正文 .tiptap.ProseMirror。",
+
+    "AI 禁止对标题/正文调用 fill；只调用 inject。",
+
+    "排版用 xhs_layout_next，禁止 click_text 一键排版后马上 click_text 下一步。"
+
+  ],
+
+  "params": {
+
+    "title": {
+
+      "type": "string",
+
+      "default": "Sparo浏览器——AI终于有了自己的手。"
+
+    },
+
+    "body": { "type": "string", "required": true },
+
+    "summary": {
+
+      "type": "string",
+
+      "optional": true,
+
+      "description": "发布页正文/推荐语（TipTap caption，可选）"
+
+    },
+
+    "topics": {
+
+      "type": "string[]",
+
+      "default": ["#ai", "#ai浏览器", "#智能浏览器", "#浏览器自动化"]
+
+    },
+
+    "template": {
+
+      "type": "string",
+
+      "default": "简约基础",
+
+      "description": "一键排版模板名"
+
+    },
+
+    "mdPath": {
+
+      "type": "string",
+
+      "optional": true,
+
+      "example": "./examples/article.md"
+
+    },
+
+    "autoPublish": { "type": "boolean", "default": false }
+
+  },
+
+  "defaultsFromRecording": {
+
+    "title": "Sparo浏览器——AI终于有了自己的手。",
+
+    "topicsClicked": ["#ai", "#ai浏览器", "#智能浏览器", "#浏览器自动化"]
+
+  },
+
+  "steps": [
+
+    {
+
+      "id": "open",
+
+      "tool": "navigate",
+
+      "args": {
+
+        "url": "https://creator.xiaohongshu.com/publish/publish?target=article"
+
+      },
+
+      "retries": 2
+
+    },
+
+    {
+
+      "id": "stage-0",
+
+      "tool": "xhs_page_stage",
+
+      "args": {}
+
+    },
+
+    {
+
+      "id": "ensure-editor",
+
+      "tool": "xhs_ensure_editor",
+
+      "args": {},
+
+      "retries": 2,
+
+      "retryDelayMs": 1500
+
+    },
+
+    {
+
+      "id": "inject-compose",
+
+      "tool": "xhs_inject_compose",
+
+      "args": {
+
+        "title": "{{title}}",
+
+        "body": "{{body}}",
+
+        "force": true
+
+      },
+
+      "retries": 2,
+
+      "note": "预埋稿一次写入；禁止再 fill"
+
+    },
+
+    {
+
+      "id": "layout-next",
+
+      "tool": "xhs_layout_next",
+
+      "args": {
+
+        "template": "{{template}}",
+
+        "timeoutMs": 32000
+
+      },
+
+      "retries": 1,
+
+      "retryDelayMs": 2000,
+
+      "note": "等待模板面板（常 10–20s）再选模板并下一步"
+
+    },
+
+    {
+
+      "id": "stage-publish",
+
+      "tool": "xhs_page_stage",
+
+      "args": {}
+
+    },
+
+    {
+
+      "id": "inject-publish",
+
+      "tool": "xhs_inject_publish",
+
+      "args": {
+
+        "summary": "{{summary}}",
+
+        "topics": "{{topics}}"
+
+      },
+
+      "optional": true,
+
+      "retries": 1
+
+    },
+
+    {
+
+      "id": "pick-cover",
+
+      "tool": "xhs_pick_cover",
+
+      "args": {},
+
+      "optional": true
+
+    },
+
+    {
+
+      "id": "auto-publish",
+
+      "tool": "xhs_click_publish",
+
+      "args": { "when": "{{autoPublish}}" },
+
+      "optional": true
+
+    },
+
+    {
+
+      "id": "human-publish",
+
+      "tool": "pause",
+
+      "hint": "脚本已投递标题/正文/话题。人检查封面后点内容区「发布」。"
+
+    }
+
+  ],
+
+  "agentPlaybook": [
+
+    "1. 把 title/body/summary/topics 放进 params（或 mdPath），不要在对话里逐字贴进 fill",
+
+    "2. 优先 run_skill；否则 xhs_page_stage → ensure_editor → inject_compose → xhs_layout_next → inject_publish → pause",
+
+    "3. 禁止对标题/正文多次 fill；禁止填两遍；禁止点完一键排版立刻找下一步",
+
+    "4. GET /health 确认 xhs_layout_next / xhs_inject_compose 存在",
+
+    "5. QA 脚本：node scripts/qa-xhs-publish.mjs"
+
+  ]
+
+}
+

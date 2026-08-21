@@ -16,3 +16,15 @@ mcp-auth.json
 *.key
 credentials*
 secrets*
+
+# Live-page scratch dumps (Steamworks/account HTML, cookies, etc.)
+tmp-*
+/tmp-*.mjs
+/tmp-*.json
+
+# Runtime browser profile — lives in %APPDATA%/sparo, not this repo
+sessions.json
+bookmarks.json
+strategy-cache.json
+/diag/
+/traces/

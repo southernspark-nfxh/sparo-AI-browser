@@ -86,6 +86,9 @@ export const SNAPSHOT_SCRIPT = `(() => {
   ].join(', ');
 
   const PORTAL_ROOTS = [
+    '#d-overlay-root',
+    '[id$="overlay-root"]',
+    '[id*="overlay-root"]',
     '.ant-dropdown',
     '.ant-select-dropdown',
     '.ant-cascader-dropdown',
@@ -97,6 +100,9 @@ export const SNAPSHOT_SCRIPT = `(() => {
     '.el-dropdown-menu',
     '[class*="Dropdown"]',
     '[data-portal]',
+    '[class*="popover"]',
+    '[class*="Popper"]',
+    '[class*="suggest"]',
   ].join(', ');
 
   function isVisible(el, doc) {
@@ -181,12 +187,15 @@ export const SNAPSHOT_SCRIPT = `(() => {
   function inPortalOf(el) {
     if (!el || !el.closest) return false;
     return !!(
+      el.closest('#d-overlay-root') ||
+      el.closest('[id$="overlay-root"]') ||
       el.closest('.ant-dropdown') ||
       el.closest('.ant-select-dropdown') ||
       el.closest('.ant-cascader-dropdown') ||
       el.closest('.el-popper') ||
       el.closest('.el-select-dropdown') ||
-      el.closest('[data-portal]')
+      el.closest('[data-portal]') ||
+      el.closest('[class*="suggest"]')
     );
   }
 
@@ -277,7 +286,7 @@ export const SNAPSHOT_SCRIPT = `(() => {
   let portalLocal = 0;
   for (const root of portalRoots) {
     const nodes = Array.from(root.querySelectorAll(
-      'li, button, a, [role="menuitem"], [role="option"], .ant-dropdown-menu-item, .ant-select-item-option, .el-dropdown-menu__item',
+      'li, button, a, [role="menuitem"], [role="option"], [role="listbox"] *, .ant-dropdown-menu-item, .ant-select-item-option, .el-dropdown-menu__item, [class*="item"], [class*="Item"], span.name',
     ));
     for (const el of nodes) {
       if (seenNodes.has(el)) continue;
@@ -291,18 +300,34 @@ export const SNAPSHOT_SCRIPT = `(() => {
   }
 
   const iframes = Array.from(document.querySelectorAll('iframe'));
+  const iframeMeta = [];
   iframes.forEach((iframe, i) => {
+    const box = iframe.getBoundingClientRect();
+    let sameOrigin = false;
+    try {
+      sameOrigin = !!(iframe.contentDocument && iframe.contentDocument.documentElement);
+    } catch (_) {
+      sameOrigin = false;
+    }
+    iframeMeta.push({
+      index: i,
+      src: iframe.src || iframe.getAttribute('src') || '',
+      sameOrigin: sameOrigin,
+      x: box.x,
+      y: box.y,
+      w: box.width,
+      h: box.height,
+    });
     try {
       const idoc = iframe.contentDocument;
       if (!idoc) return;
       const frameSel = iframe.id
         ? ('iframe#' + CSS.escape(iframe.id))
         : ('iframe:nth-of-type(' + (i + 1) + ')');
-      const box = iframe.getBoundingClientRect();
       const framed = collectFromDocument(idoc, 'f' + i + '.', frameSel, box.x, box.y);
       for (const item of framed) elements.push(item);
     } catch (_) {
-      // cross-origin — skip
+      // cross-origin — host CDP merge adds x*.e* refs
     }
   });
 
@@ -316,6 +341,7 @@ export const SNAPSHOT_SCRIPT = `(() => {
     title: document.title,
     elements: elements,
     iframeCount: iframes.length,
+    iframeMeta: iframeMeta,
     portalCount: portalRoots.length,
     portalItems: portalItems,
     capturedAt: new Date().toISOString(),
@@ -448,7 +474,26 @@ export const CLICK_SCRIPT = `(ref, selector) => {
  */
 export const FILL_SCRIPT = `(ref, selector, value) => {
   ${RESOLVE_HELPER}
-  const hit = sparkResolve(ref, selector);
+  function sparkResolveVisible(r, sel) {
+    const hit0 = sparkResolve(r, sel);
+    if (hit0 && hit0.el) {
+      const box = hit0.el.getBoundingClientRect();
+      if (box.width > 0 && box.height > 0) return hit0;
+    }
+    if (sel) {
+      try {
+        const nodes = Array.from(document.querySelectorAll(sel));
+        const vis = nodes.find((n) => {
+          const b = n.getBoundingClientRect();
+          return b.width > 0 && b.height > 0;
+        });
+        if (vis) return { el: vis, offsetX: 0, offsetY: 0, frame: null };
+        if (nodes[0]) return { el: nodes[0], offsetX: 0, offsetY: 0, frame: null };
+      } catch (_) {}
+    }
+    return hit0;
+  }
+  const hit = sparkResolveVisible(ref, selector);
   let el = hit ? hit.el : null;
   if (!el) {
     return {
@@ -618,7 +663,17 @@ export const FILL_SCRIPT = `(ref, selector, value) => {
 /** Read current value of a fill target (for post-keyboard verification). */
 export const FILL_SCRIPT_READ = `(ref, selector) => {
   ${RESOLVE_HELPER}
-  const hit = sparkResolve(ref, selector);
+  let hit = sparkResolve(ref, selector);
+  if (selector) {
+    try {
+      const nodes = Array.from(document.querySelectorAll(selector));
+      const vis = nodes.find((n) => {
+        const b = n.getBoundingClientRect();
+        return b.width > 0 && b.height > 0;
+      });
+      if (vis) hit = { el: vis, offsetX: 0, offsetY: 0, frame: null };
+    } catch (_) {}
+  }
   if (!hit) return '';
   let el = hit.el;
   const nested =
@@ -757,50 +812,101 @@ export const FIND_FILE_INPUT_SCRIPT = `(ref, selector) => {
 
 /** Find visible element by text (exact or includes), prefer smaller hit targets. */
 export const FIND_TEXT_SCRIPT = `(text, exact, withinPortal) => {
-  const want = String(text || '').trim();
+  function norm(s) {
+    s = String(s || '');
+    try { s = s.normalize('NFKC'); } catch (_) {}
+    return s.trim().replace(/\\s+/g, ' ');
+  }
+  const want = norm(text);
   if (!want) return { ok: false, message: 'empty text' };
-  const roots = withinPortal
-    ? Array.from(document.querySelectorAll('.ant-dropdown, .ant-select-dropdown, .el-popper, [data-portal]'))
-        .filter((r) => {
-          const st = getComputedStyle(r);
-          const box = r.getBoundingClientRect();
-          return st.display !== 'none' && !r.classList.contains('ant-dropdown-hidden') && box.width > 0;
-        })
-    : [document];
+  const portalRoots = Array.from(document.querySelectorAll('.ant-dropdown, .ant-select-dropdown, .el-popper, [data-portal], #d-overlay-root, [id$="overlay-root"]'))
+    .filter((r) => {
+      const st = getComputedStyle(r);
+      const box = r.getBoundingClientRect();
+      const childOk = Array.from(r.children || []).some((c) => {
+        const b = c.getBoundingClientRect();
+        return b.width > 0 && b.height > 0;
+      });
+      return st.display !== 'none' && !r.classList.contains('ant-dropdown-hidden') && (box.width > 0 || childOk);
+    });
+  const roots = withinPortal ? portalRoots : [document];
+  // Also search same-origin iframes when not portal-only
+  if (!withinPortal) {
+    const iframes = Array.from(document.querySelectorAll('iframe'));
+    for (const iframe of iframes) {
+      try {
+        if (iframe.contentDocument) roots.push(iframe);
+      } catch (_) {}
+    }
+  }
   let best = null;
   let bestEl = null;
+  let bestOffset = { x: 0, y: 0 };
   for (const root of roots) {
-    const scope = root === document ? document : root;
-    const candidates = Array.from(scope.querySelectorAll('a,button,span,div,li,label,[role=menuitem],[role=button],[role=option],.ant-dropdown-menu-item,.ant-select-item-option,.img-options-action-btn'));
+    let scope = root;
+    let offsetX = 0;
+    let offsetY = 0;
+    let searchRoot = root;
+    if (root && root.tagName === 'IFRAME') {
+      try {
+        const idoc = root.contentDocument;
+        if (!idoc) continue;
+        const box = root.getBoundingClientRect();
+        offsetX = box.x;
+        offsetY = box.y;
+        searchRoot = idoc;
+        scope = idoc;
+      } catch (_) {
+        continue;
+      }
+    }
+    const candidates = Array.from(scope.querySelectorAll(
+      'a,button,span,div,li,label,p,[role=menuitem],[role=button],[role=option],[role=tab],.ant-dropdown-menu-item,.ant-select-item-option,.img-options-action-btn'
+    ));
     for (const el of candidates) {
-      const t = (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
-      if (!t || t.length > want.length + 40) continue;
+      const raw =
+        (el.innerText || el.textContent || '') +
+        ' ' +
+        (el.getAttribute('aria-label') || '') +
+        ' ' +
+        (el.getAttribute('title') || '');
+      const t = norm(raw);
+      if (!t) continue;
+      if (t.length > want.length + 200) continue;
       const match = exact ? t === want : (t === want || t.includes(want));
       if (!match) continue;
       const r = el.getBoundingClientRect();
       if (r.width <= 0 || r.height <= 0) continue;
-      const st = getComputedStyle(el);
+      const win = (searchRoot.defaultView) || window;
+      const st = win.getComputedStyle(el);
       if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) === 0) continue;
-      const inView = r.bottom > 0 && r.top < window.innerHeight && r.right > 0 && r.left < window.innerWidth;
-      // Prefer in-viewport; heavily penalize off-screen (Electron click is viewport-local)
+      const absX = r.x + offsetX;
+      const absY = r.y + offsetY;
+      const inView =
+        absY + r.height > 0 &&
+        absY < window.innerHeight &&
+        absX + r.width > 0 &&
+        absX < window.innerWidth;
       const score =
         Math.abs(r.width * r.height - 1800) +
         (t === want || t.endsWith(want) ? 0 : 80) +
-        t.length +
+        Math.min(t.length, 200) +
         (inView ? 0 : 100000);
       if (!best || score < best.score) {
         best = {
           score,
           tag: el.tagName,
           text: t.slice(0, 60),
-          x: r.x + r.width / 2,
-          y: r.y + r.height / 2,
+          x: absX + r.width / 2,
+          y: absY + r.height / 2,
           w: r.width,
           h: r.height,
           inView: inView,
           inPortal: !!(el.closest && (el.closest('.ant-dropdown') || el.closest('.ant-select-dropdown') || el.closest('.el-popper'))),
+          frameOffset: !!(offsetX || offsetY),
         };
         bestEl = el;
+        bestOffset = { x: offsetX, y: offsetY };
       }
     }
   }
@@ -809,11 +915,11 @@ export const FIND_TEXT_SCRIPT = `(text, exact, withinPortal) => {
     bestEl.scrollIntoView({ block: 'center', inline: 'nearest' });
   } catch (_) {}
   const r2 = bestEl.getBoundingClientRect();
-  best.x = r2.x + r2.width / 2;
-  best.y = r2.y + r2.height / 2;
+  best.x = r2.x + bestOffset.x + r2.width / 2;
+  best.y = r2.y + bestOffset.y + r2.height / 2;
   best.w = r2.width;
   best.h = r2.height;
-  best.inView = r2.bottom > 0 && r2.top < window.innerHeight;
+  best.inView = best.y > 0 && best.y < window.innerHeight;
   try {
     bestEl.setAttribute('data-spark-ref', 'spark-text');
     best.ref = 'spark-text';
@@ -826,28 +932,41 @@ export const FIND_TEXT_SCRIPT = `(text, exact, withinPortal) => {
 
 /** List currently visible portal menus/items. */
 export const LIST_PORTALS_SCRIPT = `(() => {
-  const roots = Array.from(document.querySelectorAll('.ant-dropdown, .ant-select-dropdown, .el-popper, .el-select-dropdown, [data-portal]'));
+  const roots = Array.from(document.querySelectorAll(
+    '#d-overlay-root, [id$="overlay-root"], .ant-dropdown, .ant-select-dropdown, .el-popper, .el-select-dropdown, [data-portal], [class*="suggest"], [class*="Popper"]'
+  ));
   const out = [];
   for (const root of roots) {
     const st = getComputedStyle(root);
     const r = root.getBoundingClientRect();
     if (st.display === 'none' || st.visibility === 'hidden') continue;
     if (root.classList.contains('ant-dropdown-hidden') || root.classList.contains('ant-select-dropdown-hidden')) continue;
-    if (r.width <= 0 || r.height <= 0) continue;
-    const items = Array.from(root.querySelectorAll('li, .ant-dropdown-menu-item, .ant-select-item-option, [role=menuitem], [role=option]'))
+    // overlay roots may be size 0 while children are visible — still scan children
+    const childVisible = Array.from(root.querySelectorAll('*')).some((el) => {
+      const b = el.getBoundingClientRect();
+      return b.width > 2 && b.height > 2;
+    });
+    if (r.width <= 0 && r.height <= 0 && !childVisible) continue;
+    const items = Array.from(root.querySelectorAll(
+      'li, button, a, .ant-dropdown-menu-item, .ant-select-item-option, [role=menuitem], [role=option], [class*="item"], span.name'
+    ))
       .map((el) => {
         const box = el.getBoundingClientRect();
         if (box.width <= 0 || box.height <= 0) return null;
-        return (el.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 60);
+        const t = (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 80);
+        if (!t || t.length > 60) return null;
+        return { text: t, x: Math.round(box.x), y: Math.round(box.y), w: Math.round(box.width), h: Math.round(box.height) };
       })
       .filter(Boolean);
+    if (!items.length && !(r.width > 0 && r.height > 0)) continue;
     out.push({
-      cls: String(root.className).slice(0, 80),
+      id: root.id || undefined,
+      cls: String(root.className || '').slice(0, 80),
       x: Math.round(r.x),
       y: Math.round(r.y),
       w: Math.round(r.width),
       h: Math.round(r.height),
-      items: items.slice(0, 30),
+      items: items.slice(0, 40),
     });
   }
   return JSON.parse(JSON.stringify({ count: out.length, portals: out }));
@@ -884,6 +1003,28 @@ export const RECORD_START_SCRIPT = `(meta) => {
   window.__sparkTrace = [];
   window.__sparkRecording = true;
   window.__sparkRecordMeta = meta || {};
+  const cssPath = (el) => {
+    if (!el || !el.tagName) return '';
+    try {
+      if (el.id) return '#' + CSS.escape(el.id);
+      const parts = [];
+      let cur = el;
+      for (let i = 0; i < 5 && cur && cur.nodeType === 1; i++) {
+        let part = cur.tagName.toLowerCase();
+        if (cur.id) { parts.unshift('#' + CSS.escape(cur.id)); break; }
+        const cls = String(cur.className || '').trim().split(/\\s+/).filter(Boolean).slice(0, 2);
+        if (cls.length) part += '.' + cls.map((c) => CSS.escape(c)).join('.');
+        const parent = cur.parentElement;
+        if (parent) {
+          const sibs = Array.from(parent.children).filter((c) => c.tagName === cur.tagName);
+          if (sibs.length > 1) part += ':nth-of-type(' + (sibs.indexOf(cur) + 1) + ')';
+        }
+        parts.unshift(part);
+        cur = parent;
+      }
+      return parts.join(' > ');
+    } catch (_) { return el.tagName.toLowerCase(); }
+  };
   const push = (action, target, extra) => {
     if (!window.__sparkRecording) return;
     const el = target;
@@ -891,14 +1032,19 @@ export const RECORD_START_SCRIPT = `(meta) => {
     try {
       if (el && el.id) selector = '#' + CSS.escape(el.id);
       else if (el && el.getAttribute && el.getAttribute('data-spark-ref')) selector = '[data-spark-ref="' + el.getAttribute('data-spark-ref') + '"]';
-      else if (el && el.tagName) selector = el.tagName.toLowerCase() + (el.className ? '.' + String(el.className).trim().split(/\\s+/).slice(0,2).join('.') : '');
+      else if (el && el.tagName) selector = cssPath(el);
     } catch (_) {}
     const r = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+    const text = el && (el.innerText || el.value || '').toString().trim().slice(0, 80) || undefined;
     window.__sparkTrace.push({
       i: window.__sparkTrace.length + 1,
       action: action,
       selector: selector,
-      text: el && (el.innerText || el.value || '').toString().trim().slice(0, 80) || undefined,
+      cssPath: el ? cssPath(el) : undefined,
+      text: text,
+      innerText: text,
+      ariaLabel: el && el.getAttribute ? (el.getAttribute('aria-label') || undefined) : undefined,
+      placeholder: el && el.getAttribute ? (el.getAttribute('placeholder') || undefined) : undefined,
       value: extra && extra.value,
       bounds: r ? { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) } : undefined,
       url: location.href,
@@ -935,3 +1081,978 @@ export const RECORD_STOP_SCRIPT = `(() => {
     steps: steps,
   }));
 })()`;
+
+/** Scroll editor / page so bottom actions (下一步) enter the viewport. */
+export const XHS_SCROLL_BOTTOM_SCRIPT = `(() => {
+  const editor = document.querySelector('.tiptap.ProseMirror')
+    || document.querySelector('[class*="editor"]')
+    || document.documentElement;
+  let node = editor;
+  while (node && node !== document.body) {
+    const st = getComputedStyle(node);
+    if (/(auto|scroll)/.test(st.overflowY) || /(auto|scroll)/.test(st.overflow)) {
+      node.scrollTop = node.scrollHeight;
+    }
+    node = node.parentElement;
+  }
+  const se = document.scrollingElement || document.documentElement;
+  se.scrollTop = se.scrollHeight;
+  window.scrollTo(0, Math.max(document.body.scrollHeight, document.documentElement.scrollHeight));
+  const next = Array.from(document.querySelectorAll('button,span,a,[role=button]')).find((el) => {
+    const t = (el.innerText || '').trim();
+    const r = el.getBoundingClientRect();
+    return t === '下一步' && r.width > 0 && r.height > 0;
+  });
+  if (next) next.scrollIntoView({ block: 'center', inline: 'nearest' });
+  return { ok: true, nextVisible: !!(next && next.getBoundingClientRect().height > 0) };
+})()`;
+
+/**
+ * Add Xiaohongshu topics via custom topic button + insertText + #d-overlay-root suggestions.
+ * Async IIFE — Electron executeJavaScript awaits the Promise.
+ */
+export const XHS_ADD_TOPICS_SCRIPT = `(async (topics) => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const norm = (s) => String(s || '').replace(/^#/, '').trim();
+  const results = [];
+  const list = Array.isArray(topics) ? topics : [];
+
+  async function clickTopicButton() {
+    const btn = Array.from(document.querySelectorAll('button,span,[role=button]')).find((b) => {
+      const t = (b.innerText || b.textContent || '').trim();
+      const r = b.getBoundingClientRect();
+      return (t === '话题' || t === '#话题' || t === '添加话题') && r.width > 0 && r.height > 0;
+    });
+    if (btn) {
+      btn.click();
+      await sleep(500);
+      return true;
+    }
+    return false;
+  }
+
+  function findTopicInput() {
+    const active = document.activeElement;
+    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') && active.offsetWidth > 5) {
+      const ph = (active.getAttribute('placeholder') || '');
+      if (!/标题/.test(ph)) return active;
+    }
+    const inputs = Array.from(document.querySelectorAll('input[type="text"],input:not([type]),textarea'));
+    return inputs.find((i) => {
+      const r = i.getBoundingClientRect();
+      const ph = (i.getAttribute('placeholder') || '');
+      return r.width > 5 && r.height > 5 && !/标题/.test(ph) && !i.classList.contains('d-text');
+    }) || null;
+  }
+
+  function pickSuggestion(needle) {
+    const want = norm(needle);
+    // NEVER search whole document — huge divs with # in text match and hang/click wrong nodes.
+    const roots = [];
+    const add = (el) => {
+      if (!el || roots.includes(el)) return;
+      const r = el.getBoundingClientRect();
+      if (r.width < 20 || r.height < 16) return;
+      if (r.height > 640) return;
+      roots.push(el);
+    };
+    add(document.querySelector('#d-overlay-root'));
+    document.querySelectorAll('[id$="overlay-root"]').forEach(add);
+    document
+      .querySelectorAll(
+        '[class*="dropdown"],[class*="popover"],[class*="suggest"],[class*="mention"],[class*="popup"],[class*="overlay"] [class*="list"],[class*="option-list"]',
+      )
+      .forEach(add);
+    if (!roots.length) return null;
+    for (const root of roots) {
+      const nodes = root.querySelectorAll(
+        'li,[class*="item"],span.name,button,a,[role="option"],[class*="option"]',
+      );
+      for (const el of nodes) {
+        if (el.children && el.children.length > 8) continue;
+        const t = (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
+        if (!t || t.length > 48) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width < 4 || r.height < 4 || r.height > 72) continue;
+        if (t.includes(want) || t.includes('#' + want) || ('#' + t).includes('#' + want)) {
+          el.click();
+          return t.slice(0, 40);
+        }
+      }
+    }
+    return null;
+  }
+
+  for (const raw of list) {
+    const topic = String(raw || '').trim();
+    if (!topic) continue;
+    const typed = norm(topic);
+    await clickTopicButton();
+    await sleep(200);
+    let input = findTopicInput();
+    if (!input) {
+      await clickTopicButton();
+      await sleep(300);
+      input = findTopicInput();
+    }
+    if (!input) {
+      results.push({ topic, ok: false, reason: 'no_topic_input' });
+      continue;
+    }
+    input.focus();
+    try {
+      document.execCommand('selectAll', false, null);
+      document.execCommand('delete', false, null);
+    } catch (_) {}
+    const inserted = document.execCommand('insertText', false, typed);
+    if (!inserted) {
+      input.value = typed;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    await sleep(550);
+    let picked = pickSuggestion(typed);
+    if (!picked) {
+      await sleep(350);
+      picked = pickSuggestion(typed);
+    }
+    if (!picked) {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+      results.push({ topic, ok: false, reason: 'no_suggestion_enter_fallback' });
+    } else {
+      results.push({ topic, ok: true, picked });
+    }
+    await sleep(250);
+  }
+  return { ok: results.some((r) => r.ok) || results.length === 0, results };
+})`;
+
+export const XHS_PICK_COVER_SCRIPT = `(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const suggest = Array.from(document.querySelectorAll('button,span,a,[role=button]')).find((b) => {
+    const t = (b.innerText || '').trim();
+    const r = b.getBoundingClientRect();
+    return /获取封面|封面建议|智能封面/.test(t) && r.width > 0;
+  });
+  if (suggest) {
+    suggest.click();
+    await sleep(2000);
+  }
+  const cards = Array.from(document.querySelectorAll(
+    '[class*="cover"] img, [class*="Cover"] img, [class*="cover"] [class*="card"], [class*="cover-item"], [class*="coverItem"]'
+  )).filter((el) => {
+    const r = el.getBoundingClientRect();
+    return r.width > 40 && r.height > 40;
+  });
+  if (cards.length) {
+    cards[0].click();
+    return { ok: true, count: cards.length };
+  }
+  return { ok: false, message: 'no cover cards', count: 0 };
+})()`;
+
+/** Click content-area 发布 (exact), avoid sidebar 发布笔记 (x typically small). */
+export const XHS_CLICK_PUBLISH_SCRIPT = `(() => {
+  const btns = Array.from(document.querySelectorAll('button, [role=button], span, a'));
+  let best = null;
+  for (const b of btns) {
+    const t = (b.innerText || b.textContent || '').trim().replace(/\\s+/g, ' ');
+    if (t !== '发布') continue;
+    const r = b.getBoundingClientRect();
+    if (r.width < 8 || r.height < 8) continue;
+    if (r.x < 360) continue; // skip left nav
+    if (/发布笔记/.test((b.parentElement && b.parentElement.innerText) || '')) continue;
+    if (!best || r.x > best.r.x) best = { el: b, r };
+  }
+  if (!best) {
+    // fallback: class hint
+    const byClass = Array.from(document.querySelectorAll('button')).find((b) => {
+      const t = (b.innerText || '').trim();
+      const cls = String(b.className || '');
+      const r = b.getBoundingClientRect();
+      return t === '发布' && /publish/i.test(cls) && r.width > 0;
+    });
+    if (byClass) best = { el: byClass, r: byClass.getBoundingClientRect() };
+  }
+  if (!best) return { ok: false, message: 'publish button not found (content area)' };
+  best.el.scrollIntoView({ block: 'center' });
+  best.el.click();
+  return { ok: true, x: Math.round(best.r.x), y: Math.round(best.r.y) };
+})()`;
+
+/** Open XHS long-form editor: 写长文 → 新的创作 → 空白创作 (if modal). */
+export const XHS_ENSURE_EDITOR_SCRIPT = `(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const visible = (el) => {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  };
+  const clickText = (want, exact) => {
+    const nodes = Array.from(document.querySelectorAll('button,span,a,div,[role=button],[role=tab]'));
+    let best = null;
+    for (const el of nodes) {
+      const t = (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
+      if (!t || t.length > 40) continue;
+      const ok = exact ? t === want : (t === want || t.includes(want));
+      if (!ok || !visible(el)) continue;
+      const r = el.getBoundingClientRect();
+      if (!best || r.width * r.height < best.area) best = { el, area: r.width * r.height, t };
+    }
+    if (!best) return false;
+    best.el.click();
+    return true;
+  };
+  const editorReady = () => {
+    const title = Array.from(document.querySelectorAll('textarea.d-text, input.d-text')).find((el) => {
+      if (!visible(el)) return false;
+      if (el.classList && el.classList.contains('d-textarea-shadow')) return false;
+      return true;
+    });
+    const body = Array.from(document.querySelectorAll('.tiptap.ProseMirror,[contenteditable=true]')).find(visible);
+    return !!(title && body);
+  };
+  const log = [];
+  if (editorReady()) return { ok: true, already: true, log };
+
+  if (clickText('写长文', false)) {
+    log.push('clicked:写长文');
+    await sleep(1200);
+  } else log.push('miss:写长文');
+
+  if (editorReady()) return { ok: true, log };
+
+  if (clickText('新的创作', false)) {
+    log.push('clicked:新的创作');
+    await sleep(1500);
+  } else log.push('miss:新的创作');
+
+  // Template modal: 空白创作 / 从空白开始 / 不使用模板
+  for (const label of ['空白创作', '从空白开始', '从零开始', '不使用模板', '空白']) {
+    if (editorReady()) break;
+    if (clickText(label, false)) {
+      log.push('clicked:' + label);
+      await sleep(1500);
+      break;
+    }
+  }
+
+  for (let i = 0; i < 20; i++) {
+    if (editorReady()) {
+      return { ok: true, log, waitedMs: i * 500 };
+    }
+    // keep trying blank create if overlay still up
+    if (i === 4 || i === 10) {
+      clickText('空白创作', false) || clickText('新的创作', false);
+    }
+    await sleep(500);
+  }
+  const sample = (document.body && document.body.innerText || '').slice(0, 200).replace(/\\s+/g, ' ');
+  return { ok: false, log, url: location.href, sample };
+})()`;
+
+/** Detect Xiaohongshu creator stage for AI routing (no content typing). */
+export const XHS_PAGE_STAGE_SCRIPT = `(() => {
+  const visible = (el) => {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  };
+  const text = (document.body && document.body.innerText || '').slice(0, 1200);
+  const onPublishPage = !!(
+    document.querySelector('.publish-page, .publish-page-container, .publish-vue-container .publish-page-content')
+  );
+  const hasTemplatePanel = /选择模板/.test(text) && /简约|优雅|文艺|理性|杂志/.test(text);
+  const title = Array.from(document.querySelectorAll('textarea.d-text, input.d-text')).find((el) => {
+    if (!visible(el)) return false;
+    if (el.classList && el.classList.contains('d-textarea-shadow')) return false;
+    return true;
+  });
+  const body = Array.from(document.querySelectorAll('.tiptap.ProseMirror, .rich-editor-container .ProseMirror')).find(visible);
+  const hasChooser = /上传视频|上传图文|写长文/.test(text) && !title && !onPublishPage && !hasTemplatePanel;
+  const hasTopicBtn = Array.from(document.querySelectorAll('button,span')).some((b) => {
+    const t = (b.innerText || '').trim();
+    return (t === '话题' || t === '添加话题') && visible(b);
+  });
+  const hasNext = Array.from(document.querySelectorAll('button')).some((b) => (b.innerText || '').trim() === '下一步' && visible(b));
+  const hasLayoutBtn = Array.from(document.querySelectorAll('button')).some((b) => (b.innerText || '').trim() === '一键排版' && visible(b));
+  const hasPublish = Array.from(document.querySelectorAll('button,span,[role=button]')).some((b) => {
+    const t = (b.innerText || '').trim();
+    const r = b.getBoundingClientRect();
+    return (t === '发布' || t === '立即发布') && r.x > 360 && visible(b);
+  });
+  let stage = 'unknown';
+  // Order matters: publish/layout pages also contain inputs / TipTap.
+  if (onPublishPage || (hasTopicBtn && !hasLayoutBtn && !hasTemplatePanel)) stage = 'publish';
+  else if (hasTemplatePanel || (hasNext && !hasLayoutBtn)) stage = 'layout';
+  else if (title && body) stage = 'compose';
+  else if (hasChooser) stage = 'chooser';
+  else if (hasNext) stage = 'layout';
+  else if (hasPublish) stage = 'publish';
+  const titleEmpty = title ? !String(title.value || '').trim() : null;
+  const bodyEmpty = body ? !(body.innerText || '').trim() : null;
+  return {
+    ok: true,
+    stage,
+    titleEmpty,
+    bodyEmpty,
+    hasNext,
+    hasPublish,
+    hasTopic: hasTopicBtn,
+    hasLayoutBtn,
+    hasTemplatePanel,
+    onPublishPage,
+    url: location.href,
+  };
+})()`;
+
+/**
+ * Atomic compose inject: clear once + write title/body once. AI must NOT loop fill.
+ * Call as (async (payload) => ...)({ title, body, force? })
+ */
+export const XHS_INJECT_COMPOSE_SCRIPT = `(async (payload) => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const titleText = String((payload && payload.title) || '');
+  const bodyText = String((payload && payload.body) || '');
+  const force = !(payload && payload.force === false);
+  const visible = (el) => {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  };
+  const setInput = (el, value) => {
+    el.focus();
+    const win = el.ownerDocument.defaultView || window;
+    const proto = el.tagName === 'TEXTAREA' ? win.HTMLTextAreaElement.prototype : win.HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+    const tracker = el._valueTracker;
+    if (tracker) tracker.setValue(el.value == null ? '' : String(el.value));
+    if (setter) setter.call(el, '');
+    else el.value = '';
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    if (setter) setter.call(el, value);
+    else el.value = value;
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    return String(el.value || '');
+  };
+  const setCe = (el, value) => {
+    el.focus();
+    try {
+      const sel = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      document.execCommand('delete', false, undefined);
+    } catch (_) {}
+    el.innerHTML = '';
+    const ok = document.execCommand('insertText', false, value);
+    if (!ok) {
+      el.textContent = value;
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' }));
+    }
+    return String(el.innerText || el.textContent || '').trim();
+  };
+
+  const titleEl = Array.from(document.querySelectorAll('textarea.d-text, input.d-text')).find((el) => {
+      if (!visible(el)) return false;
+      if (el.classList && el.classList.contains('d-textarea-shadow')) return false;
+      const ph = el.getAttribute('placeholder') || '';
+      return /标题/.test(ph) || el.tagName === 'TEXTAREA' || el.tagName === 'INPUT';
+    })
+    || Array.from(document.querySelectorAll('textarea[placeholder*="标题"], input[placeholder*="标题"]')).find(visible);
+  const bodyEl = Array.from(document.querySelectorAll('.tiptap.ProseMirror')).find(visible)
+    || Array.from(document.querySelectorAll('[contenteditable=true]')).find(visible);
+
+  if (!titleEl || !bodyEl) {
+    return {
+      ok: false,
+      message: 'compose fields not ready',
+      stage: 'missing_fields',
+      hasTitle: !!titleEl,
+      hasBody: !!bodyEl,
+    };
+  }
+
+  // Publish page also has title + TipTap caption — do not treat as compose inject target.
+  if (document.querySelector('.publish-page, .publish-page-container')) {
+    return {
+      ok: true,
+      skipped: true,
+      message: 'on publish page — skip inject_compose (use xhs_inject_publish)',
+      stage: 'publish',
+    };
+  }
+
+  const prevTitle = String(titleEl.value || '').trim();
+  const prevBody = String(bodyEl.innerText || '').trim();
+  if (!force && prevTitle && prevBody) {
+    return {
+      ok: true,
+      skipped: true,
+      message: 'already filled — skipped (force=false)',
+      titleLen: prevTitle.length,
+      bodyLen: prevBody.length,
+    };
+  }
+
+  const titleActual = titleText ? setInput(titleEl, titleText) : prevTitle;
+  await sleep(120);
+  const bodyActual = bodyText ? setCe(bodyEl, bodyText) : prevBody;
+  await sleep(80);
+
+  const titleOk = !titleText || titleActual.length > 0;
+  const bodyOk = !bodyText || bodyActual.length > 0;
+  return {
+    ok: titleOk && bodyOk,
+    message: 'inject_compose done',
+    titleLen: titleActual.length,
+    bodyLen: bodyActual.length,
+    titleNeedle: titleText.slice(0, 12),
+    bodyNeedle: bodyText.slice(0, 12),
+    cleared: force,
+  };
+})`;
+
+/**
+ * Atomic publish-page inject: summary (caption TipTap) + topics.
+ * Call (async (p) => ...)({ summary, topics })
+ */
+export const XHS_INJECT_PUBLISH_SCRIPT = `(async (payload) => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const summary = String((payload && payload.summary) || '');
+  const topics = Array.isArray(payload && payload.topics) ? payload.topics.map(String) : [];
+  const maxTopics = Math.min(topics.length, 5);
+  const visible = (el) => {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  };
+  const inView = (el) => {
+    const r = el.getBoundingClientRect();
+    return r.bottom > 0 && r.top < (window.innerHeight || 800) && r.width > 0 && r.height > 0;
+  };
+  const out = { summary: null, topics: [] };
+
+  if (summary) {
+    // Prefer TipTap caption on publish page (near 话题 / inside publish-page).
+    const scope =
+      document.querySelector('.publish-page, .publish-page-content, .publish-page-content-base') ||
+      document;
+    let box =
+      Array.from(scope.querySelectorAll('.tiptap.ProseMirror, [contenteditable=true]')).find((el) => {
+        if (!visible(el)) return false;
+        const r = el.getBoundingClientRect();
+        return r.height >= 40 && r.height <= 280;
+      }) ||
+      Array.from(document.querySelectorAll('textarea')).find((el) => {
+        if (!visible(el)) return false;
+        const ph = (el.getAttribute('placeholder') || '') + (el.getAttribute('aria-label') || '');
+        return /简介|描述|摘要|推荐|补充|说明|概要|标题会有|说点什么/.test(ph);
+      });
+    if (box) {
+      try { box.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (_) {}
+      await sleep(120);
+      box.focus();
+      if (box.tagName === 'TEXTAREA' || box.tagName === 'INPUT') {
+        const win = window;
+        const proto = box.tagName === 'TEXTAREA' ? win.HTMLTextAreaElement.prototype : win.HTMLInputElement.prototype;
+        const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+        if (setter) setter.call(box, summary); else box.value = summary;
+        box.dispatchEvent(new Event('input', { bubbles: true }));
+        out.summary = { ok: true, len: String(box.value || '').length };
+      } else {
+        try {
+          const sel = window.getSelection();
+          const range = document.createRange();
+          range.selectNodeContents(box);
+          sel.removeAllRanges();
+          sel.addRange(range);
+          document.execCommand('delete', false, undefined);
+        } catch (_) {}
+        const ok = document.execCommand('insertText', false, summary);
+        if (!ok) {
+          box.textContent = summary;
+          box.dispatchEvent(new InputEvent('input', { bubbles: true, data: summary, inputType: 'insertText' }));
+        }
+        out.summary = { ok: true, len: String(box.innerText || '').trim().length };
+      }
+    } else {
+      out.summary = { ok: false, message: 'summary field not found' };
+    }
+  }
+
+  const norm = (s) => String(s || '').replace(/^#/, '').trim();
+  async function clickTopicButton() {
+    const btn = Array.from(document.querySelectorAll('button.topic-btn, button,span,[role=button]')).find((b) => {
+      const t = (b.innerText || b.textContent || '').trim();
+      return (t === '话题' || t === '#话题' || t === '添加话题') && visible(b);
+    });
+    if (btn) {
+      try { btn.scrollIntoView({ block: 'center' }); } catch (_) {}
+      btn.click();
+      await sleep(400);
+      return true;
+    }
+    return false;
+  }
+  function findTopicInput() {
+    const active = document.activeElement;
+    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
+      const ph = active.getAttribute('placeholder') || '';
+      if (!/标题/.test(ph)) return active;
+    }
+    return Array.from(document.querySelectorAll('input[type="text"],input:not([type]),textarea')).find((i) => {
+      const r = i.getBoundingClientRect();
+      const ph = i.getAttribute('placeholder') || '';
+      if (/标题/.test(ph)) return false;
+      // topic chips often start tiny until focused; allow small width if focused area
+      return r.height > 5 && (r.width > 3 || inView(i));
+    }) || null;
+  }
+  function pickSuggestion(needle) {
+    const want = norm(needle);
+    // NEVER fall back to document — [class*=topic] / all divs on publish page is huge and hangs.
+    const roots = [];
+    const add = (el) => {
+      if (!el || roots.includes(el)) return;
+      const r = el.getBoundingClientRect();
+      if (r.width < 20 || r.height < 16 || r.height > 640) return;
+      roots.push(el);
+    };
+    add(document.querySelector('#d-overlay-root'));
+    document.querySelectorAll('[id$="overlay-root"]').forEach(add);
+    document
+      .querySelectorAll(
+        '[class*="dropdown"],[class*="popover"],[class*="suggest"],[class*="mention"],[class*="popup"],[class*="overlay"] [class*="list"],[class*="option-list"]',
+      )
+      .forEach(add);
+    if (!roots.length) return null;
+    for (const root of roots) {
+      const nodes = root.querySelectorAll(
+        'li,[class*="item"],span.name,button,a,[role="option"],[class*="option"]',
+      );
+      for (const el of nodes) {
+        if (el.children && el.children.length > 8) continue;
+        const t = (el.innerText || '').trim().replace(/\\s+/g, ' ');
+        if (!t || t.length > 48) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width < 4 || r.height < 4 || r.height > 72) continue;
+        if (t.includes(want) || t.includes('#' + want) || ('#' + t).includes('#' + want)) {
+          el.click();
+          return t.slice(0, 40);
+        }
+      }
+    }
+    return null;
+  }
+
+  for (let i = 0; i < maxTopics; i++) {
+    const topic = String(topics[i] || '').trim();
+    if (!topic) continue;
+    const typed = norm(topic);
+    try {
+      await clickTopicButton();
+      let input = findTopicInput();
+      if (!input) {
+        await clickTopicButton();
+        await sleep(250);
+        input = findTopicInput();
+      }
+      if (!input) {
+        out.topics.push({ topic, ok: false, reason: 'no_input' });
+        continue;
+      }
+      input.focus();
+      try { document.execCommand('selectAll'); document.execCommand('delete'); } catch (_) {}
+      document.execCommand('insertText', false, typed);
+      await sleep(500);
+      let picked = pickSuggestion(typed);
+      if (!picked) {
+        await sleep(300);
+        picked = pickSuggestion(typed);
+      }
+      if (!picked) {
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+        out.topics.push({ topic, ok: false, reason: 'no_suggestion' });
+      } else {
+        out.topics.push({ topic, ok: true, picked });
+      }
+      await sleep(200);
+    } catch (e) {
+      out.topics.push({ topic, ok: false, reason: String(e && e.message ? e.message : e).slice(0, 80) });
+    }
+  }
+
+  const topicOk = !maxTopics || out.topics.some((t) => t.ok) || out.topics.every((t) => t.reason === 'no_suggestion');
+  // no_suggestion still typed — treat soft-ok if summary ok or topics attempted
+  const softTopicOk = !maxTopics || out.topics.length > 0;
+  const summaryOk = !summary || (out.summary && out.summary.ok);
+  return {
+    ok: Boolean(summaryOk && softTopicOk),
+    message: 'inject_publish done',
+    ...out,
+    topicOk,
+  };
+})`;
+
+/**
+ * Compose → layout template → publish page.
+ * Clicks 一键排版 (button), waits for template panel (up to ~30s),
+ * picks template (default 简约基础), clicks 下一步, waits for publish stage.
+ */
+export const XHS_LAYOUT_NEXT_SCRIPT = `(async (payload) => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const templatePrefer = String((payload && payload.template) || '简约基础');
+  const timeoutMs = Number((payload && payload.timeoutMs) || 32000);
+  const log = [];
+  const visible = (el) => {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  };
+  const bodyText = () => (document.body && document.body.innerText) || '';
+  const onPublish = () =>
+    !!(document.querySelector('.publish-page, .publish-page-container')) ||
+    Array.from(document.querySelectorAll('button')).some((b) => (b.innerText || '').trim() === '话题' && visible(b));
+  const hasNext = () =>
+    Array.from(document.querySelectorAll('button')).some((b) => (b.innerText || '').trim() === '下一步' && visible(b));
+  const hasTemplates = () => /选择模板/.test(bodyText()) && /简约|优雅|文艺|理性/.test(bodyText());
+
+  if (onPublish()) {
+    return { ok: true, skipped: true, message: 'already on publish page', stage: 'publish', log };
+  }
+
+  // If already in layout panel, skip 一键排版
+  if (!hasNext() && !hasTemplates()) {
+    const layoutBtn = Array.from(document.querySelectorAll('button')).find((b) => {
+      const t = (b.innerText || '').trim();
+      return t === '一键排版' && visible(b);
+    });
+    if (!layoutBtn) {
+      return { ok: false, message: '一键排版 button not found', stage: 'compose', log };
+    }
+    try { layoutBtn.scrollIntoView({ block: 'center' }); } catch (_) {}
+    layoutBtn.click();
+    log.push('clicked:一键排版');
+  }
+
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    if (hasNext() || hasTemplates()) break;
+    if (onPublish()) break;
+    await sleep(800);
+  }
+  if (!hasNext() && !hasTemplates() && !onPublish()) {
+    return {
+      ok: false,
+      message: 'layout panel did not appear (waited for 下一步/模板)',
+      waitedMs: Date.now() - t0,
+      log,
+    };
+  }
+  log.push('layout-ready:' + (Date.now() - t0) + 'ms');
+
+  if (onPublish()) {
+    return { ok: true, message: 'reached publish', stage: 'publish', log };
+  }
+
+  // Pick template if list visible
+  if (hasTemplates()) {
+    const names = [templatePrefer, '简约基础', '清晰明朗', '文艺清新', '优雅几何'];
+    let picked = null;
+    for (const name of names) {
+      const el = Array.from(document.querySelectorAll('div,span,li,button')).find((n) => {
+        const t = (n.innerText || '').trim();
+        if (t !== name) return false;
+        const r = n.getBoundingClientRect();
+        return r.width > 20 && r.height > 10;
+      });
+      if (el) {
+        try { el.scrollIntoView({ block: 'nearest' }); } catch (_) {}
+        el.click();
+        picked = name;
+        log.push('template:' + name);
+        await sleep(900);
+        break;
+      }
+    }
+    if (!picked) log.push('template:none');
+  }
+
+  // Click 下一步 (may need twice if still on layout)
+  for (let i = 0; i < 3; i++) {
+    if (onPublish()) break;
+    const next = Array.from(document.querySelectorAll('button')).find((b) => {
+      return (b.innerText || '').trim() === '下一步' && visible(b);
+    });
+    if (!next) break;
+    try { next.scrollIntoView({ block: 'center' }); } catch (_) {}
+    next.click();
+    log.push('clicked:下一步#' + (i + 1));
+    await sleep(2200);
+  }
+
+  const t1 = Date.now();
+  while (Date.now() - t1 < 12000) {
+    if (onPublish()) {
+      return { ok: true, message: 'layout → publish ok', stage: 'publish', log };
+    }
+    await sleep(500);
+  }
+  return {
+    ok: hasNext() ? false : onPublish(),
+    message: onPublish() ? 'layout → publish ok' : 'still not on publish page',
+    stage: onPublish() ? 'publish' : hasNext() ? 'layout' : 'unknown',
+    log,
+  };
+})`;
+
+/**
+ * Universal page analyzer — stamp data-spark-ref + classify primitives + required markers.
+ * Returns AnalyzedPage-compatible JSON.
+ */
+export const ANALYZE_PAGE_SCRIPT = `(() => {
+  const visible = (el) => {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return false;
+    const st = window.getComputedStyle(el);
+    if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) === 0) return false;
+    return true;
+  };
+  const isFile = (el) => el.tagName === 'INPUT' && String(el.type || '').toLowerCase() === 'file';
+  const textOf = (el) => String(el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+  const nearLabel = (el) => {
+    const id = el.getAttribute('id');
+    if (id) {
+      try {
+        const lab = document.querySelector('label[for="' + CSS.escape(id) + '"]');
+        if (lab) return textOf(lab).slice(0, 80);
+      } catch (_) {}
+    }
+    const wrap = el.closest('label, .form-item, .ant-form-item, .el-form-item, [class*="form-item"], [class*="field"]');
+    if (wrap) {
+      const t = textOf(wrap).slice(0, 80);
+      if (t && t.length < 60) return t;
+      const lab = wrap.querySelector('label, .label, [class*="label"]');
+      if (lab) return textOf(lab).slice(0, 80);
+    }
+    const prev = el.previousElementSibling;
+    if (prev) {
+      const t = textOf(prev).slice(0, 40);
+      if (t && t.length < 30) return t;
+    }
+    return (el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('name') || '').slice(0, 80);
+  };
+  const colorLooksRed = (c) => {
+    const s = String(c || '').toLowerCase();
+    if (!s || s === 'transparent' || s.indexOf('rgba(0') === 0) return false;
+    const m = s.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/);
+    if (m) {
+      const r = Number(m[1]), g = Number(m[2]), b = Number(m[3]);
+      return r > 150 && g < 120 && b < 120;
+    }
+    return /red|#f00|#ff0000|#e74|#c00|#ff4d|#f522|#fa4|#d32/.test(s);
+  };
+  const detectRequired = (el) => {
+    if (el.required || el.getAttribute('aria-required') === 'true') {
+      return { required: true, marker: el.required ? 'html_required' : 'aria-required' };
+    }
+    const scope = el.closest('label, .form-item, .ant-form-item, .el-form-item, [class*="form-item"], [class*="field"]') || el.parentElement;
+    if (!scope) return { required: false, marker: null };
+    const starNodes = Array.from(scope.querySelectorAll('*')).filter((n) => {
+      const t = (n.childNodes.length <= 2 ? (n.textContent || '') : '').trim();
+      return t === '*' || t === '＊' || t === '必填';
+    }).slice(0, 6);
+    for (const n of starNodes) {
+      const c = window.getComputedStyle(n).color;
+      if (colorLooksRed(c)) return { required: true, marker: 'asterisk_red' };
+      return { required: true, marker: 'asterisk' };
+    }
+    // pseudo-elements
+    try {
+      for (const n of [scope, ...Array.from(scope.querySelectorAll('label, span, i, em')).slice(0, 20)]) {
+        for (const pseudo of ['::before', '::after']) {
+          const cs = window.getComputedStyle(n, pseudo);
+          const content = String(cs.content || '').replace(/["']/g, '');
+          if (content === '*' || content === '＊') {
+            if (colorLooksRed(cs.color)) return { required: true, marker: 'pseudo_asterisk_red' };
+            return { required: true, marker: 'pseudo_asterisk' };
+          }
+        }
+      }
+    } catch (_) {}
+    const cls = String(scope.className || '') + ' ' + String(el.className || '');
+    if (/required|必填|is-required/.test(cls)) return { required: true, marker: 'class_required' };
+    return { required: false, marker: null };
+  };
+  const classify = (el) => {
+    const tag = el.tagName.toLowerCase();
+    const type = String(el.getAttribute('type') || el.type || '').toLowerCase();
+    const role = (el.getAttribute('role') || '').toLowerCase();
+    const ph = (el.getAttribute('placeholder') || '') + ' ' + nearLabel(el);
+    if (tag === 'input') {
+      if (type === 'password') return 'password';
+      if (type === 'number') return 'number_input';
+      if (type === 'search') return 'search';
+      if (type === 'date' || type === 'datetime-local') return 'date_input';
+      if (type === 'checkbox') return 'checkbox';
+      if (type === 'radio') return 'radio';
+      if (type === 'file') return 'file_upload';
+      if (type === 'hidden') return null;
+      if (/话题|标签|tag|topic|#/.test(ph) || /topic-btn|tag-input/.test(String(el.className || ''))) return 'tag_input';
+      return 'text_input';
+    }
+    if (tag === 'textarea') {
+      if (/话题|标签|tag|topic/.test(ph)) return 'tag_input';
+      return 'text_input';
+    }
+    if (el.isContentEditable || el.getAttribute('contenteditable') === 'true') return 'rich_text';
+    if (tag === 'select' || role === 'listbox' || role === 'combobox') return 'select';
+    if (role === 'switch' || /switch|toggle/.test(String(el.className || ''))) return 'toggle';
+    if (tag === 'button' || role === 'button' || (tag === 'a' && role === 'button')) return 'button';
+    if (tag === 'a') return 'link';
+    return 'unknown';
+  };
+  const currentValue = (el, prim) => {
+    if (prim === 'rich_text') return String(el.innerText || '').trim().slice(0, 200);
+    if (prim === 'checkbox' || prim === 'radio' || prim === 'toggle') return el.checked ? 'true' : 'false';
+    if (prim === 'file_upload') return el.files && el.files.length ? String(el.files.length) : '';
+    return String(el.value || '').slice(0, 200);
+  };
+  const buttonAction = (label) => {
+    const t = label.replace(/\\s+/g, '');
+    if (/发布|提交|确认发布|Post|Tweet|Publish|Submit/i.test(t) && !/发布笔记|定时发布/.test(t)) return 'submit';
+    if (/暂存|存草稿|草稿|Save draft|Draft/i.test(t)) return 'save_draft';
+    if (/下一步|继续|Next|Continue/i.test(t)) return 'next';
+    if (/取消|关闭|返回|Cancel|Close|Back/i.test(t)) return 'cancel';
+    return 'other';
+  };
+  const pageType = () => {
+    const t = (document.body && document.body.innerText || '').slice(0, 1500);
+    const u = location.href;
+    if (/upload.*video|上传图文|写长文|上传视频/.test(t) && /publish|creator/.test(u)) return 'chooser';
+    if (/发布|Publish|Tweet|发帖|一键排版|话题/.test(t) || /publish|compose|editor/.test(u)) return 'publish';
+    if (document.querySelectorAll('input,textarea,[contenteditable=true]').length >= 3) return 'form';
+    if (document.querySelectorAll('table, [class*=list], [class*=feed]').length >= 2) return 'list';
+    return 'custom';
+  };
+
+  // Clear old refs then stamp
+  document.querySelectorAll('[data-spark-ref]').forEach((el) => el.removeAttribute('data-spark-ref'));
+  const candidates = Array.from(document.querySelectorAll(
+    'a,button,input,textarea,select,[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="textbox"],[role="combobox"],[role="switch"],[contenteditable="true"],.tiptap.ProseMirror'
+  ));
+  const fields = [];
+  const buttons = [];
+  let idx = 0;
+  for (const el of candidates) {
+    const prim = classify(el);
+    if (!prim) continue;
+    const allowHiddenFile = prim === 'file_upload';
+    if (!allowHiddenFile && !visible(el)) continue;
+    if (prim === 'unknown' && el.tagName !== 'A') continue;
+    idx += 1;
+    const ref = 'e' + idx;
+    el.setAttribute('data-spark-ref', ref);
+    const label = nearLabel(el) || textOf(el).slice(0, 40) || prim;
+    const req = detectRequired(el);
+    const ph = el.getAttribute('placeholder') || '';
+    const maxLen = el.getAttribute('maxlength') ? Number(el.getAttribute('maxlength')) : null;
+    if (prim === 'button' || prim === 'link') {
+      const lab = textOf(el).slice(0, 40) || label;
+      if (!lab) continue;
+      buttons.push({
+        ref,
+        label: lab,
+        action: buttonAction(lab),
+        disabled: Boolean(el.disabled),
+      });
+      continue;
+    }
+    const field = {
+      ref,
+      primitive: prim,
+      label: label.slice(0, 80),
+      required: req.required,
+      required_marker: req.marker,
+      placeholder: ph.slice(0, 80),
+      max_length: maxLen,
+      current_value: currentValue(el, prim),
+      tag: el.tagName.toLowerCase(),
+      type: String(el.type || ''),
+      name: String(el.getAttribute('name') || el.getAttribute('id') || '').slice(0, 60),
+      selector: el.tagName.toLowerCase() + (el.className && typeof el.className === 'string' ? '.' + el.className.trim().split(/\\s+/).slice(0, 2).join('.') : ''),
+      disabled: Boolean(el.disabled),
+    };
+    // Better labels for anonymous rich text / title heuristics
+    if (prim === 'rich_text' && (!field.label || field.label === 'rich_text')) {
+      field.label = '正文';
+    }
+    if (prim === 'text_input' && /标题|title/i.test(field.placeholder) && (!field.label || field.label.length < 2)) {
+      field.label = '标题';
+    }
+    // Heuristic: title/正文 on publish pages often required even without star
+    if (!field.required && /标题|title|正文|内容|content|描述|简介/i.test(field.label + field.placeholder)) {
+      field.required = true;
+      field.required_marker = field.required_marker || 'label_heuristic';
+    }
+    fields.push(field);
+  }
+
+  // Suggested tags on page
+  const tagHints = [];
+  const bodyText = (document.body && document.body.innerText) || '';
+  const tagMatches = bodyText.match(/#[\\w\\u4e00-\\u9fff]{2,20}/g) || [];
+  for (const t of tagMatches.slice(0, 12)) {
+    if (!tagHints.includes(t)) tagHints.push(t);
+  }
+  for (const f of fields) {
+    if (f.primitive === 'tag_input' && tagHints.length) f.suggested_tags = tagHints.slice(0, 8);
+  }
+
+  const alerts = [];
+  document.querySelectorAll('[class*=toast],[class*=message],[class*=alert],[role=alert]').forEach((el) => {
+    if (!visible(el)) return;
+    const m = textOf(el).slice(0, 120);
+    if (m) alerts.push({ type: /错误|失败|error/i.test(m) ? 'error' : 'toast', message: m });
+  });
+
+  const required_fields = fields.filter((f) => f.required);
+  const optional_fields = fields.filter((f) => !f.required);
+  let host = '';
+  try { host = location.hostname; } catch (_) {}
+  return {
+    ok: true,
+    url: location.href,
+    title: document.title || '',
+    host,
+    page_type: pageType(),
+    required_fields,
+    optional_fields,
+    buttons: buttons.slice(0, 40),
+    alerts: alerts.slice(0, 10),
+    field_count: fields.length,
+    capturedAt: new Date().toISOString(),
+  };
+})()`;
+
+/** Read field value by data-spark-ref for mini-QA */
+export const FIELD_VALUE_SCRIPT = `(function(ref){
+  const el = document.querySelector('[data-spark-ref="' + ref + '"]');
+  if (!el) return { ok: false, message: 'ref not found' };
+  const ce = el.isContentEditable || el.getAttribute('contenteditable') === 'true';
+  if (ce) return { ok: true, kind: 'contenteditable', value: String(el.innerText || '').trim() };
+  if (el.tagName === 'INPUT' && (el.type === 'checkbox' || el.type === 'radio')) {
+    return { ok: true, kind: el.type, value: el.checked ? 'true' : 'false' };
+  }
+  if (el.tagName === 'INPUT' && el.type === 'file') {
+    return { ok: true, kind: 'file', value: String(el.files ? el.files.length : 0) };
+  }
+  return { ok: true, kind: (el.tagName || '').toLowerCase(), value: String(el.value || '') };
+})`;
+
+

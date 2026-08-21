@@ -16,7 +16,8 @@ export function createToolHandlers(browser: SparkBrowser) {
       clickTool(browser, target),
     fill: (target: { ref?: string; selector?: string }, value: string) =>
       fillTool(browser, target, value),
-    execute: (script: string) => browser.execute(script),
+    execute: (script: string, opts?: { frame?: number | string }) =>
+      browser.execute(script, opts),
     select: (target: { ref?: string; selector?: string }, value: string) =>
       browser.select(target, value),
     upload: (target: { ref?: string; selector?: string }, files: string[]) =>
@@ -32,8 +33,49 @@ export function createToolHandlers(browser: SparkBrowser) {
     start_recording: (meta?: { platform?: string; task?: string }) =>
       browser.startRecording(meta),
     stop_recording: (title?: string) => browser.stopRecording(title),
-    list_skills: () => browser.listSkillsTool(),
-    new_tab: (url?: string) => browser.newTab(url),
+  list_skills: () => browser.listSkillsTool(),
+  get_skill: (id: string) => browser.getSkillTool(id),
+  match_skill: (query: string) => browser.matchSkillTool(query),
+  run_skill: (input: {
+    id?: string;
+    query?: string;
+    params?: Record<string, unknown>;
+    dryRun?: boolean;
+  }) => browser.runSkillTool(input),
+  sparo_info: () => browser.sparoInfoTool(),
+  xhs_scroll_bottom: () => browser.xhsScrollBottom(),
+  xhs_add_topics: (topics: string[]) => browser.xhsAddTopics(topics),
+  xhs_pick_cover: () => browser.xhsPickCover(),
+  xhs_click_publish: () => browser.xhsClickPublish(),
+  xhs_ensure_editor: () => browser.xhsEnsureEditor(),
+  xhs_page_stage: () => browser.xhsPageStage(),
+  xhs_inject_compose: (input: {
+    title?: string;
+    body?: string;
+    force?: boolean;
+  }) => browser.xhsInjectCompose(input),
+  xhs_inject_publish: (input: { summary?: string; topics?: string[] }) =>
+    browser.xhsInjectPublish(input),
+  xhs_layout_next: (input?: { template?: string; timeoutMs?: number }) =>
+    browser.xhsLayoutNext(input),
+  screenshot: (label?: string) => browser.screenshot(label),
+  diagnose: (label?: string) => browser.diagnose(label),
+  save_sessions: (siteIds?: string[]) => browser.saveSessions(siteIds),
+  list_sessions: () => browser.listSessions(),
+  analyze_page: () => browser.analyzePage(),
+  execute_primitives: (input: {
+    payload: Record<string, unknown>;
+    url?: string;
+    includeOptional?: boolean;
+    maxAttempts?: number;
+  }) => browser.executePrimitives(input),
+  cs_scan: () => browser.csScan(),
+  cs_draft_reply: (input?: {
+    draft?: string;
+    fill?: boolean;
+    preferLlm?: boolean;
+  }) => browser.csDraftReply(input),
+  new_tab: (url?: string) => browser.newTab(url),
     close_tab: (id: string) => browser.closeTab(id),
     switch_tab: (id: string) => browser.switchTab(id),
     list_tabs: async () => ({
@@ -48,6 +90,7 @@ export function createToolHandlers(browser: SparkBrowser) {
       text?: string;
       ref?: string;
       timeoutMs?: number;
+      all?: boolean;
     }) => browser.waitFor(input),
     qa_check: () => browser.qaCheck(),
     qa_gate: () => browser.qaGate(),

@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
+import { app } from "electron";
 
 export type SkillStep = {
   i?: number;
@@ -9,6 +10,10 @@ export type SkillStep = {
   text?: string;
   value?: string;
   url?: string;
+  cssPath?: string;
+  innerText?: string;
+  ariaLabel?: string;
+  placeholder?: string;
   elapsed_ms?: number;
   ts?: string;
   bounds?: { x: number; y: number; w: number; h: number };
@@ -142,4 +147,72 @@ export function skillSummary(skill: Skill): {
     enabled: skill.enabled,
     url: skill.url,
   };
+}
+
+/**
+ * Copy bundled strategies/skills/*.json into %APPDATA%/sparo/skills.
+ * Overwrites seeded skills when bundled version is newer (by updatedAt / version).
+ * Never touches source:"taught" user recordings with the same id unless missing.
+ */
+export function seedBundledSkills(configDir: string): { seeded: string[] } {
+  const dir = ensureDir(configDir);
+  const candidates: string[] = [];
+  try {
+    candidates.push(join(app.getAppPath(), "strategies", "skills"));
+  } catch {
+    /* not in electron yet */
+  }
+  candidates.push(
+    join(__dirname, "../../../strategies/skills"),
+    join(process.cwd(), "strategies", "skills"),
+  );
+  const srcDir = candidates.find((p) => existsSync(p));
+  if (!srcDir) return { seeded: [] };
+
+  const seeded: string[] = [];
+  for (const f of readdirSync(srcDir).filter(
+    (x) => x.endsWith(".json") && !x.startsWith("_"),
+  )) {
+    const src = join(srcDir, f);
+    let bundled: Skill & { version?: number; distilled?: boolean };
+    try {
+      bundled = JSON.parse(readFileSync(src, "utf8")) as typeof bundled;
+    } catch {
+      continue;
+    }
+    if (!bundled?.id) continue;
+    const dest = skillPath(configDir, bundled.id);
+    if (existsSync(dest)) {
+      try {
+        const existing = JSON.parse(readFileSync(dest, "utf8")) as Skill & {
+          version?: number;
+        };
+        if (existing.source === "taught") continue;
+        const bv = Number(bundled.version || 0);
+        const ev = Number(existing.version || 0);
+        if (ev > bv) continue;
+        if (
+          ev === bv &&
+          (existing.updatedAt || "") >= (bundled.updatedAt || "")
+        ) {
+          continue;
+        }
+      } catch {
+        /* replace corrupt */
+      }
+    }
+    const next: Skill = {
+      ...bundled,
+      source: "seeded",
+      stepCount: bundled.steps?.length || bundled.stepCount || 0,
+      stats: bundled.stats || { success: 0, fail: 0 },
+      enabled: bundled.enabled !== false,
+      createdAt: bundled.createdAt || new Date().toISOString(),
+      updatedAt: bundled.updatedAt || new Date().toISOString(),
+      intent: bundled.intent || bundled.title,
+    };
+    writeFileSync(dest, JSON.stringify(next, null, 2), "utf8");
+    seeded.push(bundled.id);
+  }
+  return { seeded };
 }

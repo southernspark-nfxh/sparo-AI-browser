@@ -20,6 +20,9 @@ export type AgentToolName =
   | "start_recording"
   | "stop_recording"
   | "list_skills"
+  | "get_skill"
+  | "match_skill"
+  | "run_skill"
   | "list_workflows"
   | "run_workflow";
 
@@ -205,8 +208,51 @@ const TOOLS = [
     type: "function",
     function: {
       name: "list_skills",
-      description: "List saved skills",
+      description: "List saved 妙招 (skills)",
       parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "match_skill",
+      description: "Match user intent to a saved skill (e.g. 发小红书)",
+      parameters: {
+        type: "object",
+        properties: { query: { type: "string" } },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_skill",
+      description: "Get full skill steps by id or query",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          query: { type: "string" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "run_skill",
+      description:
+        "FAST PATH: run a saved 妙招 end-to-end in the shared browser. Prefer this over manual click/fill for known flows (小红书发布, etc). Pass id or query; optional params.title/body/topics/mdPath.",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          query: { type: "string" },
+          params: { type: "object" },
+          dryRun: { type: "boolean" },
+        },
+      },
     },
   },
   ...(dxmEnabled()
@@ -235,17 +281,26 @@ const TOOLS = [
     : ([] as const)),
 ];
 
-function systemPrompt(ctx: { url: string; title: string }): string {
+function systemPrompt(ctx: {
+  url: string;
+  title: string;
+  skills?: string;
+}): string {
   const lines = [
     "You are Sparo Agent Browser's built-in agent: you share the Chromium window with the user. You act; the user reviews. Humans stay in control.",
     "Prefer tools over talk. No feature brochure, no customer-service filler, no menu lists.",
-    "Never auto-save, claim, submit, or publish without explicit user approval.",
+    "SKILL FIRST: for known flows (小红书发文/长文发布等) call run_skill immediately. Use match_skill if unsure. Do not reinvent multi-step click sequences when a skill exists.",
+    "XHS CONTENT RULE: NEVER fill title/body character-by-character or loop fill. Pass pre-baked text into xhs_inject_compose / xhs_inject_publish (or run_skill params). AI only detects stage (xhs_page_stage) and clicks 下一步/一键排版.",
+    "Never auto-save, claim, submit, or publish without explicit user approval. Skills pause before publish.",
     `Current page: ${ctx.title || "—"}`,
     `URL: ${ctx.url || "about:blank"}`,
   ];
+  if (ctx.skills) {
+    lines.push(`Saved skills:\n${ctx.skills}`);
+  }
   if (dxmEnabled()) {
     lines.splice(
-      2,
+      3,
       0,
       "Optional Dianxiaomi vertical tools may be available (list_workflows / run_workflow / qa_check).",
     );
@@ -275,7 +330,7 @@ export class DeepSeekAgentProvider {
 
   async chat(
     input: string,
-    ctx: { url: string; title: string },
+    ctx: { url: string; title: string; skills?: string },
   ): Promise<string> {
     if (!this.config.apiKey) {
       return "No API key. Save one in the sidebar (DeepSeek / OpenAI-compatible), or set SPARO_API_KEY.";

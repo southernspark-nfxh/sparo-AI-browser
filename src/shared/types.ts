@@ -12,8 +12,10 @@ export interface SnapshotElement {
   placeholder?: string;
   href?: string;
   selector: string;
-  /** Present when element lives in a same-origin iframe (e.g. iframe#cke_1) */
+  /** Present when element lives in a same-origin iframe (e.g. iframe#cke_1) or CDP cross-origin frame (`cdp:<frameId>`) */
   frame?: string;
+  /** True when collected via CDP from a cross-origin iframe */
+  crossOrigin?: boolean;
   /** True when inside a dialog/modal container */
   inDialog?: boolean;
   /** True when inside Ant Design / Element portal dropdown */
@@ -27,6 +29,16 @@ export interface PageSnapshot {
   title: string;
   elements: SnapshotElement[];
   iframeCount?: number;
+  /** Top-level iframe layout boxes (same-origin flag) for CDP merge */
+  iframeMeta?: Array<{
+    index: number;
+    src: string;
+    sameOrigin: boolean;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  }>;
   portalCount?: number;
   portalItems?: Array<{ ref: string; name: string }>;
   capturedAt: string;

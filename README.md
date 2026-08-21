@@ -74,12 +74,14 @@ Most stacks pick one extreme: either a normal Chrome you drive awkwardly, or a h
    **MCP 浏览器 API** — 导航、快照、点击、填写、标签、暂停、审批…  
    See [MCP API Reference](./docs/MCP-API.md) for all tools and parameters.  
    详见 [MCP API 参考](./docs/MCP-API.md)。  
+   **Publishing / 发小红书:** [PUBLISHING.md](./docs/PUBLISHING.md) — AI detects stage; scripts inject content once.  
+   **发帖指南：** [PUBLISHING.md](./docs/PUBLISHING.md) — AI 认阶段，脚本一次投递标题/正文。  
 3. **Multi-agent compatibility** — plug OpenClaw / Hermes / Workbuddy / Codex / your own loop.  
    **多 Agent 兼容** — 龙虾、Hermes、Workbuddy、Codex 或自研循环皆可。  
 4. **Human override** — Pause freezes the agent; Approval gates risky submits.  
    **人类否决权** — 暂停即停手；高风险提交先审批。  
-5. **Skills (teach once)** — record a successful flow and reuse it.  
-   **妙招（教一遍）** — 录制成功流程并复用。  
+5. **Skills (teach once)** — record a flow, or use inject skills (`run_skill` / `xhs_inject_*`).  
+   **妙招（教一遍）** — 录制复用；发布优先脚本投递。见 [`strategies/skills/README.md`](./strategies/skills/README.md)。  
 6. **Local & private** — runs on your machine; API keys stay local; never shipped in the repo.  
    **本地私有** — 本机运行；密钥不进仓库。  
 7. **Extensible platform** — general automation today; optional vertical modules (e.g. e-commerce auto-listing) tomorrow.  
@@ -139,7 +141,7 @@ Sparo 是「手」。你的 Agent 是「脑」。
 3. Register Sparo as MCP in OpenClaw / Hermes / Workbuddy / Codex / Cursor / Claude Code.  
 4. Give the agent a goal; use **Pause** when you want the mouse back.  
 
-See · 详见 [`docs/AGENTS.md`](./docs/AGENTS.md) · [`docs/MCP-API.md`](./docs/MCP-API.md) · [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)
+See · 详见 [`docs/AGENTS.md`](./docs/AGENTS.md) · [`docs/PUBLISHING.md`](./docs/PUBLISHING.md) · [`docs/MCP-API.md`](./docs/MCP-API.md) · [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)
 
 ### MCP tools · 工具（节选）
 

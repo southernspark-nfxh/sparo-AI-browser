@@ -7,6 +7,8 @@ Source of truth: `src/main/tools/index.ts` + `src/main/mcp-server.ts` (v0.1.0).
 Default endpoint: `http://127.0.0.1:3920/mcp` (override with `SPARO_MCP_PORT`).  
 Auth: Bearer token from `%APPDATA%/sparo/mcp-auth.json` (written on Sparo start).
 
+**Publishing playbook (Xiaohongshu + other sites):** [`PUBLISHING.md`](./PUBLISHING.md) — read before inventing fill loops.
+
 Unless noted, tools return a JSON `ToolResult`-shaped payload inside MCP text content:
 
 ```json
@@ -45,10 +47,12 @@ Refs from `snapshot` expire after navigation or major DOM changes — **re-snaps
 
 ## Page perception
 
-- `snapshot(selector?)` → interactive elements with **refs** (e.g. `e3`); optional filter substring
-- `page_text()` → slice of visible `document.body.innerText`
+- `snapshot(selector?)` → interactive elements with **refs** (e.g. `e3`, `f0.e1` same-origin iframe, `x0.e1` cross-origin CDP frame); optional filter substring
+- `page_text()` → slice of visible text (main frame + CDP iframe text when available)
 - `contains_text(text)` → whether visible body text contains the needle
 - `wait_for({ selector?, text?, ref?, timeoutMs? })` → wait until DOM condition (page readiness, **not** human approval)
+
+> Cross-origin editors (Xiaohongshu / Feishu / Notion): run `snapshot` first, then `click`/`fill`/`execute` using `x{i}.*` refs (or `execute` with `frame`).
 
 ---
 
@@ -58,9 +62,9 @@ Refs from `snapshot` expire after navigation or major DOM changes — **re-snaps
 - `fill({ ref?, selector? }, value)` → fill input/textarea/contenteditable; verify `data.matched` when present
 - `select({ ref?, selector? }, value)` → native `<select>` or combobox option by label/value
 - `upload({ ref?, selector? }, files[])` → set `input[type=file]` via CDP; **absolute** local paths
-- `click_text(text, { exact?, withinPortal?, caret? })` → trusted click by visible text; use `withinPortal` for Ant Design / Element menus
+- `click_text(text, { exact?, withinPortal?, caret? })` → trusted click by visible text (NFKC; portals + same-origin iframes + CDP frames)
 - `menu_click(trigger, item)` → open dropdown by trigger text, then click menu item text
-- `execute(script)` → run JS in the page; JSON-serializable return value
+- `execute(script, { frame? })` → run JS in page; `frame: 0` / `"x0"` for cross-origin CDP iframe from snapshot
 
 ---
 
@@ -90,9 +94,27 @@ Still registered on the MCP surface; most useful when DXM pages / flag are in pl
 
 ## Skills（妙招）
 
-- `start_recording({ platform?, task? })` → start recording human click/fill/change
-- `stop_recording(title?)` → stop, save trace, create a named skill
 - `list_skills()` → list saved skills
+- `match_skill(query)` → rank skills for a natural-language goal (e.g. `发小红书`)
+- `get_skill(id|query)` → full skill steps + params
+- `run_skill({ id?, query?, params?, dryRun? })` → **execute** the skill in the shared window  
+  - Prefer this over hand-rolled click/fill sequences when a skill exists  
+  - Xiaohongshu: `run_skill({ query: "发小红书" })` — **call immediately**, do not explore first  
+  - Title control is `textarea.d-text` (also accept `input.d-text`); topics use overlay `#d-overlay-root`  
+  - Optional `params`: `{ title, body, topics, mdPath, autoPublish }`  
+  - Default pauses before publish; `autoPublish: true` clicks content-area 发布 (not sidebar)  
+- `start_recording({ platform?, task? })` → start recording human click/fill/change  
+- `stop_recording(title?)` → stop, save trace, create a named skill  
+
+- `xhs_page_stage()` → detect chooser | compose | publish (AI routing only)  
+- `xhs_inject_compose({ title, body, force? })` → **atomic** clear+write title/body once — prefer over `fill`  
+- `xhs_inject_publish({ summary?, topics? })` → **atomic** summary + topics on publish page  
+- `xhs_ensure_editor` → 写长文 → 新的创作 → **空白创作**  
+- `xhs_scroll_bottom` / `xhs_pick_cover` / `xhs_click_publish`  
+- `screenshot` / `diagnose`  
+
+**Product rule:** AI detects stage and clicks; scripts deliver pre-baked content. Do not loop `fill` on title/body.  
+`run_skill({ query: "发小红书", params: { title, body, summary, topics } })` is the preferred path.
 
 ---
 
@@ -118,3 +140,13 @@ Require `SPARO_ENABLE_DXM=1`. Otherwise treat as disabled / empty in public Spar
 ```
 
 For Ant Design dropdowns: prefer `menu_click(trigger, item)` or `click` once + `list_portals` — do not double-click the trigger.
+
+## Unicode / Chinese agents
+
+MCP HTTP expects **UTF-8 JSON**. Prefer Node clients:
+
+```bash
+node scripts/call-mcp.mjs tools/call click_text "{\"text\":\"写长文\"}"
+```
+
+Avoid PowerShell string literals for Chinese args (console code page corrupts them). Connect agents directly to `http://127.0.0.1:3920/mcp` with UTF-8 bodies.

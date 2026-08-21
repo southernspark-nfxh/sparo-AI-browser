@@ -1,0 +1,40 @@
+{
+  "id": "xhs-longform-compose",
+  "title": "小红书长文草稿：ensure_editor → inject_compose（停在编辑页）",
+  "platform": "xiaohongshu-creator",
+  "version": 2,
+  "aliases": ["小红书草稿", "小红书填文", "compose长文"],
+  "createdAt": "2026-08-09T11:02:37.469Z",
+  "updatedAt": "2026-08-09T15:00:00.000Z",
+  "notes": [
+    "Prefer xhs-longform-publish for full flow to publish page.",
+    "Title: textarea.d-text (or input.d-text); Body: .tiptap.ProseMirror.",
+    "Use xhs_inject_compose — do NOT loop fill."
+  ],
+  "params": {
+    "title": { "type": "string", "required": true },
+    "body": { "type": "string", "required": true },
+    "mdPath": { "type": "string", "optional": true }
+  },
+  "steps": [
+    {
+      "tool": "navigate",
+      "args": {
+        "url": "https://creator.xiaohongshu.com/publish/publish?target=article"
+      }
+    },
+    { "tool": "xhs_ensure_editor", "args": {} },
+    {
+      "tool": "xhs_inject_compose",
+      "args": { "title": "{{title}}", "body": "{{body}}", "force": true }
+    },
+    {
+      "tool": "pause",
+      "hint": "草稿已注入。人审后继续；完整发布用 skill xhs-longform-publish"
+    }
+  ],
+  "agentPlaybook": [
+    "For 发小红书 use xhs-longform-publish / run_skill query 发小红书",
+    "This skill only injects compose fields then pauses"
+  ]
+}

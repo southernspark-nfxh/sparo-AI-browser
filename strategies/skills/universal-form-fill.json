@@ -1,0 +1,47 @@
+{
+  "id": "universal-form-fill",
+  "title": "通用填表：analyze_page → execute_primitives",
+  "platform": "any",
+  "version": 1,
+  "distilled": true,
+  "aliases": [
+    "通用填表",
+    "自动填表",
+    "填表单",
+    "fill form",
+    "execute_primitives",
+    "analyze_page填表"
+  ],
+  "createdAt": "2026-08-11T12:00:00.000Z",
+  "updatedAt": "2026-08-11T12:00:00.000Z",
+  "intent": "未知站点或多字段表单：先分析题型再按 payload 一次填入",
+  "notes": [
+    "Prefer site-specific skills (xhs-*) when they match.",
+    "Pass params.payload as { 标题, 正文, … } or flat Chinese label keys.",
+    "Do NOT loop fill/click for multi-field forms."
+  ],
+  "params": {
+    "payload": {
+      "type": "object",
+      "required": true,
+      "example": { "标题": "示例", "正文": "内容", "搜索": "关键词" }
+    }
+  },
+  "steps": [
+    {
+      "tool": "analyze_page",
+      "optional": true,
+      "hint": "题型分析：字段/必填/按钮"
+    },
+    {
+      "tool": "execute_primitives",
+      "args": {},
+      "hint": "按 payload 模糊匹配并填入 + mini-QA"
+    }
+  ],
+  "agentPlaybook": [
+    "Unknown form: run_skill({ query:'通用填表', params:{ payload:{…} } })",
+    "Or call analyze_page then execute_primitives directly",
+    "Xiaohongshu long-form: use xhs-longform-publish instead"
+  ]
+}

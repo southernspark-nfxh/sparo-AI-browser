@@ -11,11 +11,18 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint src --max-warnings 50",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "status": "node scripts/sparo.mjs status",
     "ensure": "node scripts/sparo.mjs ensure",
     "open": "node scripts/sparo.mjs open",
     "info": "node scripts/sparo.mjs info",
-    "accept": "node scripts/verify-human-shell.mjs"
+    "accept": "node scripts/verify-human-shell.mjs",
+    "accept:p0": "node scripts/accept-p0.mjs",
+    "accept:weibo": "node scripts/accept-weibo.mjs",
+    "accept:analyzer": "node scripts/accept-analyzer.mjs",
+    "accept:cs": "node scripts/accept-cs.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -26,9 +33,15 @@
   },
   "devDependencies": {
     "@types/node": "^22.15.21",
+    "@typescript-eslint/eslint-plugin": "^8.32.1",
+    "@typescript-eslint/parser": "^8.32.1",
     "electron": "^35.2.1",
     "electron-vite": "^3.1.0",
+    "eslint": "^9.27.0",
+    "eslint-config-prettier": "^10.1.5",
+    "prettier": "^3.5.3",
     "typescript": "^5.8.3",
-    "vite": "^6.3.5"
+    "vite": "^6.3.5",
+    "vitest": "^3.1.4"
   }
 }

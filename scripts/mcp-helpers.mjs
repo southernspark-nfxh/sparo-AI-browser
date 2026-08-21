@@ -80,11 +80,12 @@ async function mcpFetch(auth, body) {
   return postJson(
     auth.endpoint,
     {
-      "Content-Type": "application/json",
+      "Content-Type": "application/json; charset=utf-8",
       Accept: "application/json, text/event-stream",
       Authorization: `Bearer ${auth.token}`,
       "MCP-Protocol-Version": "2024-11-05",
     },
+    // JSON.stringify preserves Unicode; Buffer.byteLength counts UTF-8 bytes
     JSON.stringify(body),
   );
 }

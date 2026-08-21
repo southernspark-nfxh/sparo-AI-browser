@@ -21,6 +21,9 @@ contextBridge.exposeInMainWorld("sparkShell", {
     ipcRenderer.invoke("spark:resolve-approval", id, approved),
   runQa: () => ipcRenderer.invoke("spark:qa-check"),
   chat: (text: string) => ipcRenderer.invoke("spark:chat", text),
+  csScan: () => ipcRenderer.invoke("spark:cs-scan"),
+  csDraft: (opts?: { draft?: string; fill?: boolean }) =>
+    ipcRenderer.invoke("spark:cs-draft", opts),
   getSettings: () => ipcRenderer.invoke("spark:get-settings"),
   saveSettings: (patch: {
     provider?: string;
