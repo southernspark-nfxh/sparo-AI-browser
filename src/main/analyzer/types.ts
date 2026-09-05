@@ -11,6 +11,8 @@ export type PrimitiveKind =
   | "search"
   | "tag_input"
   | "date_input"
+  | "date_picker_button"
+  | "spinbutton"
   | "radio"
   | "checkbox"
   | "select"

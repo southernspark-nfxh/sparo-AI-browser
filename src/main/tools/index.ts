@@ -30,9 +30,6 @@ export function createToolHandlers(browser: SparkBrowser) {
       browser.menuClick(trigger, item),
     dismiss_overlays: () => browser.dismissOverlays(),
     list_portals: () => browser.listPortals(),
-    start_recording: (meta?: { platform?: string; task?: string }) =>
-      browser.startRecording(meta),
-    stop_recording: (title?: string) => browser.stopRecording(title),
   list_skills: () => browser.listSkillsTool(),
   get_skill: (id: string) => browser.getSkillTool(id),
   match_skill: (query: string) => browser.matchSkillTool(query),
@@ -69,12 +66,35 @@ export function createToolHandlers(browser: SparkBrowser) {
     includeOptional?: boolean;
     maxAttempts?: number;
   }) => browser.executePrimitives(input),
+  pick_calendar: (input: {
+    triggerRef?: string;
+    triggerText?: string;
+    triggerLabel?: string;
+    date?: string;
+    hours?: string | number;
+    minutes?: string | number;
+    dismiss?: "outside" | "escape";
+    value?: unknown;
+  }) => browser.pickCalendar(input),
   cs_scan: () => browser.csScan(),
   cs_draft_reply: (input?: {
     draft?: string;
     fill?: boolean;
     preferLlm?: boolean;
   }) => browser.csDraftReply(input),
+  cs_one_click_reply: () => browser.csOneClickReply(),
+  feishu_page_stage: () => browser.feishuPageStage(),
+  feishu_ensure_messenger: () => browser.feishuEnsureMessenger(),
+  feishu_open_chat: (input: { to?: string }) => browser.feishuOpenChat(input),
+  feishu_inject_chat: (input: { body?: string }) => browser.feishuInjectChat(input),
+  feishu_inject_journal: (input: { title?: string; body?: string }) =>
+    browser.feishuInjectJournal(input),
+  feishu_work: (input?: {
+    kind?: string;
+    to?: string;
+    title?: string;
+    body?: string;
+  }) => browser.feishuWork(input),
   new_tab: (url?: string) => browser.newTab(url),
     close_tab: (id: string) => browser.closeTab(id),
     switch_tab: (id: string) => browser.switchTab(id),
@@ -83,6 +103,7 @@ export function createToolHandlers(browser: SparkBrowser) {
       message: "tabs",
       data: browser.listTabs(),
     }),
+    discard_inactive_tabs: () => browser.discardInactiveTabs(),
     request_approval: (action: string, reason: string, risk?: string) =>
       browser.requestApproval({ action, reason, risk }),
     wait_for: (input: {

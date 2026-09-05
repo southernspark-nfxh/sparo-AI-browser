@@ -29,6 +29,16 @@ export default defineConfig({
   },
   renderer: {
     root: resolve(__dirname, "src/renderer"),
+    resolve: {
+      alias: {
+        "@shared": resolve(__dirname, "src/shared"),
+      },
+    },
+    server: {
+      fs: {
+        allow: [resolve(__dirname, "src")],
+      },
+    },
     build: {
       rollupOptions: {
         input: {

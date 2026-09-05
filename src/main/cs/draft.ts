@@ -42,11 +42,12 @@ export async function llmDraft(input: {
     .slice(-12)
     .map((m) => `${m.role}: ${m.text}`)
     .join("\n");
-  const system = `你是电商/B2B 客服助手。根据会话写一条简短中文回复草稿（2-5句）。
-规则：不承诺无法核实的价格/交期；不索要无关隐私；不自动下单；语气专业礼貌。
+  const system = `你是网页回复助手。根据当前页面的聊天记录或评论/留言，写一条即将填进回复框的中文草稿（2～5句）。
+场景可能是客服会话，也可能是帖子评论区。
+规则：贴合对方最后一句话；不承诺无法核实的价格/交期；不索要无关隐私；不下单；不假装已经发出。
 当前动机标签：${input.intent.label}（${input.intent.intent}）。
 ${input.persona ? `人设：${input.persona}` : ""}
-只输出回复正文，不要前缀标题。`;
+只输出回复正文，不要前缀标题，不要「草稿：」字样。`;
 
   try {
     const res = await fetch(`${baseUrl}/chat/completions`, {

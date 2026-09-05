@@ -1,0 +1,46 @@
+appId: com.sparo.work-browser
+productName: Sparo
+copyright: Copyright Sparo
+asar: true
+afterPack: scripts/after-pack-win-icon.cjs
+extraMetadata:
+  main: out/main/index.js
+directories:
+  output: release
+  buildResources: resources
+files:
+  - out/**/*
+  - resources/**/*
+  - strategies/skills/**/*
+  - package.json
+extraResources:
+  - from: resources/sparo-agent.cjs
+    to: sparo-agent.cjs
+win:
+  icon: resources/icon.ico
+  artifactName: Sparo-${version}-win.${ext}
+  # Skip Authenticode. Icon is stamped in afterPack (CJK paths break rcedit in-place).
+  signAndEditExecutable: false
+  target:
+    - nsis
+    - portable
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  allowElevation: true
+  perMachine: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Sparo
+  installerIcon: resources/icon.ico
+  uninstallerIcon: resources/icon.ico
+  include: scripts/installer.nsh
+  artifactName: Sparo-Setup.exe
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false
+  installerLanguages:
+    - zh_CN
+    - en_US
+portable:
+  artifactName: Sparo-Portable.exe
+  requestExecutionLevel: user

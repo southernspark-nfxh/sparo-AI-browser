@@ -5,13 +5,15 @@ import {
   dialog,
   app,
   ipcMain,
-  nativeImage,
+  session,
+  clipboard,
+  shell,
   type MenuItemConstructorOptions,
   type WebContents,
 } from "electron";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
+import { pathToFileURL } from "node:url";
 import { randomBytes } from "node:crypto";
 import type {
   ClickConfirm,
@@ -21,7 +23,80 @@ import type {
   SnapshotElement,
   ToolResult,
 } from "../shared/types.js";
-import { parseLocalIntent } from "./agent/stub.js";
+import { parseLocalIntent, type ChatAction } from "./agent/stub.js";
+import { planUserGoal, shouldAskPlanner } from "./agent/planner.js";
+import { missionProgress, missionSynthesizePrompt, type Mission } from "./agent/mission.js";
+import {
+  chromeUserAgent,
+  oauthPopupWindowOptions,
+  shouldAllowOauthPopup,
+} from "./oauth-popups.js";
+import {
+  connectAgent,
+  connectedStatus,
+  copyForAgent,
+  type AgentTarget,
+} from "./agent-connect.js";
+import { isContinueHint, readPageInstruction, sameSite } from "./agent/intent-router.js";
+import {
+  alreadyOnFeishuTask,
+  FEISHU_MESSENGER_URL,
+  feishuUrl,
+  isFeishuLoginUrl,
+  type FeishuTask,
+} from "./agent/feishu.js";
+import {
+  ctripHotelListUrl,
+  flightFallbackUrl,
+  lifeProgress,
+  resolveCtripHotelCity,
+  isFlightResultUrl,
+  shouldFallbackFlight,
+  travelListState,
+  travelReadPrompt,
+  travelResultUrl,
+  type TravelQuery,
+} from "./agent/travel.js";
+import {
+  expandTripPlan,
+  tripPlanProgress,
+  tripSynthesizePrompt,
+  type TripPlan,
+} from "./agent/trip-plan.js";
+import {
+  loadProfile,
+  profileBriefFor,
+  recordVisit,
+  saveIdentity,
+  clearProfile,
+  upsertDetectedAccount,
+} from "./profile/store.js";
+import {
+  recordVisit as recordHistoryVisit,
+  loadHistory,
+  clearHistory,
+} from "./history.js";
+import { uniqueDownloadPath } from "./downloads.js";
+import { loadChatMemory, saveChatMemory, clearChatMemory, type ChatTurn } from "./profile/chat-memory.js";
+import {
+  flightHintFromText,
+  formatFlightLinks,
+  formatHotelLinks,
+  readingReportHtml,
+  tripReportHtml,
+  writeHtmlReport,
+  type FlightLink,
+  type HotelLink,
+} from "./agent/report-html.js";
+import {
+  cloneEnv,
+  createEnv,
+  deleteEnv as deleteEnvConfig,
+  getEnv,
+  listEnvs,
+  saveEnv,
+} from "./envs/store.js";
+import { isProxyAvailable, start as startEnvProxy, stop as stopEnvProxy, stopAll as stopAllEnvProxy } from "./envs/singbox-runner.js";
 import {
   DeepSeekAgentProvider,
   type AgentToolName,
@@ -41,12 +116,26 @@ import {
   skillCatalog,
   resolveSkill,
 } from "./skills/runner.js";
+import { tx } from "../shared/i18n.js";
+import { storeConfigDir } from "./paths.js";
 import {
   loadSettings,
   saveSettings,
   settingsPublicView,
   type SparkSettings,
 } from "./settings/store.js";
+import { chatCompletionsUrl } from "./settings/llm-url.js";
+import { accountUrl, cloudApiBase, isMsftChannel } from "./cloud/config.js";
+import {
+  clearTokens,
+  fetchMe,
+  loadTokens,
+  sendLoginCode,
+  verifyLogin,
+  type QuotaSnap,
+} from "./cloud/auth.js";
+import { assertAndStartTask, settleCloudTask } from "./cloud/quota.js";
+import { cloudFetch, hasCloudSession } from "./cloud/session.js";
 import {
   dxmGuideMessage,
   isDxmEditPage,
@@ -80,6 +169,7 @@ import {
   DISMISS_OVERLAYS_SCRIPT,
   FILL_SCRIPT,
   FILL_SCRIPT_READ,
+  FIELD_VALUE_SCRIPT,
   FIND_FILE_INPUT_SCRIPT,
   FIND_OPTION_SCRIPT,
   FIND_TEXT_SCRIPT,
@@ -101,9 +191,22 @@ import {
   XHS_PICK_COVER_SCRIPT,
   XHS_SCROLL_BOTTOM_SCRIPT,
   ANALYZE_PAGE_SCRIPT,
+  CALENDAR_INSPECT_SCRIPT,
+  SET_SPIN_SCRIPT,
+  EXTRACT_HOTEL_LINKS_SCRIPT,
+  FIND_DEST_INPUT_SCRIPT,
+  PICK_SUGGEST_SCRIPT,
+  FEISHU_STAGE_SCRIPT,
+  FEISHU_OPEN_CHAT_SCRIPT,
+  FEISHU_INJECT_TEXT_SCRIPT,
 } from "./page-scripts.js";
 import { executePrimitivesOnBrowser } from "./analyzer/execute-primitives.js";
 import type { AnalyzedPage } from "./analyzer/types.js";
+import {
+  datetimeCommitted,
+  parseDatetimeValue,
+  twoDigit,
+} from "./analyzer/datetime.js";
 import { runCsDraft, runCsScan } from "./cs/service.js";
 import type { CsDraftData, CsScanData } from "./cs/types.js";
 import {
@@ -126,13 +229,35 @@ import {
 import { isMojibake, softFillMatch, sleep } from "./browser-helpers.js";
 import { attachPageContextMenu } from "./page-context-menu.js";
 
+/**
+ * Best-effort selectors for the logged-in user's display name on each site.
+ * A stale or wrong selector is harmless — detection just yields nothing.
+ */
+const ACCOUNT_USERNAME_SELECTOR: Record<string, string> = {
+  weibo: '[class*="gn_name"] , a[href*="/profile"] , .woo-box-row',
+  zhihu: '.AppHeader-userInfo .AppHeader-userName, .ProfileHeader-name',
+  xiaohongshu: '.user-info .name, .side-bar .user-name',
+};
+
+function accountSiteForHost(host: string): string | undefined {
+  for (const s of DEFAULT_SESSION_SITES) {
+    for (const d of s.domains) {
+      const dh = d.replace(/^\./, "").toLowerCase();
+      if (host === dh || host.endsWith("." + dh) || dh.endsWith("." + host)) return s.id;
+    }
+  }
+  return undefined;
+}
+
 function resolveAppIconPath(): string {
   const candidates = [
-    // electron-vite main publicDir (resources/)
     join(__dirname, "../../resources/icon.ico"),
     join(__dirname, "../../resources/icon.png"),
+    join(process.cwd(), "resources/icon.ico"),
+    join(process.cwd(), "resources/icon.png"),
     join(app.getAppPath(), "resources/icon.ico"),
     join(app.getAppPath(), "resources/icon.png"),
+    join(__dirname, "../../src/renderer/icon.png"),
     join(process.resourcesPath || "", "icon.ico"),
     join(process.resourcesPath || "", "icon.png"),
   ];
@@ -142,22 +267,18 @@ function resolveAppIconPath(): string {
   return "";
 }
 
-function loadAppIcon(): Electron.NativeImage | undefined {
-  const path = resolveAppIconPath();
-  if (!path) return undefined;
-  const img = nativeImage.createFromPath(path);
-  return img.isEmpty() ? undefined : img;
-}
-
 const DEFAULT_URL = "https://www.google.com";
 const CHROME_H = 104; // tabs 36 + omnibox 40 + bookmarks bar 28
-const SIDEBAR_W = 300;
+const SIDEBAR_W = 312;
 
 type TabInfo = {
   id: string;
-  view: WebContentsView;
+  view: WebContentsView | null;
   title: string;
   url: string;
+  envId?: string;
+  discarded?: boolean;
+  lastActiveAt: number;
 };
 
 type ApprovalRequest = {
@@ -192,11 +313,16 @@ function pruneStaleApprovals(
 }
 
 function normalizeUrl(url: string): string {
-  let target = url.trim();
+  const extracted = url.match(/https?:\/\/[^\s\u4e00-\u9fff<>"'）)】\]]+/i);
+  let target = (extracted ? extracted[0] : url).trim();
+  target = target.replace(/[.,，。、；;!?？]+$/g, "");
   if (!target) return DEFAULT_URL;
   if (/^(https?:|file:|data:|about:)/i.test(target)) return target;
-  target = `https://${target}`;
-  return target;
+  if (/[\s\u4e00-\u9fff]/.test(target)) {
+    target = target.split(/[\s\u4e00-\u9fff]/)[0] || target;
+  }
+  if (!target) return DEFAULT_URL;
+  return `https://${target}`;
 }
 
 export class SparkBrowser {
@@ -211,15 +337,29 @@ export class SparkBrowser {
   private paused = false;
   private approvals = new Map<string, ApprovalRequest>();
   private lastQa: QaReport | null = null;
-  private chatLog: Array<{ role: "user" | "assistant"; text: string }> = [];
+  private chatLog: ChatTurn[] = [];
+  private chatRunning = false;
+  private chatQueue: string[] = [];
   private ipcReady = false;
   private bookmarks: BookmarkItem[] = [];
   private recording = false;
   private recordingTask = "";
   private lastCs: CsDraftData | CsScanData | null = null;
+  private lastFeishuTask: FeishuTask | null = null;
   private skillsCache: Skill[] = [];
   private settings!: SparkSettings;
   private deepseek: DeepSeekAgentProvider | null = null;
+  private llmRuntime: "byok" | "cloud" = "byok";
+  private cloudTaskId: string | undefined;
+  private cloudQuota: QuotaSnap | null = null;
+  private lastCloudRefuse = "";
+  private memoryTimer: ReturnType<typeof setInterval> | null = null;
+  private holeBounds: { x: number; y: number; width: number; height: number } | null = null;
+  private overlay: "none" | "history" = "none";
+  private findOpen = false;
+  private lastClosed: { url: string; envId?: string } | null = null;
+  private lastDownloadPath = "";
+  private downloadSessions = new WeakSet<Electron.Session>();
 
   /** Active page view — keeps existing tool code working. */
   private getActiveTab(): TabInfo | null {
@@ -229,18 +369,14 @@ export class SparkBrowser {
   private get pageView(): WebContentsView {
     const tab = this.getActiveTab();
     if (!tab) throw new Error("No active tab");
+    if (!tab.view || tab.discarded) this.wakeTab(tab.id);
+    if (!tab.view) throw new Error("No active tab view");
     return tab.view;
   }
 
-  /** Config + cookie + strategy cache root (%APPDATA%/sparo). */
+  /** Config + cookie + strategy cache root (%APPDATA%/sparo-store). */
   configDir(): string {
-    return (
-      process.env.SPARO_CONFIG_DIR ||
-      process.env.SPARK_CONFIG_DIR ||
-      (process.platform === "win32" && process.env.APPDATA
-        ? join(process.env.APPDATA, "sparo")
-        : join(homedir(), ".config", "sparo"))
-    );
+    return storeConfigDir();
   }
 
   /** @deprecated use configDir() */
@@ -250,15 +386,27 @@ export class SparkBrowser {
 
   constructor() {
     Menu.setApplicationMenu(null);
-    const appIcon = loadAppIcon();
+    const iconPath = resolveAppIconPath();
     this.window = new BrowserWindow({
       width: 1360,
       height: 900,
-      title: "Sparo Agent Browser",
-      backgroundColor: "#111111",
-      show: false,
+      minWidth: 800,
+      minHeight: 560,
+      title: "Sparo",
+      backgroundColor: "#f3f0ec",
+      show: true,
       autoHideMenuBar: true,
-      ...(appIcon ? { icon: appIcon } : {}),
+      titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
+      ...(process.platform === "darwin"
+        ? {}
+        : {
+            titleBarOverlay: {
+              color: "#eeeae6",
+              symbolColor: "#1c1a18",
+              height: 36,
+            },
+          }),
+      ...(iconPath ? { icon: iconPath } : {}),
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
@@ -268,23 +416,48 @@ export class SparkBrowser {
       },
     });
     this.window.setMenuBarVisibility(false);
-    if (appIcon) {
-      this.window.setIcon(appIcon);
+    this.attachChromeShortcuts(this.window.webContents);
+    this.attachDownloads(session.defaultSession);
+    this.window.webContents.on("context-menu", (_e, params) => {
+      const template: MenuItemConstructorOptions[] = [];
+      if (params.selectionText) {
+        template.push({ role: "copy" });
+      }
+      template.push({ role: "selectAll" });
+      Menu.buildFromTemplate(template).popup({ window: this.window });
+    });
+    if (iconPath) {
+      this.window.setIcon(iconPath);
     }
 
     this.bookmarks = loadSavedBookmarks(this.configDir());
     seedBundledSkills(this.configDir());
     this.skillsCache = listSkills(this.configDir());
-    this.settings = loadSettings(this.configDir());
+    this.settings = loadSettings(this.configDir(), app.getLocale());
     this.rebuildDeepSeek();
+    void this.refreshCloudQuota().then(() => this.pushSidebarState());
+    this.chatLog = loadChatMemory(this.configDir());
     this.window.on("resize", () => this.layout());
-    this.window.once("ready-to-show", () => {
-      this.layout();
-      this.window.show();
-      this.window.focus();
+    this.window.on("maximize", () => this.layout());
+    this.window.on("unmaximize", () => this.layout());
+    this.window.on("enter-full-screen", () => this.layout());
+    this.window.on("leave-full-screen", () => this.layout());
+    this.window.once("ready-to-show", () => this.presentWindow());
+    this.window.webContents.once("did-finish-load", () => this.presentWindow());
+    this.window.webContents.on("did-fail-load", (_e, code, desc, url) => {
+      console.error("[shell] did-fail-load", code, desc, url);
+      this.presentWindow();
     });
+    setTimeout(() => this.presentWindow(), 800);
     this.registerIpc();
     this.createTab(DEFAULT_URL, true);
+    this.memoryTimer = setInterval(() => this.autoDiscardIdleTabs(), 30_000);
+    this.window.on("closed", () => {
+      if (this.memoryTimer) {
+        clearInterval(this.memoryTimer);
+        this.memoryTimer = null;
+      }
+    });
   }
 
   private shellPreload(): string {
@@ -330,34 +503,97 @@ export class SparkBrowser {
     return hist ? hist.canGoForward() : wc.canGoForward();
   }
 
-  private createTab(url = DEFAULT_URL, activate = true): string {
-    const id = randomBytes(4).toString("hex");
+  private makePageView(envId?: string): WebContentsView {
+    const prefs = {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      backgroundThrottling: true,
+      preload: this.pagePreload(),
+    };
+    if (!envId) {
+      const view = new WebContentsView({ webPreferences: prefs });
+      view.webContents.setUserAgent(chromeUserAgent());
+      return view;
+    }
+    const env = getEnv(this.configDir(), envId);
+    if (!env) throw new Error(`环境 ${envId} 不存在`);
+    const partition = `persist:env_${envId}`;
+    const envSession = session.fromPartition(partition);
+    this.attachDownloads(envSession);
+    if (env.fingerprint.userAgent) {
+      envSession.setUserAgent(env.fingerprint.userAgent);
+    }
+    const proxy = startEnvProxy(env);
+    if (proxy.ok && proxy.mode === "proxy") {
+      envSession.setProxy({
+        proxyRules: `socks5://127.0.0.1:${proxy.localPort}`,
+        proxyBypassRules: "<-loopback>",
+      });
+    }
     const view = new WebContentsView({
-      webPreferences: {
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-        preload: this.pagePreload(),
-      },
-    });
-    const tab: TabInfo = { id, view, title: "新标签页", url };
-    this.tabs.set(id, tab);
-    // Activate before loadURL — navigation events may push chrome state immediately.
-    if (activate) this.activeTabId = id;
-    this.window.contentView.addChildView(view);
+      session: envSession,
+      webPreferences: prefs,
+    } as unknown as Electron.WebContentsViewConstructorOptions);
+    if (!env.fingerprint.userAgent) {
+      view.webContents.setUserAgent(chromeUserAgent());
+    }
+    return view;
+  }
 
+  private bindPageWebContents(tab: TabInfo): void {
+    const view = tab.view;
+    if (!view) return;
     const wc = view.webContents;
+    const id = tab.id;
+    try {
+      wc.setBackgroundThrottling(true);
+    } catch {
+      /* older Electron */
+    }
     attachPageContextMenu(wc, {
       openInNewTab: (openUrl) => {
-        this.createTab(openUrl, true);
+        if (tab.envId) this.createEnvTab(tab.envId, openUrl);
+        else this.createTab(openUrl, true);
       },
+      t: (key) => tx(this.settings.locale, key),
+      canGoBack: () => this.navCanGoBack(wc),
+      canGoForward: () => this.navCanGoForward(wc),
+      goBack: () => void this.goBack({ asHuman: true }),
+      goForward: () => void this.goForward({ asHuman: true }),
+      reload: () => void this.reload({ asHuman: true }),
+      print: () => this.printPage(),
+      find: () => this.openFind(),
     });
-    wc.setWindowOpenHandler(({ url: openUrl }) => {
-      this.createTab(openUrl, true);
+    this.attachChromeShortcuts(wc);
+    wc.setUserAgent(chromeUserAgent());
+    wc.on("did-create-window", (child) => {
+      try {
+        child.setMenuBarVisibility(false);
+        child.webContents.setUserAgent(chromeUserAgent());
+        child.show();
+        child.focus();
+      } catch {
+        /* ignore */
+      }
+    });
+    wc.setWindowOpenHandler((details) => {
+      if (shouldAllowOauthPopup(details)) {
+        return {
+          action: "allow",
+          overrideBrowserWindowOptions: oauthPopupWindowOptions(),
+        };
+      }
+      const openUrl = details.url;
+      if (openUrl && openUrl !== "about:blank") {
+        if (tab.envId) this.createEnvTab(tab.envId, openUrl);
+        else this.createTab(openUrl, true);
+      }
       return { action: "deny" };
     });
     const sync = () => {
-      tab.url = wc.getURL();
+      if (wc.isDestroyed()) return;
+      tab.url = wc.getURL() || tab.url;
       tab.title = wc.getTitle() || tab.title;
       this.pushChromeState();
       this.pushSidebarState();
@@ -366,7 +602,10 @@ export class SparkBrowser {
       tab.title = title;
       this.pushChromeState();
     });
-    wc.on("did-navigate", sync);
+    wc.on("did-navigate", (_e, navUrl) => {
+      sync();
+      this.noteNavigation(String(navUrl || ""));
+    });
     wc.on("did-navigate-in-page", sync);
     wc.on("did-finish-load", () => {
       sync();
@@ -383,38 +622,195 @@ export class SparkBrowser {
       }
     });
     wc.on("did-start-loading", () => this.pushChromeState());
+    wc.on("did-stop-loading", () => this.pushChromeState());
+    wc.on("found-in-page", (_e, result) => {
+      try {
+        this.window.webContents.send("spark:find-result", {
+          active: result.activeMatchOrdinal,
+          total: result.matches,
+        });
+      } catch {
+        /* ignore */
+      }
+    });
+  }
 
-    void wc.loadURL(normalizeUrl(url));
+  /**
+   * Destroy an inactive tab's Chromium renderer. Title/URL stay; click the tab to reload.
+   * This is the only way to actually free ~150–250MB per heavy page (YouTube Studio, etc.).
+   */
+  discardTab(id: string): boolean {
+    const tab = this.tabs.get(id);
+    if (!tab || tab.discarded || id === this.activeTabId) return false;
+    const view = tab.view;
+    if (!view) {
+      tab.discarded = true;
+      return true;
+    }
+    const wc = view.webContents;
+    try {
+      if (!wc.isDestroyed() && wc.isCurrentlyAudible()) return false;
+      if (!wc.isDestroyed()) {
+        tab.url = wc.getURL() || tab.url;
+        tab.title = wc.getTitle() || tab.title;
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      this.window.contentView.removeChildView(view);
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (!wc.isDestroyed()) wc.close();
+    } catch {
+      /* ignore */
+    }
+    tab.view = null;
+    tab.discarded = true;
+    return true;
+  }
+
+  private wakeTab(id: string): void {
+    const tab = this.tabs.get(id);
+    if (!tab) return;
+    if (tab.view && !tab.discarded) return;
+    if (tab.view) {
+      tab.discarded = false;
+      return;
+    }
+    try {
+      const view = this.makePageView(tab.envId);
+      tab.view = view;
+      this.window.contentView.addChildView(view);
+      this.bindPageWebContents(tab);
+      tab.discarded = false;
+      tab.lastActiveAt = Date.now();
+      this.layout();
+      void view.webContents.loadURL(normalizeUrl(tab.url || DEFAULT_URL));
+    } catch (err) {
+      console.error("[sparo] wakeTab failed:", err);
+    }
+  }
+
+  /** Sleep every background tab now. Playing audio is skipped. */
+  discardInactiveTabs(): ToolResult {
+    let n = 0;
+    for (const id of [...this.tabs.keys()]) {
+      if (this.discardTab(id)) n += 1;
+    }
+    this.layout();
+    this.pushChromeState();
+    return {
+      ok: true,
+      message:
+        n > 0
+          ? tx(this.settings.locale, "mem.slept", { n })
+          : tx(this.settings.locale, "mem.none"),
+      data: { discarded: n, ...this.listTabs() },
+    };
+  }
+
+  private autoDiscardIdleTabs(): void {
+    if (!this.settings?.memorySaver) return;
+    if (this.tabs.size <= 1) return;
+    const idleMs = (this.settings.memorySaverIdleMinutes || 2) * 60_000;
+    const now = Date.now();
+    let n = 0;
+    for (const [id, tab] of this.tabs) {
+      if (id === this.activeTabId || tab.discarded) continue;
+      if (now - (tab.lastActiveAt || 0) < idleMs) continue;
+      if (this.discardTab(id)) n += 1;
+    }
+    if (n > 0) {
+      this.layout();
+      this.pushChromeState();
+    }
+  }
+
+  private createTab(url = DEFAULT_URL, activate = true): string {
+    const id = randomBytes(4).toString("hex");
+    const view = this.makePageView();
+    const tab: TabInfo = {
+      id,
+      view,
+      title: tx(this.settings.locale, "tab.new"),
+      url,
+      lastActiveAt: Date.now(),
+    };
+    this.tabs.set(id, tab);
+    if (activate) this.activeTabId = id;
+    this.window.contentView.addChildView(view);
+    this.bindPageWebContents(tab);
+    this.layout();
+    void view.webContents.loadURL(normalizeUrl(url));
     if (activate) this.switchTab(id);
     else this.layout();
     return id;
   }
 
+  /**
+   * Open a tab inside an account environment: its own Chromium partition
+   * (cookies/localStorage isolated), the env's UA, and the env's sing-box
+   * proxy if one is running. Fingerprint JS injection is P1, not here.
+   */
+  createEnvTab(envId: string, url = DEFAULT_URL): string {
+    const env = getEnv(this.configDir(), envId);
+    if (!env) throw new Error(`环境 ${envId} 不存在`);
+    const id = randomBytes(4).toString("hex");
+    const view = this.makePageView(envId);
+    const tab: TabInfo = {
+      id,
+      view,
+      title: env.account.name,
+      url,
+      envId,
+      lastActiveAt: Date.now(),
+    };
+    this.tabs.set(id, tab);
+    this.window.contentView.addChildView(view);
+    this.bindPageWebContents(tab);
+    this.layout();
+    void view.webContents.loadURL(normalizeUrl(url));
+    this.switchTab(id);
+    return id;
+  }
+
   listTabs(): {
-    tabs: Array<{ id: string; title: string; url: string }>;
+    tabs: Array<{ id: string; title: string; url: string; discarded?: boolean }>;
     activeId: string;
     url: string;
     canGoBack: boolean;
     canGoForward: boolean;
+    isLoading: boolean;
   } {
     const active = this.tabs.get(this.activeTabId);
-    const wc = active?.view.webContents;
+    const wc = active?.view?.webContents;
+    const wcLive = wc && !wc.isDestroyed() ? wc : undefined;
     return {
       tabs: [...this.tabs.values()].map((t) => ({
         id: t.id,
         title: t.title,
-        url: t.url || t.view.webContents.getURL(),
+        url:
+          t.url ||
+          (t.view && !t.view.webContents.isDestroyed() ? t.view.webContents.getURL() : ""),
+        discarded: Boolean(t.discarded || !t.view),
       })),
       activeId: this.activeTabId,
-      url: wc?.getURL() || "",
-      canGoBack: Boolean(wc && this.navCanGoBack(wc)),
-      canGoForward: Boolean(wc && this.navCanGoForward(wc)),
+      url: wcLive ? wcLive.getURL() : active?.url || "",
+      canGoBack: Boolean(wcLive && this.navCanGoBack(wcLive)),
+      canGoForward: Boolean(wcLive && this.navCanGoForward(wcLive)),
+      isLoading: Boolean(wcLive && wcLive.isLoading()),
     };
   }
 
   switchTab(id: string): ToolResult {
     if (!this.tabs.has(id)) return { ok: false, message: `Tab not found: ${id}` };
+    this.wakeTab(id);
     this.activeTabId = id;
+    const tab = this.tabs.get(id);
+    if (tab) tab.lastActiveAt = Date.now();
     this.lastSnapshot = null;
     this.layout();
     this.focusActivePage();
@@ -423,22 +819,49 @@ export class SparkBrowser {
     return { ok: true, message: `Switched to tab ${id}`, data: this.listTabs() };
   }
 
+  openReport(filePath: string): ToolResult {
+    const reports = resolvePath(join(this.configDir(), "reports"));
+    const abs = resolvePath(filePath);
+    if (!abs.toLowerCase().startsWith(reports.toLowerCase())) {
+      return { ok: false, message: "文档路径无效" };
+    }
+    if (!existsSync(abs)) {
+      return { ok: false, message: "文档已经不在了" };
+    }
+    return this.newTab(pathToFileURL(abs).href);
+  }
+
   newTab(url?: string): ToolResult {
     const id = this.createTab(url || DEFAULT_URL, true);
     return { ok: true, message: `Opened tab ${id}`, data: { id, ...this.listTabs() } };
   }
 
   closeTab(id: string): ToolResult {
-    if (this.tabs.size <= 1) {
-      return { ok: false, message: "Cannot close the last tab" };
-    }
     const tab = this.tabs.get(id);
     if (!tab) return { ok: false, message: `Tab not found: ${id}` };
-    this.window.contentView.removeChildView(tab.view);
+    let closedUrl = tab.url || "about:blank";
     try {
-      (tab.view.webContents as WebContents).close();
+      const live = tab.view?.webContents;
+      if (live && !live.isDestroyed()) closedUrl = live.getURL() || closedUrl;
     } catch {
       /* ignore */
+    }
+    this.lastClosed = { url: closedUrl, envId: tab.envId };
+    if (this.tabs.size <= 1) {
+      this.createTab("about:blank", true);
+    }
+    if (tab.view) {
+      try {
+        this.window.contentView.removeChildView(tab.view);
+      } catch {
+        /* ignore */
+      }
+      try {
+        const wc = tab.view.webContents;
+        if (!wc.isDestroyed()) wc.close();
+      } catch {
+        /* ignore */
+      }
     }
     this.tabs.delete(id);
     if (this.activeTabId === id) {
@@ -450,24 +873,465 @@ export class SparkBrowser {
     return { ok: true, message: `Closed tab ${id}`, data: this.listTabs() };
   }
 
-  private layout(): void {
-    const [width, height] = this.window.getContentSize();
-    const pageW = Math.max(100, width - SIDEBAR_W);
-    const pageH = Math.max(100, height - CHROME_H);
-    const bounds = { x: 0, y: CHROME_H, width: pageW, height: pageH };
-
-    for (const [id, tab] of this.tabs) {
-      const active = id === this.activeTabId;
-      tab.view.setVisible(active);
-      // Only cover the center hole — shell chrome/sidebar are the BrowserWindow itself.
-      tab.view.setBounds(bounds);
+  /** First show only. Later calls must not center() — that fights the user dragging the window. */
+  private didPlaceWindow = false;
+  presentWindow(): void {
+    if (this.window.isDestroyed()) return;
+    try {
+      const iconPath = resolveAppIconPath();
+      if (iconPath) this.window.setIcon(iconPath);
+      this.layout();
+      if (this.window.isMinimized()) this.window.restore();
+      if (!this.didPlaceWindow) {
+        this.window.center();
+        this.didPlaceWindow = true;
+      }
+      this.window.show();
+      this.window.focus();
+    } catch (error) {
+      console.error("[shell] presentWindow failed:", error);
     }
+  }
+
+  private attachChromeShortcuts(wc: WebContents): void {
+    wc.on("before-input-event", (event, input) => {
+      if (this.handleChromeShortcut(input)) event.preventDefault();
+    });
+  }
+
+  private handleChromeShortcut(input: Electron.Input): boolean {
+    if (input.type !== "keyDown") return false;
+    const key = String(input.key || "").toLowerCase();
+    const ctrl = Boolean(input.control || input.meta);
+    const shift = Boolean(input.shift);
+    const alt = Boolean(input.alt);
+
+    if (ctrl && !alt && !shift && key === "t") {
+      this.newTab();
+      return true;
+    }
+    if (ctrl && shift && !alt && key === "t") {
+      this.reopenLastTab();
+      return true;
+    }
+    if (ctrl && !alt && !shift && (key === "w" || key === "f4")) {
+      this.closeTab(this.activeTabId);
+      return true;
+    }
+    if ((ctrl && !alt && !shift && key === "l") || key === "f6" || (alt && !ctrl && key === "d")) {
+      this.focusOmnibox();
+      return true;
+    }
+    if (ctrl && !alt && !shift && key === "f") {
+      this.openFind();
+      return true;
+    }
+    if (key === "f3" || (ctrl && !alt && !shift && key === "g")) {
+      this.window.webContents.send("spark:find-again", { forward: !shift });
+      return true;
+    }
+    if (ctrl && shift && key === "g") {
+      this.window.webContents.send("spark:find-again", { forward: false });
+      return true;
+    }
+    if (ctrl && !alt && !shift && key === "p") {
+      this.printPage();
+      return true;
+    }
+    if (ctrl && !alt && !shift && key === "h") {
+      this.toggleHistory();
+      return true;
+    }
+    if (ctrl && !alt && !shift && key === "j") {
+      this.showLastDownload();
+      return true;
+    }
+    if (ctrl && !alt && !shift && key === "r") {
+      void this.reload({ asHuman: true });
+      return true;
+    }
+    if (ctrl && shift && key === "r") {
+      void this.reload({ asHuman: true, ignoreCache: true });
+      return true;
+    }
+    if (key === "f5") {
+      void this.reload({ asHuman: true });
+      return true;
+    }
+    if (alt && !ctrl && key === "arrowleft") {
+      void this.goBack({ asHuman: true });
+      return true;
+    }
+    if (alt && !ctrl && key === "arrowright") {
+      void this.goForward({ asHuman: true });
+      return true;
+    }
+    if (ctrl && key === "tab") {
+      this.cycleTab(shift ? -1 : 1);
+      return true;
+    }
+    if (ctrl && !alt && !shift && key === "pagedown") {
+      this.cycleTab(1);
+      return true;
+    }
+    if (ctrl && !alt && !shift && key === "pageup") {
+      this.cycleTab(-1);
+      return true;
+    }
+    if (ctrl && !alt && !shift && /^[1-8]$/.test(key)) {
+      this.switchTabByIndex(Number(key) - 1);
+      return true;
+    }
+    if (ctrl && !alt && !shift && key === "9") {
+      this.switchTabByIndex(this.tabs.size - 1);
+      return true;
+    }
+    if (ctrl && !alt && (key === "+" || key === "=" || key === "add")) {
+      this.adjustZoom(0.1);
+      return true;
+    }
+    if (ctrl && !alt && (key === "-" || key === "subtract")) {
+      this.adjustZoom(-0.1);
+      return true;
+    }
+    if (ctrl && !alt && !shift && key === "0") {
+      this.setZoomFactor(1);
+      return true;
+    }
+    if (key === "f11") {
+      this.window.setFullScreen(!this.window.isFullScreen());
+      return true;
+    }
+    if (key === "f12") {
+      this.togglePageDevTools();
+      return true;
+    }
+    if (ctrl && !alt && !shift && key === "d") {
+      this.toggleCurrentBookmark();
+      return true;
+    }
+    if (key === "escape") {
+      if (this.handleEscape()) return true;
+    }
+    return false;
+  }
+
+  private cycleTab(delta: number): void {
+    const ids = [...this.tabs.keys()];
+    if (ids.length < 2) return;
+    const i = Math.max(0, ids.indexOf(this.activeTabId));
+    const next = ids[(i + delta + ids.length) % ids.length];
+    if (next) this.switchTab(next);
+  }
+
+  private switchTabByIndex(index: number): void {
+    const ids = [...this.tabs.keys()];
+    const id = ids[Math.min(Math.max(0, index), ids.length - 1)];
+    if (id) this.switchTab(id);
+  }
+
+  private focusOmnibox(): void {
+    try {
+      this.window.webContents.focus();
+      void this.window.webContents.executeJavaScript(
+        `(() => { const el = document.getElementById("url"); if (!el) return; el.focus(); el.select(); })()`,
+      );
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private adjustZoom(delta: number): void {
+    const wc = this.pageView?.webContents;
+    if (!wc || wc.isDestroyed()) return;
+    const next = Math.min(3, Math.max(0.3, wc.getZoomFactor() + delta));
+    wc.setZoomFactor(next);
+  }
+
+  private setZoomFactor(factor: number): void {
+    const wc = this.pageView?.webContents;
+    if (!wc || wc.isDestroyed()) return;
+    wc.setZoomFactor(factor);
+  }
+
+  private togglePageDevTools(): void {
+    const wc = this.pageView?.webContents;
+    if (!wc || wc.isDestroyed()) return;
+    if (wc.isDevToolsOpened()) wc.closeDevTools();
+    else wc.openDevTools({ mode: "detach" });
+  }
+
+  toggleMaximize(): ToolResult {
+    if (this.window.isMaximized()) this.window.unmaximize();
+    else this.window.maximize();
+    return { ok: true, message: this.window.isMaximized() ? "maximized" : "restored" };
+  }
+
+  private attachDownloads(ses: Electron.Session): void {
+    if (this.downloadSessions.has(ses)) return;
+    this.downloadSessions.add(ses);
+    ses.on("will-download", (_e, item) => {
+      const dest = uniqueDownloadPath(app.getPath("downloads"), item.getFilename());
+      item.setSavePath(dest);
+      this.sendToast(tx(this.settings.locale, "download.start", { name: item.getFilename() }));
+      item.on("done", (_ev, state) => {
+        if (state === "completed") {
+          this.lastDownloadPath = dest;
+          this.sendToast(tx(this.settings.locale, "download.done", { name: item.getFilename() }), dest);
+        } else if (state !== "cancelled") {
+          this.sendToast(tx(this.settings.locale, "download.fail", { name: item.getFilename() }));
+        }
+        this.pushChromeState();
+      });
+    });
+  }
+
+  private sendToast(text: string, path?: string): void {
+    if (this.window.isDestroyed() || this.window.webContents.isDestroyed()) return;
+    try {
+      this.window.webContents.send("spark:toast", { text, path: path || "" });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private livePage(): WebContents | null {
+    const tab = this.getActiveTab();
+    const wc = tab?.view?.webContents;
+    if (!wc || wc.isDestroyed()) return null;
+    return wc;
+  }
+
+  private handleEscape(): boolean {
+    if (this.overlay === "history") {
+      this.closeHistory();
+      return true;
+    }
+    if (this.findOpen) {
+      this.stopFind();
+      return true;
+    }
+    const wc = this.livePage();
+    if (wc?.isLoading()) {
+      wc.stop();
+      return true;
+    }
+    if (this.window.isFullScreen()) {
+      this.window.setFullScreen(false);
+      return true;
+    }
+    return false;
+  }
+
+  openFind(): void {
+    if (this.overlay === "history") this.closeHistory();
+    this.findOpen = true;
+    try {
+      this.window.webContents.focus();
+      this.window.webContents.send("spark:open-find");
+    } catch {
+      /* ignore */
+    }
+  }
+
+  findInPage(query: string, opts?: { forward?: boolean; findNext?: boolean }): void {
+    const wc = this.livePage();
+    if (!wc) return;
+    const q = String(query || "");
+    if (!q) {
+      wc.stopFindInPage("clearSelection");
+      return;
+    }
+    wc.findInPage(q, {
+      forward: opts?.forward !== false,
+      findNext: Boolean(opts?.findNext),
+    });
+  }
+
+  stopFind(): void {
+    this.findOpen = false;
+    const wc = this.livePage();
+    try {
+      wc?.stopFindInPage("clearSelection");
+    } catch {
+      /* ignore */
+    }
+    try {
+      this.window.webContents.send("spark:close-find");
+    } catch {
+      /* ignore */
+    }
+  }
+
+  printPage(): void {
+    if (this.overlay === "history") this.closeHistory();
+    const wc = this.livePage();
+    if (!wc) return;
+    wc.print({});
+  }
+
+  stopLoading(): ToolResult {
+    const wc = this.livePage();
+    if (wc?.isLoading()) wc.stop();
+    this.pushChromeState();
+    return { ok: true, message: "stopped" };
+  }
+
+  toggleHistory(): void {
+    if (this.overlay === "history") this.closeHistory();
+    else this.openHistory();
+  }
+
+  openHistory(): void {
+    this.overlay = "history";
+    this.layout();
+    try {
+      this.window.webContents.focus();
+      this.window.webContents.send("spark:history", {
+        items: loadHistory(this.configDir()),
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  closeHistory(): void {
+    this.overlay = "none";
+    this.layout();
+    try {
+      this.window.webContents.send("spark:history", { items: null });
+    } catch {
+      /* ignore */
+    }
+    this.focusActivePage();
+  }
+
+  clearVisitHistory(): ToolResult {
+    clearHistory(this.configDir());
+    try {
+      this.window.webContents.send("spark:history", { items: [] });
+    } catch {
+      /* ignore */
+    }
+    return { ok: true, message: tx(this.settings.locale, "history.cleared") };
+  }
+
+  reopenLastTab(): ToolResult {
+    const last = this.lastClosed;
+    if (!last) return { ok: false, message: "nothing to reopen" };
+    this.lastClosed = null;
+    if (last.envId) {
+      const id = this.createEnvTab(last.envId, last.url);
+      return { ok: true, message: `Reopened ${id}`, data: this.listTabs() };
+    }
+    return this.newTab(last.url);
+  }
+
+  reorderTabs(fromId: string, toId: string): ToolResult {
+    const from = String(fromId || "");
+    const to = String(toId || "");
+    if (!from || !to || from === to) return { ok: true, data: this.listTabs() };
+    const ids = [...this.tabs.keys()];
+    const fromIndex = ids.indexOf(from);
+    const toIndex = ids.indexOf(to);
+    if (fromIndex < 0 || toIndex < 0) return { ok: false, message: "tab not found" };
+    ids.splice(fromIndex, 1);
+    ids.splice(toIndex, 0, from);
+    const next = new Map<string, TabInfo>();
+    for (const id of ids) {
+      const tab = this.tabs.get(id);
+      if (tab) next.set(id, tab);
+    }
+    this.tabs = next;
+    this.pushChromeState();
+    return { ok: true, data: this.listTabs() };
+  }
+
+  showLastDownload(): void {
+    if (this.lastDownloadPath) {
+      shell.showItemInFolder(this.lastDownloadPath);
+      return;
+    }
+    void shell.openPath(app.getPath("downloads"));
+  }
+
+  showInFolder(filePath: string): void {
+    const p = String(filePath || "");
+    if (p) shell.showItemInFolder(p);
+  }
+
+  setPageHoleBounds(raw: { x?: number; y?: number; width?: number; height?: number }): void {
+    const x = Math.round(Number(raw?.x) || 0);
+    const y = Math.round(Number(raw?.y) || 0);
+    const width = Math.round(Number(raw?.width) || 0);
+    const height = Math.round(Number(raw?.height) || 0);
+    if (width < 80 || height < 80) return;
+    const prev = this.holeBounds;
+    if (
+      prev &&
+      prev.x === x &&
+      prev.y === y &&
+      prev.width === width &&
+      prev.height === height
+    ) {
+      return;
+    }
+    this.holeBounds = { x, y, width, height };
+    this.applyViewBounds();
+  }
+
+  private pageBounds(): { x: number; y: number; width: number; height: number } {
+    if (
+      this.holeBounds &&
+      this.holeBounds.width >= 80 &&
+      this.holeBounds.height >= 80
+    ) {
+      return this.holeBounds;
+    }
+    const [width, height] = this.window.getContentSize();
+    return {
+      x: 0,
+      y: CHROME_H,
+      width: Math.max(100, width - SIDEBAR_W),
+      height: Math.max(100, height - CHROME_H),
+    };
+  }
+
+  private applyViewBounds(): void {
+    if (this.window.isDestroyed()) return;
+    const bounds = this.pageBounds();
+    const hidePage = this.overlay !== "none";
+    for (const [id, tab] of this.tabs) {
+      if (!tab.view) continue;
+      const active = id === this.activeTabId && !hidePage;
+      try {
+        if (active) {
+          tab.view.setBounds(bounds);
+          tab.view.setVisible(true);
+          tab.view.setBounds(bounds);
+        } else {
+          tab.view.setVisible(false);
+          tab.view.setBounds({
+            x: -20000,
+            y: 0,
+            width: Math.max(bounds.width, 100),
+            height: Math.max(bounds.height, 100),
+          });
+        }
+      } catch {
+        /* 视图已销毁 */
+      }
+    }
+  }
+
+  private layout(): void {
+    this.applyViewBounds();
   }
 
   private focusActivePage(): void {
     try {
       const tab = this.getActiveTab();
-      if (!tab || tab.view.webContents.isDestroyed()) return;
+      if (!tab || !tab.view || tab.view.webContents.isDestroyed()) return;
       tab.view.webContents.focus();
     } catch {
       /* ignore */
@@ -518,16 +1382,50 @@ export class SparkBrowser {
       }
       ipcMain.handle(channel, listener);
     };
+    ipcMain.removeAllListeners("spark:page-hole");
+    ipcMain.on("spark:page-hole", (_e, raw) => this.setPageHoleBounds(raw || {}));
     handle("spark:navigate", async (_e, url: string) =>
       this.navigate(String(url || ""), { asHuman: true }),
     );
     handle("spark:go-back", async () => this.goBack({ asHuman: true }));
     handle("spark:go-forward", async () => this.goForward({ asHuman: true }));
     handle("spark:reload", async () => this.reload({ asHuman: true }));
+    handle("spark:toggle-maximize", async () => this.toggleMaximize());
     handle("spark:new-tab", async (_e, url?: string) => this.newTab(url));
     handle("spark:close-tab", async (_e, id: string) => this.closeTab(String(id)));
     handle("spark:switch-tab", async (_e, id: string) => this.switchTab(String(id)));
     handle("spark:list-tabs", async () => this.listTabs());
+    handle("spark:discard-inactive-tabs", async () => this.discardInactiveTabs());
+    handle("spark:clear-chat", async () => this.clearChat());
+    handle("spark:reorder-tabs", async (_e, fromId: string, toId: string) =>
+      this.reorderTabs(String(fromId || ""), String(toId || "")),
+    );
+    handle("spark:stop", async () => this.stopLoading());
+    handle("spark:print", async () => {
+      this.printPage();
+      return { ok: true };
+    });
+    handle("spark:find", async (_e, query: string, opts?: { forward?: boolean; findNext?: boolean }) => {
+      this.findInPage(String(query || ""), opts);
+      return { ok: true };
+    });
+    handle("spark:stop-find", async () => {
+      this.stopFind();
+      return { ok: true };
+    });
+    handle("spark:open-history", async () => {
+      this.openHistory();
+      return { ok: true, items: loadHistory(this.configDir()) };
+    });
+    handle("spark:close-history", async () => {
+      this.closeHistory();
+      return { ok: true };
+    });
+    handle("spark:clear-history", async () => this.clearVisitHistory());
+    handle("spark:show-in-folder", async (_e, filePath: string) => {
+      this.showInFolder(String(filePath || ""));
+      return { ok: true };
+    });
     handle("spark:set-paused", async (_e, paused: boolean) => {
       this.setPaused(Boolean(paused));
       return { ok: true, paused: this.paused };
@@ -538,32 +1436,154 @@ export class SparkBrowser {
     );
     handle("spark:qa-check", async () => this.qaCheck());
     handle("spark:chat", async (_e, text: string) => this.handleChat(String(text || "")));
-    handle("spark:cs-scan", async () => this.csScan());
-    handle("spark:cs-draft", async (_e, opts?: { draft?: string; fill?: boolean }) =>
-      this.csDraftReply(opts || {}),
+    handle("spark:open-report", async (_e, filePath: string) =>
+      this.openReport(String(filePath || "")),
+    );
+    handle("spark:cs-scan", async (_e, opts?: { fromHuman?: boolean }) =>
+      this.csScan(opts),
+    );
+    handle("spark:cs-draft", async (
+      _e,
+      opts?: { draft?: string; fill?: boolean; preferLlm?: boolean; fromHuman?: boolean },
+    ) => this.csDraftReply(opts || {}));
+    handle("spark:cs-one-click", async () =>
+      this.csOneClickReply(),
     );
     handle("spark:get-settings", async () => ({
       ok: true,
-      settings: settingsPublicView(this.settings),
+      settings: this.settingsPublic(),
+      cloud: this.cloudPublic(),
     }));
+    handle("spark:get-profile", async () => {
+      const p = loadProfile(this.configDir());
+      return {
+        ok: true,
+        identity: p.identity,
+        accounts: p.learned.accounts,
+        brief: profileBriefFor(this.configDir()),
+      };
+    });
+    handle("spark:save-identity", async (_e, patch) => {
+      const next = saveIdentity(this.configDir(), patch || {});
+      return {
+        ok: true,
+        identity: next.identity,
+        accounts: next.learned.accounts,
+        brief: profileBriefFor(this.configDir()),
+      };
+    });
+    handle("spark:clear-profile", async () => {
+      clearProfile(this.configDir());
+      return { ok: true, brief: "" };
+    });
+
+    // ---- Multi-account environments (decoupled from profile) ----
+    handle("spark:list-envs", async () => ({
+      ok: true,
+      envs: listEnvs(this.configDir()).map((e) => ({
+        id: e.id,
+        name: e.account.name,
+        type: e.account.type,
+        note: e.account.note,
+        enabled: e.enabled,
+        proxyAvailable: isProxyAvailable(),
+        proxyRunning: false, // runner state not exposed yet at P0
+        homeUrl: e.account.homeUrl,
+      })),
+    }));
+    handle("spark:create-env", async (_e, init) => {
+      const env = createEnv(this.configDir(), init || {});
+      return { ok: true, id: env.id, env: { id: env.id, name: env.account.name, type: env.account.type } };
+    });
+    handle("spark:save-env", async (_e, patch) => {
+      const current = getEnv(this.configDir(), String(patch?.id || ""));
+      if (!current) return { ok: false, message: "环境不存在" };
+      const next = saveEnv(this.configDir(), { ...current, ...patch, id: current.id });
+      return { ok: true, env: { id: next.id, name: next.account.name } };
+    });
+    handle("spark:clone-env", async (_e, envId) => {
+      const c = cloneEnv(this.configDir(), String(envId || ""));
+      return c ? { ok: true, id: c.id } : { ok: false, message: "源环境不存在" };
+    });
+    handle("spark:delete-env", async (_e, envId) => {
+      stopEnvProxy(String(envId || ""));
+      return { ok: deleteEnvConfig(this.configDir(), String(envId || "")) };
+    });
+    handle("spark:open-env", async (_e, envId) => {
+      try {
+        const id = this.createEnvTab(String(envId));
+        return { ok: true, tabId: id };
+      } catch (e) {
+        return { ok: false, message: e instanceof Error ? e.message : String(e) };
+      }
+    });
     handle("spark:save-settings", async (_e, patch: Partial<SparkSettings>) => {
       this.settings = saveSettings(this.configDir(), patch || {});
       this.rebuildDeepSeek();
       this.pushSidebarState();
+      const hasKey = Boolean((this.settings.apiKey || this.settings.deepseekApiKey || "").trim());
+      const toastKey =
+        this.settings.llmMode === "cloud"
+          ? hasCloudSession(this.configDir())
+            ? "toast.cloudMode"
+            : "toast.cloudNeedLogin"
+          : hasKey
+            ? "toast.apiOk"
+            : "toast.savedNoKey";
       return {
         ok: true,
-        message: this.settings.apiKey || this.settings.deepseekApiKey
-          ? "API 已配置"
-          : "已保存（未设置 API Key）",
-        settings: settingsPublicView(this.settings),
+        message: tx(this.settings.locale, toastKey),
+        settings: this.settingsPublic(),
+        cloud: this.cloudPublic(),
       };
     });
-    handle("spark:start-recording", async (_e, task?: string) =>
-      this.startRecording({ task: task ? String(task) : undefined }),
-    );
-    handle("spark:stop-recording", async (_e, title?: string) =>
-      this.stopRecording(title ? String(title) : undefined),
-    );
+    handle("spark:cloud-send-code", async (_e, email: string) => {
+      try {
+        const message = await sendLoginCode(String(email || ""));
+        return { ok: true, message };
+      } catch (error) {
+        return {
+          ok: false,
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
+    });
+    handle("spark:cloud-verify", async (_e, email: string, code: string) => {
+      try {
+        this.cloudQuota = await verifyLogin(
+          this.configDir(),
+          String(email || ""),
+          String(code || ""),
+        );
+        if (this.settings.llmMode !== "cloud") {
+          this.settings = saveSettings(this.configDir(), { llmMode: "cloud" });
+        }
+        this.rebuildDeepSeek();
+        this.pushSidebarState();
+        return { ok: true, message: tx(this.settings.locale, "toast.cloudIn"), cloud: this.cloudPublic() };
+      } catch (error) {
+        return {
+          ok: false,
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
+    });
+    handle("spark:cloud-logout", async () => {
+      clearTokens(this.configDir());
+      this.cloudQuota = null;
+      this.rebuildDeepSeek();
+      this.pushSidebarState();
+      return { ok: true, message: tx(this.settings.locale, "toast.cloudOut"), cloud: this.cloudPublic() };
+    });
+    handle("spark:cloud-open-account", async () => {
+      await shell.openExternal(accountUrl());
+      return { ok: true };
+    });
+    handle("spark:cloud-refresh", async () => {
+      await this.refreshCloudQuota();
+      this.pushSidebarState();
+      return { ok: true, cloud: this.cloudPublic() };
+    });
     handle("spark:list-skills", async () => ({
       ok: true,
       skills: this.skillsCache.map(skillSummary),
@@ -597,8 +1617,17 @@ export class SparkBrowser {
       this.bookmarks = [];
       saveBookmarks(this.configDir(), this.bookmarks);
       this.pushChromeState();
-      return { ok: true, message: "已清空书签" };
+      return { ok: true, message: tx(this.settings.locale, "bookmark.cleared") };
     });
+    handle("spark:copy-agent-connect", async () => this.copyAgentConnect());
+    handle("spark:connect-agent", async (_e, target: string) => {
+      const t = target === "claude" ? "claude" : "cursor";
+      return connectAgent(t as AgentTarget, this.settings.locale);
+    });
+    handle("spark:agent-connect-status", async () => ({
+      ok: true,
+      ...connectedStatus(),
+    }));
   }
 
   /** Native popup — stays above WebContentsView (HTML dropdown was covered by the page). */
@@ -618,9 +1647,10 @@ export class SparkBrowser {
       },
     }));
 
+    const loc = this.settings.locale;
     const template: MenuItemConstructorOptions[] = [
       {
-        label: state.currentBookmarked ? "取消收藏当前页" : "收藏当前页面",
+        label: tx(loc, state.currentBookmarked ? "bookmark.unpage" : "bookmark.page"),
         click: () => {
           const r = this.toggleCurrentBookmark();
           this.window.webContents
@@ -632,7 +1662,7 @@ export class SparkBrowser {
       },
       { type: "separator" },
       {
-        label: "从 Chrome 导入书签…",
+        label: tx(loc, "bookmark.importChrome"),
         enabled: state.canImportChrome,
         click: () => {
           void this.importBookmarks("chrome").then((r) => {
@@ -645,7 +1675,7 @@ export class SparkBrowser {
         },
       },
       {
-        label: "从 Edge 导入书签…",
+        label: tx(loc, "bookmark.importEdge"),
         enabled: state.canImportEdge,
         click: () => {
           void this.importBookmarks("edge").then((r) => {
@@ -663,7 +1693,10 @@ export class SparkBrowser {
       template.push({ type: "separator" });
       // Flat list so every overflow bookmark is one click away (no nested submenu truncation).
       if (bookmarkItems.length <= 35) {
-        template.push({ label: `未显示的书签（${bookmarkItems.length}）`, enabled: false });
+        template.push({
+          label: tx(loc, "bookmark.hidden", { n: bookmarkItems.length }),
+          enabled: false,
+        });
         template.push(...bookmarkItems);
       } else {
         // Split into chunks of 30 as submenus so Windows menu height stays usable.
@@ -671,7 +1704,7 @@ export class SparkBrowser {
         for (let i = 0; i < bookmarkItems.length; i += chunk) {
           const part = bookmarkItems.slice(i, i + chunk);
           template.push({
-            label: `书签 ${i + 1}–${i + part.length}`,
+            label: tx(loc, "bookmark.range", { from: i + 1, to: i + part.length }),
             submenu: part,
           });
         }
@@ -681,7 +1714,7 @@ export class SparkBrowser {
     template.push(
       { type: "separator" },
       {
-        label: "清空书签",
+        label: tx(loc, "bookmark.clear"),
         enabled: state.total > 0,
         click: () => {
           this.bookmarks = [];
@@ -689,7 +1722,7 @@ export class SparkBrowser {
           this.pushChromeState();
           this.window.webContents
             .executeJavaScript(
-              `window.__sparkToast && window.__sparkToast("已清空书签")`,
+              `window.__sparkToast && window.__sparkToast(${JSON.stringify(tx(loc, "bookmark.cleared"))})`,
             )
             .catch(() => undefined);
         },
@@ -731,8 +1764,79 @@ export class SparkBrowser {
     if (this.window.isDestroyed() || this.window.webContents.isDestroyed()) return;
     try {
       this.window.webContents.send("spark:sidebar-state", this.getSidebarPayload());
+      saveChatMemory(this.configDir(), this.chatLog);
     } catch (error) {
       console.error("[shell] pushSidebarState failed:", error);
+    }
+  }
+
+  clearChat(): ToolResult {
+    this.chatLog = [];
+    this.lastCs = null;
+    clearChatMemory(this.configDir());
+    this.pushSidebarState();
+    return { ok: true, message: tx(this.settings.locale, "chat.cleared") };
+  }
+
+  /**
+   * Record a navigation into the learned profile. Only full navigations land here
+   * (not in-page), and we dedupe by host so a reload or anchor jump does not spam.
+   */
+  private _lastNavHost = "";
+  private noteNavigation(url: string): void {
+    let host = "";
+    try {
+      host = new URL(url).hostname.replace(/^www\./, "");
+    } catch {
+      return;
+    }
+    if (!host) return;
+    const tab = this.getActiveTab();
+    try {
+      recordHistoryVisit(this.configDir(), url, tab?.title || host);
+    } catch {
+      /* best-effort */
+    }
+    if (host === this._lastNavHost) return;
+    this._lastNavHost = host;
+    try {
+      recordVisit(this.configDir(), host);
+      void this.detectAccountOnSite(host, url);
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  /** Best-effort: if the user is logged into a known site, capture their handle. */
+  private async detectAccountOnSite(host: string, url: string): Promise<void> {
+    const site = accountSiteForHost(host);
+    if (!site) return;
+    const selector = ACCOUNT_USERNAME_SELECTOR[site];
+    if (!selector) return;
+    const wc = this.pageView.webContents;
+    try {
+      const username = (await wc.executeJavaScript(
+        `(() => { const el = document.querySelector(${JSON.stringify(selector)}); return el ? (el.textContent || el.value || "").trim() : ""; })()`,
+        true,
+      )) as string;
+      if (username && username.length >= 2 && username.length <= 40) {
+        upsertDetectedAccount(this.configDir(), site, username);
+      }
+    } catch {
+      /* page not ready or selector stale */
+    }
+  }
+
+  /** Compact profile view for the sidebar — nickname + accounts, nothing raw. */
+  private profilePublic(): { nickname: string; accounts: { site: string; username: string }[] } {
+    try {
+      const p = loadProfile(this.configDir());
+      const accounts = p.identity.accounts
+        .concat(p.learned.accounts)
+        .map((a) => ({ site: a.site, username: a.username }));
+      return { nickname: p.identity.nickname, accounts };
+    } catch {
+      return { nickname: "", accounts: [] };
     }
   }
 
@@ -740,6 +1844,7 @@ export class SparkBrowser {
     pruneStaleApprovals(this.approvals);
     return {
       paused: this.paused,
+      agentConnect: connectedStatus(),
       recording: this.recording,
       recordingTask: this.recordingTask,
       url: this.getUrl(),
@@ -754,7 +1859,9 @@ export class SparkBrowser {
       qa: this.lastQa,
       chat: this.chatLog.slice(-40),
       skills: this.skillsCache.map(skillSummary).slice(0, 30),
-      deepseek: settingsPublicView(this.settings),
+      deepseek: this.settingsPublic(),
+      cloud: this.cloudPublic(),
+      profile: this.profilePublic(),
       cs: this.lastCs
         ? "intent" in this.lastCs && (this.lastCs as CsDraftData).intent
           ? {
@@ -776,38 +1883,44 @@ export class SparkBrowser {
             }
         : null,
       explain: {
-        pause: "暂停：Agent 立刻停手，人可自由操作页面",
-        approval: "审批：Agent 请求做人确认后才继续（如提交）",
-        wait: "等待 wait_for：Agent 等页面元素出现，不是等人",
-        skill: "妙招：录制成功操作并沉淀；对话说「开始录制 / 结束录制并保存为某某」",
-        cs: "客服半自动：扫描会话 → AI/模板草稿填入输入框 → 人点发送（永不自动发送）",
-        workflow:
-          "Agent-First：说「登录店小蜜」会打开后台；编辑页说「处理好」全自动，做完暂停等你审",
+        pause: tx(this.settings.locale, "status.paused"),
+        approval: tx(this.settings.locale, "approvals.label"),
+        wait: "",
+        skill: "",
+        cs: tx(this.settings.locale, "cs.idleHint"),
+        workflow: "",
       },
+      locale: this.settings.locale,
     };
+  }
+
+  copyAgentConnect(): { ok: boolean; message: string } {
+    const r = copyForAgent(this.settings.locale);
+    if (r.ok) clipboard.writeText(r.text);
+    return { ok: r.ok, message: r.message };
   }
 
   async importBookmarks(source: "chrome" | "edge"): Promise<ToolResult> {
     const label = source === "chrome" ? "Chrome" : "Edge";
+    const loc = this.settings.locale;
     try {
       const sources = chromiumBookmarkPaths();
       const found = sources.find((s) => s.id === source);
       if (!found?.exists) {
-        return { ok: false, message: `未检测到本机 ${label} 书签文件` };
+        return { ok: false, message: tx(loc, "dialog.noBookmarksFile", { label }) };
       }
 
       const prompt = await dialog.showMessageBox(this.window, {
         type: "question",
-        buttons: ["取消", "导入"],
+        buttons: [tx(loc, "confirm.cancel"), tx(loc, "dialog.import")],
         defaultId: 1,
         cancelId: 0,
-        title: "导入书签",
-        message: `从 ${label} 导入书签？`,
-        detail:
-          "只会加入 Sparo 的书签，不会自动打开网页。\n书签栏会按宽度尽量多显示，其余在「更多」里。",
+        title: tx(loc, "dialog.importTitle"),
+        message: tx(loc, "dialog.importMsg", { label }),
+        detail: tx(loc, "dialog.importDetail"),
       });
       if (prompt.response !== 1) {
-        return { ok: false, message: "已取消导入" };
+        return { ok: false, message: tx(loc, "dialog.importCancel") };
       }
 
       const result = readChromiumBookmarks(source);
@@ -815,7 +1928,7 @@ export class SparkBrowser {
         return { ok: false, message: result.message };
       }
       if (!result.items.length) {
-        return { ok: false, message: `${label} 里没有可导入的书签` };
+        return { ok: false, message: tx(loc, "dialog.noItems", { label }) };
       }
 
       // Replace with this import (explicit user action), pin bookmark-bar items.
@@ -833,13 +1946,17 @@ export class SparkBrowser {
       const onBar = this.bookmarks.filter((b) => b.bar).length;
       return {
         ok: true,
-        message: `已从 ${label} 导入 ${result.items.length} 个（书签栏候选 ${onBar} 个，按宽度显示）`,
+        message: tx(loc, "bookmark.imported", {
+          label,
+          n: result.items.length,
+          bar: onBar,
+        }),
         data: this.chromeBookmarkState(),
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error("[bookmarks] import failed:", error);
-      return { ok: false, message: `导入失败：${message}` };
+      return { ok: false, message: tx(loc, "bookmark.importFail", { message }) };
     }
   }
 
@@ -895,36 +2012,6 @@ export class SparkBrowser {
               : `${base.note || ""} · 未检测到 Cookie（可能未登录）`.trim(),
         });
       }
-
-      // Ensure bookmarks for logged-in homes (add only — never toggle-remove)
-      for (const s of sites) {
-        if ((s.cookieCount || 0) < 1) continue;
-        const homeBase = s.homeUrl.split("?")[0] || s.homeUrl;
-        const exists = this.bookmarks.some(
-          (b) => b.url === s.homeUrl || (b.url || "").startsWith(homeBase),
-        );
-        if (!exists) {
-          this.bookmarks = [
-            {
-              id: randomBytes(4).toString("hex"),
-              title: s.title,
-              url: s.homeUrl,
-              folder: "书签栏",
-              bar: true,
-              source: "manual",
-            },
-            ...this.bookmarks,
-          ];
-        } else {
-          this.bookmarks = this.bookmarks.map((b) =>
-            b.url === s.homeUrl || (b.url || "").startsWith(homeBase)
-              ? { ...b, bar: true, title: s.title || b.title }
-              : b,
-          );
-        }
-      }
-      saveBookmarks(this.configDir(), this.bookmarks);
-      this.pushChromeState();
 
       const file = {
         updatedAt: now,
@@ -1020,13 +2107,13 @@ export class SparkBrowser {
    * Semi-auto CS: scan any page for chat-like UI + recent messages.
    * Does not send.
    */
-  async csScan(): Promise<ToolResult & { data?: CsScanData }> {
+  async csScan(opts?: { fromHuman?: boolean }): Promise<ToolResult & { data?: CsScanData }> {
     const res = await runCsScan({
       pageView: this.pageView,
       assertNotPaused: () => this.assertNotPaused(),
       fill: (t, v) => this.fill(t, v),
       getSettings: () => this.settings,
-    });
+    }, opts);
     if (res.data) this.lastCs = res.data;
     this.pushSidebarState();
     return res;
@@ -1040,6 +2127,7 @@ export class SparkBrowser {
     draft?: string;
     fill?: boolean;
     preferLlm?: boolean;
+    fromHuman?: boolean;
   }): Promise<ToolResult & { data?: CsDraftData }> {
     const res = await runCsDraft(
       {
@@ -1053,6 +2141,25 @@ export class SparkBrowser {
     if (res.data) this.lastCs = res.data;
     this.pushSidebarState();
     return res;
+  }
+
+  /** Address-bar / sidebar 一键回复：扫当前页 → 模型起草 → 填入。不点发送。 */
+  async csOneClickReply(): Promise<ToolResult & { data?: CsDraftData }> {
+    const hasKey = this.modelReady();
+    const res = await this.csDraftReply({
+      fill: true,
+      preferLlm: true,
+      fromHuman: true,
+    });
+    if (!res.ok) return res;
+    const src = res.data?.source;
+    const via = src === "llm" ? "模型" : src === "template" ? (hasKey ? "模型不可用，已用模板" : "未配 Key，已用模板") : "草稿";
+    return {
+      ...res,
+      message: res.data?.filled
+        ? `一键回复已填入（${res.data.intent?.label || "回复"} · ${via}）。请在页面上确认后点发送——Sparo 不会自动发出。`
+        : res.message,
+    };
   }
 
   getWebContents(): WebContents {
@@ -1316,21 +2423,116 @@ export class SparkBrowser {
     };
   }
 
-  private rebuildDeepSeek(): void {
-    const apiKey = (this.settings.apiKey || this.settings.deepseekApiKey || "").trim();
-    if (!apiKey) {
-      this.deepseek = null;
+  private hasByokKey(): boolean {
+    return Boolean((this.settings.apiKey || this.settings.deepseekApiKey || "").trim());
+  }
+
+  private modelReady(): boolean {
+    if (this.hasByokKey()) return true;
+    return this.settings.llmMode === "cloud" && Boolean(this.cloudQuota?.canStart);
+  }
+
+  private settingsPublic() {
+    const view = settingsPublicView(this.settings);
+    return {
+      ...view,
+      configured: this.modelReady(),
+    };
+  }
+
+  private cloudPublic() {
+    const tokens = loadTokens(this.configDir());
+    const q = this.cloudQuota;
+    return {
+      loggedIn: Boolean(tokens?.access),
+      email: q?.email || tokens?.email || "",
+      canStart: Boolean(q?.canStart),
+      points: q?.points ?? 0,
+      approxTasks: q?.approxTasks ?? 0,
+      trial: q?.trial || { used: 0, left: 0, cap: 3 },
+      subscription: q?.subscription || { active: false, plan: null },
+      llmMode: this.settings.llmMode,
+      runtime: this.llmRuntime,
+      hidePayCopy: isMsftChannel(),
+      accountUrl: accountUrl(),
+    };
+  }
+
+  private async refreshCloudQuota(): Promise<void> {
+    if (!hasCloudSession(this.configDir())) {
+      this.cloudQuota = null;
       return;
     }
-    const cfg = {
-      apiKey,
-      baseUrl:
-        (this.settings.baseUrl || this.settings.deepseekBaseUrl || "").trim().replace(/\/$/, "") ||
-        "https://api.deepseek.com",
-      model:
-        (this.settings.model || this.settings.deepseekModel || "").trim() ||
-        "deepseek-v4-flash",
-    };
+    try {
+      this.cloudQuota = await fetchMe(this.configDir());
+    } catch {
+      /* 断网时沿用缓存，本地 Key 仍可用 */
+    }
+  }
+
+  private actionNeedsLlm(action: ChatAction, text: string): boolean {
+    if (shouldAskPlanner(action, text)) return true;
+    switch (action.type) {
+      case "llm":
+      case "act":
+      case "summarize":
+      case "fill_form":
+      case "one_click_reply":
+      case "travel_search":
+      case "trip_plan":
+      case "mission":
+      case "feishu":
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private async beginCloudTaskIfNeeded(
+    action: ChatAction,
+    text: string,
+  ): Promise<"ok" | "skip" | "refused"> {
+    if (this.llmRuntime !== "cloud") return "skip";
+    if (!this.actionNeedsLlm(action, text)) return "skip";
+    try {
+      const t = await assertAndStartTask(this.configDir());
+      this.cloudTaskId = t.taskId;
+      this.deepseek?.setTaskId(t.taskId);
+      this.cloudQuota = {
+        ...t.snap,
+        email: this.cloudQuota?.email || loadTokens(this.configDir())?.email,
+      };
+      this.lastCloudRefuse = "";
+      return "ok";
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (this.hasByokKey()) {
+        this.rebuildDeepSeek("byok");
+        return "skip";
+      }
+      this.lastCloudRefuse = msg;
+      return "refused";
+    }
+  }
+
+  private async finishCloudTask(): Promise<{
+    approxTasksUsed: number;
+    approxTasks: number;
+  } | null> {
+    const id = this.cloudTaskId;
+    this.cloudTaskId = undefined;
+    this.deepseek?.setTaskId(undefined);
+    if (!id) return null;
+    try {
+      const s = await settleCloudTask(this.configDir(), id);
+      await this.refreshCloudQuota();
+      return { approxTasksUsed: s.approxTasksUsed, approxTasks: s.approxTasks };
+    } catch {
+      return null;
+    }
+  }
+
+  private applyDeepSeekCfg(cfg: ConstructorParameters<typeof DeepSeekAgentProvider>[0]): void {
     if (this.deepseek) {
       this.deepseek.updateConfig(cfg);
     } else {
@@ -1338,6 +2540,72 @@ export class SparkBrowser {
         this.runAgentTool(name, args),
       );
     }
+  }
+
+  private rebuildDeepSeek(force?: "byok" | "cloud"): void {
+    const byokKey = (this.settings.apiKey || this.settings.deepseekApiKey || "").trim();
+    const byokBase =
+      (this.settings.baseUrl || this.settings.deepseekBaseUrl || "").trim().replace(/\/$/, "") ||
+      "https://api.deepseek.com";
+    const byokModel =
+      (this.settings.model || this.settings.deepseekModel || "").trim() || "deepseek-v4-flash";
+    const wantCloud =
+      force !== "byok" &&
+      (force === "cloud" || this.settings.llmMode === "cloud") &&
+      hasCloudSession(this.configDir());
+
+    if (wantCloud) {
+      this.llmRuntime = "cloud";
+      this.applyDeepSeekCfg({
+        apiKey: "cloud",
+        baseUrl: cloudApiBase(),
+        model: byokModel,
+        mode: "cloud",
+        fetchImpl: (url, init) => this.cloudOrByokFetch(String(url), init ?? {}, byokKey, byokBase),
+      });
+      return;
+    }
+
+    this.llmRuntime = "byok";
+    if (!byokKey) {
+      this.deepseek = null;
+      return;
+    }
+    this.applyDeepSeekCfg({
+      apiKey: byokKey,
+      baseUrl: byokBase,
+      model: byokModel,
+      mode: "byok",
+    });
+  }
+
+  private async cloudOrByokFetch(
+    url: string,
+    init: RequestInit,
+    byokKey: string,
+    byokBase: string,
+  ): Promise<Response> {
+    try {
+      const res = await cloudFetch(this.configDir(), this.cloudTaskId || "", url, init);
+      if (res.ok || res.status === 402 || res.status === 400 || res.status === 409) {
+        return res;
+      }
+      if (res.status >= 500 && byokKey) {
+        return this.byokFetch(byokKey, byokBase, init);
+      }
+      return res;
+    } catch {
+      if (byokKey) return this.byokFetch(byokKey, byokBase, init);
+      throw new Error(tx(this.settings.locale, "cloud.proxyDown"));
+    }
+  }
+
+  private byokFetch(apiKey: string, baseUrl: string, init: RequestInit): Promise<Response> {
+    const headers = new Headers(init.headers);
+    headers.set("Authorization", `Bearer ${apiKey}`);
+    headers.set("api-key", apiKey);
+    headers.delete("X-Sparo-Task");
+    return fetch(chatCompletionsUrl(baseUrl), { ...init, headers });
   }
 
   private async runAgentTool(
@@ -1355,6 +2623,16 @@ export class SparkBrowser {
           message: this.getTitle(),
           data: { title: this.getTitle() },
         };
+      case "page_text": {
+        const page = await this.pageText();
+        const raw = page.data?.text || "";
+        const clipped = raw.slice(0, 8000);
+        return {
+          ok: page.ok,
+          message: page.message,
+          data: { text: clipped, length: raw.length, truncated: raw.length > 8000 },
+        };
+      }
       case "snapshot":
         return this.snapshot(
           args.selector ? String(args.selector) : undefined,
@@ -1372,6 +2650,23 @@ export class SparkBrowser {
           },
           String(args.value ?? ""),
         );
+      case "fill_suggest":
+        return this.fillSuggest(String(args.value ?? args.query ?? ""), {
+          selector: args.selector ? String(args.selector) : undefined,
+          ref: args.ref ? String(args.ref) : undefined,
+        });
+      case "press":
+        return this.pressKey(String(args.key || "Enter"));
+      case "pick_calendar":
+        return this.pickCalendar({
+          triggerRef: args.triggerRef ? String(args.triggerRef) : undefined,
+          triggerLabel: args.triggerLabel ? String(args.triggerLabel) : undefined,
+          triggerText: args.triggerText ? String(args.triggerText) : undefined,
+          value: args.value,
+          date: args.date ? String(args.date) : undefined,
+          hours: args.hours as string | number | undefined,
+          minutes: args.minutes as string | number | undefined,
+        });
       case "qa_check":
         return this.qaCheck();
       case "click_text":
@@ -1397,18 +2692,21 @@ export class SparkBrowser {
       case "resume":
         this.setPaused(false);
         return { ok: true, message: "Agent resumed" };
-      case "start_recording":
-        return this.startRecording({
-          task: args.task ? String(args.task) : undefined,
-        });
-      case "stop_recording":
-        return this.stopRecording(args.title ? String(args.title) : undefined);
       case "list_skills":
         return this.listSkillsTool();
       case "get_skill":
         return this.getSkillTool(String(args.id || args.query || ""));
       case "match_skill":
         return this.matchSkillTool(String(args.query || args.id || ""));
+      case "cs_one_click_reply":
+        return this.csOneClickReply();
+      case "feishu_work":
+        return this.feishuWork({
+          kind: args.kind != null ? String(args.kind) : undefined,
+          to: args.to != null ? String(args.to) : undefined,
+          title: args.title != null ? String(args.title) : undefined,
+          body: args.body != null ? String(args.body) : undefined,
+        });
       case "run_skill":
         return this.runSkillTool({
           id: args.id ? String(args.id) : undefined,
@@ -1491,13 +2789,17 @@ export class SparkBrowser {
           zh_tagline: "AI 驾驭网页，你驾驭 AI",
         },
         fast_path: [
+          "Site first: user said 知乎 → zhihu.com, 微博 → weibo.com. Never substitute Xiaohongshu.",
+          "No matching skill → operate the page with snapshot/click/fill. Do not ask the human to record a skill first.",
           "Publishing: read docs/PUBLISHING.md — run_skill or xhs_inject_* (never loop fill).",
-          "Xiaohongshu: run_skill({ query:'发小红书', params:{ title, body, summary, topics } }).",
+          "Xiaohongshu ONLY if user named 小红书/xhs/rednote: run_skill({ query:'发小红书', params:{ title, body, summary, topics } }).",
           "Or: xhs_ensure_editor → xhs_inject_compose → xhs_layout_next → xhs_inject_publish → pause.",
           "Unknown forms: run_skill({ query:'通用填表', params:{ payload:{ 标题, 正文, … } } }) OR analyze_page → execute_primitives.",
+          "Date pickers (X Ads End time): pick_calendar or payload End time — never fill a date string, never click_text a bare day number, never click the month '<' chevron.",
           "Do NOT loop fill/click on multi-field forms — use execute_primitives.",
-          "Customer service (any site, semi-auto): cs_scan → cs_draft_reply (fills composer; NEVER auto-send).",
-          "Detect only: xhs_page_stage. Auth: %APPDATA%/sparo/mcp-auth.json · GET /health · /tools",
+          "Customer service (any site, semi-auto): cs_one_click_reply or cs_scan → cs_draft_reply (fills composer; NEVER auto-send).",
+          "Feishu web: run_skill({ query:'飞书', params:{ to, body, title, kind } }) or feishu_work. Opens messenger, injects chat/journal draft ONCE. NEVER click 发送.",
+          "Detect only: xhs_page_stage / feishu_page_stage. Auth: %APPDATA%/sparo-store/mcp-auth.json · GET /health · /tools",
           "Playbook: docs/HERMES-PLAYBOOK.md",
         ],
         skills,
@@ -1508,8 +2810,15 @@ export class SparkBrowser {
           "run_skill",
           "analyze_page",
           "execute_primitives",
+          "pick_calendar",
           "cs_scan",
           "cs_draft_reply",
+          "cs_one_click_reply",
+          "feishu_page_stage",
+          "feishu_ensure_messenger",
+          "feishu_inject_chat",
+          "feishu_inject_journal",
+          "feishu_work",
           "xhs_page_stage",
           "xhs_inject_compose",
           "xhs_inject_publish",
@@ -1520,8 +2829,11 @@ export class SparkBrowser {
           "navigate",
           "analyze_page",
           "execute_primitives",
+          "pick_calendar",
           "cs_scan",
           "cs_draft_reply",
+          "cs_one_click_reply",
+          "feishu_work",
           "xhs_page_stage",
           "xhs_inject_compose",
           "xhs_layout_next",
@@ -1634,12 +2946,84 @@ export class SparkBrowser {
   }
 
   async handleChat(text: string): Promise<ToolResult> {
+    if (this.chatRunning) {
+      this.chatQueue.push(text);
+      this.chatLog.push({
+        role: "assistant",
+        text: `「${text.slice(0, 28)}」已排队，等当前任务写出手册再做。`,
+      });
+      this.pushSidebarState();
+      return { ok: true, message: "queued" };
+    }
+    this.chatRunning = true;
+    try {
+      return await this.handleChatJob(text);
+    } finally {
+      this.chatRunning = false;
+      const next = this.chatQueue.shift();
+      if (next) void this.handleChat(next);
+    }
+  }
+
+  private async handleChatJob(text: string): Promise<ToolResult> {
     this.chatLog.push({ role: "user", text });
     this.pushSidebarState();
-    const action = parseLocalIntent(text);
+    let action = parseLocalIntent(text, this.settings.locale);
+    if (
+      action.type === "llm" &&
+      isContinueHint(text) &&
+      this.lastFeishuTask
+    ) {
+      action = { type: "feishu", task: this.lastFeishuTask };
+    }
+    const cloudGate = await this.beginCloudTaskIfNeeded(action, text);
+    if (cloudGate === "refused") {
+      const reply = this.lastCloudRefuse || this.L("cloud.exhausted");
+      this.chatLog.push({ role: "assistant", text: reply });
+      this.pushSidebarState();
+      return { ok: false, message: reply };
+    }
+    const cloudOpened = cloudGate === "ok";
+    try {
+    if (this.deepseek && shouldAskPlanner(action, text)) {
+      this.chatLog.push({
+        role: "assistant",
+        text: "先对照能力，弄清你要做什么…",
+      });
+      this.pushSidebarState();
+      try {
+        const planned = await planUserGoal(text, (prompt) =>
+          this.deepseek!.completePlain(prompt),
+        );
+        if (planned && planned.type !== "none") {
+          action = planned as ChatAction;
+        } else if (action.type === "travel_search") {
+          action = { type: "llm", text };
+        }
+      } catch {
+        /* 规划失败就沿用正则结果 */
+      }
+    }
+    if (this.paused && action.type !== "pause") {
+      this.setPaused(false);
+    }
     let reply = "";
+    let replyDoc: ChatTurn["doc"];
     if (action.type === "reply") {
       reply = action.text;
+    } else if (action.type === "print") {
+      try {
+        this.pageView.webContents.print();
+        reply =
+          this.settings.locale.startsWith("zh")
+            ? "已打开系统打印。选打印机或另存为 PDF。"
+            : "Print dialog opened. Choose a printer or Save as PDF.";
+      } catch (error) {
+        reply =
+          "没法自动打印：" +
+          (error instanceof Error ? error.message : String(error)) +
+          "。请按 Ctrl+P。";
+      }
     } else if (action.type === "pause") {
       this.setPaused(action.paused);
       reply = action.paused ? "已暂停，人可接管。" : "已恢复 Agent 操控。";
@@ -1652,7 +3036,7 @@ export class SparkBrowser {
       } else if (action.after === "dxm_crawl") {
         reply = "已打开采集箱。点进商品编辑页后说「处理好」或「继续」。";
       } else {
-        reply = nav.message;
+        reply = action.note || nav.message;
       }
     } else if (action.type === "dxm_guide") {
       reply = dxmGuideMessage(this.getUrl(), action.mode);
@@ -1674,27 +3058,108 @@ export class SparkBrowser {
       const r = await runWorkflow(this, action.id);
       reply = r.message;
       this.pushSidebarState(); // reflect pause after autopilot
-    } else if (action.type === "record_start") {
-      const r = await this.startRecording({ task: action.task });
-      reply = r.ok
-        ? `开始录制${action.task ? `「${action.task}」` : ""}。请在页面上操作，完成后说「结束录制并保存为某某」。`
-        : `无法开始录制：${r.message}`;
-    } else if (action.type === "record_stop") {
-      const r = await this.stopRecording(action.title);
-      reply = r.message;
     } else if (action.type === "list_skills") {
       this.skillsCache = listSkills(this.configDir());
       if (!this.skillsCache.length) {
-        reply = "还没有妙招。可以说「开始录制」演示一遍，再「结束录制并保存为某某」。";
+        reply = "内置能力可直接说「发小红书」「填表」「回复」。这一版不提供录制新操作。";
       } else {
         reply =
-          `已有 ${this.skillsCache.length} 个妙招：\n` +
+          `已有 ${this.skillsCache.length} 个可用操作：\n` +
           this.skillsCache
             .slice(0, 12)
             .map((s, i) => `${i + 1}. ${s.title}（${s.stepCount} 步）`)
             .join("\n") +
-          "\n\n直接说「发小红书」或「运行妙招 小红书发布」即可自动执行。";
+          "\n\n直接说「发小红书」或「填表」即可。这一版不提供录制新操作。";
       }
+    } else if (action.type === "one_click_reply") {
+      this.chatLog.push({
+        role: "assistant",
+        text: this.L("chat.scanningReply"),
+      });
+      this.pushSidebarState();
+      const r = await this.csOneClickReply();
+      reply = r.message;
+      this.pushSidebarState();
+    } else if (action.type === "summarize") {
+      this.chatLog.push({
+        role: "assistant",
+        text: this.L("chat.readingPage"),
+      });
+      this.pushSidebarState();
+      reply = await this.summarizeActivePage(text);
+    } else if (action.type === "trip_plan") {
+      this.chatLog.push({
+        role: "assistant",
+        text: tripPlanProgress(action.plan),
+      });
+      this.pushSidebarState();
+      const tripOut = await this.runTripPlan(action.plan, text);
+      reply = tripOut.text;
+      try {
+        const title = `${action.plan.origin} → ${action.plan.cities.join(" → ")} → ${action.plan.origin}`;
+        const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        replyDoc = writeHtmlReport(
+          this.configDir(),
+          `trip-${stamp}`,
+          tripReportHtml({
+            plan: action.plan,
+            userAsk: text,
+            summary: reply,
+            hotels: tripOut.hotels,
+            flights: tripOut.flights,
+          }),
+          { title, kind: "trip" },
+        );
+        reply = `行程手册已写好：${action.plan.startDate} ${title}，${action.plan.endDate} 返回。点下面卡片，在窗口里打开完整页。`;
+      } catch {
+        /* 写文档失败就仍用侧栏长文 */
+      }
+    } else if (action.type === "mission") {
+      this.chatLog.push({
+        role: "assistant",
+        text: missionProgress(action.mission),
+      });
+      this.pushSidebarState();
+      const out = await this.runMission(action.mission, text);
+      reply = out;
+      try {
+        const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        replyDoc = writeHtmlReport(
+          this.configDir(),
+          `mission-${action.mission.kind}-${stamp}`,
+          readingReportHtml({
+            title: action.mission.title,
+            body: out,
+            eyebrow: "SPARO 任务手册",
+          }),
+          { title: action.mission.title, kind: "read" },
+        );
+        reply = `手册已写好：${action.mission.title}。点下面卡片在窗口里打开。`;
+      } catch {
+        /* 仍用侧栏长文 */
+      }
+    } else if (action.type === "travel_search") {
+      this.chatLog.push({
+        role: "assistant",
+        text: lifeProgress(action),
+      });
+      this.pushSidebarState();
+      reply = await this.runTravelSearch(action);
+    } else if (action.type === "feishu") {
+      this.lastFeishuTask = action.task;
+      this.chatLog.push({
+        role: "assistant",
+        text: "正在打开飞书网页版…",
+      });
+      this.pushSidebarState();
+      reply = await this.runFeishu(action.task);
+    } else if (action.type === "fill_form") {
+      this.chatLog.push({
+        role: "assistant",
+        text: this.L("chat.detectingFields"),
+      });
+      this.pushSidebarState();
+      reply = await this.previewFormFill(text);
     } else if (action.type === "run_skill") {
       const label = action.id || action.query;
       this.chatLog.push({
@@ -1721,46 +3186,501 @@ export class SparkBrowser {
       } else {
         reply = `未知脚本 ${action.script}`;
       }
-    } else if (action.type === "llm") {
-      if (!this.deepseek) {
-        reply =
-          "未配置 DeepSeek API Key。请在侧栏「DeepSeek」保存 Key（platform.deepseek.com），" +
-          "或设置环境变量 DEEPSEEK_API_KEY。\n" +
-          "也可直接说「发小红书」自动跑妙招，或连接 MCP Agent。\n" +
-          dxmGuideMessage(this.getUrl(), "help");
-      } else {
-        try {
-          const url = this.getUrl();
-          this.skillsCache = listSkills(this.configDir());
-          const catalog = skillCatalog(this.configDir())
-            .slice(0, 8)
-            .map((s) => `- ${s.id}: ${s.title}`)
-            .join("\n");
-          const dxmCtx =
-            /店小[蜜秘]|dianxiaomi|速卖通|改标题|改尺寸|图片翻译/i.test(action.text) ||
-            /dianxiaomi\.com/i.test(url);
-          const skillHint =
-            `【妙招优先】若用户要发小红书/长文/已知流程，立刻 run_skill（可用 query 或 id），不要逐步瞎点。目录：\n${catalog || "(无)"}`;
-          const prompt = dxmCtx
-            ? `【执行优先】当前 URL：${url}\n${skillHint}\n动手，不要讲功能清单。要登录/打开店小蜜就 navigate 到 https://www.dianxiaomi.com/web/home；要上品/上架/处理好且在编辑页就 run_workflow(dxm_full_listing)；不在编辑页就 navigate 到 https://www.dianxiaomi.com/web/productCrawl 并短说一句让用户点进编辑页。\n用户说：${action.text}`
-            : `${skillHint}\n当前页：${url}\n用户说：${action.text}`;
-          reply = await this.deepseek.chat(prompt, {
-            url,
-            title: this.getTitle(),
-            skills: catalog,
+    } else if (action.type === "act") {
+      if (action.url && !sameSite(this.getUrl(), action.url)) {
+        const nav = await this.navigate(action.url, { asHuman: true });
+        if (!nav.ok) {
+          reply = nav.message;
+        } else {
+          this.chatLog.push({
+            role: "assistant",
+            text: this.L("chat.openedSite"),
           });
-        } catch (error) {
-          reply =
-            "DeepSeek 调用失败：" +
-            (error instanceof Error ? error.message : String(error));
+          this.pushSidebarState();
+          reply = await this.runLlmGoal(action.text);
         }
+      } else {
+        this.chatLog.push({
+          role: "assistant",
+          text: this.L("chat.actingHere"),
+        });
+        this.pushSidebarState();
+        reply = await this.runLlmGoal(action.text);
       }
+    } else if (action.type === "llm") {
+      reply = await this.runLlmGoal(action.text);
     } else {
-      reply = "未识别指令。";
+      reply = this.L("chat.unknown");
     }
-    this.chatLog.push({ role: "assistant", text: reply });
+    if (cloudOpened) {
+      const settle = await this.finishCloudTask();
+      if (settle) {
+        reply = `${reply}\n\n${this.L("cloud.usedThis", {
+          x: settle.approxTasksUsed,
+          n: settle.approxTasks,
+        })}`;
+      }
+    }
+    if (!replyDoc && reply.length >= 1600) {
+      try {
+        const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        replyDoc = writeHtmlReport(
+          this.configDir(),
+          `read-${stamp}`,
+          readingReportHtml({ title: "Sparo 阅读页", body: reply }),
+          { title: "阅读页", kind: "read" },
+        );
+      } catch {
+        /* 可选 */
+      }
+    }
+    this.chatLog.push({ role: "assistant", text: reply, doc: replyDoc });
     this.pushSidebarState();
     return { ok: true, message: reply, data: { action, chat: this.chatLog.slice(-20) } };
+    } finally {
+      if (this.cloudTaskId) void this.finishCloudTask();
+    }
+  }
+
+  private L(key: string, vars?: Record<string, string | number>): string {
+    return tx(this.settings.locale, key, vars);
+  }
+
+  private async summarizeActivePage(userAsk?: string): Promise<string> {
+    const page = await this.pageText();
+    const text = (page.data?.text || "").trim();
+    if (!text) {
+      return this.L("llm.summarizeEmpty");
+    }
+    if (!this.deepseek) {
+      return this.L("llm.needKeySummarize") + "\n\n" + text.slice(0, 1200);
+    }
+    try {
+      const ask = (userAsk || "").trim();
+      const summary = await this.deepseek.completePlain(
+        [
+          readPageInstruction(ask),
+          `${this.L("llm.pageTitle")}${this.getTitle()}`,
+          `${this.L("llm.pageUrl")}${this.getUrl()}`,
+          this.L("llm.pageBody"),
+          text.slice(0, this.llmRuntime === "cloud" ? 3500 : 8000),
+        ].join("\n"),
+      );
+      return summary || this.L("llm.summarizeNone");
+    } catch (error) {
+      return this.L("llm.summarizeFail") + (error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  private async previewFormFill(userText: string): Promise<string> {
+    const analyzed = await this.analyzePage();
+    if (!analyzed.ok || !analyzed.data) {
+      return analyzed.message || this.L("llm.formNone");
+    }
+    const data = analyzed.data;
+    const fields = [...(data.required_fields || []), ...(data.optional_fields || [])];
+    if (!fields.length) {
+      return this.L("llm.formNotAForm");
+    }
+    const lines = fields.slice(0, 14).map((f) => {
+      const star = f.required ? this.L("llm.formRequired") : "";
+      return `- ${f.label || f.placeholder || f.ref}${star}`;
+    });
+    const header =
+      this.L("llm.formHeader", { count: data.field_count, type: data.page_type }) +
+      "\n" +
+      lines.join("\n");
+    const extra = userText.replace(/填这(张|个)?表|帮我填|通用填表|自动填表|按资料填/g, "").trim();
+    if (extra.length < 8) {
+      return header + "\n\n" + this.L("llm.formAskPayload");
+    }
+    if (!this.deepseek) {
+      return header + "\n\n" + this.L("llm.needKeyFill");
+    }
+    this.chatLog.push({
+      role: "assistant",
+      text: header + "\n" + this.L("llm.formFilling"),
+    });
+    this.pushSidebarState();
+    return this.runLlmGoal(
+      `${userText}\n\n${this.L("llm.knownFields")}\n${lines.join("\n")}\n${this.L("llm.formGoalTail")}`,
+    );
+  }
+
+  async fillSuggest(
+    value: string,
+    target: { ref?: string; selector?: string } = {},
+  ): Promise<ToolResult> {
+    const blocked = this.assertNotPaused();
+    if (blocked) return blocked;
+    const query = value.trim();
+    if (!query) return { ok: false, message: "fill_suggest 需要目的地或关键词" };
+    const wc = this.pageView.webContents;
+    let ref = target.ref;
+    let selector = target.selector;
+    if (!ref && !selector) {
+      const found = (await wc.executeJavaScript(
+        `(${FIND_DEST_INPUT_SCRIPT})()`,
+        true,
+      )) as { ok?: boolean; ref?: string };
+      if (found?.ok && found.ref) ref = found.ref;
+    }
+    if (!ref && !selector) {
+      return { ok: false, message: "找不到目的地输入框" };
+    }
+    const filled = await this.fill({ ref, selector }, query);
+    if (!filled.ok) return filled;
+    await sleep(800);
+    const sug = (await wc.executeJavaScript(
+      `(${PICK_SUGGEST_SCRIPT})(${JSON.stringify(query)})`,
+      true,
+    )) as { ok?: boolean; ref?: string; text?: string; message?: string };
+    if (sug?.ok && sug.ref) {
+      const clicked = await this.click({ ref: sug.ref });
+      return {
+        ok: clicked.ok,
+        message: clicked.ok
+          ? `已选联想「${sug.text || query}」`
+          : clicked.message,
+      };
+    }
+    const enter = await this.pressKey("Enter");
+    return {
+      ok: enter.ok,
+      message: `没有匹配联想，已回车。${sug?.message || ""}`.trim(),
+    };
+  }
+
+  private async extractHotelLinks(city: string): Promise<HotelLink[]> {
+    const pageUrl = this.getUrl();
+    if (!/hotel/i.test(pageUrl) || /\/flights?\//i.test(pageUrl)) return [];
+    try {
+      const raw = (await this.pageView.webContents.executeJavaScript(
+        `(${EXTRACT_HOTEL_LINKS_SCRIPT})()`,
+        true,
+      )) as {
+        hotels?: Array<{ name?: string; url?: string; price?: string; score?: string; area?: string }>;
+      };
+      return (raw.hotels || [])
+        .filter((h) => h.name && h.url && /^https?:/i.test(h.url))
+        .filter((h) => !/\/hotels\/?(\?|$)|\/hotels\/all-cities|\/hotels\/list/i.test(String(h.url)))
+        .filter((h) => /hotelid=|hotels?\/\d|\/hotel\/\d|hotel-detail|\/rooms\/\d/i.test(String(h.url)))
+        .map((h) => ({
+          city,
+          name: String(h.name),
+          url: String(h.url),
+          price: h.price ? String(h.price) : undefined,
+          score: h.score ? String(h.score) : undefined,
+          area: h.area ? String(h.area) : undefined,
+        }));
+    } catch {
+      return [];
+    }
+  }
+
+  private async runMission(mission: Mission, userAsk: string): Promise<string> {
+    const findings: Array<{ label: string; url: string; text: string }> = [];
+    const heavyHost = /taobao\.com|tmall\.com|jd\.com|dianping\.com|maoyan\.com/;
+    for (const step of mission.steps.slice(0, 4)) {
+      this.chatLog.push({ role: "assistant", text: `正在查：${step.label}` });
+      this.pushSidebarState();
+      if (heavyHost.test(step.url)) {
+        findings.push({
+          label: step.label,
+          url: step.url,
+          text: "商城和点评页会卡住窗口，只记下链接，不打开正文。",
+        });
+        continue;
+      }
+      const nav = await this.withTimeout(
+        this.navigate(step.url, { asHuman: true }),
+        12000,
+        { ok: false, message: "打开超时，先记下链接。" },
+      );
+      if (!nav.ok) {
+        findings.push({ label: step.label, url: step.url, text: nav.message });
+        continue;
+      }
+      const landed = this.getUrl() || step.url;
+      if (heavyHost.test(landed)) {
+        try {
+          this.pageView.webContents.stop();
+        } catch {
+          /* 停不住也别继续读 */
+        }
+        findings.push({
+          label: step.label,
+          url: step.url,
+          text: "落到了会卡死的商城页，改回检索链接，不读这一页。",
+        });
+        continue;
+      }
+      if (mission.kind !== "compare_shop" && !/baidu\.com\/s/.test(landed)) {
+        await sleep(800);
+        try {
+          await this.scrollTravelList();
+        } catch {
+          /* 滚动失败仍读当前正文 */
+        }
+      }
+      const page = await this.withTimeout(this.pageText(), 8000, {
+        ok: true,
+        message: "",
+        data: { text: "" },
+      });
+      const body = String(page.data?.text || "").trim();
+      findings.push({
+        label: step.label,
+        url: landed,
+        text: body.slice(0, 8000) || "这一页还没出文字，可能要登录。",
+      });
+    }
+    if (this.deepseek) {
+      const summary = await this.withTimeout(
+        this.deepseek.completePlain(missionSynthesizePrompt(userAsk, mission, findings)),
+        20000,
+        "",
+      );
+      if (String(summary).trim()) return String(summary).trim();
+    }
+    return findings.map((f) => `【${f.label}】\n${f.url}\n${f.text.slice(0, 800)}`).join("\n\n");
+  }
+
+  private async withTimeout<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
+    let settled = false;
+    const timeout = new Promise<T>((resolve) => {
+      setTimeout(() => {
+        if (settled) return;
+        try {
+          this.pageView.webContents.stop();
+        } catch {
+          /* 停加载失败仍返回兜底，避免整窗挂死 */
+        }
+        resolve(fallback);
+      }, ms);
+    });
+    try {
+      const value = await Promise.race([work, timeout]);
+      settled = true;
+      return value;
+    } catch {
+      settled = true;
+      return fallback;
+    }
+  }
+
+  private async runTripPlan(
+    plan: TripPlan,
+    userAsk: string,
+  ): Promise<{ text: string; hotels: HotelLink[]; flights: FlightLink[] }> {
+    const steps = expandTripPlan(plan);
+    if (!steps.length) {
+      return {
+        text: "没法拆出航班和酒店步骤，请再说清出发地、要去的城市和往返日期。",
+        hotels: [],
+        flights: [],
+      };
+    }
+    const findings: Array<{ label: string; url: string; text: string }> = [];
+    const hotels: HotelLink[] = [];
+    const flights: FlightLink[] = [];
+    for (const step of steps) {
+      this.chatLog.push({ role: "assistant", text: `正在查：${step.label}` });
+      this.pushSidebarState();
+      let note = await this.runTravelSearch(step.query, { raw: true });
+      const pageUrl = this.getUrl();
+      if (step.query.kind === "hotel") {
+        const city = step.query.city;
+        await this.scrollTravelList();
+        await sleep(400);
+        const links = await this.extractHotelLinks(city);
+        hotels.push(...links);
+        const extra = formatHotelLinks(links);
+        if (extra) note = `${note}\n\n${extra}`;
+      } else if (step.query.kind === "flight" && /^https?:/i.test(pageUrl)) {
+        const title =
+          step.query.from && step.query.to
+            ? `${step.query.from} → ${step.query.to} ${step.query.date}`
+            : step.label.replace(/^[^ ]+机票\s*/, "");
+        const hint = flightHintFromText(note);
+        flights.push({ label: title, url: pageUrl, hint });
+        note = `${note}\n\n${formatFlightLinks([{ label: title, url: pageUrl, hint }])}`;
+      }
+      findings.push({
+        label: step.label,
+        url: pageUrl,
+        text: note,
+      });
+    }
+    if (this.deepseek) {
+      const summary = await this.deepseek.completePlain(
+        tripSynthesizePrompt(userAsk, plan, findings),
+      );
+      if (summary.trim()) return { text: summary.trim(), hotels, flights };
+    }
+    return {
+      text: findings.map((f) => `【${f.label}】\n${f.url}\n${f.text}`).join("\n\n"),
+      hotels,
+      flights,
+    };
+  }
+
+  private async scrollTravelList(): Promise<void> {
+    try {
+      await this.pageView.webContents.executeJavaScript(
+        `(() => {
+          const roots = [document.scrollingElement, document.getElementById('app')];
+          document.querySelectorAll('[class*="list"],[class*="result"],[class*="scroll"]').forEach((el) => roots.push(el));
+          for (const el of roots) {
+            if (!el) continue;
+            try { el.scrollTop = (el.scrollTop || 0) + 720; } catch (_) {}
+          }
+          window.scrollBy(0, 900);
+          return true;
+        })()`,
+        true,
+      );
+    } catch {
+      /* 滚动失败就继续读当前正文 */
+    }
+  }
+
+  private async waitTravelText(q: TravelQuery, ms = 6000): Promise<string> {
+    const started = Date.now();
+    let last = "";
+    while (Date.now() - started < ms) {
+      await this.scrollTravelList();
+      await sleep(450);
+      const page = await this.pageText();
+      last = (page.data?.text || "").trim();
+      const here = this.getUrl();
+      if (q.kind === "hotel" && (!/hotel/i.test(here) || /\/flights?\//i.test(here))) {
+        continue;
+      }
+      if (q.kind === "flight" && !isFlightResultUrl(here)) {
+        continue;
+      }
+      const state = travelListState(q.kind, last);
+      if (state === "ready" || state === "empty" || state === "blocked") return last;
+    }
+    return last;
+  }
+
+  private async runTravelSearch(
+    q: TravelQuery,
+    opts: { raw?: boolean } = {},
+  ): Promise<string> {
+    try {
+      let url = travelResultUrl(q);
+      if (q.kind === "hotel" && q.site === "ctrip") {
+        const resolved = await resolveCtripHotelCity(q.city);
+        if (!resolved) {
+          return `找不到「${q.city}」对应的携程城市，请换个地名再试。`;
+        }
+        url = ctripHotelListUrl(resolved.cityId, q.checkin, q.checkout);
+      }
+      if (!url) {
+        return "还不知道怎么打开这一页，请换个站点名再试。";
+      }
+      const nav = await this.navigate(url, { asHuman: true });
+      if (!nav.ok) return nav.message;
+      await sleep(opts.raw ? 800 : 1400);
+      let text = await this.waitTravelText(q, opts.raw ? 5000 : 7000);
+      let promptQ = q;
+      const here = this.getUrl();
+      const alreadyList = q.kind === "flight" && isFlightResultUrl(here);
+      if (
+        q.kind === "flight" &&
+        !alreadyList &&
+        shouldFallbackFlight(text, q.site, here)
+      ) {
+        const fbUrl = flightFallbackUrl(q);
+        this.chatLog.push({
+          role: "assistant",
+          text: "携程列表没读全，改去 Trip.com 再查…",
+        });
+        this.pushSidebarState();
+        const nav2 = await this.navigate(fbUrl, { asHuman: true });
+        if (nav2.ok) {
+          await sleep(1000);
+          const alt = await this.waitTravelText(q, 7000);
+          const altState = travelListState("flight", alt);
+          if (altState === "ready" || alt.length > text.length + 200) {
+            text = alt;
+            promptQ = { ...q, site: "gflights" };
+          }
+        }
+      }
+      if (/验证码|滑块|captcha|人机验证|请登录|sign in to continue/i.test(text) && text.length < 400) {
+        return `已打开目标页，但被登录或验证码挡住了。请你在窗口里过后说「继续」。\n${this.getUrl()}`;
+      }
+      const body = text.slice(0, 12000);
+      if (!body) {
+        return `已打开 ${this.getUrl()}，页面还没出文字。可能要登录或过一下验证。`;
+      }
+      let extra = "";
+      if (q.kind === "hotel") {
+        try {
+          await this.scrollTravelList();
+          const links = await this.extractHotelLinks(q.city);
+          extra = formatHotelLinks(links);
+        } catch {
+          /* 没有详情链就只用正文 */
+        }
+      }
+      if (opts.raw) {
+        return extra ? `${body.slice(0, 2400)}\n\n${extra}` : body.slice(0, 2400);
+      }
+      if (this.deepseek) {
+        const summary = await this.deepseek.completePlain(
+          [travelReadPrompt(promptQ), `当前网址：${this.getUrl()}`, extra, body].join("\n"),
+        );
+        if (summary.trim()) return extra ? `${summary.trim()}\n\n${extra}` : summary.trim();
+      }
+      return `已打开结果页：${this.getUrl()}\n\n${body.slice(0, 900)}${extra ? `\n\n${extra}` : ""}`;
+    } catch (error) {
+      return "查询失败：" + (error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  private async runLlmGoal(text: string): Promise<string> {
+    if (!this.deepseek) {
+      return this.L("llm.needKey");
+    }
+    try {
+      const url = this.getUrl();
+      this.skillsCache = listSkills(this.configDir());
+      const catalog = skillCatalog(this.configDir())
+        .slice(0, 8)
+        .map((s) => `- ${s.id}: ${s.title}`)
+        .join("\n");
+      const history = this.chatLog
+        .filter(
+          (turn) =>
+            !/^(已打开目标站|开始在当前页操作|Opened the site|Acting on this page)/.test(
+              turn.text,
+            ),
+        )
+        .slice(-12);
+      if (history.at(-1)?.role === "user" && history.at(-1)?.text === text) {
+        history.pop();
+      }
+      const page = await this.pageText();
+      const visible = (page.data?.text || "").trim().slice(0, this.llmRuntime === "cloud" ? 3000 : 6000);
+      const reply = await this.deepseek.chat(text, {
+        url,
+        title: this.getTitle(),
+        skills: catalog,
+        history,
+        profileBrief: profileBriefFor(this.configDir()),
+        locale: this.settings.locale,
+        pageText: visible,
+      });
+      this.deepseek.takeMutations();
+      return reply;
+    } catch (error) {
+      return this.L("llm.callFail") + (error instanceof Error ? error.message : String(error));
+    }
   }
 
   private async probe(): Promise<{ url: string; title: string; bodyLen: number }> {
@@ -2353,6 +4273,164 @@ export class SparkBrowser {
     }
   }
 
+  /**
+   * Set a custom calendar + hour:minute popover (X Ads End time, etc.).
+   * Clicks Next/Previous month by aria-label, never the "<" glyph.
+   * Does not click page Next / Save draft / pay.
+   */
+  async pickCalendar(input: {
+    triggerRef?: string;
+    triggerLabel?: string;
+    triggerText?: string;
+    value?: unknown;
+    date?: string;
+    hours?: string | number;
+    minutes?: string | number;
+    dismiss?: "outside" | "escape";
+  }): Promise<ToolResult> {
+    const blocked = this.assertNotPaused();
+    if (blocked) return blocked;
+    const dt = parseDatetimeValue(input.value ?? input.date ?? "") || parseDatetimeValue({
+      date: input.date,
+      hours: input.hours,
+      minutes: input.minutes,
+    });
+    if (!dt) {
+      return { ok: false, message: "pick_calendar needs a date (e.g. 2026-09-03 00:59 or Sep 3, 2026)" };
+    }
+    if (input.hours != null) dt.hours = Number(input.hours);
+    if (input.minutes != null) dt.minutes = Number(input.minutes);
+    const wc = this.pageView.webContents;
+    const inspect = async () =>
+      (await wc.executeJavaScript(
+        `(${CALENDAR_INSPECT_SCRIPT})(${JSON.stringify({
+          year: dt.year,
+          month: dt.month,
+          day: dt.day,
+          triggerRef: input.triggerRef || "",
+        })})`,
+        true,
+      )) as {
+        ok?: boolean;
+        open?: boolean;
+        message?: string;
+        header?: string;
+        headerYear?: number;
+        headerMonth?: number;
+        steps?: number;
+        next?: { x: number; y: number; label?: string } | null;
+        prev?: { x: number; y: number; label?: string } | null;
+        day?: { x: number; y: number; name?: string } | null;
+        dayCount?: number;
+        hours?: { ref?: string; x: number; y: number } | null;
+        minutes?: { ref?: string; x: number; y: number } | null;
+        outside?: { x: number; y: number };
+        triggerText?: string;
+      };
+
+    if (input.triggerRef) {
+      const clk = await this.click({ ref: input.triggerRef });
+      if (!clk.ok) {
+        return { ok: false, message: `could not open date picker: ${clk.message}` };
+      }
+    } else {
+      const label = input.triggerText || input.triggerLabel || "Run indefinitely";
+      let clk = await this.clickText(label, { exact: false });
+      if (!clk.ok && label !== "Run indefinitely") {
+        clk = await this.clickText("Run indefinitely", { exact: false });
+      }
+      if (!clk.ok) {
+        return { ok: false, message: `could not open date picker: ${clk.message}` };
+      }
+    }
+    await sleep(250);
+    let state = await inspect();
+    const deadline = Date.now() + 2500;
+    while (!state?.open && Date.now() < deadline) {
+      await sleep(150);
+      state = await inspect();
+    }
+    if (!state?.open) {
+      return { ok: false, message: state?.message || "calendar popover did not open" };
+    }
+
+    let guard = 0;
+    while (typeof state.steps === "number" && state.steps !== 0 && guard < 24) {
+      const goNext = state.steps > 0;
+      const nav = goNext ? state.next : state.prev;
+      if (!nav) {
+        return {
+          ok: false,
+          message: `calendar needs ${goNext ? "Next month" : "Previous month"} but no aria-labelled chevron`,
+          data: state,
+        };
+      }
+      await this.trustedClickAt(Math.round(nav.x), Math.round(nav.y), { hoverOnly: true });
+      await sleep(40);
+      await this.trustedClickAt(Math.round(nav.x), Math.round(nav.y));
+      await sleep(280);
+      state = await inspect();
+      guard += 1;
+    }
+    if (state.steps) {
+      return { ok: false, message: `could not reach ${dt.year}-${twoDigit(dt.month)}`, data: state };
+    }
+    if (!state.day) {
+      return {
+        ok: false,
+        message: `no unique in-month cell for day ${dt.day} (count=${state.dayCount ?? 0}). Do not click_text a bare number.`,
+        data: state,
+      };
+    }
+    await this.trustedClickAt(Math.round(state.day.x), Math.round(state.day.y), { hoverOnly: true });
+    await sleep(40);
+    await this.trustedClickAt(Math.round(state.day.x), Math.round(state.day.y));
+    await sleep(200);
+    state = await inspect();
+    const hourRef = state.hours?.ref;
+    const minRef = state.minutes?.ref;
+    if (hourRef) {
+      await wc.executeJavaScript(
+        `(${SET_SPIN_SCRIPT})(${JSON.stringify(hourRef)}, ${JSON.stringify(twoDigit(dt.hours))})`,
+        true,
+      );
+    }
+    if (minRef && minRef !== hourRef) {
+      await wc.executeJavaScript(
+        `(${SET_SPIN_SCRIPT})(${JSON.stringify(minRef)}, ${JSON.stringify(twoDigit(dt.minutes))})`,
+        true,
+      );
+    }
+    await sleep(120);
+    if (input.dismiss === "escape") {
+      wc.sendInputEvent({ type: "keyDown", keyCode: "Escape" } as Electron.KeyboardInputEvent);
+      wc.sendInputEvent({ type: "keyUp", keyCode: "Escape" } as Electron.KeyboardInputEvent);
+    } else if (state.outside) {
+      await this.trustedClickAt(Math.round(state.outside.x), Math.round(state.outside.y));
+    }
+    await sleep(280);
+    let committed = "";
+    if (input.triggerRef) {
+      const read = (await wc.executeJavaScript(
+        `(${FIELD_VALUE_SCRIPT})(${JSON.stringify(input.triggerRef)})`,
+        true,
+      )) as { value?: string };
+      committed = String(read?.value || "");
+    } else {
+      const again = await inspect();
+      committed = String(again?.triggerText || "");
+    }
+    const ok = datetimeCommitted(committed, dt) || Boolean(committed && !/indefinitely/i.test(committed));
+    this.lastSnapshot = null;
+    return {
+      ok,
+      message: ok
+        ? `pick_calendar → ${committed || `${dt.year}-${twoDigit(dt.month)}-${twoDigit(dt.day)} ${twoDigit(dt.hours)}:${twoDigit(dt.minutes)}`}`
+        : `calendar picked but End time still reads "${committed || "unknown"}"`,
+      data: { committed, dt, header: state.header },
+    };
+  }
+
   /** Scroll long-form editor so 下一步 is on-screen. */
   async xhsScrollBottom(): Promise<ToolResult> {
     try {
@@ -2601,6 +4679,231 @@ export class SparkBrowser {
         message: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  async feishuPageStage(): Promise<ToolResult> {
+    try {
+      const data = await this.pageView.webContents.executeJavaScript(
+        FEISHU_STAGE_SCRIPT,
+        true,
+      );
+      return {
+        ok: true,
+        message: `stage=${(data as { stage?: string })?.stage || "unknown"}`,
+        data,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  async feishuEnsureMessenger(): Promise<ToolResult> {
+    const url = this.getUrl();
+    if (alreadyOnFeishuTask(url, { kind: "open" })) {
+      const stage = await this.feishuPageStage();
+      if ((stage.data as { login?: boolean } | undefined)?.login || isFeishuLoginUrl(url)) {
+        this.setPaused(true);
+        return {
+          ok: false,
+          message: "已打开飞书登录页。请你扫码或登录，登好后说「继续」。",
+          data: stage.data,
+        };
+      }
+      return { ok: true, message: "飞书消息页已打开", data: { url } };
+    }
+    const nav = await this.navigate(FEISHU_MESSENGER_URL, { asHuman: true });
+    if (!nav.ok) return nav;
+    await sleep(1200);
+    const stage = await this.feishuPageStage();
+    if ((stage.data as { login?: boolean } | undefined)?.login || isFeishuLoginUrl(this.getUrl())) {
+      this.setPaused(true);
+      return {
+        ok: false,
+        message: "已打开飞书登录页。请你扫码或登录，登好后说「继续」。",
+        data: stage.data,
+      };
+    }
+    return { ok: true, message: "已打开飞书网页消息", data: { url: this.getUrl() } };
+  }
+
+  async feishuOpenChat(input: { to?: string }): Promise<ToolResult> {
+    const to = String(input.to || "").trim();
+    if (!to) return { ok: false, message: "缺少联系人" };
+    try {
+      const data = (await Promise.race([
+        this.pageView.webContents.executeJavaScript(
+          `(${FEISHU_OPEN_CHAT_SCRIPT})(${JSON.stringify({ to })})`,
+          true,
+        ),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("feishu_open_chat timeout 12s")), 12000),
+        ),
+      ])) as { ok?: boolean; message?: string };
+      return {
+        ok: Boolean(data?.ok),
+        message: data?.message || (data?.ok ? `已点开 ${to}` : "没找到联系人"),
+        data,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  async feishuInjectChat(input: { body?: string }): Promise<ToolResult> {
+    return this.feishuInjectText({ body: input.body || "" });
+  }
+
+  async feishuInjectJournal(input: {
+    title?: string;
+    body?: string;
+  }): Promise<ToolResult> {
+    return this.feishuInjectText({
+      title: input.title || "",
+      body: input.body || "",
+    });
+  }
+
+  private async feishuInjectText(input: {
+    title?: string;
+    body?: string;
+  }): Promise<ToolResult> {
+    const title = String(input.title || "");
+    const body = String(input.body || "");
+    if (!title && !body) return { ok: false, message: "没有可写入的正文" };
+    try {
+      const data = (await Promise.race([
+        this.pageView.webContents.executeJavaScript(
+          `(${FEISHU_INJECT_TEXT_SCRIPT})(${JSON.stringify({ title, body })})`,
+          true,
+        ),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("feishu_inject timeout 12s")), 12000),
+        ),
+      ])) as { ok?: boolean; message?: string; bodyLen?: number };
+      return {
+        ok: Boolean(data?.ok),
+        message: data?.message || (data?.ok ? "已写入草稿，未点发送" : "找不到输入框"),
+        data,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  async feishuWork(input?: {
+    kind?: string;
+    to?: string;
+    title?: string;
+    body?: string;
+  }): Promise<ToolResult> {
+    const kindRaw = String(input?.kind || "").trim();
+    const kind: FeishuTask["kind"] =
+      kindRaw === "chat" ||
+      kindRaw === "journal" ||
+      kindRaw === "doc" ||
+      kindRaw === "calendar"
+        ? kindRaw
+        : input?.to || input?.body
+          ? "chat"
+          : "open";
+    const task: FeishuTask = {
+      kind,
+      to: input?.to ? String(input.to) : undefined,
+      title: input?.title ? String(input.title) : undefined,
+      body: input?.body ? String(input.body) : undefined,
+    };
+    this.lastFeishuTask = task;
+    const message = await this.runFeishu(task);
+    return { ok: !/失败|找不到|登录/.test(message) || /已打开飞书登录/.test(message), message };
+  }
+
+  async runFeishu(task: FeishuTask): Promise<string> {
+    const target = feishuUrl(task);
+    if (!alreadyOnFeishuTask(this.getUrl(), task)) {
+      const nav = await this.navigate(target, { asHuman: true });
+      if (!nav.ok) return nav.message;
+      await sleep(1500);
+    }
+
+    const stage = await this.feishuPageStage();
+    const login =
+      Boolean((stage.data as { login?: boolean } | undefined)?.login) ||
+      isFeishuLoginUrl(this.getUrl());
+    if (login) {
+      this.setPaused(true);
+      return "已打开飞书登录页。请你在窗口里扫码或登录，登好后说「继续」。我不会代填密码。";
+    }
+
+    if (task.kind === "open") {
+      return "已打开飞书网页消息。可以说「给张三发：……」或「写今日日报：……」，发送仍由你点。";
+    }
+    if (task.kind === "calendar") {
+      this.setPaused(true);
+      return "已打开飞书日历。请你在窗口里确认或新建日程，需要我写入标题时再说。";
+    }
+
+    if (task.kind === "chat") {
+      if (task.to) {
+        const opened = await this.feishuOpenChat({ to: task.to });
+        if (!opened.ok) {
+          this.setPaused(true);
+          return `${opened.message}。请你在左侧点开会话，点开后说「继续」，我再写入草稿。`;
+        }
+        await sleep(800);
+      }
+      if (task.body) {
+        const inj = await this.feishuInjectChat({ body: task.body });
+        if (!inj.ok) {
+          this.setPaused(true);
+          return `${inj.message}。请点开输入框后说「继续」。`;
+        }
+      }
+      this.setPaused(true);
+      const who = task.to ? `给${task.to}` : "当前会话";
+      return task.body
+        ? `已在飞书写好${who}的草稿，未点发送。请你看一眼再点发送。`
+        : `已打开${who}。把要说的话发给我，我写入草稿，发送由你点。`;
+    }
+
+    const draft = [task.title, task.body].filter(Boolean).join("\n\n");
+    const inj = await this.feishuInjectJournal({
+      title: task.title,
+      body: task.body,
+    });
+    if (inj.ok) {
+      this.setPaused(true);
+      return task.kind === "doc"
+        ? "已打开飞书文档并尝试写入草稿，未提交。请你确认后保存。"
+        : "已写入飞书日志草稿，未提交。请你确认后点发送/提交。";
+    }
+
+    if (!alreadyOnFeishuTask(this.getUrl(), { kind: "open" })) {
+      const nav = await this.navigate(FEISHU_MESSENGER_URL, { asHuman: true });
+      if (!nav.ok) return nav.message;
+      await sleep(1200);
+    }
+    if (isFeishuLoginUrl(this.getUrl())) {
+      this.setPaused(true);
+      return "需要先登录飞书。请扫码，登好后说「继续」。";
+    }
+    if (draft) {
+      const chat = await this.feishuInjectChat({ body: draft });
+      this.setPaused(true);
+      if (chat.ok) {
+        return "汇报页没有可写区域，已把内容写进消息草稿。请你自己点开日志或发给同事，我不会代点发送。";
+      }
+    }
+    this.setPaused(true);
+    return "打不开飞书日志输入框。请你点开汇报或会话后说「继续」。";
   }
 
   async screenshot(label?: string): Promise<ToolResult> {
@@ -3475,16 +5778,18 @@ export class SparkBrowser {
     }
   }
 
-  async reload(opts?: { asHuman?: boolean }): Promise<ToolResult> {
+  async reload(opts?: { asHuman?: boolean; ignoreCache?: boolean }): Promise<ToolResult> {
     if (!opts?.asHuman) {
       const blocked = this.assertNotPaused();
       if (blocked) return blocked;
     }
-    this.pageView.webContents.reload();
+    if (opts?.ignoreCache) this.pageView.webContents.reloadIgnoringCache();
+    else this.pageView.webContents.reload();
     this.lastSnapshot = null;
-    await sleep(800);
+    if (!opts?.asHuman) await sleep(800);
     const probe = await this.probe();
     this.pushStatus();
+    this.pushChromeState();
     return {
       ok: true,
       message: `Reloaded → ${probe.url}`,
@@ -3503,9 +5808,10 @@ export class SparkBrowser {
     const before = await this.probe();
     this.pageView.webContents.goBack();
     this.lastSnapshot = null;
-    await sleep(800);
+    if (!opts?.asHuman) await sleep(800);
     const after = await this.probe();
     this.pushStatus();
+    this.pushChromeState();
     return {
       ok: after.url !== before.url,
       message: `Back → ${after.url}`,
@@ -3524,9 +5830,10 @@ export class SparkBrowser {
     const before = await this.probe();
     this.pageView.webContents.goForward();
     this.lastSnapshot = null;
-    await sleep(800);
+    if (!opts?.asHuman) await sleep(800);
     const after = await this.probe();
     this.pushStatus();
+    this.pushChromeState();
     return {
       ok: after.url !== before.url,
       message: `Forward → ${after.url}`,
@@ -3538,7 +5845,10 @@ export class SparkBrowser {
     const tab = this.getActiveTab();
     if (!tab) return "";
     try {
-      return tab.view.webContents.getURL() || tab.url || "";
+      if (tab.view && !tab.view.webContents.isDestroyed()) {
+        return tab.view.webContents.getURL() || tab.url || "";
+      }
+      return tab.url || "";
     } catch {
       return tab.url || "";
     }
@@ -3548,7 +5858,10 @@ export class SparkBrowser {
     const tab = this.getActiveTab();
     if (!tab) return "";
     try {
-      return tab.view.webContents.getTitle() || tab.title || "";
+      if (tab.view && !tab.view.webContents.isDestroyed()) {
+        return tab.view.webContents.getTitle() || tab.title || "";
+      }
+      return tab.title || "";
     } catch {
       return tab.title || "";
     }

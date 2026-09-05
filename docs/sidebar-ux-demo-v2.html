@@ -1,0 +1,725 @@
+<!doctype html>
+<html lang="zh-CN" data-kit="studio">
+<head>
+  <meta charset="UTF-8" />
+  <title>Sparo 侧栏 · 套装 Demo</title>
+  <style>
+    :root {
+      --page-bg: #e8e8ed;
+      --win-line: #c8c8cd;
+      --side: #f4f4f6;
+      --text: #1d1d1f;
+      --mute: #6e6e73;
+      --accent: #1d1d1f;
+      --accent-ink: #f5f5f7;
+      --warn: #6e6e73;
+      --paper: #ffffff;
+      --paper-ink: #1d1d1f;
+      --paper-mute: #6e6e73;
+      --chrome: #f5f5f7;
+      --chrome-line: #d2d2d7;
+      --omni: #ffffff;
+      --omni-ink: #6e6e73;
+      --sheet-box: #f5f5f7;
+      --composer: #ffffff;
+      --dot-r: #ff5f57;
+      --dot-y: #febc2e;
+      --dot-g: #28c840;
+      --glow: 0 18px 48px rgba(0,0,0,.10);
+      --radius-win: 12px;
+      --radius-in: 12px;
+      --radius-btn: 8px;
+      --track: 0;
+      --ui-font: -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+      --mark-font: -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    }
+
+    html[data-kit="studio"] {
+      --page-bg: #e8e8ed;
+      --win-line: #c8c8cd;
+      --side: #f4f4f6;
+      --text: #1d1d1f;
+      --mute: #6e6e73;
+      --accent: #1d1d1f;
+      --accent-ink: #f5f5f7;
+      --warn: #6e6e73;
+      --paper: #ffffff;
+      --paper-ink: #1d1d1f;
+      --paper-mute: #6e6e73;
+      --chrome: #f5f5f7;
+      --chrome-line: #d2d2d7;
+      --omni: #ffffff;
+      --omni-ink: #6e6e73;
+      --sheet-box: #f5f5f7;
+      --composer: #ffffff;
+      --dot-r: #ff5f57;
+      --dot-y: #febc2e;
+      --dot-g: #28c840;
+      --glow: 0 18px 48px rgba(0,0,0,.10);
+      --radius-win: 12px;
+      --radius-in: 12px;
+      --radius-btn: 8px;
+      --track: 0;
+    }
+
+    html[data-kit="cursor"] {
+      --page-bg: #ececec;
+      --win-line: #e0e0e0;
+      --side: #f7f7f7;
+      --text: #1e1e1e;
+      --mute: #787878;
+      --accent: #171717;
+      --accent-ink: #fafafa;
+      --warn: #787878;
+      --paper: #ffffff;
+      --paper-ink: #1e1e1e;
+      --paper-mute: #6a6a6a;
+      --chrome: #f3f3f3;
+      --chrome-line: #e5e5e5;
+      --omni: #ffffff;
+      --omni-ink: #787878;
+      --sheet-box: #fafafa;
+      --composer: #ffffff;
+      --dot-r: #d4d4d4;
+      --dot-y: #d4d4d4;
+      --dot-g: #d4d4d4;
+      --glow: 0 1px 0 rgba(255,255,255,.8), 0 12px 32px rgba(0,0,0,.08);
+      --radius-win: 8px;
+      --radius-in: 8px;
+      --radius-btn: 6px;
+      --track: 0;
+    }
+
+    html[data-kit="frost"] {
+      --page-bg: #d8dce4;
+      --win-line: #b8c0cc;
+      --side: #eceef2;
+      --text: #1c222c;
+      --mute: #6a7380;
+      --accent: #2a313c;
+      --accent-ink: #f4f6f8;
+      --warn: #6a7380;
+      --paper: #f8f9fb;
+      --paper-ink: #1c222c;
+      --paper-mute: #5e6774;
+      --chrome: #e4e8ee;
+      --chrome-line: #cdd3dc;
+      --omni: #f8f9fb;
+      --omni-ink: #6a7380;
+      --sheet-box: #eef1f5;
+      --composer: #f8f9fb;
+      --dot-r: #c5ccd6;
+      --dot-y: #c5ccd6;
+      --dot-g: #c5ccd6;
+      --glow: 0 16px 40px rgba(40,50,70,.12);
+      --radius-win: 14px;
+      --radius-in: 14px;
+      --radius-btn: 10px;
+      --track: .02em;
+    }
+
+    html[data-kit="platinum"] {
+      --page-bg: #e4e0dc;
+      --win-line: #c8c2bc;
+      --side: #f3f0ec;
+      --text: #1c1a18;
+      --mute: #6e6a66;
+      --accent: #2c2a28;
+      --accent-ink: #f7f4f0;
+      --warn: #6e6a66;
+      --paper: #fbfaf8;
+      --paper-ink: #1c1a18;
+      --paper-mute: #6e6a66;
+      --chrome: #eeeae6;
+      --chrome-line: #ddd8d2;
+      --omni: #fbfaf8;
+      --omni-ink: #6e6a66;
+      --sheet-box: #f4f1ed;
+      --composer: #fbfaf8;
+      --dot-r: #ff5f57;
+      --dot-y: #febc2e;
+      --dot-g: #28c840;
+      --glow: 0 18px 44px rgba(40,32,24,.10);
+      --radius-win: 16px;
+      --radius-in: 16px;
+      --radius-btn: 999px;
+      --track: -.01em;
+    }
+
+    html[data-kit="graphite"] {
+      --page-bg: #111111;
+      --win-line: #2a2a2a;
+      --side: #181818;
+      --text: #ececec;
+      --mute: #8a8a8a;
+      --accent: #f4f4f4;
+      --accent-ink: #141414;
+      --warn: #a0a0a0;
+      --paper: #1e1e1e;
+      --paper-ink: #e8e8e8;
+      --paper-mute: #8f8f8f;
+      --chrome: #141414;
+      --chrome-line: #2a2a2a;
+      --omni: #252525;
+      --omni-ink: #8a8a8a;
+      --sheet-box: #252525;
+      --composer: #222222;
+      --dot-r: #3a3a3a;
+      --dot-y: #3a3a3a;
+      --dot-g: #3a3a3a;
+      --glow: 0 18px 48px rgba(0,0,0,.45);
+      --radius-win: 8px;
+      --radius-in: 8px;
+      --radius-btn: 6px;
+      --track: 0;
+    }
+
+    html[data-kit="midnight"] {
+      --page-bg: #000000;
+      --win-line: #3a3a3c;
+      --side: #1c1c1e;
+      --text: #f5f5f7;
+      --mute: #8e8e93;
+      --accent: #f5f5f7;
+      --accent-ink: #1c1c1e;
+      --warn: #8e8e93;
+      --paper: #2c2c2e;
+      --paper-ink: #f5f5f7;
+      --paper-mute: #8e8e93;
+      --chrome: #1c1c1e;
+      --chrome-line: #3a3a3c;
+      --omni: #2c2c2e;
+      --omni-ink: #8e8e93;
+      --sheet-box: #3a3a3c;
+      --composer: #2c2c2e;
+      --dot-r: #ff5f57;
+      --dot-y: #febc2e;
+      --dot-g: #28c840;
+      --glow: 0 20px 50px rgba(0,0,0,.55);
+      --radius-win: 12px;
+      --radius-in: 12px;
+      --radius-btn: 8px;
+      --track: 0;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--page-bg);
+      color: var(--text);
+      font-family: var(--ui-font);
+      transition: background .25s ease, color .25s ease;
+    }
+    .wrap {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 32px 28px 56px;
+    }
+    .kicker {
+      font-size: 11px;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      color: var(--mute);
+      margin: 0 0 8px;
+    }
+    h1 {
+      font-size: 26px;
+      font-weight: 560;
+      letter-spacing: -.03em;
+      margin: 0 0 8px;
+    }
+    .lead {
+      margin: 0 0 18px;
+      color: var(--mute);
+      font-size: 14px;
+      line-height: 1.55;
+      max-width: 46em;
+    }
+    .kits {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .kit {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--win-line);
+      background: transparent;
+      color: var(--text);
+      border-radius: 999px;
+      padding: 6px 12px 6px 8px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .kit.on {
+      border-color: var(--accent);
+    }
+    .swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      display: block;
+      border: 1px solid rgba(0,0,0,.08);
+    }
+    .switch {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 18px;
+    }
+    .switch button {
+      border: 0;
+      background: transparent;
+      color: var(--mute);
+      font-size: 13px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      cursor: pointer;
+    }
+    .switch button.on {
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      color: var(--text);
+    }
+    .win {
+      height: 740px;
+      display: grid;
+      grid-template-columns: 1fr 312px;
+      border-radius: var(--radius-win);
+      overflow: hidden;
+      border: 1px solid var(--win-line);
+      box-shadow: var(--glow);
+    }
+    .main {
+      display: grid;
+      grid-template-rows: 52px 1fr;
+      background: var(--paper);
+      color: var(--paper-ink);
+    }
+    .chrome {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 14px;
+      background: var(--chrome);
+      border-bottom: 1px solid var(--chrome-line);
+      font-size: 13px;
+    }
+    .traffic { display: flex; gap: 6px; }
+    .traffic i {
+      width: 11px; height: 11px; border-radius: 50%;
+      display: block;
+    }
+    .traffic i:nth-child(1) { background: var(--dot-r); }
+    .traffic i:nth-child(2) { background: var(--dot-y); }
+    .traffic i:nth-child(3) { background: var(--dot-g); }
+    .omni {
+      flex: 1;
+      height: 28px;
+      border-radius: var(--radius-btn);
+      background: var(--omni);
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      color: var(--omni-ink);
+      font-size: 12px;
+      font-family: var(--mark-font);
+      letter-spacing: var(--track);
+      border: 1px solid var(--chrome-line);
+    }
+    .sheet { padding: 40px 48px; overflow: auto; }
+    .sheet h2 {
+      font-size: 28px;
+      font-weight: 560;
+      letter-spacing: -.03em;
+      margin: 0 0 12px;
+    }
+    .sheet p {
+      margin: 0 0 18px;
+      color: var(--paper-mute);
+      font-size: 16px;
+      line-height: 1.6;
+      max-width: 34em;
+    }
+    .compose-page {
+      background: var(--sheet-box);
+      border-radius: var(--radius-in);
+      padding: 16px 18px;
+      min-height: 88px;
+      color: var(--paper-mute);
+      font-size: 14px;
+      max-width: 420px;
+      border: 1px solid var(--chrome-line);
+    }
+
+    .side {
+      background: var(--side);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      position: relative;
+      color: var(--text);
+      border-left: 1px solid var(--win-line);
+    }
+    .top {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      padding: 18px 20px 8px;
+    }
+    .mark {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: var(--track);
+      text-transform: uppercase;
+      font-family: var(--mark-font);
+    }
+    .gear {
+      border: 0;
+      background: transparent;
+      color: var(--mute);
+      font-size: 12px;
+      padding: 0;
+      cursor: pointer;
+    }
+    .gear:hover { color: var(--text); }
+
+    .thread {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 8px 20px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .msg { font-size: 14px; line-height: 1.55; max-width: 28em; }
+    .msg.you { color: var(--mute); }
+    .msg.bot { color: var(--text); }
+    .empty {
+      margin: auto 0;
+      color: var(--mute);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    .dock { padding: 0 16px 16px; }
+    .shortcuts {
+      display: flex;
+      gap: 14px;
+      padding: 0 4px 10px;
+      color: var(--mute);
+      font-size: 12px;
+      letter-spacing: var(--track);
+    }
+    .shortcuts span { cursor: default; }
+    .shortcuts span:hover { color: var(--text); }
+    .composer {
+      background: var(--composer);
+      border-radius: var(--radius-in);
+      padding: 12px 12px 10px;
+      border: 1px solid var(--win-line);
+    }
+    .composer textarea {
+      width: 100%;
+      border: 0;
+      background: transparent;
+      color: var(--text);
+      font: 14px/1.45 var(--ui-font);
+      resize: none;
+      min-height: 52px;
+      outline: none;
+    }
+    .composer textarea::placeholder { color: var(--mute); }
+    .go { display: flex; justify-content: flex-end; }
+    .go button {
+      border: 0;
+      background: var(--accent);
+      color: var(--accent-ink);
+      height: 30px;
+      padding: 0 14px;
+      border-radius: var(--radius-btn);
+      font-size: 12px;
+      font-weight: 620;
+      letter-spacing: var(--track);
+      cursor: pointer;
+    }
+    .note {
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--mute);
+      padding: 0 6px;
+    }
+    .pause {
+      margin: 0 16px 10px;
+      padding: 8px 4px 0;
+      font-size: 12px;
+      color: var(--warn);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-top: 1px solid var(--win-line);
+    }
+    .pause button {
+      border: 0;
+      background: transparent;
+      color: var(--warn);
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .ask {
+      margin: 0 16px 8px;
+      padding: 12px 4px 0;
+      border-top: 1px solid var(--win-line);
+    }
+    .ask p { margin: 0 0 10px; font-size: 13px; color: var(--text); }
+    .ask-row { display: flex; gap: 16px; }
+    .ask-row button {
+      border: 0;
+      background: transparent;
+      color: var(--mute);
+      font-size: 13px;
+      padding: 0;
+      cursor: pointer;
+    }
+    .ask-row .yes { color: var(--text); font-weight: 560; }
+
+    .drawer {
+      position: absolute;
+      inset: 0;
+      background: var(--side);
+      display: flex;
+      flex-direction: column;
+      padding: 18px 20px 16px;
+    }
+    .drawer h2 { font-size: 15px; font-weight: 560; margin: 0; }
+    .drawer-h {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 28px;
+    }
+    .done {
+      border: 0;
+      background: transparent;
+      color: var(--mute);
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .block { margin-bottom: 28px; }
+    .block h3 {
+      font-size: 11px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--mute);
+      font-weight: 500;
+      margin: 0 0 10px;
+    }
+    .block input, .block select {
+      width: 100%;
+      height: 40px;
+      border: 0;
+      border-bottom: 1px solid var(--win-line);
+      border-radius: 0;
+      background: transparent;
+      color: var(--text);
+      font-size: 14px;
+      outline: none;
+      margin-bottom: 8px;
+    }
+    .cap { font-size: 12px; color: var(--mute); line-height: 1.45; }
+    .save {
+      margin-top: auto;
+      border: 0;
+      background: var(--accent);
+      color: var(--accent-ink);
+      height: 36px;
+      border-radius: var(--radius-btn);
+      font-size: 13px;
+      font-weight: 620;
+      letter-spacing: var(--track);
+      width: 100%;
+      cursor: pointer;
+    }
+    .ghost {
+      display: block;
+      width: 100%;
+      margin-top: 10px;
+      border: 0;
+      background: transparent;
+      color: var(--mute);
+      font-size: 12px;
+      cursor: pointer;
+      text-align: center;
+    }
+    .hide { display: none !important; }
+    .notes {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 20px;
+      margin-top: 28px;
+    }
+    .notes h3 { font-size: 13px; font-weight: 560; margin: 0 0 6px; color: var(--text); }
+    .notes p { margin: 0; font-size: 13px; color: var(--mute); line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <p class="kicker">Look kits</p>
+    <h1>银白六套</h1>
+    <p class="lead">主色是白和银，没有霓虹。浅色像苹果系统灰 / Cursor 浅色；深色是石墨和午夜，按钮仍是黑或白，不涂第二强调色。</p>
+
+    <div class="kits" id="kits">
+      <button class="kit on" data-kit="studio"><i class="swatch" style="background:#f5f5f7;border-color:#c8c8cd"></i>工作室</button>
+      <button class="kit" data-kit="cursor"><i class="swatch" style="background:#f7f7f7;border-color:#d4d4d4"></i>Cursor</button>
+      <button class="kit" data-kit="frost"><i class="swatch" style="background:#e4e8ee;border-color:#b8c0cc"></i>冷银</button>
+      <button class="kit" data-kit="platinum"><i class="swatch" style="background:#eeeae6;border-color:#c8c2bc"></i>钛金</button>
+      <button class="kit" data-kit="graphite"><i class="swatch" style="background:#181818;border-color:#3a3a3a"></i>石墨</button>
+      <button class="kit" data-kit="midnight"><i class="swatch" style="background:#1c1c1e;border-color:#3a3a3c"></i>午夜</button>
+    </div>
+
+    <div class="switch" id="sw">
+      <button class="on" data-v="daily">日常</button>
+      <button data-v="first">第一次</button>
+      <button data-v="paused">暂停 · 确认</button>
+      <button data-v="set">设置</button>
+    </div>
+
+    <div class="win">
+      <section class="main">
+        <div class="chrome">
+          <div class="traffic"><i></i><i></i><i></i></div>
+          <div class="omni">example.com/inbox</div>
+        </div>
+        <div class="sheet">
+          <h2>客户留言</h2>
+          <p>请问这单什么时候能发货？能不能便宜一点？</p>
+          <div class="compose-page">在页面上回复……发送仍由你点</div>
+        </div>
+      </section>
+
+      <aside class="side">
+        <div class="top">
+          <div class="mark">Sparo</div>
+          <button class="gear" id="openSet">设置</button>
+        </div>
+
+        <div class="thread" id="thread">
+          <div class="msg you">总结这一页，起草回复，先别发</div>
+          <div class="msg bot">草稿会写进左边。发送请你点页面上的按钮。</div>
+        </div>
+
+        <div class="pause hide" id="pause">
+          <span>已停下</span>
+          <button>继续</button>
+        </div>
+        <div class="ask hide" id="ask">
+          <p>要提交这份表吗？</p>
+          <div class="ask-row">
+            <button>先不要</button>
+            <button class="yes">可以</button>
+          </div>
+        </div>
+
+        <div class="dock">
+          <div class="shortcuts">
+            <span>总结</span>
+            <span>填表</span>
+            <span>回复</span>
+            <span>发布</span>
+          </div>
+          <div class="composer">
+            <textarea id="ta" placeholder="说要做什么"></textarea>
+            <div class="go"><button>让它动手</button></div>
+          </div>
+          <div class="note">网页上的发送，始终由你点</div>
+        </div>
+
+        <div class="drawer hide" id="drawer">
+          <div class="drawer-h">
+            <h2>设置</h2>
+            <button class="done" id="closeSet">完成</button>
+          </div>
+          <div class="block">
+            <h3>语言</h3>
+            <select>
+              <option>中文</option>
+              <option>English</option>
+              <option>日本語</option>
+              <option>한국어</option>
+              <option>Español</option>
+              <option>Português</option>
+              <option>Deutsch</option>
+              <option>Français</option>
+              <option>Italiano</option>
+            </select>
+          </div>
+          <div class="block">
+            <h3>模型</h3>
+            <select>
+              <option>DeepSeek</option>
+              <option>OpenAI</option>
+              <option>兼容接口</option>
+            </select>
+            <input placeholder="API Key" />
+            <p class="cap">卖的是浏览器，不卖会员。费用走你的密钥。</p>
+          </div>
+          <div class="block">
+            <h3>回复时</h3>
+            <input placeholder="怎么叫你" />
+            <input placeholder="运费、售后、价格怎么说" />
+            <input placeholder="不要承诺时效" />
+          </div>
+          <button class="save">保存</button>
+          <button class="ghost">复制给 Agent</button>
+        </div>
+      </aside>
+    </div>
+
+    <div class="notes">
+      <div>
+        <h3>工作室 / Cursor</h3>
+        <p>默认是苹果系统灰：白页、银侧栏、黑按钮、红绿灯。Cursor 更冷、发丝线、灰圆点，更像 IDE。</p>
+      </div>
+      <div>
+        <h3>冷银 / 钛金</h3>
+        <p>冷银偏铝，略蓝。钛金偏苹果钛金属，微暖、大圆角胶囊按钮。</p>
+      </div>
+      <div>
+        <h3>石墨 / 午夜</h3>
+        <p>深色仍是银白：石墨像 Cursor 暗色，午夜像 macOS Dark。按钮是白，没有青紫光。</p>
+      </div>
+    </div>
+  </div>
+  <script>
+    const thread = document.getElementById("thread");
+    const pause = document.getElementById("pause");
+    const ask = document.getElementById("ask");
+    const drawer = document.getElementById("drawer");
+    const ta = document.getElementById("ta");
+    const daily = `
+      <div class="msg you">总结这一页，起草回复，先别发</div>
+      <div class="msg bot">草稿会写进左边。发送请你点页面上的按钮。</div>`;
+    const first = `<div class="empty">先贴密钥。点右上角设置。</div>`;
+
+    function show(v) {
+      document.querySelectorAll("#sw button").forEach((b) => b.classList.toggle("on", b.dataset.v === v));
+      drawer.classList.toggle("hide", v !== "set");
+      pause.classList.toggle("hide", v !== "paused");
+      ask.classList.toggle("hide", v !== "paused");
+      thread.innerHTML = v === "first" ? first : daily;
+      ta.placeholder = v === "first" ? "先贴密钥，点右上角设置" : "说要做什么";
+    }
+    document.querySelectorAll("#sw button").forEach((b) => b.onclick = () => show(b.dataset.v));
+    document.getElementById("openSet").onclick = () => show("set");
+    document.getElementById("closeSet").onclick = () => show("daily");
+
+    document.querySelectorAll("#kits .kit").forEach((b) => {
+      b.onclick = () => {
+        document.documentElement.dataset.kit = b.dataset.kit;
+        document.querySelectorAll("#kits .kit").forEach((x) => x.classList.toggle("on", x === b));
+      };
+    });
+  </script>
+</body>
+</html>

@@ -134,8 +134,19 @@ async function copyImage(wc: WebContents, srcURL: string): Promise<void> {
 
 export function attachPageContextMenu(
   wc: WebContents,
-  opts?: { openInNewTab?: (url: string) => void },
+  opts?: {
+    openInNewTab?: (url: string) => void;
+    t?: (key: string) => string;
+    canGoBack?: () => boolean;
+    canGoForward?: () => boolean;
+    goBack?: () => void;
+    goForward?: () => void;
+    reload?: () => void;
+    print?: () => void;
+    find?: () => void;
+  },
 ): void {
+  const tr = opts?.t || ((key: string) => key);
   wc.on("context-menu", (_event, params) => {
     const isImage =
       params.mediaType === "image" ||
@@ -145,29 +156,55 @@ export function attachPageContextMenu(
 
     const template: MenuItemConstructorOptions[] = [];
 
+    template.push(
+      {
+        label: tr("ctx.back"),
+        enabled: Boolean(opts?.canGoBack?.()),
+        click: () => opts?.goBack?.(),
+      },
+      {
+        label: tr("ctx.forward"),
+        enabled: Boolean(opts?.canGoForward?.()),
+        click: () => opts?.goForward?.(),
+      },
+      {
+        label: tr("ctx.reload"),
+        click: () => opts?.reload?.(),
+      },
+      {
+        label: tr("ctx.find"),
+        click: () => opts?.find?.(),
+      },
+      {
+        label: tr("ctx.print"),
+        click: () => opts?.print?.(),
+      },
+      { type: "separator" },
+    );
+
     if (isImage && params.srcURL) {
       const src = params.srcURL;
       template.push(
         {
-          label: "图片另存为…",
+          label: tr("ctx.saveImage"),
           click: () => {
             void saveImageAs(wc, src);
           },
         },
         {
-          label: "复制图片",
+          label: tr("ctx.copyImage"),
           click: () => {
             void copyImage(wc, src);
           },
         },
         {
-          label: "复制图片地址",
+          label: tr("ctx.copyImageUrl"),
           click: () => clipboard.writeText(src),
         },
       );
       if (opts?.openInNewTab && (src.startsWith("http") || src.startsWith("data:"))) {
         template.push({
-          label: "在新标签打开图片",
+          label: tr("ctx.openImage"),
           click: () => opts.openInNewTab?.(src),
         });
       }
@@ -177,7 +214,12 @@ export function attachPageContextMenu(
     if (params.linkURL) {
       template.push(
         {
-          label: "复制链接地址",
+          label: tr("ctx.openLink"),
+          click: () => opts?.openInNewTab?.(params.linkURL),
+          visible: Boolean(opts?.openInNewTab),
+        },
+        {
+          label: tr("ctx.copyLink"),
           click: () => clipboard.writeText(params.linkURL),
         },
         { type: "separator" },
@@ -186,22 +228,22 @@ export function attachPageContextMenu(
 
     template.push(
       {
-        label: "剪切",
+        label: tr("ctx.cut"),
         role: "cut",
         enabled: params.editFlags.canCut,
       },
       {
-        label: "复制",
+        label: tr("ctx.copy"),
         role: "copy",
         enabled: params.editFlags.canCopy,
       },
       {
-        label: "粘贴",
+        label: tr("ctx.paste"),
         role: "paste",
         enabled: params.editFlags.canPaste,
       },
       {
-        label: "全选",
+        label: tr("ctx.selectAll"),
         role: "selectAll",
         enabled: params.editFlags.canSelectAll,
       },

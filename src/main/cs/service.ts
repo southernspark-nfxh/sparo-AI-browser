@@ -18,9 +18,14 @@ export type CsBrowserSurface = {
   getSettings: () => SparoSettings;
 };
 
-export async function runCsScan(browser: CsBrowserSurface): Promise<ToolResult & { data?: CsScanData }> {
-  const blocked = browser.assertNotPaused();
-  if (blocked) return blocked as ToolResult & { data?: CsScanData };
+export async function runCsScan(
+  browser: CsBrowserSurface,
+  opts?: { fromHuman?: boolean },
+): Promise<ToolResult & { data?: CsScanData }> {
+  if (!opts?.fromHuman) {
+    const blocked = browser.assertNotPaused();
+    if (blocked) return blocked as ToolResult & { data?: CsScanData };
+  }
   try {
     const data = (await browser.pageView.webContents.executeJavaScript(
       CS_SCAN_SCRIPT,
@@ -50,12 +55,16 @@ export async function runCsDraft(
     draft?: string;
     fill?: boolean;
     preferLlm?: boolean;
+    /** Human clicked 一键回复 in the shell — do not treat as paused Agent. */
+    fromHuman?: boolean;
   } = {},
 ): Promise<ToolResult & { data?: CsDraftData }> {
-  const blocked = browser.assertNotPaused();
-  if (blocked) return blocked as ToolResult & { data?: CsDraftData };
+  if (!input.fromHuman) {
+    const blocked = browser.assertNotPaused();
+    if (blocked) return blocked as ToolResult & { data?: CsDraftData };
+  }
 
-  const scanRes = await runCsScan(browser);
+  const scanRes = await runCsScan(browser, { fromHuman: input.fromHuman });
   if (!scanRes.ok || !scanRes.data) {
     return { ok: false, message: scanRes.message || "cs_scan failed", data: scanRes.data as never };
   }

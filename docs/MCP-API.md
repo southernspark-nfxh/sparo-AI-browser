@@ -1,11 +1,11 @@
-# Sparo Agent Browser — MCP API Reference
+# Sparo — MCP API Reference（商店版）
 
-**Sparo Agent Browser** · *The browser built for AI agents — humans stay in control.*  
-**Sparo 人机同窗浏览器** · *AI 驾驭网页，你驾驭 AI*
+**Sparo** · *会动手的 AI 浏览器。发送前你确认。*  
+产品：[PRODUCT.md](./PRODUCT.md)
 
 Source of truth: `src/main/tools/index.ts` + `src/main/mcp-server.ts` (v0.1.0).  
-Default endpoint: `http://127.0.0.1:3920/mcp` (override with `SPARO_MCP_PORT`).  
-Auth: Bearer token from `%APPDATA%/sparo/mcp-auth.json` (written on Sparo start).
+Default endpoint: `http://127.0.0.1:3921/mcp`（原版是 3920）.  
+Auth: Bearer token from `%APPDATA%/sparo-store/mcp-auth.json`，或用户点 **复制给 Agent**。
 
 **Publishing playbook (Xiaohongshu + other sites):** [`PUBLISHING.md`](./PUBLISHING.md) — read before inventing fill loops.
 
@@ -39,9 +39,10 @@ Refs from `snapshot` expire after navigation or major DOM changes — **re-snaps
 ## Tabs
 
 - `new_tab(url?)` → open a tab (optional URL); tools act on the **active** tab
-- `close_tab(id)` → close by id (cannot close the last tab)
+- `close_tab(id)` → close by id (last tab becomes a blank page; window stays)
 - `switch_tab(id)` → set active tab
-- `list_tabs()` → `{ data: tabs… }` including active id/url
+- `list_tabs()` → `{ data: tabs… }` including active id/url and `discarded`
+- `discard_inactive_tabs()` → sleep background tabs (destroy renderers; click a tab to reload). Skips the current tab and tabs playing sound.
 
 ---
 
@@ -103,8 +104,6 @@ Still registered on the MCP surface; most useful when DXM pages / flag are in pl
   - Title control is `textarea.d-text` (also accept `input.d-text`); topics use overlay `#d-overlay-root`  
   - Optional `params`: `{ title, body, topics, mdPath, autoPublish }`  
   - Default pauses before publish; `autoPublish: true` clicks content-area 发布 (not sidebar)  
-- `start_recording({ platform?, task? })` → start recording human click/fill/change  
-- `stop_recording(title?)` → stop, save trace, create a named skill  
 
 - `xhs_page_stage()` → detect chooser | compose | publish (AI routing only)  
 - `xhs_inject_compose({ title, body, force? })` → **atomic** clear+write title/body once — prefer over `fill`  
@@ -113,8 +112,14 @@ Still registered on the MCP surface; most useful when DXM pages / flag are in pl
 - `xhs_scroll_bottom` / `xhs_pick_cover` / `xhs_click_publish`  
 - `screenshot` / `diagnose`  
 
+- `feishu_page_stage()` → login | messenger | journal | doc  
+- `feishu_ensure_messenger()` → open `https://www.feishu.cn/next/messenger`（不是官网）  
+- `feishu_open_chat({ to })` / `feishu_inject_chat({ body })` / `feishu_inject_journal({ title?, body? })`  
+- `feishu_work({ kind?, to?, title?, body? })` → 打开 + 找人 + 注入草稿 + pause，不点发送  
+
 **Product rule:** AI detects stage and clicks; scripts deliver pre-baked content. Do not loop `fill` on title/body.  
-`run_skill({ query: "发小红书", params: { title, body, summary, topics } })` is the preferred path.
+`run_skill({ query: "发小红书", params: { title, body, summary, topics } })` is the preferred path.  
+Feishu: `run_skill({ query: "飞书", params: { to, body } })` or `feishu_work`. Never click 发送.
 
 ---
 
@@ -149,4 +154,4 @@ MCP HTTP expects **UTF-8 JSON**. Prefer Node clients:
 node scripts/call-mcp.mjs tools/call click_text "{\"text\":\"写长文\"}"
 ```
 
-Avoid PowerShell string literals for Chinese args (console code page corrupts them). Connect agents directly to `http://127.0.0.1:3920/mcp` with UTF-8 bodies.
+Avoid PowerShell string literals for Chinese args (console code page corrupts them). Connect agents directly to `http://127.0.0.1:3921/mcp` with UTF-8 bodies.

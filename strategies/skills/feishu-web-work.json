@@ -1,0 +1,43 @@
+{
+  "id": "feishu-web-work",
+  "title": "飞书网页：打开消息 / 写聊天或日志草稿（人不点发送不发出）",
+  "platform": "feishu",
+  "version": 1,
+  "distilled": true,
+  "aliases": [
+    "飞书",
+    "打开飞书",
+    "飞书网页版",
+    "飞书发消息",
+    "飞书写日志",
+    "飞书日报",
+    "feishu",
+    "lark"
+  ],
+  "createdAt": "2026-09-04T00:00:00.000Z",
+  "updatedAt": "2026-09-04T00:00:00.000Z",
+  "intent": "飞书网页版：打开消息页，找人，写入聊天或日志草稿，发送留给人",
+  "notes": [
+    "NEVER click 发送 / 提交.",
+    "Opens https://www.feishu.cn/next/messenger (not the marketing homepage).",
+    "Login wall: pause for the human, then say 继续.",
+    "Optional params: kind, to, title, body."
+  ],
+  "params": {
+    "kind": { "type": "string", "optional": true },
+    "to": { "type": "string", "optional": true },
+    "title": { "type": "string", "optional": true },
+    "body": { "type": "string", "optional": true }
+  },
+  "steps": [
+    { "tool": "feishu_work", "args": {} },
+    {
+      "tool": "pause",
+      "hint": "已写入草稿。发送或提交请你在飞书页面上点。"
+    }
+  ],
+  "agentPlaybook": [
+    "run_skill({ query:'飞书', params:{ to, body, title, kind } }) or feishu_work()",
+    "Human clicks Send on the page"
+  ]
+}

@@ -9,9 +9,11 @@ Do **not** type title/body into fields character-by-character. Do **not** loop `
 
 ## 0. Connect (once)
 
+商店版：用户点 **复制给 Agent**，或：
+
 ```text
-GET http://127.0.0.1:3920/health   → ok + xhs_inject_* listed
-Auth: %APPDATA%/sparo/mcp-auth.json
+GET http://127.0.0.1:3921/health   → ok + xhs_inject_* listed
+Auth: %APPDATA%/sparo-store/mcp-auth.json
 Optional: GET /tools  (tool name list if tools/list looks empty)
 ```
 

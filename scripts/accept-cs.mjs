@@ -64,5 +64,25 @@ const skill = await mcpCall(auth, "match_skill", { query: "客服回复" });
 const hit = (skill.data?.matches || []).find((m) => m.id === "cs-semi-auto-reply");
 check("match_skill.cs", Boolean(hit), JSON.stringify((skill.data?.matches || [])[0]));
 
+const comments = pathToFileURL(join(__dirname, "fixtures", "cs-comments.html")).href;
+const nav2 = await mcpCall(auth, "navigate", { url: comments });
+check("navigate.comments", Boolean(nav2.ok), nav2.message);
+await sleep(800);
+
+const one = await mcpCall(auth, "cs_one_click_reply", {});
+check("cs_one_click_reply", Boolean(one.ok), one.message);
+check("one.filled", Boolean(one.data?.filled), one.message);
+check("one.sendBlocked", one.data?.sendBlocked === true, JSON.stringify(one.data?.sendBlocked));
+check(
+  "one.hasText",
+  Boolean(one.data?.draft && String(one.data.draft).length > 5),
+  String(one.data?.draft || "").slice(0, 80),
+);
+check(
+  "one.composer",
+  Boolean(one.data?.scan?.composer?.ref || one.data?.scan?.composer?.selector),
+  JSON.stringify(one.data?.scan?.composer),
+);
+
 console.log(failed === 0 ? "\naccept:cs PASS" : `\naccept:cs FAIL (${failed})`);
 process.exit(failed === 0 ? 0 : 1);

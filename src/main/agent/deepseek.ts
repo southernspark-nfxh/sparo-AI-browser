@@ -3,26 +3,33 @@
  */
 import type { ToolResult } from "../../shared/types.js";
 import { dxmEnabled } from "../features.js";
+import { chatCompletionsUrl } from "../settings/llm-url.js";
+import { tx } from "../../shared/i18n.js";
+import { agentCapabilityBrief } from "./intent-router.js";
 
 export type AgentToolName =
   | "navigate"
   | "get_url"
   | "get_title"
+  | "page_text"
   | "snapshot"
   | "click"
   | "fill"
+  | "fill_suggest"
+  | "press"
+  | "pick_calendar"
   | "click_text"
   | "menu_click"
   | "dismiss_overlays"
   | "qa_check"
   | "pause"
   | "resume"
-  | "start_recording"
-  | "stop_recording"
   | "list_skills"
   | "get_skill"
   | "match_skill"
   | "run_skill"
+  | "cs_one_click_reply"
+  | "feishu_work"
   | "list_workflows"
   | "run_workflow";
 
@@ -35,6 +42,9 @@ export type DeepSeekConfig = {
   apiKey: string;
   baseUrl: string;
   model: string;
+  mode?: "byok" | "cloud";
+  taskId?: string;
+  fetchImpl?: typeof fetch;
 };
 
 type ChatMessage = {
@@ -81,8 +91,17 @@ const TOOLS = [
   {
     type: "function",
     function: {
+      name: "page_text",
+      description:
+        "Read visible text on the current page (and iframes). Use this to translate, explain, or summarize what the user is looking at. Snapshot is NOT a substitute.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "snapshot",
-      description: "DOM snapshot with refs for click/fill",
+      description: "Interactive element refs for click/fill — not page prose",
       parameters: {
         type: "object",
         properties: { selector: { type: "string" } },
@@ -122,8 +141,54 @@ const TOOLS = [
   {
     type: "function",
     function: {
+      name: "fill_suggest",
+      description:
+        "Type a destination/city and click the autocomplete hit. Use for Ctrip/amap city pickers. Do not click 热门城市 grids in a loop.",
+      parameters: {
+        type: "object",
+        properties: {
+          value: { type: "string" },
+          ref: { type: "string" },
+          selector: { type: "string" },
+        },
+        required: ["value"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "press",
+      description: "Press Enter or Escape",
+      parameters: {
+        type: "object",
+        properties: { key: { type: "string" } },
+        required: ["key"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "pick_calendar",
+      description:
+        "Set a date on a custom calendar popover. Prefer this over clicking bare day numbers.",
+      parameters: {
+        type: "object",
+        properties: {
+          date: { type: "string" },
+          value: { type: "string" },
+          triggerRef: { type: "string" },
+          triggerText: { type: "string" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "click_text",
-      description: "Click visible text; use withinPortal for Ant Design dropdowns",
+      description: "Click visible text; withinPortal for menus and calendars. Day numbers must uniquely match an in-month gridcell.",
       parameters: {
         type: "object",
         properties: {
@@ -185,30 +250,8 @@ const TOOLS = [
   {
     type: "function",
     function: {
-      name: "start_recording",
-      description: "Start recording human actions into a skill",
-      parameters: {
-        type: "object",
-        properties: { task: { type: "string" } },
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "stop_recording",
-      description: "Stop recording and save as 妙招",
-      parameters: {
-        type: "object",
-        properties: { title: { type: "string" } },
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
       name: "list_skills",
-      description: "List saved 妙招 (skills)",
+      description: "List built-in skills (e.g. 发小红书, 通用填表). Recording new skills is not available.",
       parameters: { type: "object", properties: {} },
     },
   },
@@ -216,7 +259,8 @@ const TOOLS = [
     type: "function",
     function: {
       name: "match_skill",
-      description: "Match user intent to a saved skill (e.g. 发小红书)",
+      description:
+        "Match user intent to a saved skill. Query must keep the user's site (发知乎 ≠ 小红书).",
       parameters: {
         type: "object",
         properties: { query: { type: "string" } },
@@ -238,6 +282,32 @@ const TOOLS = [
       },
     },
   },
+    {
+      type: "function",
+      function: {
+        name: "cs_one_click_reply",
+        description:
+          "Scan current page chat/comments and draft a reply. Never sends. Use when user wants 回复/一键回复.",
+        parameters: { type: "object", properties: {} },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "feishu_work",
+        description:
+          "Feishu web: open messenger, find a contact, inject chat/journal draft. Never clicks 发送. Use when user says 飞书/给谁发/写日报.",
+        parameters: {
+          type: "object",
+          properties: {
+            kind: { type: "string", description: "open | chat | journal | doc | calendar" },
+            to: { type: "string" },
+            title: { type: "string" },
+            body: { type: "string" },
+          },
+        },
+      },
+    },
   {
     type: "function",
     function: {
@@ -285,18 +355,34 @@ function systemPrompt(ctx: {
   url: string;
   title: string;
   skills?: string;
+  profileBrief?: string;
+  locale?: string;
+  pageText?: string;
 }): string {
   const lines = [
-    "You are Sparo Agent Browser's built-in agent: you share the Chromium window with the user. You act; the user reviews. Humans stay in control.",
+    agentCapabilityBrief(ctx.locale),
     "Prefer tools over talk. No feature brochure, no customer-service filler, no menu lists.",
-    "SKILL FIRST: for known flows (小红书发文/长文发布等) call run_skill immediately. Use match_skill if unsure. Do not reinvent multi-step click sequences when a skill exists.",
-    "XHS CONTENT RULE: NEVER fill title/body character-by-character or loop fill. Pass pre-baked text into xhs_inject_compose / xhs_inject_publish (or run_skill params). AI only detects stage (xhs_page_stage) and clicks 下一步/一键排版.",
-    "Never auto-save, claim, submit, or publish without explicit user approval. Skills pause before publish.",
+    "Reply in the same language as the user's latest message. Chinese question → Chinese answer, even if the UI or page is English.",
+    "SKILL FIRST only when the skill's site matches. No matching skill → snapshot/click/fill yourself. Never ask the user to record a skill instead of acting.",
+    "Do not name Xiaohongshu, RedNote, Weibo, Zhihu, or any social network, and do not offer to publish or post, unless the user already named that site or action.",
+    "If the current URL is xiaohongshu.com: NEVER fill title/body character-by-character or loop fill. Pass pre-baked text into xhs_inject_compose / xhs_inject_publish (or run_skill params). Detect stage with xhs_page_stage and click Next / auto-layout.",
+    "FEISHU RULE: Use feishu_work or run_skill query 飞书. Inject draft once. NEVER click 发送. Login wall → pause for the human.",
+    "User said publish/post/发/发布/发三条 = permission to click send. Pause only for payment or customer-service send.",
     `Current page: ${ctx.title || "—"}`,
     `URL: ${ctx.url || "about:blank"}`,
   ];
+  if (ctx.pageText) {
+    lines.push("Visible page text (source of truth; do not invent beyond this):");
+    lines.push(ctx.pageText.slice(0, 6000));
+  } else {
+    lines.push("No page text was attached. Call page_text before describing or translating this page.");
+  }
   if (ctx.skills) {
     lines.push(`Saved skills:\n${ctx.skills}`);
+  }
+  if (ctx.profileBrief) {
+    lines.push(ctx.profileBrief);
+    lines.push(tx(ctx.locale, "llm.profileUse"));
   }
   if (dxmEnabled()) {
     lines.splice(
@@ -318,6 +404,7 @@ function callFingerprint(name: string, args: Record<string, unknown>): string {
 
 export class DeepSeekAgentProvider {
   readonly name = "deepseek";
+  lastMutations: Array<{ tool: string; args: Record<string, unknown> }> = [];
 
   constructor(
     private config: DeepSeekConfig,
@@ -328,23 +415,67 @@ export class DeepSeekAgentProvider {
     this.config = config;
   }
 
+  setTaskId(taskId?: string): void {
+    this.config.taskId = taskId;
+  }
+
+  takeMutations(): Array<{ tool: string; args: Record<string, unknown> }> {
+    const out = this.lastMutations;
+    this.lastMutations = [];
+    return out;
+  }
+
+  /** One-shot completion with no tools — page summaries, not clicking. */
+  async completePlain(prompt: string): Promise<string> {
+    if (!this.config.apiKey && this.config.mode !== "cloud") {
+      return "";
+    }
+    const data = await this.completion(
+      [{ role: "user", content: prompt }],
+      "none",
+    );
+    return (data?.choices?.[0]?.message?.content || "").trim();
+  }
+
   async chat(
     input: string,
-    ctx: { url: string; title: string; skills?: string },
+    ctx: {
+      url: string;
+      title: string;
+      skills?: string;
+      history?: Array<{ role: "user" | "assistant"; text: string }>;
+      profileBrief?: string;
+      locale?: string;
+      pageText?: string;
+    },
   ): Promise<string> {
-    if (!this.config.apiKey) {
-      return "No API key. Save one in the sidebar (DeepSeek / OpenAI-compatible), or set SPARO_API_KEY.";
+    if (!this.config.apiKey && this.config.mode !== "cloud") {
+      return tx(ctx.locale, "llm.needKey");
     }
 
-    const messages: ChatMessage[] = [
-      { role: "system", content: systemPrompt(ctx) },
-      { role: "user", content: input },
-    ];
+    this.lastMutations = [];
+    const messages: ChatMessage[] = [{ role: "system", content: systemPrompt(ctx) }];
+    for (const turn of ctx.history || []) {
+      if (!turn.text?.trim()) continue;
+      messages.push({
+        role: turn.role === "assistant" ? "assistant" : "user",
+        content: turn.text,
+      });
+    }
+    messages.push({ role: "user", content: input });
 
     const toolNotes: string[] = [];
     const recentFingerprints: string[] = [];
-    // No artificial round cap for personal use. Only break on identical-tool loops.
+    let rounds = 0;
     for (;;) {
+      rounds += 1;
+      if (rounds > 16) {
+        return (
+          (tx(ctx.locale, "llm.repeatStop") ||
+            "这一页的控件连试多轮都没走完（常见是城市联想或日期弹层）。请换一种说法，或先点开目标页再让我读结果。") +
+          (toolNotes.length ? "\n\n" + toolNotes.slice(-8).join("\n") : "")
+        );
+      }
       const data = await this.completion(messages, "auto");
       const choice = data?.choices?.[0]?.message as ChatMessage | undefined;
       if (!choice) {
@@ -398,6 +529,15 @@ export class DeepSeekAgentProvider {
         }
 
         const result = await this.safeRun(name, args);
+        if (
+          result.ok &&
+          (name === "navigate" ||
+            name === "click" ||
+            name === "fill" ||
+            name === "click_text")
+        ) {
+          this.lastMutations.push({ tool: name, args });
+        }
         const payload = truncate(
           JSON.stringify({
             ok: result.ok,
@@ -417,7 +557,7 @@ export class DeepSeekAgentProvider {
       if (repeated) {
         messages.push({
           role: "user",
-          content: "你陷入了重复工具调用。请停止操作，用中文说明进度与建议。",
+          content: tx(ctx.locale, "llm.repeatStop"),
         });
         const final = await this.completion(messages, "none");
         const text = (final?.choices?.[0]?.message?.content || "").trim();
@@ -450,7 +590,7 @@ export class DeepSeekAgentProvider {
     choices?: Array<{ message?: ChatMessage }>;
     error?: { message?: string };
   }> {
-    const url = `${this.config.baseUrl}/chat/completions`;
+    const url = chatCompletionsUrl(this.config.baseUrl);
     const body: Record<string, unknown> = {
       model: this.config.model,
       messages,
@@ -463,12 +603,18 @@ export class DeepSeekAgentProvider {
       body.tool_choice = "auto";
     }
 
-    const res = await fetch(url, {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${this.config.apiKey}`,
+      "api-key": this.config.apiKey,
+    };
+    if (this.config.mode === "cloud" && this.config.taskId) {
+      headers["X-Sparo-Task"] = this.config.taskId;
+    }
+    const doFetch = this.config.fetchImpl || fetch;
+    const res = await doFetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.config.apiKey}`,
-      },
+      headers,
       body: JSON.stringify(body),
     });
 

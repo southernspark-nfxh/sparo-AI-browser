@@ -11,7 +11,7 @@ import {
   logMcpRequest,
 } from "./mcp-security.js";
 
-const DEFAULT_PORT = Number(process.env.SPARO_MCP_PORT || process.env.SPARK_MCP_PORT || 3920);
+const DEFAULT_PORT = Number(process.env.SPARO_MCP_PORT || process.env.SPARK_MCP_PORT || 3921);
 
 function textResult(payload: unknown) {
   return {
@@ -27,7 +27,7 @@ function textResult(payload: unknown) {
 function registerTools(server: McpServer, handlers: ToolHandlers): void {
   server.tool(
     "sparo_info",
-    "FIRST TOOL for new agents: what Sparo is, skill catalog, and fastest paths. Call once before exploring. Prefer run_skill for known flows (e.g. 小红书发布).",
+    "FIRST TOOL for new agents: what Sparo is, skill catalog, and fastest paths. Call once before exploring. Prefer run_skill only when the skill site matches the user (发小红书 ≠ 发知乎).",
     {},
     async () => textResult(await handlers.sparo_info()),
   );
@@ -41,7 +41,7 @@ function registerTools(server: McpServer, handlers: ToolHandlers): void {
 
   server.tool(
     "snapshot",
-    "Capture interactive elements with refs. Always re-snapshot after navigation or DOM changes. Refs expire after nav.",
+    "Capture interactive elements with refs, including role=grid / gridcell / spinbutton in open calendars. Always re-snapshot after navigation or DOM changes. After opening End time, snapshot the popover — do not fill the closed button. Refs expire after nav.",
     {
       selector: z
         .string()
@@ -124,7 +124,7 @@ function registerTools(server: McpServer, handlers: ToolHandlers): void {
 
   server.tool(
     "click_text",
-    "P0: Trusted click by visible text. Set withinPortal=true for Ant Design / Element portal menu items.",
+    "P0: Trusted click by visible text. Set withinPortal=true for dropdowns AND calendar popovers. Day numbers (1–31) only match a unique in-month gridcell (aria-label), never ghosted next-month days or the month chevron.",
     {
       text: z.string().min(1),
       exact: z.boolean().optional(),
@@ -154,32 +154,14 @@ function registerTools(server: McpServer, handlers: ToolHandlers): void {
 
   server.tool(
     "list_portals",
-    "List currently visible Portal dropdowns/menus and their item texts.",
+    "List visible portal overlays (Ant Design menus AND custom date calendars). Calendar items include gridcell accessible names, not just innerText \"3\".",
     {},
     async () => textResult(await handlers.list_portals()),
   );
 
   server.tool(
-    "start_recording",
-    "Start recording human DOM click/fill/change into a skill trace. Can also be started via chat: 开始录制",
-    {
-      platform: z.string().optional(),
-      task: z.string().optional(),
-    },
-    async ({ platform, task }) =>
-      textResult(await handlers.start_recording({ platform, task })),
-  );
-
-  server.tool(
-    "stop_recording",
-    "Stop recording, save trace, and create a named 妙招 (skill). Optional title becomes the skill name.",
-    { title: z.string().optional() },
-    async ({ title }) => textResult(await handlers.stop_recording(title)),
-  );
-
-  server.tool(
     "list_skills",
-    "List saved 妙招 (skills). For execution use match_skill + run_skill.",
+    "List built-in skills. For execution use match_skill + run_skill. Recording new skills is not available.",
     {},
     async () => textResult(await handlers.list_skills()),
   );
@@ -353,14 +335,14 @@ function registerTools(server: McpServer, handlers: ToolHandlers): void {
 
   server.tool(
     "analyze_page",
-    "FIRST step for unknown forms: classify inputs/buttons, detect required (红星/required/aria), stamp data-spark-ref. Then call execute_primitives with a label→value payload. Prefer run_skill query 通用填表. Do NOT start with blind fill loops.",
+    "FIRST step for unknown forms: classify inputs/buttons/date_picker_button, detect required, stamp data-spark-ref. Custom calendars (X Ads End time) are date_picker_button — not text fill. Then execute_primitives or pick_calendar. Do NOT start with blind fill loops.",
     {},
     async () => textResult(await handlers.analyze_page()),
   );
 
   server.tool(
     "execute_primitives",
-    "Fill ANY page from a Chinese/English label→value payload (re-analyzes if needed). Fuzzy-matches 标题/正文/搜索… → fill/click/upload + mini-QA + strategy cache. Prefer over repeated fill/click. Xiaohongshu long-form: use xhs_* instead. Or run_skill query 通用填表.",
+    "Fill ANY page from a Chinese/English label→value payload. Fuzzy-matches labels → fill/click/upload/pick_calendar + mini-QA. Date pickers (End time, Run indefinitely) open the calendar grid — never fill a datetime string into a budget box. Xiaohongshu long-form: use xhs_* instead.",
     {
       payload: z
         .record(z.unknown())
@@ -376,6 +358,30 @@ function registerTools(server: McpServer, handlers: ToolHandlers): void {
           url,
           includeOptional,
           maxAttempts,
+        }),
+      ),
+  );
+
+  server.tool(
+    "pick_calendar",
+    "Set a custom calendar + hours:minutes popover (X Ads End time). Sequence: open trigger → Next month by aria-label (never click \"<\") → unique in-month gridcell → fill hour and minute spinboxes separately → click outside to commit. Does NOT click Next / Save draft / pay. Prefer this over fill or click_text \"3\".",
+    {
+      ref: z.string().optional().describe("data-spark-ref of the End time button"),
+      trigger: z.string().optional().describe("Visible trigger text, e.g. Run indefinitely"),
+      date: z.string().describe("Target date: 2026-09-03 or Sep 3, 2026"),
+      hours: z.union([z.string(), z.number()]).optional().describe("24h hours, e.g. 00"),
+      minutes: z.union([z.string(), z.number()]).optional().describe("Minutes, e.g. 59 — separate from hours"),
+      dismiss: z.enum(["outside", "escape"]).optional(),
+    },
+    async ({ ref, trigger, date, hours, minutes, dismiss }) =>
+      textResult(
+        await handlers.pick_calendar({
+          triggerRef: ref,
+          triggerText: trigger,
+          date,
+          hours,
+          minutes,
+          dismiss,
         }),
       ),
   );
@@ -400,6 +406,72 @@ function registerTools(server: McpServer, handlers: ToolHandlers): void {
   );
 
   server.tool(
+    "cs_one_click_reply",
+    "One click on the CURRENT page: scan chat or comments → draft with the configured LLM (template fallback) → fill the reply box. NEVER clicks Send/发布 — human confirms on the page. Use when the user asks 一键回复.",
+    {},
+    async () => textResult(await handlers.cs_one_click_reply()),
+  );
+
+  server.tool(
+    "feishu_page_stage",
+    "Feishu web: detect stage only (login|messenger|journal|doc|other). AI routes on this — never type into the page.",
+    {},
+    async () => textResult(await handlers.feishu_page_stage()),
+  );
+
+  server.tool(
+    "feishu_ensure_messenger",
+    "Open Feishu web messenger (https://www.feishu.cn/next/messenger). If login wall, pause for the human. Does not send messages.",
+    {},
+    async () => textResult(await handlers.feishu_ensure_messenger()),
+  );
+
+  server.tool(
+    "feishu_open_chat",
+    "Feishu web: search a contact/group and open the conversation. Does not type or send.",
+    {
+      to: z.string().min(1).describe("Contact or group name, e.g. 张三"),
+    },
+    async ({ to }) => textResult(await handlers.feishu_open_chat({ to })),
+  );
+
+  server.tool(
+    "feishu_inject_chat",
+    "ATOMIC: write a chat draft into the Feishu composer ONCE. NEVER clicks 发送 — human must send.",
+    {
+      body: z.string().min(1).describe("Pre-baked message text"),
+    },
+    async ({ body }) => textResult(await handlers.feishu_inject_chat({ body })),
+  );
+
+  server.tool(
+    "feishu_inject_journal",
+    "ATOMIC: write a Feishu report/journal draft ONCE (title+body). NEVER submits. If no report box, caller should fall back to chat draft.",
+    {
+      title: z.string().optional(),
+      body: z.string().optional(),
+    },
+    async ({ title, body }) =>
+      textResult(await handlers.feishu_inject_journal({ title, body })),
+  );
+
+  server.tool(
+    "feishu_work",
+    "FAST PATH Feishu web: open messenger/report, find contact, inject chat or journal draft, then pause. NEVER clicks 发送. Prefer this or run_skill query 飞书.",
+    {
+      kind: z
+        .enum(["open", "chat", "journal", "doc", "calendar"])
+        .optional()
+        .describe("open | chat | journal | doc | calendar"),
+      to: z.string().optional().describe("Contact or group name"),
+      title: z.string().optional(),
+      body: z.string().optional().describe("Draft text; not sent"),
+    },
+    async ({ kind, to, title, body }) =>
+      textResult(await handlers.feishu_work({ kind, to, title, body })),
+  );
+
+  server.tool(
     "new_tab",
     "Open a new browser tab (optional URL). Tools always act on the active tab.",
     { url: z.string().optional() },
@@ -408,7 +480,7 @@ function registerTools(server: McpServer, handlers: ToolHandlers): void {
 
   server.tool(
     "close_tab",
-    "Close a tab by id (cannot close the last tab).",
+    "Close a tab by id. Closing the last tab opens a blank page; the window stays open.",
     { id: z.string().min(1) },
     async ({ id }) => textResult(await handlers.close_tab(id)),
   );
@@ -422,6 +494,13 @@ function registerTools(server: McpServer, handlers: ToolHandlers): void {
 
   server.tool("list_tabs", "List tabs and active tab id/url.", {}, async () =>
     textResult(await handlers.list_tabs()),
+  );
+
+  server.tool(
+    "discard_inactive_tabs",
+    "Sleep background tabs to free RAM (destroys Chromium renderers; clicking a tab reloads it). Prefer after opening many heavy tabs.",
+    {},
+    async () => textResult(await handlers.discard_inactive_tabs()),
   );
 
   server.tool(

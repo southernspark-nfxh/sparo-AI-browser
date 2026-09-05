@@ -1,5 +1,6 @@
-import { app } from "electron";
-import { writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
+import { app, BrowserWindow, session } from "electron";
+import { chromeUserAgent } from "./oauth-popups.js";
+import { writeFileSync, mkdirSync, existsSync, readFileSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
@@ -8,6 +9,9 @@ import { createToolHandlers } from "./tools/index.js";
 import { startMcpServer } from "./mcp-server.js";
 import { shouldRotateToken } from "./mcp-security.js";
 import { migrateCookiesFromLegacyUserData } from "./sessions/store.js";
+import { persistInstallInfo } from "./agent-connect.js";
+import { stopAll as stopAllEnvProxy } from "./envs/singbox-runner.js";
+import { storeConfigDir } from "./paths.js";
 
 /** Reuse mcp-auth.json token unless SPARO_MCP_TOKEN_TTL (seconds) says rotate. */
 function resolveMcpToken(configDir: string): { token: string; createdAt: number } {
@@ -44,25 +48,56 @@ function resolveMcpToken(configDir: string): { token: string; createdAt: number 
 }
 
 function resolveConfigDir(): string {
-  return (
-    process.env.SPARO_CONFIG_DIR ||
-    process.env.SPARK_CONFIG_DIR ||
-    (process.platform === "win32" && process.env.APPDATA
-      ? join(process.env.APPDATA, "sparo")
-      : join(homedir(), ".config", "sparo"))
-  );
+  return storeConfigDir();
+}
+
+function seedSettingsFromOriginal(configDir: string): void {
+  const dest = join(configDir, "settings.json");
+  if (existsSync(dest)) return;
+  const legacy =
+    process.platform === "win32" && process.env.APPDATA
+      ? join(process.env.APPDATA, "sparo", "settings.json")
+      : join(homedir(), ".config", "sparo", "settings.json");
+  if (!existsSync(legacy)) return;
+  try {
+    copyFileSync(legacy, dest);
+    console.log("[sparo] seeded settings.json (key / language). Chat and bookmarks start empty.");
+  } catch {
+    /* ignore */
+  }
 }
 
 async function main(): Promise<void> {
-  app.setName("Sparo Agent Browser");
+  app.setName("Sparo");
   if (process.platform === "win32") {
-    app.setAppUserModelId("com.sparo.agent-browser");
+    app.setAppUserModelId("com.sparo.work-browser");
   }
+  // Must run before ready: Google/Apple OAuth blank out on Electron UA + 3P cookie phaseout.
+  app.userAgentFallback = chromeUserAgent();
+  app.commandLine.appendSwitch(
+    "disable-features",
+    "ThirdPartyCookiePhaseout,TrackingProtection3pcd",
+  );
 
-  // Keep cookies + skills + mcp-auth under the same %APPDATA%/sparo tree.
+  // Store edition keeps its own tree so it never shares cookies with the original Sparo.
   const configDir = resolveConfigDir();
   mkdirSync(configDir, { recursive: true });
+  // Packaged install is a blank product. Do not copy API keys from the original Sparo.
+  if (!app.isPackaged) seedSettingsFromOriginal(configDir);
   app.setPath("userData", configDir);
+
+  const gotLock = app.requestSingleInstanceLock();
+  if (!gotLock) {
+    app.quit();
+    return;
+  }
+  app.on("second-instance", () => {
+    const w = BrowserWindow.getAllWindows()[0];
+    if (!w) return;
+    if (w.isMinimized()) w.restore();
+    w.show();
+    w.focus();
+  });
   // Migrate cookies from older Electron default folder if present (before session opens).
   const mig = migrateCookiesFromLegacyUserData(configDir);
   if (mig.migrated) {
@@ -70,63 +105,75 @@ async function main(): Promise<void> {
   }
 
   await whenAppReady();
+  session.defaultSession.setUserAgent(chromeUserAgent());
 
-  // Dev / Linux / Windows: reinforce dock/taskbar icon after ready.
+  process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = "true";
+
+  const browser = createBrowser();
+  browser.attachShell();
+  browser.presentWindow();
+
   try {
     const { nativeImage } = await import("electron");
     const candidates = [
       join(__dirname, "../../resources/icon.ico"),
       join(__dirname, "../../resources/icon.png"),
+      join(process.cwd(), "resources/icon.ico"),
       join(app.getAppPath(), "resources/icon.ico"),
-      join(app.getAppPath(), "resources/icon.png"),
     ];
     const iconPath = candidates.find((p) => existsSync(p));
     if (iconPath) {
       const img = nativeImage.createFromPath(iconPath);
-      if (!img.isEmpty() && process.platform === "darwin") {
-        app.dock?.setIcon(img);
+      if (!img.isEmpty() && process.platform === "darwin") app.dock?.setIcon(img);
+      if (process.platform === "win32") {
+        for (const w of BrowserWindow.getAllWindows()) w.setIcon(iconPath);
       }
     }
   } catch {
     /* ignore icon reinforce failures */
   }
 
-  process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = "true";
-
-  const browser = createBrowser();
-  browser.attachShell();
-
   const authToken = resolveMcpToken(configDir);
   const handlers = createToolHandlers(browser);
-  const mcp = await startMcpServer(handlers);
-
-  writeFileSync(
-    join(configDir, "mcp-auth.json"),
-    JSON.stringify(
-      {
-        endpoint: mcp.endpoint,
-        token: mcp.token,
-        createdAt: authToken.createdAt,
-        pid: process.pid,
-      },
-      null,
-      2,
-    ),
-    "utf8",
-  );
-  console.log(`[sparo] MCP auth → ${join(configDir, "mcp-auth.json")}`);
-  console.log(`[sparo] userData → ${app.getPath("userData")}`);
-
-  // Persist whatever logins are already in the Chromium cookie jar.
+  let mcp: Awaited<ReturnType<typeof startMcpServer>> | null = null;
   try {
-    const saved = await browser.saveSessions();
-    console.log(`[sparo] sessions: ${saved.message}`);
+    mcp = await startMcpServer(handlers);
   } catch (e) {
-    console.warn("[sparo] saveSessions on boot:", e);
+    console.error("[sparo] MCP failed to start (browser still opens):", e);
   }
 
+  if (mcp) {
+    writeFileSync(
+      join(configDir, "mcp-auth.json"),
+      JSON.stringify(
+        {
+          endpoint: mcp.endpoint,
+          token: mcp.token,
+          createdAt: authToken.createdAt,
+          pid: process.pid,
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    console.log(`[sparo] MCP auth → ${join(configDir, "mcp-auth.json")}`);
+  }
+  try {
+    persistInstallInfo();
+  } catch (e) {
+    console.warn("[sparo] persist install path:", e);
+  }
+  console.log(`[sparo] userData → ${app.getPath("userData")}`);
+
   app.on("window-all-closed", () => {
-    void mcp.close().finally(() => app.quit());
+    try {
+      stopAllEnvProxy();
+    } catch {
+      /* best-effort cleanup */
+    }
+    const closer = mcp ? mcp.close() : Promise.resolve();
+    void closer.finally(() => app.quit());
   });
 }
 

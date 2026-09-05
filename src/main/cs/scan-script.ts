@@ -27,7 +27,7 @@ export const CS_SCAN_SCRIPT = `(() => {
     'textarea, [contenteditable="true"], [contenteditable=""], input[type="text"], input:not([type])'
   )).filter(visible);
 
-  const composerRe = /输入|回复|发送|说点什么|请输入|message|reply|type a message|写消息|和TA聊/i;
+  const composerRe = /输入|回复|发送|说点什么|请输入|message|reply|type a message|写消息|和TA聊|留言|评论|写评论|发表评论|说点啥/i;
   let composer = null;
   for (const el of composerCandidates) {
     const ph = el.getAttribute('placeholder') || el.getAttribute('aria-label') || el.getAttribute('data-placeholder') || '';
@@ -55,7 +55,7 @@ export const CS_SCAN_SCRIPT = `(() => {
   const btns = Array.from(document.querySelectorAll('button, [role="button"], a')).filter(visible);
   for (const b of btns) {
     const t = textOf(b).slice(0, 20);
-    if (/^(发送|Send|Reply|回复)$/i.test(t) || /^发送/.test(t)) {
+    if (/^(发送|Send|Reply|回复|发布|发表)$/i.test(t) || /^(发送|发布)/.test(t)) {
       sendLabel = t || '发送';
       score += 20;
       hints.push('send_btn');
@@ -67,7 +67,9 @@ export const CS_SCAN_SCRIPT = `(() => {
   const msgSel = [
     '[class*="message"]', '[class*="msg"]', '[class*="bubble"]', '[class*="chat"]',
     '[class*="Message"]', '[class*="im-"]', '[data-role="message"]',
-    '[class*="conversation"] li', '[role="log"] > *', '[role="listitem"]'
+    '[class*="conversation"] li', '[role="log"] > *', '[role="listitem"]',
+    '[class*="comment"]', '[class*="Comment"]', '[class*="reply"]', '[class*="Reply"]',
+    '[class*="留言"]'
   ].join(',');
   let nodes = [];
   try { nodes = Array.from(document.querySelectorAll(msgSel)).filter(visible); } catch (_) {}

@@ -17,7 +17,7 @@ import type {
   PrimitivePlanStep,
   PrimitiveStepResult,
 } from "./types.js";
-import { FIELD_VALUE_SCRIPT } from "../page-scripts.js";
+import { datetimeCommitted, parseDatetimeValue } from "./datetime.js";
 
 type BrowserLike = Pick<
   SparkBrowser,
@@ -29,9 +29,11 @@ type BrowserLike = Pick<
   | "upload"
   | "execute"
   | "configDir"
+  | "pickCalendar"
 >;
 
 function methodsFor(primitive: PrimitiveKind, cached?: string | null): string[] {
+  if (primitive === "date_picker_button") return ["pick_calendar"];
   const primary =
     cached ||
     ({
@@ -40,6 +42,8 @@ function methodsFor(primitive: PrimitiveKind, cached?: string | null): string[] 
       password: "fill",
       search: "fill",
       date_input: "fill",
+      date_picker_button: "pick_calendar",
+      spinbutton: "fill",
       rich_text: "fill",
       tag_input: "fill_enter",
       select: "select",
@@ -57,6 +61,7 @@ function methodsFor(primitive: PrimitiveKind, cached?: string | null): string[] 
     fill_enter: ["fill_enter", "fill", "execute_value"],
     select: ["select", "click"],
     click: ["click", "click_text"],
+    pick_calendar: ["pick_calendar"],
     upload: ["upload"],
     execute_value: ["execute_value", "fill"],
   };
@@ -86,8 +91,9 @@ function softMatch(expected: string, actual: string, primitive: PrimitiveKind): 
     const want = /^(1|true|yes|on)$/i.test(e);
     return (a === "true") === want;
   }
-  if (primitive === "file_upload") {
-    return Number(a) > 0;
+  if (primitive === "date_picker_button") {
+    const dt = parseDatetimeValue(expected) || parseDatetimeValue(a);
+    if (dt) return datetimeCommitted(a, dt);
   }
   return a === e || a.includes(e.slice(0, Math.min(20, e.length))) || e.includes(a.slice(0, 20));
 }
@@ -135,6 +141,16 @@ async function runMethod(
   }
   if (method === "click_text") {
     return browser.clickText(field.label || str, { exact: false });
+  }
+  if (method === "pick_calendar") {
+    if (!browser.pickCalendar) {
+      return { ok: false, message: "pick_calendar is not available" };
+    }
+    return browser.pickCalendar({
+      triggerRef: field.ref,
+      triggerLabel: field.label,
+      value,
+    });
   }
   if (method === "upload") {
     const files = Array.isArray(value) ? value.map(String) : [str];
@@ -232,7 +248,11 @@ export async function executePrimitivesOnBrowser(
       const result = await runMethod(browser, method, field, step.value);
       const read = await readField(browser, step.ref);
       const expected = valueAsString(step.value);
-      const matched = read.ok && softMatch(expected, read.value, step.primitive);
+      const dt = parseDatetimeValue(step.value);
+      const matched =
+        step.primitive === "date_picker_button"
+          ? Boolean(result.ok && (dt ? datetimeCommitted(read.value, dt) : !/indefinitely/i.test(read.value)))
+          : read.ok && softMatch(expected, read.value, step.primitive);
       if (result.ok && matched) {
         const learned = attempt > 0;
         if (learned || (attempt === 0 && method !== "fill")) {

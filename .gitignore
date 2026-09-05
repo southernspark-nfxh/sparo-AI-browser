@@ -1,6 +1,7 @@
 node_modules/
 out/
 dist/
+release/
 .DS_Store
 *.log
 .env
@@ -21,8 +22,19 @@ secrets*
 tmp-*
 /tmp-*.mjs
 /tmp-*.json
+FILL_UNICODE_V2.txt
+cloud-session.bin
+**/cloud-session.bin
+cloud-device.json
+**/reports/
 
-# Runtime browser profile — lives in %APPDATA%/sparo, not this repo
+# Local QA scratch — never publish
+scripts/_qa-*
+scripts/__pycache__/
+**/__pycache__/
+.github/qa-notes/
+
+# Runtime browser profile — lives in %APPDATA%/sparo-store, not this repo
 sessions.json
 bookmarks.json
 strategy-cache.json

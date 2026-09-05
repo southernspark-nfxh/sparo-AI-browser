@@ -1,6 +1,0 @@
-﻿FILL UNICODE FIX LANDED
-path: D:\download\Sparo\src\main\browser.ts
-marker: fill-unicode-v2
-cdpUtf8Expr: src/main/cdp-frames.ts
-After restart, fill success message MUST contain: fill-unicode-v2
-If you do not see that string, you are running an old process / wrong folder.

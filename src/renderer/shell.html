@@ -1,677 +1,1216 @@
-<!doctype html>
+﻿<!doctype html>
 <!-- Single shell: chrome + embedded sidebar (no separate chrome.html / sidebar.html). -->
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <title>Sparo Agent Browser</title>
+    <title>Sparo</title>
     <style>
-      :root {
-        color-scheme: dark;
-        --bg: #1a1a1e;
-        --bg2: #25252b;
-        --side: #161618;
-        --card: #222226;
-        --line: #33333a;
-        --text: #e8e8ea;
-        --muted: #9a9aa3;
-        --accent: #3d7eff;
-        --tab: #2a2a30;
-        --tab-active: #35353d;
-        --ok: #3dd68c;
-        --warn: #ffb020;
-        --bad: #ff5c5c;
-        --chrome-h: 104px;
-        --side-w: 300px;
-        font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
-      }
-      * { box-sizing: border-box; }
-      html, body {
-        margin: 0;
-        height: 100%;
-        overflow: hidden;
-        background: #111;
-        color: var(--text);
-        user-select: none;
-      }
-      input, textarea {
-        user-select: text;
-        -webkit-user-select: text;
-      }
-      .app {
-        display: grid;
-        grid-template-columns: 1fr var(--side-w);
-        grid-template-rows: var(--chrome-h) 1fr;
-        height: 100%;
-        width: 100%;
-      }
-      .chrome {
-        grid-column: 1;
-        grid-row: 1;
-        display: flex;
-        flex-direction: column;
-        background: var(--bg);
-        border-bottom: 1px solid var(--line);
-        z-index: 2;
-        position: relative;
-      }
-      .page-hole {
-        grid-column: 1;
-        grid-row: 2;
-        background: #0c0c0e;
-      }
-      .sidebar {
-        grid-column: 2;
-        grid-row: 1 / 3;
-        background: var(--side);
-        border-left: 1px solid var(--line);
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        padding: 10px;
-        overflow: hidden;
-        z-index: 5;
-        position: relative;
-      }
-      .tabs-row {
-        display: flex;
-        align-items: stretch;
-        gap: 0;
-        height: 36px;
-        background: #121215;
-        min-width: 0;
-      }
-      .brand {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        flex: 0 0 auto;
-        padding: 0 10px 0 8px;
-        border-right: 1px solid var(--line);
-        height: 100%;
-      }
-      .brand img {
-        width: 18px;
-        height: 18px;
-        border-radius: 4px;
-        object-fit: cover;
-        display: block;
-      }
-      .brand span {
-        font-size: 12px;
-        font-weight: 650;
-        letter-spacing: 0.02em;
-        color: #f2f2f4;
-      }
-      .tabs {
-        display: flex;
-        align-items: stretch;
-        gap: 2px;
-        padding: 4px 6px 0;
-        height: 36px;
-        background: #121215;
-        overflow-x: auto;
-        flex: 1;
-        min-width: 0;
-      }
-      .tab {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        max-width: 180px;
-        min-width: 80px;
-        padding: 0 8px 0 10px;
-        background: var(--tab);
-        border-radius: 8px 8px 0 0;
-        font-size: 12px;
-        border: 1px solid transparent;
-        border-bottom: 0;
-      }
-      .tab.active {
-        background: var(--tab-active);
-        border-color: var(--line);
-      }
-      .tab .title {
-        flex: 1;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      .tab .x, .new-tab, .nav button, .go, .icon-btn, .sidebar button, .bm-chip, .menu-item {
-        border: 0;
-        cursor: default;
-      }
-      .tab .x {
-        width: 16px;
-        height: 16px;
-        border-radius: 4px;
-        background: transparent;
-        color: var(--muted);
-        font-size: 12px;
-        line-height: 1;
-        padding: 0;
-      }
-      .tab .x:hover { background: #444; color: #fff; }
-      .new-tab {
-        width: 28px;
-        background: transparent;
-        color: var(--muted);
-        font-size: 18px;
-      }
-      .new-tab:hover { color: #fff; }
-      .bar {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        height: 40px;
-        padding: 0 8px;
-        background: var(--bg2);
-      }
-      .nav { display: flex; gap: 2px; }
-      .nav button, .icon-btn {
-        width: 32px;
-        height: 28px;
-        border-radius: 6px;
-        background: transparent;
-        color: var(--text);
-        font-size: 14px;
-      }
-      .nav button:disabled { opacity: 0.35; }
-      .nav button:hover:not(:disabled),
-      .icon-btn:hover { background: #333; }
-      .icon-btn.on { color: #f5c542; }
-      .url {
-        flex: 1;
-        height: 28px;
-        border-radius: 14px;
-        border: 1px solid var(--line);
-        background: #121215;
-        color: var(--text);
-        padding: 0 12px;
-        font-size: 13px;
-        outline: none;
-      }
-      .url:focus { border-color: var(--accent); }
-      .go {
-        height: 28px;
-        padding: 0 12px;
-        border-radius: 6px;
-        background: var(--accent);
-        color: #fff;
-        font-size: 12px;
-      }
-      .bm-bar {
-        display: flex;
-        align-items: center;
-        gap: 2px;
-        height: 28px;
-        padding: 0 8px;
-        background: var(--bg);
-        border-top: 1px solid #2a2a30;
-        overflow: hidden;
-        width: 100%;
-        min-width: 0;
-      }
-      .bm-chip {
-        max-width: 160px;
-        height: 22px;
-        padding: 0 8px;
-        border-radius: 4px;
-        background: transparent;
-        color: var(--text);
-        font-size: 12px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        flex: 0 0 auto;
-      }
-      .bm-chip:hover { background: #2e2e36; }
-      .bm-more {
-        flex: 0 0 auto;
-        height: 22px;
-        padding: 0 8px;
-        border-radius: 4px;
-        background: #2a2a32;
-        color: var(--text);
-        font-size: 11px;
-        border: 0;
-      }
-      .bm-more:hover { background: #3a3a44; }
-      .bm-empty {
-        color: var(--muted);
-        font-size: 11px;
-        padding-left: 4px;
-      }
-      .bm-menu-wrap { position: relative; }
-      .bm-menu {
-        display: none;
-        position: absolute;
-        right: 0;
-        top: 32px;
-        width: 280px;
-        max-height: 360px;
-        overflow: auto;
-        background: #2a2a30;
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        box-shadow: 0 8px 24px rgba(0,0,0,.45);
-        padding: 6px;
-        z-index: 20;
-      }
-      .bm-menu.open { display: block; }
-      .menu-item {
-        display: block;
-        width: 100%;
-        text-align: left;
-        background: transparent;
-        color: var(--text);
-        font-size: 12px;
-        padding: 8px 10px;
-        border-radius: 6px;
-      }
-      .menu-item:hover { background: #3a3a44; }
-      .menu-item:disabled { opacity: 0.4; }
-      .menu-sep {
-        height: 1px;
-        background: var(--line);
-        margin: 4px 0;
-      }
-      .menu-hint {
-        font-size: 10px;
-        color: var(--muted);
-        padding: 4px 10px 6px;
-      }
-      .toast {
-        display: none;
-        position: absolute;
-        left: 50%;
-        bottom: -36px;
-        transform: translateX(-50%);
-        background: #2f6fed;
-        color: #fff;
-        font-size: 12px;
-        padding: 6px 12px;
-        border-radius: 6px;
-        white-space: nowrap;
-        z-index: 30;
-      }
-      .toast.show { display: block; }
-      .sidebar h1 {
-        font-size: 14px;
-        font-weight: 600;
-        margin: 0;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-      .sidebar h1 img {
-        width: 22px;
-        height: 22px;
-        border-radius: 5px;
-        object-fit: cover;
-        display: block;
-      }
-      .product-tag {
-        margin: -2px 0 4px;
-        font-size: 11px;
-        color: var(--muted);
-        letter-spacing: 0.01em;
-      }
-      .card {
-        background: var(--card);
-        border: 1px solid var(--line);
-        border-radius: 10px;
-        padding: 8px 10px;
-      }
-      .label {
-        font-size: 11px;
-        color: var(--muted);
-        margin-bottom: 4px;
-      }
-      .value { font-size: 12px; word-break: break-all; }
-      .dot {
-        display: inline-block;
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        margin-right: 6px;
-        background: var(--ok);
-      }
-      .dot.paused { background: var(--warn); }
-      .dot.rec { background: #e35d6a; box-shadow: 0 0 0 3px rgba(227,93,106,.25); }
-      .sidebar button {
-        border-radius: 8px;
-        padding: 8px 10px;
-        background: var(--accent);
-        color: white;
-        font-size: 12px;
-      }
-      .sidebar button.ghost { background: #333; }
-      .sidebar button.danger { background: #8b2e2e; }
-      .sidebar button.ok { background: #1f6b45; }
-      .sidebar button:disabled {
-        opacity: 0.4;
-        cursor: not-allowed;
-      }
-      .rec-title {
-        width: 100%;
-        margin-top: 8px;
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        background: #1c1c20;
-        color: var(--text);
-        padding: 7px 9px;
-        font-size: 12px;
-        outline: none;
-      }
-      .rec-title:focus { border-color: #4a6aaa; }
-      .row { display: flex; gap: 6px; }
-      .row button { flex: 1; }
-      .modal-mask {
-        display: none;
-        position: fixed;
-        inset: 0;
-        background: rgba(0,0,0,.55);
-        z-index: 1000;
-        align-items: center;
-        justify-content: center;
-      }
-      .modal-mask.show { display: flex; }
-      .modal-box {
-        width: min(320px, 90vw);
-        background: #222226;
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        padding: 14px;
-        box-shadow: 0 12px 40px rgba(0,0,0,.45);
-      }
-      .modal-box p { margin: 0 0 12px; font-size: 13px; line-height: 1.45; }
-      .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
-      .modal-actions button { min-width: 72px; }
-      .skill-item {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 6px;
-        padding: 6px 0;
-        border-bottom: 1px solid #2a2a32;
-        font-size: 11px;
-      }
-      .skill-item:last-child { border-bottom: none; }
-      .skill-meta { color: var(--muted); font-size: 10px; margin-top: 2px; }
-      .skill-del {
-        flex-shrink: 0;
-        background: transparent !important;
-        color: var(--muted) !important;
-        padding: 2px 6px !important;
-        font-size: 11px !important;
-      }
-      .skill-del:hover { color: var(--bad) !important; }
-      .hint {
-        font-size: 11px;
-        color: var(--muted);
-        line-height: 1.45;
-        margin: 0;
-      }
-      .scroll {
-        flex: 1;
-        overflow: auto;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        min-height: 0;
-      }
-      .approval {
-        border: 1px solid #4a3a1a;
-        background: #2a2418;
-        border-radius: 8px;
-        padding: 8px;
-        margin-top: 6px;
-      }
-      .qa-item { font-size: 11px; margin: 2px 0; }
-      .qa-item.pass { color: var(--ok); }
-      .qa-item.fail { color: var(--bad); }
-      .qa-item.warn { color: var(--warn); }
-      .chat-log {
-        flex: 1;
-        min-height: 160px;
-        max-height: 280px;
-        overflow: auto;
-        font-size: 12px;
-        line-height: 1.45;
-        background: #121215;
-        border-radius: 8px;
-        padding: 8px;
-        margin-bottom: 8px;
-      }
-      .chat-log .u { color: #9ec1ff; }
-      .chat-log .a { color: #c8c8d0; white-space: pre-wrap; }
-      .chat-card {
-        flex: 0 0 auto;
-        display: flex;
-        flex-direction: column;
-        min-height: 280px;
-      }
-      .chat-input {
-        width: 100%;
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-      .chat-input textarea {
-        width: 100%;
-        min-height: 72px;
-        max-height: 140px;
-        resize: vertical;
-        border-radius: 8px;
-        border: 1px solid var(--line);
-        background: #121215;
-        color: var(--text);
-        padding: 8px 10px;
-        font-size: 13px;
-        line-height: 1.4;
-        font-family: inherit;
-        box-sizing: border-box;
-      }
-      .chat-input textarea:focus {
-        outline: none;
-        border-color: var(--accent);
-      }
-      .chat-actions {
-        display: flex;
-        gap: 6px;
-        align-items: center;
-      }
-      .chat-actions button { flex: 0 0 auto; min-width: 64px; }
-      .chat-actions .spacer { flex: 1; }
-      .ds-row {
-        display: flex;
-        gap: 6px;
-        margin-top: 6px;
-        align-items: center;
-      }
-      .ds-row input, .ds-row select {
-        flex: 1;
-        min-width: 0;
-        height: 28px;
-        border-radius: 6px;
-        border: 1px solid var(--line);
-        background: #121215;
-        color: var(--text);
-        padding: 0 8px;
-        font-size: 11px;
-      }
-      .ds-row label.mini {
-        flex: 0 0 52px;
-        font-size: 10px;
-        color: var(--muted);
-      }
-      .ds-status { font-size: 11px; color: var(--muted); margin-top: 4px; }
-      .ds-status.ok { color: var(--ok); }
-      .cs-draft {
-        margin-top: 6px;
-        max-height: 90px;
-        overflow: auto;
-        font-size: 12px;
-        line-height: 1.4;
-        color: var(--text);
-        white-space: pre-wrap;
-        background: #121215;
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        padding: 6px 8px;
-      }
-      .cs-badge {
-        display: inline-block;
-        font-size: 11px;
-        padding: 2px 6px;
-        border-radius: 4px;
-        background: #2a3344;
-        color: #9ec1ff;
-        margin-right: 4px;
-      }
+:root {
+  color-scheme: light;
+  --page: #e4e0dc;
+  --bg: #eeeae6;
+  --bg2: #eeeae6;
+  --side: #f3f0ec;
+  --card: transparent;
+  --line: #ddd8d2;
+  --text: #1c1a18;
+  --muted: #6e6a66;
+  --accent: #2c2a28;
+  --accent-ink: #f7f4f0;
+  --tab: #e8e4e0;
+  --tab-active: #fbfaf8;
+  --ok: #5a8f62;
+  --warn: #8a7a4a;
+  --bad: #a45a52;
+  --paper: #fbfaf8;
+  --composer: #fbfaf8;
+  --chrome-h: 104px;
+  --side-w: 312px;
+  --radius-btn: 999px;
+  --radius-in: 16px;
+  font-family: -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  user-select: none;
+}
+input, textarea, select, .chat-log, .chat-log .bubble {
+  user-select: text;
+  -webkit-user-select: text;
+}
+.app {
+  display: grid;
+  grid-template-columns: 1fr var(--side-w);
+  grid-template-rows: env(titlebar-area-height, 36px) 40px 28px 1fr;
+  height: 100%;
+  width: 100%;
+}
+.page-hole {
+  grid-column: 1;
+  grid-row: 4;
+  background: var(--paper);
+  position: relative;
+  min-width: 0;
+}
+.sidebar {
+  grid-column: 2;
+  grid-row: 2 / -1;
+  background: var(--side);
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  z-index: 5;
+  position: relative;
+  color: var(--text);
+}
+.tabs-row {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  height: env(titlebar-area-height, 36px);
+  width: env(titlebar-area-width, 100%);
+  margin-left: env(titlebar-area-x, 0px);
+  background: var(--bg);
+  min-width: 0;
+  -webkit-app-region: drag;
+  position: relative;
+  z-index: 3;
+}
+.tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 4px 6px 0;
+  height: 100%;
+  background: transparent;
+  overflow-x: auto;
+  flex: 0 1 auto;
+  max-width: calc(100% - 72px);
+  min-width: 0;
+  -webkit-app-region: no-drag;
+}
+.title-drag {
+  flex: 1 1 64px;
+  min-width: 48px;
+  height: 100%;
+  -webkit-app-region: drag;
+  cursor: default;
+}
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 180px;
+  min-width: 80px;
+  padding: 0 8px 0 10px;
+  background: var(--tab);
+  border-radius: 8px 8px 0 0;
+  font-size: 12px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  -webkit-app-region: no-drag;
+}
+.tab.active {
+  background: var(--tab-active);
+  border-color: var(--line);
+}
+.tab.drag-over {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.tab.sleeping {
+  opacity: 0.62;
+}
+.tab.sleeping .title::before {
+  content: "☾ ";
+  color: #8a7a62;
+}
+.tab .title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tab .x, .new-tab, .nav button, .go, .icon-btn, .sidebar button, .bm-chip, .menu-item {
+  border: 0;
+  cursor: default;
+}
+.tab .x {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  padding: 0;
+}
+.tab .x:hover { background: rgba(44,42,40,.08); color: var(--text); }
+.new-tab {
+  width: 28px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  -webkit-app-region: no-drag;
+}
+.new-tab:hover { color: var(--text); }
+.bar {
+  grid-column: 1;
+  grid-row: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 8px;
+  background: var(--bg2);
+  border-right: 1px solid var(--line);
+  z-index: 2;
+  position: relative;
+}
+.nav { display: flex; gap: 2px; }
+.nav button, .icon-btn {
+  width: 32px;
+  height: 28px;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+}
+.nav button:disabled { opacity: 0.35; }
+.nav button:hover:not(:disabled),
+.icon-btn:hover { background: rgba(44,42,40,.08); }
+.icon-btn.on { color: #b0892c; }
+.mem-chip {
+  flex: 0 0 auto;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--text);
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.mem-chip:hover { background: #fff; }
+.url {
+  flex: 1;
+  height: 28px;
+  border-radius: var(--radius-btn);
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--text);
+  padding: 0 12px;
+  font-size: 13px;
+  outline: none;
+}
+.url:focus { border-color: var(--text); }
+.go {
+  height: 28px;
+  padding: 0 14px;
+  border-radius: var(--radius-btn);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 12px;
+  font-weight: 620;
+}
+.reply-one {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: var(--radius-btn);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 12px;
+  border: 0;
+  cursor: default;
+  white-space: nowrap;
+}
+.reply-one:disabled { opacity: 0.5; }
+.bm-bar {
+  grid-column: 1;
+  grid-row: 3;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 28px;
+  padding: 0 8px;
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  overflow: hidden;
+  width: 100%;
+  min-width: 0;
+}
+.bm-chip {
+  max-width: 160px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.bm-chip:hover { background: rgba(44,42,40,.06); }
+.bm-more {
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: #e8e4e0;
+  color: var(--text);
+  font-size: 11px;
+  border: 0;
+}
+.bm-more:hover { background: #ddd8d2; }
+.bm-empty {
+  color: var(--muted);
+  font-size: 11px;
+  padding-left: 4px;
+}
+.bm-menu-wrap { position: relative; }
+.bm-menu {
+  display: none;
+  position: absolute;
+  right: 0;
+  top: 32px;
+  width: 280px;
+  max-height: 360px;
+  overflow: auto;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(40,32,24,.14);
+  padding: 6px;
+  z-index: 20;
+}
+.bm-menu.open { display: block; }
+.menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+.menu-item:hover { background: rgba(44,42,40,.06); }
+.menu-item:disabled { opacity: 0.4; }
+.menu-sep {
+  height: 1px;
+  background: var(--line);
+  margin: 4px 0;
+}
+.menu-hint {
+  font-size: 10px;
+  color: var(--muted);
+  padding: 4px 10px 6px;
+}
+.toast {
+  display: none;
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  margin-top: 8px;
+  transform: translateX(-50%);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+  z-index: 30;
+  -webkit-app-region: no-drag;
+}
+.toast.show { display: block; }
+.toast.has-path { cursor: pointer; }
+
+.find-bar {
+  display: none;
+  position: absolute;
+  right: 8px;
+  top: 4px;
+  height: 32px;
+  align-items: center;
+  gap: 4px;
+  background: var(--tab-active);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0 4px 0 10px;
+  z-index: 8;
+  box-shadow: 0 6px 18px rgba(28,26,24,.12);
+}
+.find-bar.open { display: flex; }
+.find-bar input {
+  width: 168px;
+  border: 0;
+  background: transparent;
+  font-size: 13px;
+  outline: none;
+  color: var(--text);
+}
+.find-count {
+  font-size: 11px;
+  color: var(--muted);
+  min-width: 40px;
+  text-align: right;
+}
+.history-panel {
+  display: none;
+  position: absolute;
+  inset: 0;
+  background: var(--paper);
+  flex-direction: column;
+  z-index: 4;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.history-panel.open { display: flex; }
+.history-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.history-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+.history-head input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 10px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+.history-list {
+  flex: 1;
+  overflow: auto;
+  padding: 8px 0 16px;
+}
+.history-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 16px;
+  cursor: default;
+  border: 0;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+}
+.history-item:hover { background: rgba(44,42,40,.06); }
+.history-item .ht { font-size: 13px; }
+.history-item .hu { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-empty { padding: 24px 16px; color: var(--muted); font-size: 13px; }
+.history-head button.ghost {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 0 8px;
+  height: 32px;
+  cursor: default;
+  flex: 0 0 auto;
+}
+.history-head button.ghost:hover { color: var(--text); }
+
+.side-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 18px 20px 8px;
+}
+.side-acts {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex: 0 0 auto;
+}
+.mark {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  text-transform: uppercase;
+}
+.gear, .done {
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 0;
+}
+.gear:hover, .done:hover { color: var(--text); }
+
+.thread {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 20px 12px;
+}
+.chat-log {
+  min-height: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+}
+.chat-log .bubble-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  max-width: 100%;
+}
+.chat-log .bubble-row.me { flex-direction: row-reverse; }
+.chat-log .avatar {
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #e8e4e0;
+  color: var(--muted);
+}
+.chat-log .bubble-row.sparo .avatar,
+.chat-log .bubble-row.me .avatar {
+  background: #e8e4e0;
+  color: var(--muted);
+}
+.chat-log .bubble {
+  max-width: 80%;
+  padding: 0;
+  border-radius: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: transparent;
+  color: var(--text);
+}
+.chat-log .bubble.me { color: var(--muted); }
+.chat-log .bubble.sparo { color: var(--text); }
+.chat-log .bubble-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 80%;
+  min-width: 0;
+}
+.chat-log .bubble-row.me .bubble-wrap { align-items: flex-end; }
+.chat-log .bubble-wrap .bubble { max-width: 100%; }
+.chat-log .bubble-copy {
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 0;
+  line-height: 1;
+}
+.chat-log .bubble-copy:hover { color: var(--text); }
+.doc-card {
+  margin-top: 6px;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  color: var(--text);
+}
+.doc-card:hover { border-color: #c8c0b6; }
+.doc-card .kicker {
+  font-size: 10px;
+  letter-spacing: .14em;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.doc-card .ttl { font-size: 13px; line-height: 1.35; }
+.doc-card .go { font-size: 11px; color: var(--muted); margin-top: 6px; }
+.thread-tools {
+  display: flex;
+  justify-content: flex-end;
+  gap: 14px;
+  padding: 0 20px 6px;
+  flex: 0 0 auto;
+}
+.thread-tools button {
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 0;
+}
+.thread-tools button:hover { color: var(--text); }
+
+.pause-bar {
+  margin: 0 16px 10px;
+  padding: 8px 4px 0;
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid var(--line);
+}
+.pause-bar.hide { display: none; }
+.pause-bar button { color: var(--text); font-size: 12px; background: transparent; padding: 0; }
+
+.ask-card {
+  margin: 0 16px 8px;
+  padding: 12px 4px 0;
+  border-top: 1px solid var(--line);
+}
+.ask-card.hide { display: none; }
+.approval {
+  padding: 8px 0;
+}
+.approval .row button {
+  padding: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+}
+.approval .row button.ok { color: var(--text); font-weight: 560; }
+
+.dock { padding: 0 16px 16px; }
+.shortcuts {
+  display: flex;
+  gap: 14px;
+  padding: 0 4px 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.shortcuts .job {
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 0;
+}
+.shortcuts .job:hover { color: var(--text); }
+.shortcuts .job:disabled { opacity: 0.4; }
+
+.composer {
+  background: var(--composer);
+  border-radius: var(--radius-in);
+  padding: 12px 12px 10px;
+  border: 1px solid var(--line);
+}
+.composer textarea,
+.chat-input textarea {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: 14px/1.45 inherit;
+  resize: none;
+  min-height: 52px;
+  max-height: 140px;
+  outline: none;
+  padding: 0;
+  border-radius: 0;
+}
+.composer textarea::placeholder { color: var(--muted); }
+.go-row { display: flex; justify-content: flex-end; }
+#chatSend {
+  background: var(--accent);
+  color: var(--accent-ink);
+  height: 30px;
+  padding: 0 14px;
+  border-radius: var(--radius-btn);
+  font-size: 12px;
+  font-weight: 620;
+}
+.note, #chatHint {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 0 6px;
+  line-height: 1.45;
+}
+.quick-status {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 6px;
+  padding: 0 6px;
+}
+
+.drawer {
+  display: none;
+  position: absolute;
+  inset: 0;
+  background: var(--side);
+  flex-direction: column;
+  padding: 18px 20px 16px;
+  overflow: auto;
+  z-index: 6;
+}
+.drawer.open { display: flex; }
+.drawer-h {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 22px;
+}
+.drawer h2 {
+  font-size: 15px;
+  font-weight: 560;
+  margin: 0;
+}
+.block { margin-bottom: 22px; }
+.block h3, .label {
+  font-size: 13px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text);
+  font-weight: 560;
+  margin: 0 0 10px;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 12px;
+}
+.field label {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.block input, .block select,
+.field input, .field select,
+.lang-row select {
+  width: 100%;
+  height: 36px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+  margin: 0;
+  padding: 0 2px;
+}
+.lang-row { margin: 0; }
+.ds-status { font-size: 12px; color: var(--muted); margin: 0 0 10px; }
+.ds-status.ok { color: var(--text); }
+.mode-cards { display: flex; gap: 8px; margin: 0 0 12px; }
+.mode-card {
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 10px 12px;
+  cursor: pointer;
+  background: transparent;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+.mode-card.on {
+  background: #e8e4e0;
+  border-color: var(--text);
+}
+.mode-card strong { display: block; font-size: 13px; margin-bottom: 4px; }
+.mode-card span { display: block; font-size: 11px; color: var(--muted); line-height: 1.4; }
+#cloudQuota { font-size: 12px; color: var(--muted); margin: 0 0 10px; }
+.switch {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  margin: 8px 0 10px;
+}
+.switch input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+.switch .track {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 22px;
+  border-radius: 999px;
+  background: #ddd8d2;
+  position: relative;
+}
+.switch .track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fbfaf8;
+}
+.switch input:checked + .track { background: var(--accent); }
+.switch input:checked + .track::after { left: 16px; }
+.switch span { font-size: 13px; color: var(--text); line-height: 1.35; }
+.idle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0 0 4px;
+}
+.idle-row input {
+  width: 52px;
+  height: 32px;
+  text-align: center;
+  flex: 0 0 52px;
+  border-bottom: 1px solid var(--line);
+}
+.fold {
+  border-top: 1px solid var(--line);
+  padding: 12px 0 4px;
+  margin: 0 0 8px;
+}
+.fold > summary {
+  list-style: none;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 560;
+  color: var(--text);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary::after {
+  content: "›";
+  color: var(--muted);
+  font-size: 16px;
+  transform: rotate(90deg);
+}
+.fold[open] > summary::after { transform: rotate(-90deg); }
+.fold .fold-body { padding-top: 12px; }
+.linkish {
+  display: inline-block;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 0;
+  margin: 0 0 10px;
+}
+.linkish:hover { color: var(--text); }
+.cap, .hint {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+  margin: 0;
+}
+.value { font-size: 12px; word-break: break-all; }
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  background: var(--ok);
+}
+.dot.paused { background: var(--warn); }
+.dot.rec { background: var(--bad); }
+
+.sidebar .primary,
+.sidebar button.ok,
+.sidebar #btnDsSave,
+.sidebar #btnPfSave,
+.sidebar #btnCopyAgent,
+.sidebar .save {
+  background: var(--accent);
+  color: var(--accent-ink);
+  height: 36px;
+  padding: 0 14px;
+  border-radius: var(--radius-btn);
+  font-size: 13px;
+  font-weight: 620;
+  width: 100%;
+  margin-top: 4px;
+}
+.row button.save,
+.approval .row button.ok {
+  width: auto;
+  height: 32px;
+}
+.sidebar button.ghost {
+  background: transparent;
+  color: var(--muted);
+  padding: 8px 0;
+  font-size: 12px;
+}
+.sidebar button.danger {
+  background: transparent;
+  color: var(--bad);
+  padding: 8px 0;
+  font-size: 12px;
+}
+.sidebar button:disabled { opacity: 0.4; cursor: not-allowed; }
+.row { display: flex; gap: 12px; }
+.row button { flex: 1; }
+.drawer .ghost,
+.block .ghost {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.cs-draft {
+  margin-top: 6px;
+  max-height: 90px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text);
+  white-space: pre-wrap;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 6px 8px;
+}
+.cs-badge {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #e8e4e0;
+  color: var(--text);
+  margin-right: 4px;
+}
+.qa-item { font-size: 11px; margin: 2px 0; }
+.qa-item.pass { color: var(--ok); }
+.qa-item.fail { color: var(--bad); }
+.qa-item.warn { color: var(--warn); }
+.hide { display: none !important; }
+
+.modal-mask {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(40,32,24,.35);
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+}
+.modal-mask.show { display: flex; }
+.modal-box {
+  width: min(320px, 90vw);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 14px;
+  box-shadow: 0 18px 44px rgba(40,32,24,.16);
+}
+.modal-box p { margin: 0 0 12px; font-size: 13px; line-height: 1.45; }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.modal-actions button {
+  min-width: 72px;
+  height: 32px;
+  border-radius: var(--radius-btn);
+  padding: 0 12px;
+}
+.modal-actions #confirmOk {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.modal-actions #confirmCancel {
+  background: transparent;
+  color: var(--muted);
+}
+
+.product-tag { display: none; }
+.chat-card, .card { background: transparent; border: 0; padding: 0; }
+.chat-input { display: contents; }
+.chat-actions { display: none; }
+.act-grid { display: none; }
+.more-toggle { display: none; }
+.more-body { }
+.scroll { }
+#approvalsCard { flex: 0 0 auto; }
+
     </style>
   </head>
   <body>
     <div class="app">
-      <div class="chrome">
-        <div class="tabs-row">
-          <div class="brand" title="Sparo Agent Browser — humans stay in control">
-            <img src="/icon.png" alt="" />
-            <span>Sparo</span>
-          </div>
-          <div class="tabs" id="tabs"></div>
-        </div>
-        <div class="bar">
-          <div class="nav">
-            <button id="back" title="后退">◀</button>
-            <button id="forward" title="前进">▶</button>
-            <button id="reload" title="刷新">⟳</button>
-          </div>
-          <input class="url" id="url" type="text" spellcheck="false" placeholder="输入网址，例如 baidu.com" />
-          <button class="icon-btn" id="btnStar" title="收藏此页">☆</button>
-          <button class="icon-btn" id="btnBmMenu" title="书签">▤</button>
-          <button class="go" id="go">前往</button>
-        </div>
-        <div class="bm-bar" id="bmBar">
-          <span class="bm-empty" id="bmEmpty">书签栏为空 · 点 ▤ 可按需从 Chrome / Edge 导入</span>
-        </div>
+      <div class="tabs-row">
+        <div class="tabs" id="tabs"></div>
+        <div class="title-drag" id="titleDrag" title=""></div>
         <div class="toast" id="toast"></div>
       </div>
-      <div class="page-hole" id="pageHole"></div>
+      <div class="bar">
+        <div class="nav">
+          <button id="back" data-i18n-title="nav.back" title="后退">◀</button>
+          <button id="forward" data-i18n-title="nav.forward" title="前进">▶</button>
+          <button id="reload" data-i18n-title="nav.reload" title="刷新">⟳</button>
+        </div>
+        <input class="url" id="url" type="text" spellcheck="false" data-i18n-placeholder="url.placeholder" placeholder="输入网址，例如 baidu.com" />
+        <button class="icon-btn" id="btnStar" data-i18n-title="bookmark.star" title="收藏此页">☆</button>
+        <button class="icon-btn" id="btnBmMenu" data-i18n-title="bookmark.menu" title="书签">▤</button>
+        <button class="icon-btn" id="btnHistory" data-i18n-title="nav.history" title="历史记录">◷</button>
+        <button type="button" class="mem-chip" id="btnMem" data-i18n-title="mem.moonTitle" title="休眠后台标签，释放内存。点休眠的标签会重新加载。">
+          <span aria-hidden="true">☾</span>
+          <span data-i18n="mem.optimize">优化内存</span>
+        </button>
+        <div class="find-bar" id="findBar">
+          <input id="findInput" type="text" data-i18n-placeholder="find.placeholder" placeholder="Find in page" />
+          <span class="find-count" id="findCount"></span>
+          <button type="button" class="icon-btn" id="findPrev" data-i18n-title="find.prev" title="Previous">↑</button>
+          <button type="button" class="icon-btn" id="findNext" data-i18n-title="find.next" title="Next">↓</button>
+          <button type="button" class="icon-btn" id="findClose" data-i18n-title="find.close" title="Close">×</button>
+        </div>
+      </div>
+      <div class="bm-bar" id="bmBar">
+        <span class="bm-empty" id="bmEmpty" data-i18n="bookmark.empty">书签栏为空 · 点 ▤ 可按需从 Chrome / Edge 导入</span>
+      </div>
+      <div class="page-hole" id="pageHole">
+        <div class="history-panel" id="historyPanel">
+          <div class="history-head">
+            <h2 data-i18n="history.title">History</h2>
+            <input id="historyFilter" type="text" data-i18n-placeholder="history.filter" placeholder="Search history" />
+            <button type="button" class="ghost" id="historyClear" data-i18n="history.clear">Clear</button>
+            <button type="button" class="icon-btn" id="historyClose" data-i18n-title="history.close" title="Close">×</button>
+          </div>
+          <div class="history-list" id="historyList"></div>
+        </div>
+      </div>
       <aside class="sidebar">
-        <h1><img src="/icon.png" alt="" />Sparo</h1>
-        <p class="product-tag" title="Sparo 人机同窗浏览器">Agent Browser · AI 驾驭网页，你驾驭 AI</p>
-        <div class="card chat-card">
-          <div class="label">Sparo chat</div>
+        <div class="side-top">
+          <div class="mark">Sparo</div>
+          <div class="side-acts">
+            <button type="button" class="gear" id="btnMore" data-i18n="more.settings" aria-expanded="false">设置</button>
+          </div>
+        </div>
+
+        <div class="thread-tools">
+          <button type="button" id="btnCopyChat" data-i18n="chat.copyAll">复制全部</button>
+          <button type="button" id="btnClearChatDock" data-i18n="chat.clear">清空对话</button>
+        </div>
+        <div class="thread">
           <div class="chat-log" id="chat"></div>
-          <div class="chat-input">
-            <textarea id="chatInput" placeholder="Goal: open weibo.com / automate a task…"></textarea>
-            <div class="chat-actions">
-              <span class="hint" id="chatHint">BYO model · MCP agents welcome</span>
-              <span class="spacer"></span>
-              <button id="chatSend">Send</button>
-            </div>
-          </div>
         </div>
-        <div class="card">
-          <div class="label">Model</div>
-          <div class="ds-status" id="dsStatus">No API key</div>
-          <div class="ds-row">
-            <label class="mini">Brand</label>
-            <select id="dsProvider">
-              <option value="deepseek">DeepSeek (default)</option>
-              <option value="openai">OpenAI</option>
-              <option value="custom">Custom / compatible</option>
-            </select>
-          </div>
-          <div class="ds-row">
-            <label class="mini">Model</label>
-            <input id="dsModel" type="text" placeholder="deepseek-v4-flash" autocomplete="off" />
-          </div>
-          <div class="ds-row" id="dsBaseRow">
-            <label class="mini">Base</label>
-            <input id="dsBase" type="text" placeholder="https://api.deepseek.com" autocomplete="off" />
-          </div>
-          <div class="ds-row">
-            <label class="mini">Key</label>
-            <input id="dsKey" type="password" placeholder="sk-… API Key" autocomplete="off" />
-            <button class="ghost" id="btnDsSave">Save</button>
-          </div>
-          <p class="hint" id="dsHint" style="margin-top:6px">
-            Default: DeepSeek V4 Flash. Switching brand fills the matching API host — a GPT key will not work on DeepSeek’s server.
-          </p>
+
+        <div class="pause-bar hide" id="pauseBar">
+          <span id="status"><span class="dot" id="dot"></span><span data-i18n="status.ready">就绪</span></span>
+          <button type="button" id="btnResume" data-i18n="act.resume">继续</button>
         </div>
-        <div class="scroll">
-          <div class="card">
-            <div class="label">状态</div>
-            <div class="value" id="status"><span class="dot" id="dot"></span>就绪</div>
-            <div class="row" style="margin-top:8px">
-              <button id="btnPause">暂停 / 人接管</button>
-              <button class="ghost" id="btnResume">恢复 Agent</button>
+        <div class="ask-card" id="approvalsCard" style="display:none">
+          <div id="approvals"><p class="hint" data-i18n="approvals.empty">暂无</p></div>
+        </div>
+
+        <div class="dock">
+          <div class="shortcuts">
+            <button type="button" class="job" id="btnSummarize" data-i18n="act.summarize" data-i18n-title="act.summarizeTitle" title="阅读当前页，写出要点">总结</button>
+            <button type="button" class="job" id="btnFillForm" data-i18n="act.fill" data-i18n-title="act.fillTitle" title="识别表单并按你给的资料填写，提交前停下">填表</button>
+            <button type="button" class="job" id="btnCsOneClick" data-i18n="act.reply" data-i18n-title="act.replyTitle" title="起草回复并填入输入框，不会自动发送">回复</button>
+            <button type="button" class="job" id="btnPublish" data-i18n="act.publish" data-i18n-title="act.publishTitle" title="按当前站发布，提交前暂停">发布</button>
+          </div>
+          <div class="composer">
+            <textarea id="chatInput" data-i18n-placeholder="chat.placeholder" placeholder="说要做什么"></textarea>
+            <div class="go-row"><button type="button" id="chatSend" data-i18n="chat.send">让它动手</button></div>
+          </div>
+          <div class="note" id="chatHint" data-i18n="chat.hintDefault">网页上的发送，始终由你点</div>
+          <div class="quick-status" id="csStatus" data-i18n="cs.idleHint">回复只填草稿。发送、提交都请你点。</div>
+          <div id="csMeta"></div>
+          <div class="cs-draft" id="csDraft" style="display:none"></div>
+        </div>
+
+        <div class="drawer" id="moreBody">
+          <div class="drawer-h">
+            <h2 data-i18n="more.settings">设置</h2>
+            <button type="button" class="done" id="moreChev" data-i18n="more.open">完成</button>
+          </div>
+
+          <div class="block">
+            <h3 data-i18n="model.label">模型</h3>
+            <div class="mode-cards">
+              <button type="button" class="mode-card on" id="modeByok">
+                <strong data-i18n="cloud.modeByok">自己的 Key</strong>
+                <span data-i18n="cloud.modeByokHint">密钥只留这台电脑</span>
+              </button>
+              <button type="button" class="mode-card" id="modeCloud">
+                <strong data-i18n="cloud.modeCloud">云端模型</strong>
+                <span data-i18n="cloud.modeCloudHint">登录即可体验</span>
+              </button>
+            </div>
+            <div class="ds-status" id="dsStatus" data-i18n="ds.unconfigured">未配置</div>
+            <div id="cloudQuota"></div>
+            <div id="dsByokBox">
+              <button type="button" class="linkish" id="btnByokEdit" data-i18n="model.change" style="display:none">更改</button>
+              <div id="dsByokFields">
+                <div class="field">
+                  <label for="dsProvider" data-i18n="ds.brand">品牌</label>
+                  <select id="dsProvider">
+                    <option value="deepseek" data-i18n="ds.opt.deepseek">DeepSeek（默认）</option>
+                    <option value="openai" data-i18n="ds.opt.openai">OpenAI</option>
+                    <option value="custom" data-i18n="ds.opt.custom">兼容接口</option>
+                  </select>
+                </div>
+                <div class="field" id="dsGatewayRow" style="display:none">
+                  <label for="dsGateway" data-i18n="ds.gateway">网关</label>
+                  <select id="dsGateway"></select>
+                </div>
+                <div class="field">
+                  <label for="dsModel" data-i18n="ds.model">模型</label>
+                  <input id="dsModel" type="text" placeholder="deepseek-v4-flash" autocomplete="off" />
+                </div>
+                <div class="field" id="dsBaseRow">
+                  <label for="dsBase" data-i18n="ds.base">地址</label>
+                  <input id="dsBase" type="text" placeholder="https://api.deepseek.com" autocomplete="off" />
+                </div>
+                <div class="field">
+                  <label for="dsKey" data-i18n="ds.key">密钥</label>
+                  <input id="dsKey" type="password" placeholder="sk-… API Key" autocomplete="off" />
+                </div>
+                <p class="hint" id="dsHint" data-i18n="ds.hint.deepseek">GPT 密钥不要填到 DeepSeek 地址上。</p>
+                <button type="button" class="save" id="btnDsSave" data-i18n="ds.save">保存</button>
+              </div>
+            </div>
+            <div id="dsCloudBox" style="display:none">
+              <p class="hint" data-i18n="cloud.intro">登录后可体验几次。密钥不进这台电脑。</p>
+              <div id="cloudLoggedOut">
+                <div class="field">
+                  <label for="cloudEmail" data-i18n="cloud.email">邮箱</label>
+                  <input id="cloudEmail" type="email" autocomplete="username" />
+                </div>
+                <div class="field">
+                  <label for="cloudCode" data-i18n="cloud.code">验证码</label>
+                  <input id="cloudCode" type="text" inputmode="numeric" autocomplete="one-time-code" />
+                </div>
+                <div class="row" style="gap:8px;margin-top:4px">
+                  <button type="button" class="ghost" id="btnCloudCode" data-i18n="cloud.sendCode">发送验证码</button>
+                  <button type="button" class="save" id="btnCloudVerify" data-i18n="cloud.verify" style="width:auto;margin-top:0">登录</button>
+                </div>
+              </div>
+              <div id="cloudLoggedIn" style="display:none">
+                <p class="hint" id="cloudEmailShow"></p>
+                <button type="button" class="ghost" id="btnCloudLogout" data-i18n="cloud.logout">退出登录</button>
+              </div>
+              <button type="button" class="ghost" id="btnCloudAccount" data-i18n="cloud.manage" style="margin-top:8px">去官网管理订阅</button>
             </div>
           </div>
-          <div class="card">
-            <div class="label">客服半自动</div>
-            <div class="value" id="csStatus"><span class="hint">任意聊天页：扫描 → 草稿填入 → 人点发送</span></div>
-            <div id="csMeta" style="margin-top:6px"></div>
-            <div class="cs-draft" id="csDraft" style="display:none"></div>
-            <div class="row" style="margin-top:8px">
-              <button class="ghost" id="btnCsScan">扫描会话</button>
-              <button class="ok" id="btnCsDraft">生成并填入</button>
+
+          <details class="fold">
+            <summary data-i18n="work.label">工作偏好</summary>
+            <div class="fold-body">
+              <p class="hint" data-i18n="work.intro">回复和发布时参考，只留本机。</p>
+              <div class="field">
+                <label for="pfNick" data-i18n="work.nick">称呼</label>
+                <input id="pfNick" type="text" data-i18n-placeholder="work.nickPh" placeholder="你想让 Sparo 怎么叫你" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="pfAccounts" data-i18n="work.accounts">账号</label>
+                <input id="pfAccounts" type="text" data-i18n-placeholder="work.accountsPh" placeholder="微博:名字, 知乎:名字" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="pfTopics" data-i18n="work.topics">话题</label>
+                <input id="pfTopics" type="text" data-i18n-placeholder="work.topicsPh" placeholder="客服、内容、表格" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="pfStyle" data-i18n="work.style">口吻</label>
+                <input id="pfStyle" type="text" data-i18n-placeholder="work.stylePh" placeholder="口语、短句、不说绝对承诺" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="pfNotes" data-i18n="work.notes">口径</label>
+                <input id="pfNotes" type="text" data-i18n-placeholder="work.notesPh" placeholder="运费、售后、价格怎么说" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="pfForbid" data-i18n="work.forbid">禁答</label>
+                <input id="pfForbid" type="text" data-i18n-placeholder="work.forbidPh" placeholder="不要承诺时效、不要给竞品链接" autocomplete="off" />
+              </div>
+              <button type="button" class="save" id="btnPfSave" data-i18n="work.save">保存</button>
+              <div class="row" style="margin-top:4px">
+                <button type="button" class="ghost" id="btnPfView" data-i18n="work.view">查看</button>
+                <button type="button" class="danger" id="btnPfClear" data-i18n="work.clear">清空</button>
+              </div>
             </div>
-            <p class="hint" style="margin-top:6px">不会自动点「发送」。配置 Model Key 后可用 LLM 写草稿。</p>
-          </div>
-          <div class="card">
-            <div class="label">教一遍 · 妙招</div>
-            <div class="value" id="recStatus"><span class="dot" id="recDot"></span>未录制</div>
-            <input class="rec-title" id="recTitle" type="text" placeholder="妙招名称（可选，结束时用）" autocomplete="off" />
-            <div class="row" style="margin-top:8px">
-              <button class="ok" id="btnRecStart">开始录制</button>
-              <button class="danger" id="btnRecStop" disabled>结束并保存</button>
+          </details>
+
+          <details class="fold">
+            <summary data-i18n="more.advanced">高级</summary>
+            <div class="fold-body">
+              <h3 data-i18n="mem.label">内存</h3>
+              <p class="hint" data-i18n="mem.hint">闲置后台标签会休眠。点回去再加载，登录还在。</p>
+              <label class="switch">
+                <input id="memSaver" type="checkbox" checked />
+                <span class="track" aria-hidden="true"></span>
+                <span data-i18n="mem.auto">闲置后台标签自动休眠</span>
+              </label>
+              <div class="idle-row" id="memIdleRow">
+                <span data-i18n="mem.idleBefore">闲置</span>
+                <input id="memIdle" type="number" min="1" max="60" value="2" />
+                <span data-i18n="mem.idleAfter">分钟后休眠</span>
+              </div>
+
+              <h3 data-i18n="agent.label" style="margin-top:18px">连接 Agent</h3>
+              <p class="hint" data-i18n="agent.hint">复制连接方式，让外部 Agent 操作这扇窗。</p>
+              <div class="value" id="installPath" style="margin-top:6px">—</div>
+              <button type="button" class="save" id="btnCopyAgent" data-i18n="agent.copy">复制给 Agent</button>
+              <div class="row" id="vendorRow" style="margin-top:6px;display:none">
+                <button type="button" class="ghost" id="btnConnectCursor" data-i18n="agent.writeCursor" style="display:none">写入 Cursor</button>
+                <button type="button" class="ghost" id="btnConnectClaude" data-i18n="agent.writeClaude" style="display:none">写入 Claude</button>
+              </div>
+              <p class="hint" id="agentCopyHint" style="margin-top:6px"></p>
             </div>
-            <p class="hint" style="margin-top:6px">也可对话：「开始录制」→ 操作 →「结束录制并保存为改尺寸」</p>
+          </details>
+
+          <div class="block" style="margin-top:16px">
+            <h3 data-i18n="lang.label">语言</h3>
+            <div class="lang-row">
+              <select id="localeSelect" aria-label="Language"></select>
+            </div>
           </div>
-          <div class="card">
-            <div class="label">当前页</div>
-            <div class="value" id="pageUrl">about:blank</div>
-            <div class="label" style="margin-top:6px">标题</div>
-            <div class="value" id="pageTitle">—</div>
-          </div>
-          <div class="card">
-            <div class="label">我的妙招</div>
-            <div id="skills"><p class="hint">暂无 · 录制一次成功操作后会出现在这里</p></div>
-          </div>
-          <div class="card">
-            <div class="label">概念说明</div>
-            <p class="hint" id="explain">
-              暂停：Agent 立刻停手，人可自由操作。<br />
-              审批：Agent 请求确认后才继续（如提交）。<br />
-              等待 wait_for：Agent 等页面元素出现，不是等人。<br />
-              妙招：发帖用「认阶段 + 脚本投递」——说「发小红书」走 run_skill / inject，勿循环 fill。
-            </p>
-          </div>
-          <div class="card">
-            <div class="label">审批队列</div>
-            <div id="approvals"><p class="hint">暂无待审批项</p></div>
-          </div>
-          <div class="card">
-            <div class="label">Page check</div>
-            <button id="btnQa" style="width:100%;margin-bottom:6px">Check page</button>
-            <div id="qa"><p class="hint">Not run yet</p></div>
-          </div>
+          <div class="block" id="qa"></div>
         </div>
       </aside>
+
     </div>
     <div class="modal-mask" id="confirmMask" role="dialog" aria-modal="true">
       <div class="modal-box">
-        <p id="confirmText">确认？</p>
+        <p id="confirmText" data-i18n="confirm.default">确认？</p>
         <div class="modal-actions">
-          <button class="ghost" id="confirmCancel">取消</button>
-          <button class="danger" id="confirmOk">删除</button>
+          <button class="ghost" id="confirmCancel" data-i18n="confirm.cancel">取消</button>
+          <button class="danger" id="confirmOk" data-i18n="confirm.delete">删除</button>
         </div>
       </div>
     </div>
-    <script>
+    <script type="module">
+      import { t, setLocale, applyDom, getLocale, LOCALE_META } from "./i18n.ts";
       const tabsEl = document.getElementById("tabs");
       const urlEl = document.getElementById("url");
       const backEl = document.getElementById("back");
@@ -689,6 +1228,7 @@
         url: "",
         canGoBack: false,
         canGoForward: false,
+        isLoading: false,
         barAll: [],
         barTotal: 0,
         total: 0,
@@ -699,14 +1239,74 @@
       let paused = false;
       let toastTimer = null;
       let overflowUrls = [];
+      let userProfile = { nickname: "" };
 
-      function toast(text) {
+      let lastSidebar = null;
+      let moreOpen = false;
+      let GATEWAYS = [];
+
+      function fillGatewaySelect(list) {
+        const sel = document.getElementById("dsGateway");
+        if (!sel) return;
+        if (Array.isArray(list) && list.length) GATEWAYS = list;
+        if (sel.options.length > 1) return;
+        sel.innerHTML = "";
+        const blank = document.createElement("option");
+        blank.value = "";
+        blank.textContent = t("ds.gateway.pick");
+        sel.appendChild(blank);
+        for (const g of GATEWAYS) {
+          const o = document.createElement("option");
+          o.value = g.id;
+          o.textContent = g.label;
+          sel.appendChild(o);
+        }
+      }
+      function toggleGatewayRow(provider) {
+        const row = document.getElementById("dsGatewayRow");
+        if (row) row.style.display = provider === "custom" ? "" : "none";
+      }
+
+      function fillLocaleSelect() {
+        const sel = document.getElementById("localeSelect");
+        if (!sel) return;
+        if (!sel.options.length) {
+          for (const m of LOCALE_META) {
+            const o = document.createElement("option");
+            o.value = m.id;
+            o.textContent = m.native;
+            sel.appendChild(o);
+          }
+        }
+        sel.value = getLocale();
+      }
+
+      function applyLanguage(locale) {
+        setLocale(locale);
+        if (lastSidebar) lastSidebar.locale = locale;
+        applyDom();
+        fillLocaleSelect();
+        if (lastSidebar) applySidebar(lastSidebar);
+        renderChrome();
+        const hp = document.getElementById("historyPanel");
+        if (hp && hp.classList.contains("open")) {
+          try { renderHistory(); } catch { /* not ready */ }
+        }
+      }
+
+      function toast(text, path) {
         toastEl.textContent = text;
         toastEl.classList.add("show");
+        toastEl.classList.toggle("has-path", Boolean(path));
+        toastEl.dataset.path = path || "";
         clearTimeout(toastTimer);
-        toastTimer = setTimeout(() => toastEl.classList.remove("show"), 2600);
+        toastTimer = setTimeout(() => toastEl.classList.remove("show"), 3200);
       }
       window.__sparkToast = toast;
+      toastEl.addEventListener("click", () => {
+        const p = toastEl.dataset.path;
+        if (p) window.sparkShell.showInFolder(p);
+      });
 
       function openBmMenu() {
         window.sparkShell.openBookmarksMenu({ overflowUrls });
@@ -766,7 +1366,7 @@
           const more = document.createElement("button");
           more.className = "bm-more";
           more.textContent = "» " + overflowUrls.length;
-          more.title = "其余 " + overflowUrls.length + " 个书签";
+          more.title = t("bookmark.moreTitle", { n: overflowUrls.length });
           more.onclick = (e) => {
             e.stopPropagation();
             openBmMenu();
@@ -775,23 +1375,53 @@
         }
       }
 
+      let draggingTabId = "";
       function renderChrome() {
         tabsEl.innerHTML = "";
-        for (const t of chromeState.tabs) {
+        for (const tab of chromeState.tabs) {
           const el = document.createElement("div");
-          el.className = "tab" + (t.id === chromeState.activeId ? " active" : "");
-          el.title = t.url || "";
+          el.className =
+            "tab" +
+            (tab.id === chromeState.activeId ? " active" : "") +
+            (tab.discarded ? " sleeping" : "");
+          el.draggable = true;
+          el.dataset.id = tab.id;
+          el.title = (tab.discarded ? t("mem.tabSleeping") + "\n" : "") + (tab.url || "");
           const title = document.createElement("span");
           title.className = "title";
-          title.textContent = t.title || t.url || "新标签页";
+          title.textContent = tab.title || tab.url || t("tab.new");
           const x = document.createElement("button");
           x.className = "x";
           x.textContent = "×";
+          x.draggable = false;
           x.onclick = (e) => {
             e.stopPropagation();
-            window.sparkShell.closeTab(t.id);
+            window.sparkShell.closeTab(tab.id);
           };
-          el.onclick = () => window.sparkShell.switchTab(t.id);
+          el.onclick = () => window.sparkShell.switchTab(tab.id);
+          el.addEventListener("auxclick", (e) => {
+            if (e.button !== 1) return;
+            e.preventDefault();
+            e.stopPropagation();
+            window.sparkShell.closeTab(tab.id);
+          });
+          el.addEventListener("dragstart", (e) => {
+            draggingTabId = tab.id;
+            e.dataTransfer.setData("text/plain", tab.id);
+            e.dataTransfer.effectAllowed = "move";
+          });
+          el.addEventListener("dragover", (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+            el.classList.add("drag-over");
+          });
+          el.addEventListener("dragleave", () => el.classList.remove("drag-over"));
+          el.addEventListener("drop", (e) => {
+            e.preventDefault();
+            el.classList.remove("drag-over");
+            const from = e.dataTransfer.getData("text/plain") || draggingTabId;
+            if (from && from !== tab.id) window.sparkShell.reorderTabs(from, tab.id);
+          });
           el.appendChild(title);
           el.appendChild(x);
           tabsEl.appendChild(el);
@@ -799,7 +1429,7 @@
         const add = document.createElement("button");
         add.className = "new-tab";
         add.textContent = "+";
-        add.title = "新标签页";
+        add.title = t("tab.new");
         add.onclick = () => window.sparkShell.newTab();
         tabsEl.appendChild(add);
 
@@ -808,6 +1438,8 @@
         }
         backEl.disabled = !chromeState.canGoBack;
         forwardEl.disabled = !chromeState.canGoForward;
+        reloadEl.textContent = chromeState.isLoading ? "×" : "⟳";
+        reloadEl.title = chromeState.isLoading ? t("nav.stop") : t("nav.reload");
         starEl.textContent = chromeState.currentBookmarked ? "★" : "☆";
         starEl.classList.toggle("on", !!chromeState.currentBookmarked);
         packBookmarkBar();
@@ -818,20 +1450,139 @@
         if (!v || !window.sparkShell) return;
         window.sparkShell.navigate(v).catch((err) => console.error(err));
       }
-      goEl.onclick = navigateFromBar;
+      if (goEl) goEl.onclick = navigateFromBar;
       urlEl.addEventListener("keydown", (e) => {
         if (e.key === "Enter") navigateFromBar();
       });
+      urlEl.addEventListener("focus", () => {
+        requestAnimationFrame(() => urlEl.select());
+      });
+      const titleDrag = document.getElementById("titleDrag");
+      if (titleDrag) {
+        titleDrag.addEventListener("dblclick", () => {
+          window.sparkShell.toggleMaximize?.();
+        });
+      }
       backEl.onclick = () => window.sparkShell.goBack();
       forwardEl.onclick = () => window.sparkShell.goForward();
-      reloadEl.onclick = () => window.sparkShell.reload();
+      reloadEl.onclick = () => {
+        if (chromeState.isLoading) window.sparkShell.stop();
+        else window.sparkShell.reload();
+      };
+
+      const findBar = document.getElementById("findBar");
+      const findInput = document.getElementById("findInput");
+      const findCount = document.getElementById("findCount");
+      let lastFindQuery = "";
+      function runFind(opts) {
+        const q = findInput.value;
+        lastFindQuery = q;
+        window.sparkShell.find(q, opts);
+      }
+      function openFindBar() {
+        findBar.classList.add("open");
+        findInput.focus();
+        findInput.select();
+        if (findInput.value) runFind({ findNext: false, forward: true });
+      }
+      function closeFindBar() {
+        findBar.classList.remove("open");
+        findCount.textContent = "";
+        window.sparkShell.stopFind();
+      }
+      findInput.addEventListener("input", () => runFind({ findNext: false, forward: true }));
+      findInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          runFind({ findNext: true, forward: !e.shiftKey });
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          closeFindBar();
+        }
+      });
+      document.getElementById("findNext").onclick = () => runFind({ findNext: true, forward: true });
+      document.getElementById("findPrev").onclick = () => runFind({ findNext: true, forward: false });
+      document.getElementById("findClose").onclick = closeFindBar;
+
+      const historyPanel = document.getElementById("historyPanel");
+      const historyList = document.getElementById("historyList");
+      const historyFilter = document.getElementById("historyFilter");
+      let historyItems = [];
+      function formatWhen(ts) {
+        try {
+          const d = new Date(ts);
+          if (Number.isNaN(d.getTime())) return "";
+          return d.toLocaleString();
+        } catch {
+          return "";
+        }
+      }
+      function renderHistory() {
+        const q = (historyFilter.value || "").trim().toLowerCase();
+        const rows = historyItems
+          .slice()
+          .reverse()
+          .filter((h) => {
+            if (!q) return true;
+            return String(h.title || "").toLowerCase().includes(q) || String(h.url || "").toLowerCase().includes(q);
+          });
+        historyList.innerHTML = "";
+        if (!rows.length) {
+          const empty = document.createElement("div");
+          empty.className = "history-empty";
+          empty.textContent = t("history.empty");
+          historyList.appendChild(empty);
+          return;
+        }
+        for (const h of rows) {
+          const btn = document.createElement("button");
+          btn.className = "history-item";
+          btn.type = "button";
+          const ht = document.createElement("span");
+          ht.className = "ht";
+          ht.textContent = h.title || h.url;
+          const hu = document.createElement("span");
+          hu.className = "hu";
+          hu.textContent = (formatWhen(h.ts) ? formatWhen(h.ts) + " · " : "") + (h.url || "");
+          btn.appendChild(ht);
+          btn.appendChild(hu);
+          btn.onclick = () => {
+            window.sparkShell.navigate(h.url);
+            window.sparkShell.closeHistory();
+          };
+          historyList.appendChild(btn);
+        }
+      }
+      function showHistory(items) {
+        if (!items) {
+          historyPanel.classList.remove("open");
+          return;
+        }
+        historyItems = Array.isArray(items) ? items : [];
+        historyPanel.classList.add("open");
+        historyFilter.value = "";
+        renderHistory();
+        historyFilter.focus();
+      }
+      historyFilter.addEventListener("input", renderHistory);
+      document.getElementById("historyClose").onclick = () => window.sparkShell.closeHistory();
+      document.getElementById("historyClear").onclick = async () => {
+        if (!confirm(t("history.clear") + "?")) return;
+        await window.sparkShell.clearHistory();
+        toast(t("history.cleared"));
+      };
+      document.getElementById("btnHistory").onclick = () => window.sparkShell.openHistory();
 
       function renderApprovals(list) {
         const root = document.getElementById("approvals");
+        const card = document.getElementById("approvalsCard");
         if (!list || !list.length) {
-          root.innerHTML = '<p class="hint">暂无待审批项</p>';
+          root.innerHTML = '<p class="hint">' + t("approvals.empty") + "</p>";
+          if (card) card.style.display = "none";
           return;
         }
+        if (card) card.style.display = "";
         root.innerHTML = "";
         for (const a of list) {
           const box = document.createElement("div");
@@ -845,11 +1596,11 @@
           const row = box.querySelector(".row");
           const ok = document.createElement("button");
           ok.className = "ok";
-          ok.textContent = "批准";
+          ok.textContent = t("approvals.approve");
           ok.onclick = () => window.sparkShell.resolveApproval(a.id, true);
           const no = document.createElement("button");
           no.className = "danger";
-          no.textContent = "拒绝";
+          no.textContent = t("approvals.reject");
           no.onclick = () => window.sparkShell.resolveApproval(a.id, false);
           row.appendChild(ok);
           row.appendChild(no);
@@ -859,8 +1610,9 @@
 
       function renderQa(qa) {
         const root = document.getElementById("qa");
+        if (!root) return;
         if (!qa) {
-          root.innerHTML = '<p class="hint">尚未检查</p>';
+          root.innerHTML = '<p class="hint">' + t("qa.none") + "</p>";
           return;
         }
         let html = '<div class="value">' + (qa.summary || "") + "</div>";
@@ -878,54 +1630,87 @@
         root.innerHTML = html;
       }
 
+      function scrollChatToEnd() {
+        const root = document.getElementById("chat");
+        const box = (root && root.closest(".thread")) || root;
+        if (!box) return;
+        const go = () => {
+          box.scrollTop = box.scrollHeight;
+          const last = root && root.lastElementChild;
+          if (last) last.scrollIntoView({ block: "end", inline: "nearest" });
+        };
+        go();
+        requestAnimationFrame(() => requestAnimationFrame(go));
+      }
+
       function renderChat(log) {
         const root = document.getElementById("chat");
         root.innerHTML = "";
+        const meLabel = userProfile.nickname ? userProfile.nickname.slice(0, 1) : t("chat.me");
         for (const m of log || []) {
-          const div = document.createElement("div");
-          div.className = m.role === "user" ? "u" : "a";
-          div.textContent = (m.role === "user" ? "You: " : "Sparo: ") + m.text;
-          root.appendChild(div);
-        }
-        root.scrollTop = root.scrollHeight;
-      }
-
-      function renderSkills(skills) {
-        const root = document.getElementById("skills");
-        if (!skills || !skills.length) {
-          root.innerHTML = '<p class="hint">暂无 · 录制一次成功操作后会出现在这里</p>';
-          return;
-        }
-        root.innerHTML = "";
-        for (const s of skills) {
           const row = document.createElement("div");
-          row.className = "skill-item";
-          const left = document.createElement("div");
-          left.innerHTML =
-            "<div>" +
-            escapeHtml(s.title) +
-            '</div><div class="skill-meta">' +
-            (s.stepCount || 0) +
-            " 步 · " +
-            (s.source === "taught" ? "教的" : s.source || "") +
-            "</div>";
-          const del = document.createElement("button");
-          del.className = "skill-del";
-          del.title = "删除";
-          del.textContent = "×";
-          del.onclick = async () => {
-            const ok = await askConfirm("删除妙招「" + s.title + "」？");
-            if (!ok) return;
+          row.className = "bubble-row " + (m.role === "user" ? "me" : "sparo");
+          const av = document.createElement("div");
+          av.className = "avatar";
+          av.textContent = m.role === "user" ? meLabel : "S";
+          const bub = document.createElement("div");
+          bub.className = "bubble " + (m.role === "user" ? "me" : "sparo");
+          bub.textContent = m.text;
+          const wrap = document.createElement("div");
+          wrap.className = "bubble-wrap";
+          wrap.appendChild(bub);
+          const copyBtn = document.createElement("button");
+          copyBtn.type = "button";
+          copyBtn.className = "bubble-copy";
+          copyBtn.textContent = t("chat.copy");
+          copyBtn.onclick = async (ev) => {
+            ev.stopPropagation();
             try {
-              await window.sparkShell.deleteSkill(s.id);
+              await navigator.clipboard.writeText(m.text || "");
+              toast(t("chat.copied"));
             } catch (err) {
               console.error(err);
+              toast(t("toast.fail"));
             }
           };
-          row.appendChild(left);
-          row.appendChild(del);
+          wrap.appendChild(copyBtn);
+          if (m.doc && m.doc.path) {
+            const card = document.createElement("button");
+            card.type = "button";
+            card.className = "doc-card";
+            const kicker = document.createElement("div");
+            kicker.className = "kicker";
+            kicker.textContent = m.doc.kind === "trip" ? "行程手册" : "阅读页";
+            const ttl = document.createElement("div");
+            ttl.className = "ttl";
+            ttl.textContent = m.doc.title || "打开文档";
+            const go = document.createElement("div");
+            go.className = "go";
+            go.textContent = "在窗口里打开";
+            card.appendChild(kicker);
+            card.appendChild(ttl);
+            card.appendChild(go);
+            card.onclick = async (ev) => {
+              ev.stopPropagation();
+              try {
+                await window.sparkShell.openReport(m.doc.path);
+              } catch (err) {
+                console.error(err);
+                toast(t("toast.fail"));
+              }
+            };
+            wrap.appendChild(card);
+          }
+          if (m.role === "user") {
+            row.appendChild(wrap);
+            row.appendChild(av);
+          } else {
+            row.appendChild(av);
+            row.appendChild(wrap);
+          }
           root.appendChild(row);
         }
+        scrollChatToEnd();
       }
 
       function askConfirm(message) {
@@ -961,25 +1746,37 @@
 
       function applySidebar(payload) {
         if (!payload) return;
+        lastSidebar = payload;
+        if (payload.locale && payload.locale !== getLocale()) {
+          setLocale(payload.locale);
+          applyDom();
+          fillLocaleSelect();
+        }
         paused = !!payload.paused;
-        const recording = !!payload.recording;
+        const pauseBar = document.getElementById("pauseBar");
+        if (pauseBar) pauseBar.classList.toggle("hide", !paused);
+        const sideEl = document.querySelector(".sidebar");
+        if (sideEl) sideEl.classList.toggle("is-paused", paused);
         document.getElementById("status").innerHTML =
           '<span class="dot' +
           (paused ? " paused" : "") +
           '" id="dot"></span>' +
-          (paused ? "已暂停（人接管）" : "Agent 可操控");
-        document.getElementById("recStatus").innerHTML =
-          '<span class="dot' +
-          (recording ? " rec" : "") +
-          '" id="recDot"></span>' +
-          (recording
-            ? "录制中" + (payload.recordingTask ? " · " + payload.recordingTask : "")
-            : "未录制");
-        document.getElementById("btnRecStart").disabled = recording;
-        document.getElementById("btnRecStop").disabled = !recording;
-        document.getElementById("pageUrl").textContent = payload.url || "—";
-        document.getElementById("pageTitle").textContent = payload.title || "—";
+          (paused ? t("status.paused") : t("status.ready"));
+        const ac = payload.agentConnect;
+        if (ac) {
+          const pathEl = document.getElementById("installPath");
+          if (pathEl) pathEl.textContent = ac.installPath || "—";
+          const vendorRow = document.getElementById("vendorRow");
+          const btnCur = document.getElementById("btnConnectCursor");
+          const btnCl = document.getElementById("btnConnectClaude");
+          if (btnCur) btnCur.style.display = ac.cursorInstalled ? "" : "none";
+          if (btnCl) btnCl.style.display = ac.claudeInstalled ? "" : "none";
+          if (vendorRow) {
+            vendorRow.style.display = ac.cursorInstalled || ac.claudeInstalled ? "flex" : "none";
+          }
+        }
         const ds = payload.deepseek;
+        const cloud = payload.cloud || {};
         const dsEl = document.getElementById("dsStatus");
         const hint = document.getElementById("chatHint");
         const presets = (ds && ds.presets) || {
@@ -994,48 +1791,98 @@
           if (provEl && document.activeElement !== provEl) provEl.value = ds.provider || "deepseek";
           if (modelEl && document.activeElement !== modelEl) modelEl.value = ds.model || "";
           if (baseEl && document.activeElement !== baseEl) baseEl.value = ds.baseUrl || "";
-          const p = presets[ds.provider || "deepseek"];
+          const p = ds.provider || "deepseek";
           const hintEl = document.getElementById("dsHint");
-          if (hintEl && p) {
-            hintEl.textContent =
-              (p.hint || "") +
-              " · Key alone is not enough — brand selects the API host.";
+          if (hintEl) {
+            hintEl.textContent = t("ds.hint." + p) || t("ds.hint.deepseek");
           }
+          fillGatewaySelect(ds.gateways);
+          toggleGatewayRow(p);
+          const memEl = document.getElementById("memSaver");
+          const idleEl = document.getElementById("memIdle");
+          if (memEl && document.activeElement !== memEl) memEl.checked = ds.memorySaver !== false;
+          if (idleEl && document.activeElement !== idleEl) {
+            idleEl.value = String(ds.memorySaverIdleMinutes || 2);
+          }
+          const idleRow = document.getElementById("memIdleRow");
+          if (idleRow) idleRow.style.display = ds.memorySaver === false ? "none" : "";
         }
-        if (ds && ds.configured) {
+        renderCloudPanel(ds, cloud);
+        if (ds && ds.configured && dsEl) {
           dsEl.className = "ds-status ok";
-          dsEl.textContent =
-            "Ready · " +
-            (ds.provider || "deepseek") +
-            " · " +
-            (ds.model || "deepseek-v4-flash") +
-            (ds.fromEnv ? " (env)" : "") +
-            (ds.apiKeyMasked ? " · " + ds.apiKeyMasked : "");
-          hint.textContent = "Agent acts · you review";
-        } else {
+          const cloudReady = cloud.llmMode === "cloud" && cloud.loggedIn;
+          dsEl.textContent = cloudReady
+            ? t("ds.readyCloud")
+            : t("ds.ready", {
+                provider: ds.provider || "deepseek",
+                model: ds.model || "deepseek-v4-flash",
+                env: ds.fromEnv ? t("ds.fromEnv") : "",
+              });
+          if (cloudReady && cloud.subscription && cloud.subscription.active) {
+            hint.textContent = t("cloud.quotaMonth", { n: cloud.approxTasks || 0 });
+          } else if (cloudReady && cloud.trial) {
+            hint.textContent = t("cloud.quotaTrial", { n: cloud.trial.left || 0 });
+          } else {
+            hint.textContent = t("chat.hintReady");
+          }
+        } else if (dsEl) {
           dsEl.className = "ds-status";
-          dsEl.textContent = "No API key — pick brand, then paste key";
-          hint.textContent = "Save a key · or connect MCP agent";
-        }
-        if (payload.explain) {
-          document.getElementById("explain").innerHTML =
-            "暂停：" +
-            payload.explain.pause +
-            "<br/>审批：" +
-            payload.explain.approval +
-            "<br/>等待：" +
-            payload.explain.wait +
-            (payload.explain.cs ? "<br/>客服：" + payload.explain.cs : "") +
-            (payload.explain.skill ? "<br/>妙招：" + payload.explain.skill : "") +
-            (payload.explain.workflow
-              ? "<br/>工作流：" + payload.explain.workflow
-              : "");
+          dsEl.textContent = t("ds.needKey");
+          hint.textContent = t("chat.hintNeedCloud");
         }
         renderCs(payload.cs);
         renderApprovals(payload.approvals);
         renderQa(payload.qa);
         renderChat(payload.chat);
-        renderSkills(payload.skills);
+        if (payload.profile) {
+          userProfile.nickname = payload.profile.nickname || "";
+        }
+      }
+
+      let byokEditOpen = false;
+
+      function syncByokFold(ds, cloud) {
+        const mode = (cloud && cloud.llmMode) || (ds && ds.llmMode) || "byok";
+        const configured = Boolean(ds && ds.configured && mode !== "cloud");
+        const fields = document.getElementById("dsByokFields");
+        const editBtn = document.getElementById("btnByokEdit");
+        const show = mode !== "cloud" && (!configured || byokEditOpen);
+        if (fields) fields.style.display = show ? "" : "none";
+        if (editBtn) editBtn.style.display = configured && !byokEditOpen ? "" : "none";
+      }
+
+      function renderCloudPanel(ds, cloud) {
+        const mode = (cloud && cloud.llmMode) || (ds && ds.llmMode) || "byok";
+        const byokBtn = document.getElementById("modeByok");
+        const cloudBtn = document.getElementById("modeCloud");
+        const byokBox = document.getElementById("dsByokBox");
+        const cloudBox = document.getElementById("dsCloudBox");
+        const quotaEl = document.getElementById("cloudQuota");
+        if (byokBtn) byokBtn.classList.toggle("on", mode !== "cloud");
+        if (cloudBtn) cloudBtn.classList.toggle("on", mode === "cloud");
+        if (byokBox) byokBox.style.display = mode === "cloud" ? "none" : "";
+        if (cloudBox) cloudBox.style.display = mode === "cloud" ? "" : "none";
+        if (mode === "cloud") byokEditOpen = false;
+        syncByokFold(ds, cloud);
+        const loggedIn = Boolean(cloud && cloud.loggedIn);
+        const outEl = document.getElementById("cloudLoggedOut");
+        const inEl = document.getElementById("cloudLoggedIn");
+        if (outEl) outEl.style.display = loggedIn ? "none" : "";
+        if (inEl) inEl.style.display = loggedIn ? "" : "none";
+        const emailShow = document.getElementById("cloudEmailShow");
+        if (emailShow) emailShow.textContent = loggedIn ? (cloud.email || "") : "";
+        if (quotaEl) {
+          if (mode === "cloud" && loggedIn && cloud.subscription && cloud.subscription.active) {
+            quotaEl.textContent = t("cloud.quotaMonthDetail", {
+              n: cloud.approxTasks || 0,
+              p: cloud.points || 0,
+            });
+          } else if (mode === "cloud" && loggedIn && cloud.trial) {
+            quotaEl.textContent = t("cloud.quotaTrial", { n: cloud.trial.left || 0 });
+          } else {
+            quotaEl.textContent = "";
+          }
+        }
       }
 
       function renderCs(cs) {
@@ -1044,7 +1891,7 @@
         const draftEl = document.getElementById("csDraft");
         if (!status || !meta || !draftEl) return;
         if (!cs) {
-          status.innerHTML = '<span class="hint">任意聊天页：扫描 → 草稿填入 → 人点发送</span>';
+          status.innerHTML = t("cs.idleLong");
           meta.innerHTML = "";
           draftEl.style.display = "none";
           draftEl.textContent = "";
@@ -1053,10 +1900,11 @@
         if (cs.mode === "draft") {
           status.innerHTML =
             '<span class="cs-badge">' +
-            escapeHtml((cs.intent && cs.intent.label) || "草稿") +
+            escapeHtml((cs.intent && cs.intent.label) || t("cs.draft")) +
             "</span>" +
-            (cs.filled ? "已填入输入框" : "已生成") +
-            " · 请人点发送";
+            (cs.filled ? t("cs.filled") : t("cs.generated")) +
+            " · " +
+            t("cs.clickSend");
           meta.innerHTML =
             '<span class="hint">' +
             escapeHtml((cs.source || "") + (cs.intent && cs.intent.reason ? " · " + cs.intent.reason : "")) +
@@ -1065,13 +1913,13 @@
           draftEl.textContent = cs.draft || "";
         } else {
           status.innerHTML =
-            (cs.looksLikeChat ? "疑似会话页" : "弱信号") +
+            (cs.looksLikeChat ? t("cs.maybeChat") : t("cs.weak")) +
             " · score=" +
             (cs.score || 0) +
             " · msgs=" +
             (cs.msgCount || 0);
           meta.innerHTML = cs.lastCustomerText
-            ? '<span class="hint">客户：' + escapeHtml(String(cs.lastCustomerText).slice(0, 80)) + "</span>"
+            ? '<span class="hint">' + t("cs.customer") + escapeHtml(String(cs.lastCustomerText).slice(0, 80)) + "</span>"
             : "";
           draftEl.style.display = "none";
         }
@@ -1080,14 +1928,48 @@
       function bindShell() {
         if (!window.sparkShell) {
           console.error("[shell] sparkShell missing");
-          document.getElementById("status").textContent = "壳层 API 未加载，请重启";
+          document.getElementById("status").textContent = t("shell.missing");
           return;
         }
+        const hole = document.getElementById("pageHole");
+        const reportHole = () => {
+          if (!hole || !window.sparkShell.pageHoleBounds) return;
+          const r = hole.getBoundingClientRect();
+          window.sparkShell.pageHoleBounds({
+            x: r.left,
+            y: r.top,
+            width: r.width,
+            height: r.height,
+          });
+        };
+        reportHole();
+        if (typeof ResizeObserver === "function") {
+          new ResizeObserver(reportHole).observe(hole);
+        }
+        window.addEventListener("resize", reportHole);
         window.sparkShell.onChromeState((s) => {
           chromeState = { ...chromeState, ...(s || {}) };
           renderChrome();
         });
         window.sparkShell.onSidebarState(applySidebar);
+        window.sparkShell.onToast?.((payload) => {
+          if (payload && payload.text) toast(payload.text, payload.path);
+        });
+        window.sparkShell.onOpenFind?.(openFindBar);
+        window.sparkShell.onCloseFind?.(() => {
+          findBar.classList.remove("open");
+          findCount.textContent = "";
+        });
+        window.sparkShell.onFindResult?.((result) => {
+          const total = Number(result.total || 0);
+          const active = Number(result.active || 0);
+          findCount.textContent = total ? active + " / " + total : "";
+        });
+        window.sparkShell.onFindAgain?.((opts) => {
+          if (!findBar.classList.contains("open")) openFindBar();
+          runFind({ findNext: true, forward: opts.forward !== false });
+        });
+        window.sparkShell.onHistory?.((payload) => showHistory(payload.items));
         window.sparkShell.listTabs().then((s) => {
           if (s) {
             chromeState = { ...chromeState, ...s };
@@ -1102,59 +1984,101 @@
         });
         window.sparkShell.getStatus().then(applySidebar);
 
-        document.getElementById("btnPause").onclick = () => window.sparkShell.setPaused(true);
-        document.getElementById("btnResume").onclick = () => window.sparkShell.setPaused(false);
-        document.getElementById("btnCsScan").onclick = async () => {
+        const moreBody = document.getElementById("moreBody");
+        const moreBtn = document.getElementById("btnMore");
+        const moreChev = document.getElementById("moreChev");
+        const side = document.querySelector(".sidebar");
+        function setMore(open) {
+          moreOpen = open;
+          moreBody.classList.toggle("open", open);
+          moreBtn.setAttribute("aria-expanded", open ? "true" : "false");
+          if (side) side.classList.toggle("more-open", open);
+        }
+        moreBtn.onclick = () => setMore(true);
+        if (moreChev) moreChev.onclick = () => setMore(false);
+
+        const btnResume = document.getElementById("btnResume");
+        if (btnResume) btnResume.onclick = () => window.sparkShell.setPaused(false);
+
+        async function oneClickReply(btn) {
+          if (!window.sparkShell.csOneClick) {
+            toast(t("toast.restartReply"));
+            return;
+          }
+          const buttons = [btn, document.getElementById("btnCsOneClick")].filter(Boolean);
+          buttons.forEach((b) => { b.disabled = true; });
+          const old = btn ? btn.textContent : "";
+          if (btn) btn.textContent = t("act.replyBusy");
           try {
-            const r = await window.sparkShell.csScan();
-            toast((r && r.message) || "已扫描");
+            const r = await window.sparkShell.csOneClick();
+            toast((r && r.message) || t("toast.handled"));
           } catch (err) {
             console.error(err);
-            toast("扫描失败");
+            toast(t("toast.replyFail"));
+          } finally {
+            buttons.forEach((b) => { b.disabled = false; });
+            if (btn) btn.textContent = old || t("act.reply");
+            const csBtn = document.getElementById("btnCsOneClick");
+            if (csBtn) csBtn.textContent = t("act.reply");
           }
-        };
-        document.getElementById("btnCsDraft").onclick = async () => {
+        }
+        document.getElementById("btnCsOneClick").onclick = () => oneClickReply(document.getElementById("btnCsOneClick"));
+        function showAgentHint(text) {
+          const hintEl = document.getElementById("agentCopyHint");
+          if (hintEl) hintEl.textContent = text || "";
+        }
+        async function connectMyAgent(target) {
           try {
-            const r = await window.sparkShell.csDraft({ fill: true });
-            toast((r && r.message) || "草稿已处理");
+            const r = await window.sparkShell.connectAgent(target);
+            showAgentHint((r && r.message) || "");
+            toast((r && r.message) || t("toast.handled"));
           } catch (err) {
             console.error(err);
-            toast("生成草稿失败");
+            toast(t("toast.connectFail"));
           }
-        };
-        document.getElementById("btnRecStart").onclick = async () => {
+        }
+        const btnConnectCursor = document.getElementById("btnConnectCursor");
+        if (btnConnectCursor) btnConnectCursor.onclick = () => connectMyAgent("cursor");
+        const btnConnectClaude = document.getElementById("btnConnectClaude");
+        if (btnConnectClaude) btnConnectClaude.onclick = () => connectMyAgent("claude");
+        const btnCopyAgent = document.getElementById("btnCopyAgent");
+        if (btnCopyAgent) {
+          btnCopyAgent.onclick = async () => {
+            try {
+              const r = await window.sparkShell.copyAgentConnect();
+              showAgentHint((r && r.message) || "");
+              toast((r && r.message) || t("toast.handled"));
+            } catch (err) {
+              console.error(err);
+              toast(t("toast.copyFail"));
+            }
+          };
+        }
+        async function runChatGoal(text, btn) {
+          if (!text) return;
+          const old = btn ? btn.textContent : "";
+          if (btn) {
+            btn.disabled = true;
+            btn.textContent = "…";
+          }
           try {
-            const r = await window.sparkShell.startRecording();
-            if (r && !r.ok) toast(r.message || "无法开始录制");
-            else toast("已开始录制 · 在页面上操作后点「结束并保存」");
+            await window.sparkShell.chat(text);
           } catch (err) {
             console.error(err);
-            toast("开始录制失败");
+            toast(t("toast.fail"));
+          } finally {
+            if (btn) {
+              btn.disabled = false;
+              btn.textContent = old;
+            }
           }
-        };
-        document.getElementById("btnRecStop").onclick = async () => {
-          const titleInput = document.getElementById("recTitle");
-          const title = (titleInput && titleInput.value.trim()) || undefined;
-          const btn = document.getElementById("btnRecStop");
-          btn.disabled = true;
-          try {
-            const r = await window.sparkShell.stopRecording(title);
-            toast(r && r.message ? r.message : "已保存");
-            if (titleInput && r && r.ok) titleInput.value = "";
-          } catch (err) {
-            console.error(err);
-            toast("结束录制失败");
-          }
-        };
-        document.getElementById("btnQa").onclick = async () => {
-          try {
-            const r = await window.sparkShell.runQa();
-            if (r && r.data) renderQa(r.data);
-            else if (r) renderQa({ summary: r.message, items: [] });
-          } catch (err) {
-            console.error(err);
-          }
-        };
+        }
+        document.getElementById("btnSummarize").onclick = () =>
+          runChatGoal(t("goal.summarize"), document.getElementById("btnSummarize"));
+        document.getElementById("btnFillForm").onclick = () =>
+          runChatGoal(t("goal.fill"), document.getElementById("btnFillForm"));
+        document.getElementById("btnPublish").onclick = () =>
+          runChatGoal(t("goal.publish"), document.getElementById("btnPublish"));
         async function sendChat() {
           const input = document.getElementById("chatInput");
           const text = input.value.trim();
@@ -1169,8 +2093,9 @@
             console.error(err);
           } finally {
             sendBtn.disabled = false;
-            sendBtn.textContent = "发送";
+            sendBtn.textContent = t("chat.send");
             input.focus();
+            scrollChatToEnd();
           }
         }
         document.getElementById("chatSend").onclick = sendChat;
@@ -1202,13 +2127,24 @@
           const p = PRESETS[provider] || PRESETS.deepseek;
           document.getElementById("dsModel").value = p.model;
           document.getElementById("dsBase").value = p.baseUrl;
-          document.getElementById("dsHint").textContent =
-            p.hint + " · Switching brand fills the matching API host.";
+          document.getElementById("dsHint").textContent = t("ds.hint." + provider) || t("ds.hint.deepseek");
+          toggleGatewayRow(provider);
+          const gw = document.getElementById("dsGateway");
+          if (gw && provider !== "custom") gw.value = "";
           if (!localOnly) {
             /* wait for Save to persist */
           }
         }
         document.getElementById("dsProvider").onchange = () => applyProviderPreset(true);
+        const gwSel = document.getElementById("dsGateway");
+        if (gwSel) {
+          gwSel.onchange = () => {
+            const g = GATEWAYS.find((x) => x.id === gwSel.value);
+            if (!g) return;
+            document.getElementById("dsBase").value = g.baseUrl;
+            document.getElementById("dsModel").value = g.model;
+          };
+        }
 
         document.getElementById("btnDsSave").onclick = async () => {
           const provider = document.getElementById("dsProvider").value || "deepseek";
@@ -1221,19 +2157,208 @@
               model,
               baseUrl,
               apiKey: key || undefined,
+              llmMode: "byok",
               applyPreset: false,
             });
             if (key) document.getElementById("dsKey").value = "";
-            toast(r && r.message ? r.message : "Saved");
+            byokEditOpen = false;
+            toast(r && r.message ? r.message : t("toast.saved"));
           } catch (err) {
             console.error(err);
-            toast("Save failed");
+            toast(t("toast.saveFail"));
           }
         };
+        async function setLlmMode(llmMode) {
+          try {
+            const r = await window.sparkShell.saveSettings({ llmMode });
+            toast(r && r.message ? r.message : t("toast.saved"));
+          } catch (err) {
+            console.error(err);
+            toast(t("toast.saveFail"));
+          }
+        }
+        const modeByok = document.getElementById("modeByok");
+        const modeCloud = document.getElementById("modeCloud");
+        if (modeByok) modeByok.onclick = () => setLlmMode("byok");
+        if (modeCloud) modeCloud.onclick = () => setLlmMode("cloud");
+        const btnByokEdit = document.getElementById("btnByokEdit");
+        if (btnByokEdit) {
+          btnByokEdit.onclick = () => {
+            byokEditOpen = true;
+            const ds = lastSidebar && lastSidebar.deepseek;
+            const cloud = (lastSidebar && lastSidebar.cloud) || {};
+            syncByokFold(ds, cloud);
+          };
+        }
+        const btnCloudCode = document.getElementById("btnCloudCode");
+        if (btnCloudCode) {
+          btnCloudCode.onclick = async () => {
+            const email = document.getElementById("cloudEmail").value.trim();
+            try {
+              const r = await window.sparkShell.cloudSendCode(email);
+              toast(r && r.message ? r.message : t("cloud.codeSent"));
+            } catch (err) {
+              console.error(err);
+              toast(t("toast.saveFail"));
+            }
+          };
+        }
+        const btnCloudVerify = document.getElementById("btnCloudVerify");
+        if (btnCloudVerify) {
+          btnCloudVerify.onclick = async () => {
+            const email = document.getElementById("cloudEmail").value.trim();
+            const code = document.getElementById("cloudCode").value.trim();
+            try {
+              const r = await window.sparkShell.cloudVerify(email, code);
+              toast(r && r.message ? r.message : t("toast.cloudIn"));
+            } catch (err) {
+              console.error(err);
+              toast(t("toast.saveFail"));
+            }
+          };
+        }
+        const btnCloudLogout = document.getElementById("btnCloudLogout");
+        if (btnCloudLogout) {
+          btnCloudLogout.onclick = async () => {
+            try {
+              const r = await window.sparkShell.cloudLogout();
+              toast(r && r.message ? r.message : t("toast.cloudOut"));
+            } catch (err) {
+              console.error(err);
+              toast(t("toast.saveFail"));
+            }
+          };
+        }
+        const btnCloudAccount = document.getElementById("btnCloudAccount");
+        if (btnCloudAccount) {
+          btnCloudAccount.onclick = async () => {
+            try {
+              await window.sparkShell.cloudOpenAccount();
+            } catch (err) {
+              console.error(err);
+              toast(t("toast.fail"));
+            }
+          };
+        }
+
+        async function optimizeMemory() {
+          try {
+            const r = await window.sparkShell.discardInactiveTabs();
+            toast((r && r.message) || t("toast.handled"));
+          } catch (err) {
+            console.error(err);
+            toast(t("mem.fail"));
+          }
+        }
+        const btnMem = document.getElementById("btnMem");
+        if (btnMem) btnMem.onclick = optimizeMemory;
+        async function saveMemoryPrefs(quiet) {
+          const memEl = document.getElementById("memSaver");
+          const idleEl = document.getElementById("memIdle");
+          if (!memEl || !idleEl) return;
+          const on = memEl.checked;
+          const mins = Number(idleEl.value) || 2;
+          const idleRow = document.getElementById("memIdleRow");
+          if (idleRow) idleRow.style.display = on ? "" : "none";
+          try {
+            const r = await window.sparkShell.saveSettings({
+              memorySaver: on,
+              memorySaverIdleMinutes: mins,
+            });
+            if (!quiet) {
+              toast(r && r.ok ? (on ? t("mem.autoOn") : t("mem.autoOff")) : t("toast.saveFail"));
+            }
+          } catch (err) {
+            console.error(err);
+            if (!quiet) toast(t("toast.saveFail"));
+          }
+        }
+        const memSaver = document.getElementById("memSaver");
+        if (memSaver) memSaver.onchange = () => saveMemoryPrefs(false);
+        const memIdle = document.getElementById("memIdle");
+        if (memIdle) {
+          let idleTimer;
+          memIdle.addEventListener("change", () => saveMemoryPrefs(true));
+          memIdle.addEventListener("input", () => {
+            clearTimeout(idleTimer);
+            idleTimer = setTimeout(() => saveMemoryPrefs(true), 600);
+          });
+        }
+
+        // ---- My profile ----
+        function parseAccounts(raw) {
+          const out = [];
+          for (const part of String(raw || "").split(/[,，]/)) {
+            const m = part.trim().match(/^([^:：]+)[:：](.+)$/);
+            if (m) out.push({ site: m[1].trim(), username: m[2].trim() });
+          }
+          return out;
+        }
+        function accountsText(accs) {
+          return (accs || []).map((a) => a.site + ":" + a.username).join(", ");
+        }
+        async function loadProfileIntoForm() {
+          try {
+            const r = await window.sparkShell.getProfile();
+            if (!r) return;
+            const id = r.identity || {};
+            document.getElementById("pfNick").value = id.nickname || "";
+            document.getElementById("pfAccounts").value = accountsText(id.accounts);
+            document.getElementById("pfTopics").value = (id.topics || []).join(", ");
+            document.getElementById("pfStyle").value = id.writingStyle || "";
+            const notes = document.getElementById("pfNotes");
+            const forbid = document.getElementById("pfForbid");
+            if (notes) notes.value = id.workNotes || "";
+            if (forbid) forbid.value = id.forbidden || "";
+          } catch (err) {
+            console.error(err);
+          }
+        }
+        document.getElementById("btnPfSave").onclick = async () => {
+          try {
+            const r = await window.sparkShell.saveIdentity({
+              nickname: document.getElementById("pfNick").value.trim(),
+              accounts: parseAccounts(document.getElementById("pfAccounts").value),
+              topics: document.getElementById("pfTopics").value
+                .split(/[,，]/).map((s) => s.trim()).filter(Boolean),
+              writingStyle: document.getElementById("pfStyle").value.trim(),
+              workNotes: (document.getElementById("pfNotes") || {}).value
+                ? document.getElementById("pfNotes").value.trim()
+                : "",
+              forbidden: (document.getElementById("pfForbid") || {}).value
+                ? document.getElementById("pfForbid").value.trim()
+                : "",
+            });
+            toast(t("toast.remembered"));
+          } catch (err) {
+            console.error(err);
+            toast(t("toast.saveFail"));
+          }
+        };
+        document.getElementById("btnPfView").onclick = async () => {
+          try {
+            const r = await window.sparkShell.getProfile();
+            const brief = (r && r.brief) || t("work.briefEmpty");
+            alert(brief);
+          } catch (err) {
+            console.error(err);
+          }
+        };
+        document.getElementById("btnPfClear").onclick = async () => {
+          if (!confirm(t("confirm.clearProfile"))) return;
+          try {
+            await window.sparkShell.clearProfile();
+            await loadProfileIntoForm();
+            toast(t("toast.cleared"));
+          } catch (err) {
+            console.error(err);
+          }
+        };
+        loadProfileIntoForm();
 
         async function toggleStar() {
           const r = await window.sparkShell.toggleBookmark();
-          toast(r.message || (r.ok ? "已更新书签" : "失败"));
+          toast(r.message || (r.ok ? t("toast.bookmark") : t("toast.fail")));
         }
         starEl.onclick = toggleStar;
         document.getElementById("btnBmMenu").onclick = (e) => {
@@ -1241,6 +2366,48 @@
           openBmMenu();
         };
         window.addEventListener("resize", () => packBookmarkBar());
+
+        fillLocaleSelect();
+        applyDom();
+        async function clearChatNow() {
+          if (!confirm(t("confirm.clearChat"))) return;
+          try {
+            const r = await window.sparkShell.clearChat();
+            toast((r && r.message) || t("chat.cleared"));
+          } catch (err) {
+            console.error(err);
+            toast(t("toast.saveFail"));
+          }
+        }
+        async function copyAllChat() {
+          const parts = [...document.querySelectorAll("#chat .bubble")].map((el) =>
+            (el.textContent || "").trim(),
+          ).filter(Boolean);
+          if (!parts.length) return;
+          try {
+            await navigator.clipboard.writeText(parts.join("\n\n"));
+            toast(t("chat.copied"));
+          } catch (err) {
+            console.error(err);
+            toast(t("toast.fail"));
+          }
+        }
+        const btnClearDock = document.getElementById("btnClearChatDock");
+        if (btnClearDock) btnClearDock.onclick = clearChatNow;
+        const btnCopyChat = document.getElementById("btnCopyChat");
+        if (btnCopyChat) btnCopyChat.onclick = copyAllChat;
+        const localeSel = document.getElementById("localeSelect");
+        if (localeSel) {
+          localeSel.onchange = async () => {
+            const val = localeSel.value;
+            applyLanguage(val);
+            try {
+              await window.sparkShell.saveSettings({ locale: val });
+            } catch (err) {
+              console.error(err);
+            }
+          };
+        }
       }
       bindShell();
     </script>

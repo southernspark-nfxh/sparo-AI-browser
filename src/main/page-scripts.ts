@@ -80,7 +80,14 @@ export const SNAPSHOT_SCRIPT = `(() => {
     '[role="option"]',
     '[role="menuitem"]',
     '[role="dialog"]',
+    '[role="grid"]',
+    '[role="gridcell"]',
+    '[role="spinbutton"]',
+    '[role="columnheader"]',
     '[aria-haspopup]',
+    '[aria-label*="calendar" i]',
+    '[aria-label*="Next month" i]',
+    '[aria-label*="Previous month" i]',
     '[contenteditable="true"]',
     '[contenteditable=""]',
   ].join(', ');
@@ -103,6 +110,13 @@ export const SNAPSHOT_SCRIPT = `(() => {
     '[class*="popover"]',
     '[class*="Popper"]',
     '[class*="suggest"]',
+    '[class*="DatePicker"]',
+    '[class*="datepicker"]',
+    '[class*="Datepicker"]',
+    '[class*="calendar"]',
+    '[class*="Calendar"]',
+    '[role="dialog"]',
+    '[role="grid"]',
   ].join(', ');
 
   function isVisible(el, doc) {
@@ -192,10 +206,18 @@ export const SNAPSHOT_SCRIPT = `(() => {
       el.closest('.ant-dropdown') ||
       el.closest('.ant-select-dropdown') ||
       el.closest('.ant-cascader-dropdown') ||
+      el.closest('.ant-picker-dropdown') ||
       el.closest('.el-popper') ||
       el.closest('.el-select-dropdown') ||
       el.closest('[data-portal]') ||
-      el.closest('[class*="suggest"]')
+      el.closest('[class*="suggest"]') ||
+      el.closest('[class*="popover"]') ||
+      el.closest('[class*="Popper"]') ||
+      el.closest('[class*="DatePicker"]') ||
+      el.closest('[class*="datepicker"]') ||
+      el.closest('[class*="calendar"]') ||
+      el.closest('[class*="Calendar"]') ||
+      el.closest('[role="grid"]')
     );
   }
 
@@ -286,7 +308,7 @@ export const SNAPSHOT_SCRIPT = `(() => {
   let portalLocal = 0;
   for (const root of portalRoots) {
     const nodes = Array.from(root.querySelectorAll(
-      'li, button, a, [role="menuitem"], [role="option"], [role="listbox"] *, .ant-dropdown-menu-item, .ant-select-item-option, .el-dropdown-menu__item, [class*="item"], [class*="Item"], span.name',
+      'li, button, a, [role="menuitem"], [role="option"], [role="listbox"] *, [role="gridcell"], [role="spinbutton"], [role="columnheader"], .ant-dropdown-menu-item, .ant-select-item-option, .el-dropdown-menu__item, [class*="item"], [class*="Item"], span.name',
     ));
     for (const el of nodes) {
       if (seenNodes.has(el)) continue;
@@ -376,9 +398,22 @@ export const PAGE_TEXT_SCRIPT = `(() => {
     }
     return out;
   }
-  const root = document.getElementById('app') || document.body || document.documentElement;
-  let text = '';
-  try { text = root ? String(root.innerText || root.textContent || '') : ''; } catch (_) { text = ''; }
+  function visibleText(el) {
+    if (!el) return '';
+    try { return String(el.innerText || el.textContent || ''); } catch (_) { return ''; }
+  }
+  const app = document.getElementById('app');
+  let text = visibleText(app);
+  const body = visibleText(document.body || document.documentElement);
+  if (body.length > text.length) text = body;
+  if (text.length < 2200) {
+    const extra = [];
+    document.querySelectorAll('[class*="list"],[class*="result"],[class*="flight"],[class*="hotel"],[class*="price"]').forEach((el) => {
+      const t = visibleText(el);
+      if (t.length > 80) extra.push(t);
+    });
+    if (extra.length) text = [text].concat(extra).join('\\n');
+  }
   text = stripSurrogates(text);
   const payload = { text: text.slice(0, 80000), length: text.length };
   return JSON.parse(JSON.stringify(payload));
@@ -819,17 +854,31 @@ export const FIND_TEXT_SCRIPT = `(text, exact, withinPortal) => {
   }
   const want = norm(text);
   if (!want) return { ok: false, message: 'empty text' };
-  const portalRoots = Array.from(document.querySelectorAll('.ant-dropdown, .ant-select-dropdown, .el-popper, [data-portal], #d-overlay-root, [id$="overlay-root"]'))
+  const isDayNum = /^(0?[1-9]|[12][0-9]|3[01])$/.test(want);
+  const dayWant = isDayNum ? parseInt(want, 10) : 0;
+  const portalRoots = Array.from(document.querySelectorAll('.ant-dropdown, .ant-select-dropdown, .ant-picker-dropdown, .el-popper, [data-portal], #d-overlay-root, [id$="overlay-root"], [class*="popover"], [class*="Popper"], [class*="DatePicker"], [class*="datepicker"], [class*="calendar"], [class*="Calendar"], [role="dialog"], [role="grid"]'))
     .filter((r) => {
       const st = getComputedStyle(r);
       const box = r.getBoundingClientRect();
-      const childOk = Array.from(r.children || []).some((c) => {
+      const childOk = Array.from(r.querySelectorAll('*')).some((c) => {
         const b = c.getBoundingClientRect();
         return b.width > 0 && b.height > 0;
       });
       return st.display !== 'none' && !r.classList.contains('ant-dropdown-hidden') && (box.width > 0 || childOk);
     });
+  for (const el of Array.from(document.body ? document.body.children : [])) {
+    if (!el || el.nodeType !== 1) continue;
+    const st = getComputedStyle(el);
+    if (st.position !== 'fixed' && st.position !== 'absolute') continue;
+    const t = (el.innerText || '').replace(/\\s+/g, ' ');
+    if (/Time \\(in 24h\\)/i.test(t) || (el.querySelector && el.querySelector('[role="grid"], [role="gridcell"]'))) {
+      if (!portalRoots.includes(el)) portalRoots.push(el);
+    }
+  }
   const roots = withinPortal ? portalRoots : [document];
+  if (withinPortal && !portalRoots.length) {
+    return { ok: false, message: 'no portal overlay open' };
+  }
   // Also search same-origin iframes when not portal-only
   if (!withinPortal) {
     const iframes = Array.from(document.querySelectorAll('iframe'));
@@ -839,9 +888,30 @@ export const FIND_TEXT_SCRIPT = `(text, exact, withinPortal) => {
       } catch (_) {}
     }
   }
+  function monthFromName(s) {
+    const n = String(s || '').toLowerCase().slice(0, 3);
+    const all = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+    const i = all.indexOf(n);
+    return i >= 0 ? i + 1 : 0;
+  }
+  function ymdFromAria(s) {
+    const raw = String(s || '');
+    const en = raw.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\b/i);
+    if (en) return { year: Number(en[3]), month: monthFromName(en[1]), day: Number(en[2]) };
+    const iso = raw.match(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/);
+    if (iso) return { year: Number(iso[1]), month: Number(iso[2]), day: Number(iso[3]) };
+    return null;
+  }
+  function headerOf(scope) {
+    const t = String(scope.innerText || '').replace(/\\s+/g, ' ').slice(0, 500);
+    const en = t.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{4})\b/i);
+    if (en) return { year: Number(en[2]), month: monthFromName(en[1]) };
+    return null;
+  }
   let best = null;
   let bestEl = null;
   let bestOffset = { x: 0, y: 0 };
+  const dayHits = [];
   for (const root of roots) {
     let scope = root;
     let offsetX = 0;
@@ -860,21 +930,18 @@ export const FIND_TEXT_SCRIPT = `(text, exact, withinPortal) => {
         continue;
       }
     }
+    const header = isDayNum ? headerOf(scope) : null;
     const candidates = Array.from(scope.querySelectorAll(
-      'a,button,span,div,li,label,p,[role=menuitem],[role=button],[role=option],[role=tab],.ant-dropdown-menu-item,.ant-select-item-option,.img-options-action-btn'
+      isDayNum
+        ? '[role="gridcell"], [role="grid"] [role="button"], [role="grid"] td, [role="grid"] [role="gridcell"]'
+        : 'a,button,span,div,li,label,p,[role=menuitem],[role=button],[role=option],[role=tab],[role=gridcell],[role=spinbutton],.ant-dropdown-menu-item,.ant-select-item-option,.img-options-action-btn'
     ));
     for (const el of candidates) {
-      const raw =
-        (el.innerText || el.textContent || '') +
-        ' ' +
-        (el.getAttribute('aria-label') || '') +
-        ' ' +
-        (el.getAttribute('title') || '');
+      const aria = el.getAttribute('aria-label') || '';
+      const inner = norm(el.innerText || el.textContent || '');
+      const raw = inner + ' ' + aria + ' ' + (el.getAttribute('title') || '');
       const t = norm(raw);
       if (!t) continue;
-      if (t.length > want.length + 200) continue;
-      const match = exact ? t === want : (t === want || t.includes(want));
-      if (!match) continue;
       const r = el.getBoundingClientRect();
       if (r.width <= 0 || r.height <= 0) continue;
       const win = (searchRoot.defaultView) || window;
@@ -887,28 +954,85 @@ export const FIND_TEXT_SCRIPT = `(text, exact, withinPortal) => {
         absY < window.innerHeight &&
         absX + r.width > 0 &&
         absX < window.innerWidth;
+      const inPortal = !!(el.closest && (
+        el.closest('.ant-dropdown') ||
+        el.closest('.ant-select-dropdown') ||
+        el.closest('.el-popper') ||
+        el.closest('[class*="popover"]') ||
+        el.closest('[class*="DatePicker"]') ||
+        el.closest('[class*="calendar"]') ||
+        el.closest('[role="grid"]')
+      ));
+      if (isDayNum) {
+        const disabled =
+          el.getAttribute('aria-disabled') === 'true' ||
+          el.getAttribute('aria-hidden') === 'true' ||
+          el.hasAttribute('disabled');
+        const cls = String(el.className || '');
+        let outside = /outside|other-month|muted|not-current/i.test(cls) || Number(st.opacity) < 0.45;
+        const named = ymdFromAria(aria);
+        if (named && header && (named.month !== header.month || named.year !== header.year)) outside = true;
+        const day = named ? named.day : Number(String(inner).replace(/^0+/, '') || '0');
+        if (day !== dayWant) continue;
+        if (disabled || outside) continue;
+        dayHits.push({
+          el, offsetX, offsetY, inView, inPortal, t: (aria || inner).slice(0, 80),
+          w: r.width, h: r.height,
+          x: absX + r.width / 2,
+          y: absY + r.height / 2,
+        });
+        continue;
+      }
+      if (t.length > want.length + 200) continue;
+      const match = exact ? t === want : (t === want || t.includes(want));
+      if (!match) continue;
       const score =
         Math.abs(r.width * r.height - 1800) +
         (t === want || t.endsWith(want) ? 0 : 80) +
+        (aria && norm(aria) === want ? -40 : 0) +
         Math.min(t.length, 200) +
         (inView ? 0 : 100000);
       if (!best || score < best.score) {
         best = {
           score,
           tag: el.tagName,
-          text: t.slice(0, 60),
+          text: (aria || t).slice(0, 80),
           x: absX + r.width / 2,
           y: absY + r.height / 2,
           w: r.width,
           h: r.height,
           inView: inView,
-          inPortal: !!(el.closest && (el.closest('.ant-dropdown') || el.closest('.ant-select-dropdown') || el.closest('.el-popper'))),
+          inPortal: inPortal,
           frameOffset: !!(offsetX || offsetY),
         };
         bestEl = el;
         bestOffset = { x: offsetX, y: offsetY };
       }
     }
+  }
+  if (isDayNum) {
+    if (dayHits.length !== 1) {
+      return {
+        ok: false,
+        message: dayHits.length
+          ? 'ambiguous day ' + want + ' in calendar (' + dayHits.length + ' cells) — use pick_calendar / accessible name'
+          : 'text not found: ' + want,
+        count: dayHits.length,
+      };
+    }
+    bestEl = dayHits[0].el;
+    bestOffset = { x: dayHits[0].offsetX, y: dayHits[0].offsetY };
+    best = {
+      score: 0,
+      tag: bestEl.tagName,
+      text: dayHits[0].t,
+      x: dayHits[0].x,
+      y: dayHits[0].y,
+      w: dayHits[0].w,
+      h: dayHits[0].h,
+      inView: dayHits[0].inView,
+      inPortal: true,
+    };
   }
   if (!best || !bestEl) return { ok: false, message: 'text not found: ' + want };
   try {
@@ -933,40 +1057,61 @@ export const FIND_TEXT_SCRIPT = `(text, exact, withinPortal) => {
 /** List currently visible portal menus/items. */
 export const LIST_PORTALS_SCRIPT = `(() => {
   const roots = Array.from(document.querySelectorAll(
-    '#d-overlay-root, [id$="overlay-root"], .ant-dropdown, .ant-select-dropdown, .el-popper, .el-select-dropdown, [data-portal], [class*="suggest"], [class*="Popper"]'
+    '#d-overlay-root, [id$="overlay-root"], .ant-dropdown, .ant-select-dropdown, .ant-picker-dropdown, .el-popper, .el-select-dropdown, [data-portal], [class*="suggest"], [class*="Popper"], [class*="popover"], [class*="DatePicker"], [class*="datepicker"], [class*="calendar"], [class*="Calendar"], [role="dialog"], [role="grid"]'
   ));
+  for (const el of Array.from(document.body ? document.body.children : [])) {
+    if (!el || el.nodeType !== 1) continue;
+    const st = getComputedStyle(el);
+    if (st.position !== 'fixed' && st.position !== 'absolute' && st.position !== 'sticky') continue;
+    const t = (el.innerText || '').replace(/\\s+/g, ' ');
+    if (/Time \\(in 24h\\)/i.test(t) || (el.querySelector && el.querySelector('[role="grid"], [role="gridcell"]'))) {
+      if (!roots.includes(el)) roots.push(el);
+    }
+  }
   const out = [];
   for (const root of roots) {
     const st = getComputedStyle(root);
     const r = root.getBoundingClientRect();
     if (st.display === 'none' || st.visibility === 'hidden') continue;
     if (root.classList.contains('ant-dropdown-hidden') || root.classList.contains('ant-select-dropdown-hidden')) continue;
-    // overlay roots may be size 0 while children are visible — still scan children
     const childVisible = Array.from(root.querySelectorAll('*')).some((el) => {
       const b = el.getBoundingClientRect();
       return b.width > 2 && b.height > 2;
     });
     if (r.width <= 0 && r.height <= 0 && !childVisible) continue;
     const items = Array.from(root.querySelectorAll(
-      'li, button, a, .ant-dropdown-menu-item, .ant-select-item-option, [role=menuitem], [role=option], [class*="item"], span.name'
+      'li, button, a, .ant-dropdown-menu-item, .ant-select-item-option, [role=menuitem], [role=option], [role=gridcell], [role=spinbutton], [role=columnheader], [class*="item"], span.name'
     ))
       .map((el) => {
         const box = el.getBoundingClientRect();
         if (box.width <= 0 || box.height <= 0) return null;
-        const t = (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 80);
-        if (!t || t.length > 60) return null;
-        return { text: t, x: Math.round(box.x), y: Math.round(box.y), w: Math.round(box.width), h: Math.round(box.height) };
+        const role = (el.getAttribute('role') || '').toLowerCase();
+        const aria = (el.getAttribute('aria-label') || '').trim();
+        const t = (aria || el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 120);
+        if (!t) return null;
+        if (t.length > 80 && role !== 'gridcell' && role !== 'spinbutton') return null;
+        return {
+          text: t,
+          name: aria || t,
+          role: role || undefined,
+          x: Math.round(box.x),
+          y: Math.round(box.y),
+          w: Math.round(box.width),
+          h: Math.round(box.height),
+        };
       })
       .filter(Boolean);
     if (!items.length && !(r.width > 0 && r.height > 0)) continue;
+    const body = (root.innerText || '').replace(/\\s+/g, ' ').slice(0, 200);
     out.push({
       id: root.id || undefined,
       cls: String(root.className || '').slice(0, 80),
+      kind: /Time \\(in 24h\\)|\\bSu\\b.*\\bMo\\b|[role="grid"]/i.test(body) || root.querySelector('[role="grid"], [role="gridcell"]') ? 'calendar' : 'menu',
       x: Math.round(r.x),
       y: Math.round(r.y),
       w: Math.round(r.width),
       h: Math.round(r.height),
-      items: items.slice(0, 40),
+      items: items.slice(0, 80),
     });
   }
   return JSON.parse(JSON.stringify({ count: out.length, portals: out }));
@@ -1913,15 +2058,24 @@ export const ANALYZE_PAGE_SCRIPT = `(() => {
     if (el.isContentEditable || el.getAttribute('contenteditable') === 'true') return 'rich_text';
     if (tag === 'select' || role === 'listbox' || role === 'combobox') return 'select';
     if (role === 'switch' || /switch|toggle/.test(String(el.className || ''))) return 'toggle';
+    if (role === 'spinbutton') return 'spinbutton';
+    const blob = (ph + ' ' + textOf(el) + ' ' + (el.getAttribute('aria-label') || '') + ' ' + String(el.className || ''));
+    const isTrigger = tag === 'button' || role === 'button' || el.getAttribute('aria-haspopup');
+    if (isTrigger && /end\\s*time|start\\s*time|run indefinitely|date picker|datepicker|选择日期|结束时间|开始时间|截止日期|投放结束|结束日期/i.test(blob)) {
+      return 'date_picker_button';
+    }
+    if (isTrigger && /date|time|日期|时间|日历/i.test(ph) && (/indefinitely/i.test(textOf(el)) || /20\\d{2}/.test(textOf(el))) && !/budget|bid|amount|usd|\\$/i.test(blob)) {
+      return 'date_picker_button';
+    }
     if (tag === 'button' || role === 'button' || (tag === 'a' && role === 'button')) return 'button';
     if (tag === 'a') return 'link';
     return 'unknown';
   };
   const currentValue = (el, prim) => {
-    if (prim === 'rich_text') return String(el.innerText || '').trim().slice(0, 200);
+    if (prim === 'rich_text' || prim === 'date_picker_button' || prim === 'button') return String(el.innerText || '').trim().slice(0, 200);
     if (prim === 'checkbox' || prim === 'radio' || prim === 'toggle') return el.checked ? 'true' : 'false';
     if (prim === 'file_upload') return el.files && el.files.length ? String(el.files.length) : '';
-    return String(el.value || '').slice(0, 200);
+    return String(el.value || el.getAttribute('aria-valuenow') || el.innerText || '').slice(0, 200);
   };
   const buttonAction = (label) => {
     const t = label.replace(/\\s+/g, '');
@@ -1944,7 +2098,7 @@ export const ANALYZE_PAGE_SCRIPT = `(() => {
   // Clear old refs then stamp
   document.querySelectorAll('[data-spark-ref]').forEach((el) => el.removeAttribute('data-spark-ref'));
   const candidates = Array.from(document.querySelectorAll(
-    'a,button,input,textarea,select,[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="textbox"],[role="combobox"],[role="switch"],[contenteditable="true"],.tiptap.ProseMirror'
+    'a,button,input,textarea,select,[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="textbox"],[role="combobox"],[role="switch"],[role="spinbutton"],[aria-haspopup],[contenteditable="true"],.tiptap.ProseMirror'
   ));
   const fields = [];
   const buttons = [];
@@ -1962,6 +2116,24 @@ export const ANALYZE_PAGE_SCRIPT = `(() => {
     const req = detectRequired(el);
     const ph = el.getAttribute('placeholder') || '';
     const maxLen = el.getAttribute('maxlength') ? Number(el.getAttribute('maxlength')) : null;
+    if (prim === 'date_picker_button') {
+      fields.push({
+        ref,
+        primitive: prim,
+        label: (label || textOf(el) || 'date').slice(0, 80),
+        required: req.required,
+        required_marker: req.marker,
+        placeholder: ph.slice(0, 80),
+        max_length: maxLen,
+        current_value: currentValue(el, prim),
+        tag: el.tagName.toLowerCase(),
+        type: String(el.type || ''),
+        name: String(el.getAttribute('name') || el.getAttribute('id') || '').slice(0, 60),
+        selector: el.tagName.toLowerCase() + (el.className && typeof el.className === 'string' ? '.' + el.className.trim().split(/\\s+/).slice(0, 2).join('.') : ''),
+        disabled: Boolean(el.disabled),
+      });
+      continue;
+    }
     if (prim === 'button' || prim === 'link') {
       const lab = textOf(el).slice(0, 40) || label;
       if (!lab) continue;
@@ -2046,13 +2218,445 @@ export const FIELD_VALUE_SCRIPT = `(function(ref){
   if (!el) return { ok: false, message: 'ref not found' };
   const ce = el.isContentEditable || el.getAttribute('contenteditable') === 'true';
   if (ce) return { ok: true, kind: 'contenteditable', value: String(el.innerText || '').trim() };
+  if (el.getAttribute && el.getAttribute('role') === 'button') {
+    return { ok: true, kind: 'button', value: String(el.innerText || '').trim() };
+  }
   if (el.tagName === 'INPUT' && (el.type === 'checkbox' || el.type === 'radio')) {
     return { ok: true, kind: el.type, value: el.checked ? 'true' : 'false' };
+  }
+  if (el.tagName === 'BUTTON' || (el.getAttribute && el.getAttribute('role') === 'button')) {
+    return { ok: true, kind: 'button', value: String(el.innerText || '').trim() };
   }
   if (el.tagName === 'INPUT' && el.type === 'file') {
     return { ok: true, kind: 'file', value: String(el.files ? el.files.length : 0) };
   }
-  return { ok: true, kind: (el.tagName || '').toLowerCase(), value: String(el.value || '') };
+  return { ok: true, kind: (el.tagName || '').toLowerCase(), value: String(el.value || el.innerText || '') };
+})`;
+
+/**
+ * Inspect an open calendar/time popover and return trusted-click targets.
+ * Never identifies month nav by "<" / ">" glyphs — uses aria-label Next/Previous month.
+ */
+export const CALENDAR_INSPECT_SCRIPT = `(function(opts){
+  opts = opts || {};
+  const wantY = Number(opts.year);
+  const wantM = Number(opts.month);
+  const wantD = Number(opts.day);
+  function visible(el) {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return false;
+    const st = getComputedStyle(el);
+    return st.display !== 'none' && st.visibility !== 'hidden' && Number(st.opacity) !== 0;
+  }
+  function pt(el) {
+    const r = el.getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width, h: r.height };
+  }
+  function monthFromName(s) {
+    const n = String(s || '').toLowerCase().replace(/sept/, 'sep').slice(0, 3);
+    const all = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+    const i = all.indexOf(n);
+    return i >= 0 ? i + 1 : 0;
+  }
+  function ymdFromAria(s) {
+    const raw = String(s || '');
+    const en = raw.match(/\\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(\\d{4})\\b/i);
+    if (en) return { year: Number(en[3]), month: monthFromName(en[1]), day: Number(en[2]) };
+    const iso = raw.match(/\\b(20\\d{2})-(\\d{1,2})-(\\d{1,2})\\b/);
+    if (iso) return { year: Number(iso[1]), month: Number(iso[2]), day: Number(iso[3]) };
+    return null;
+  }
+  const portalSel = '#d-overlay-root, [id$="overlay-root"], .ant-picker-dropdown, [class*="popover"], [class*="Popper"], [class*="DatePicker"], [class*="datepicker"], [class*="calendar"], [class*="Calendar"], [role="dialog"], [role="grid"]';
+  let roots = Array.from(document.querySelectorAll(portalSel));
+  for (const el of Array.from(document.body ? document.body.children : [])) {
+    if (!el || el.nodeType !== 1) continue;
+    const st = getComputedStyle(el);
+    if (st.position !== 'fixed' && st.position !== 'absolute') continue;
+    const t = (el.innerText || '');
+    if (/Time \\(in 24h\\)/i.test(t) || el.querySelector('[role="grid"], [role="gridcell"]')) roots.push(el);
+  }
+  roots = roots.filter((root) => {
+    if (!visible(root) && !root.querySelector('[role="gridcell"]')) return false;
+    const t = (root.innerText || '');
+    return /Time \\(in 24h\\)/i.test(t) || !!root.querySelector('[role="grid"], [role="gridcell"]') || /\\bSu\\b[\\s\\S]{0,40}\\bMo\\b/.test(t);
+  });
+  if (!roots.length) return { ok: false, open: false, message: 'calendar popover not open' };
+  const root = roots.sort((a, b) => {
+    const ta = (a.innerText || '').length;
+    const tb = (b.innerText || '').length;
+    return tb - ta;
+  })[0];
+  const body = String(root.innerText || '').replace(/\\s+/g, ' ');
+  const headerMatch = body.match(/\\b(january|february|march|april|may|june|july|august|september|october|november|december)\\s+(\\d{4})\\b/i)
+    || body.match(/(20\\d{2})\\s*年\\s*(\\d{1,2})\\s*月/);
+  let headerYear = 0;
+  let headerMonth = 0;
+  let header = '';
+  if (headerMatch) {
+    if (/年/.test(headerMatch[0])) {
+      headerYear = Number(headerMatch[1]);
+      headerMonth = Number(headerMatch[2]);
+    } else {
+      headerMonth = monthFromName(headerMatch[1]);
+      headerYear = Number(headerMatch[2]);
+    }
+    header = headerMatch[0];
+  }
+  const steps = (wantY && wantM && headerYear && headerMonth)
+    ? (wantY - headerYear) * 12 + (wantM - headerMonth)
+    : 0;
+  const buttons = Array.from(root.querySelectorAll('button, [role="button"]')).filter(visible);
+  const nextBtn = buttons.find((b) => /next month|下个月|后一个月/i.test(b.getAttribute('aria-label') || ''));
+  const prevBtn = buttons.find((b) => /previous month|last month|上个月|前一个月/i.test(b.getAttribute('aria-label') || ''));
+  const cells = Array.from(root.querySelectorAll('[role="gridcell"]')).filter(visible);
+  let dayEl = null;
+  const dayCandidates = [];
+  for (const el of cells) {
+    const aria = el.getAttribute('aria-label') || '';
+    const inner = String(el.innerText || '').trim();
+    const named = ymdFromAria(aria);
+    const disabled = el.getAttribute('aria-disabled') === 'true' || el.hasAttribute('disabled');
+    const cls = String(el.className || '');
+    let outside = /outside|other-month|muted|not-current/i.test(cls);
+    const st = getComputedStyle(el);
+    if (Number(st.opacity) < 0.45) outside = true;
+    if (named && headerMonth && (named.month !== headerMonth || named.year !== headerYear)) outside = true;
+    const day = named ? named.day : Number(inner.replace(/^0+/, '') || '0');
+    if (day !== wantD) continue;
+    if (disabled || outside) continue;
+    dayCandidates.push(el);
+  }
+  if (dayCandidates.length === 1) dayEl = dayCandidates[0];
+  const spins = Array.from(root.querySelectorAll('[role="spinbutton"], input[type="number"], input[inputmode="numeric"]'))
+    .filter(visible)
+    .sort((a, b) => a.getBoundingClientRect().x - b.getBoundingClientRect().x);
+  if (spins.length < 2) {
+    const tiny = Array.from(root.querySelectorAll('input')).filter((el) => {
+      if (!visible(el) || spins.includes(el)) return false;
+      const b = el.getBoundingClientRect();
+      return b.width > 8 && b.width < 90 && b.height < 48;
+    }).sort((a, b) => a.getBoundingClientRect().x - b.getBoundingClientRect().x);
+    for (const el of tiny) {
+      if (!spins.includes(el)) spins.push(el);
+    }
+  }
+  const hourEl = spins[0] || null;
+  const minuteEl = spins[1] || spins[0] || null;
+  function stamp(el, ref) {
+    if (!el) return null;
+    try { el.setAttribute('data-spark-ref', ref); } catch (_) {}
+    return { ref, ...pt(el), tag: el.tagName, role: el.getAttribute('role') || '', aria: el.getAttribute('aria-label') || '' };
+  }
+  const rr = root.getBoundingClientRect();
+  const outside = { x: Math.max(8, rr.x - 12), y: Math.max(8, rr.y - 12) };
+  let triggerText = '';
+  if (opts.triggerRef) {
+    try {
+      const t = document.querySelector('[data-spark-ref="' + CSS.escape(String(opts.triggerRef)) + '"]');
+      if (t) triggerText = String(t.innerText || '').trim();
+    } catch (_) {}
+  }
+  return JSON.parse(JSON.stringify({
+    ok: true,
+    open: true,
+    header,
+    headerYear,
+    headerMonth,
+    steps,
+    next: nextBtn ? { ...pt(nextBtn), label: nextBtn.getAttribute('aria-label') || 'Next month' } : null,
+    prev: prevBtn ? { ...pt(prevBtn), label: prevBtn.getAttribute('aria-label') || 'Previous month' } : null,
+    day: dayEl ? { ...pt(dayEl), name: dayEl.getAttribute('aria-label') || dayEl.innerText } : null,
+    dayCount: dayCandidates.length,
+    hours: stamp(hourEl, 'spark-cal-hour'),
+    minutes: stamp(minuteEl, 'spark-cal-minute'),
+    outside,
+    triggerText,
+    hasTime: /Time \\(in 24h\\)/i.test(body),
+  }));
+})`;
+
+/** 目的地 / 城市输入框（携程、高德一类联想控件）。 */
+export const FIND_DEST_INPUT_SCRIPT = `() => {
+  const re = /目的地|城市|位置|酒店名称|destination|city|where to/i;
+  const els = Array.from(document.querySelectorAll('input, textarea, [role="combobox"], [contenteditable="true"]'));
+  for (const el of els) {
+    const st = getComputedStyle(el);
+    const b = el.getBoundingClientRect();
+    if (b.width < 8 || b.height < 8 || st.display === 'none' || st.visibility === 'hidden') continue;
+    const blob = [
+      el.getAttribute('placeholder') || '',
+      el.getAttribute('aria-label') || '',
+      el.getAttribute('name') || '',
+      el.getAttribute('id') || '',
+      el.className || '',
+    ].join(' ');
+    if (!re.test(blob)) continue;
+    try { el.setAttribute('data-spark-ref', 'dest-input'); } catch (_) {}
+    return { ok: true, ref: 'dest-input', placeholder: el.getAttribute('placeholder') || '' };
+  }
+  return { ok: false, message: 'no destination input' };
+}`;
+
+/** 点开联想列表里包含 query 的一项。 */
+export const PICK_SUGGEST_SCRIPT = `(query) => {
+  const q = String(query || '').trim();
+  if (!q) return { ok: false, message: 'empty suggest query' };
+  const nodes = Array.from(document.querySelectorAll(
+    '[role="option"], li, [class*="suggest"] a, [class*="suggest"] li, [class*="auto"] li, [class*="AutoComplete"] li, [class*="city"] li'
+  ));
+  const vis = nodes.filter((el) => {
+    const st = getComputedStyle(el);
+    const b = el.getBoundingClientRect();
+    return b.width > 12 && b.height > 12 && st.display !== 'none' && st.visibility !== 'hidden' && Number(st.opacity) !== 0;
+  });
+  const textOf = (el) => String(el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+  const hit =
+    vis.find((el) => textOf(el).includes(q)) ||
+    vis.find((el) => q.includes(textOf(el).slice(0, 4)) && textOf(el).length >= 2);
+  if (!hit) return { ok: false, message: 'no suggestion for ' + q, count: vis.length };
+  try { hit.setAttribute('data-spark-ref', 'suggest-hit'); } catch (_) {}
+  return { ok: true, ref: 'suggest-hit', text: textOf(hit).slice(0, 80) };
+}`;
+
+export const SET_SPIN_SCRIPT = `(function(ref, value){
+  const el = document.querySelector('[data-spark-ref="' + String(ref || '') + '"]');
+  if (!el) return { ok: false, message: 'spin not found' };
+  const v = String(value);
+  try { el.focus(); } catch (_) {}
+  if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+    const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, 'value') && Object.getOwnPropertyDescriptor(proto, 'value').set;
+    if (setter) setter.call(el, v); else el.value = v;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    return { ok: true, value: String(el.value || '') };
+  }
+  el.textContent = v;
+  try {
+    el.setAttribute('aria-valuenow', v);
+  } catch (_) {}
+  el.dispatchEvent(new InputEvent('input', { bubbles: true, data: v }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+  return { ok: true, value: v };
+})`;
+
+/** 住宿列表里抽出可点开的酒店详情链接。 */
+export const EXTRACT_HOTEL_LINKS_SCRIPT = `() => {
+  function abs(href) {
+    try { return new URL(href, location.href).href; } catch (_) { return ''; }
+  }
+  function fromCtripNext() {
+    try {
+      const list = window.__NEXT_DATA__
+        && window.__NEXT_DATA__.props
+        && window.__NEXT_DATA__.props.pageProps
+        && window.__NEXT_DATA__.props.pageProps.initListData
+        && window.__NEXT_DATA__.props.pageProps.initListData.hotelList;
+      if (!Array.isArray(list) || !list.length) return [];
+      const page = new URL(location.href);
+      const checkin = page.searchParams.get('checkin') || page.searchParams.get('checkIn') || '';
+      const checkout = page.searchParams.get('checkout') || page.searchParams.get('checkOut') || '';
+      const out = [];
+      for (const row of list) {
+        const info = (row && row.hotelInfo) || {};
+        const id = String((info.summary && info.summary.hotelId) || '');
+        const name = String((info.nameInfo && info.nameInfo.name) || '').replace(/\\s+/g, ' ').trim();
+        if (!id || !name || name.length > 80) continue;
+        const q = new URLSearchParams();
+        if (checkin) q.set('checkIn', checkin);
+        if (checkout) q.set('checkOut', checkout);
+        const room = (row.roomInfo && row.roomInfo[0]) || {};
+        const price = String((room.priceInfo && (room.priceInfo.displayPrice || room.priceInfo.price)) || '');
+        const score = String((info.commentInfo && info.commentInfo.commentScore) || '');
+        const area = String((info.positionInfo && (info.positionInfo.positionDesc || ((info.positionInfo.zoneNames || [])[0] || ''))) || '');
+        out.push({
+          name,
+          url: 'https://hotels.ctrip.com/hotels/' + id + '.html' + (q.toString() ? '?' + q.toString() : ''),
+          price: price.replace(/\\s+/g, ''),
+          score,
+          area: area.replace(/\\s+/g, ' ').trim(),
+        });
+        if (out.length >= 12) break;
+      }
+      return out;
+    } catch (_) {
+      return [];
+    }
+  }
+  const nextHotels = fromCtripNext();
+  if (nextHotels.length) return { ok: true, hotels: nextHotels };
+  function isDetail(href) {
+    const h = abs(href);
+    if (!h || /javascript:|mailto:|#/.test(h)) return false;
+    let u;
+    try { u = new URL(h); } catch (_) { return false; }
+    const p = u.pathname.toLowerCase();
+    if (/\\/(login|signup|signin)/.test(p)) return false;
+    if (/hotels?\\/list|searchresults|\\/hotellist|\\/hotels\\/all-cities|\\/s\\/[^/]+\\/homes?$/.test(p)) return false;
+    if (/\\/hotels\\/?$/.test(p)) return false;
+    if (/\\/flights?\\//.test(p)) return false;
+    return /(?:hotels?\\/\\d|\\/hotel\\/\\d|hotelid=|hotel-detail|\\/rooms\\/\\d)/i.test(u.href);
+  }
+  function clean(s) {
+    return String(s || '').replace(/\\s+/g, ' ').trim();
+  }
+  function nameOf(a) {
+    const card = a.closest('[class*="hotel" i], [class*="property" i], [class*="Hotel"], article, li, [data-hotel], [data-id]');
+    if (card) {
+      const h = card.querySelector('h2, h3, h4, [class*="name" i], [class*="title" i]');
+      const t = clean(h && (h.innerText || h.textContent));
+      if (t.length >= 2 && t.length <= 80) return t;
+    }
+    const t = clean(a.getAttribute('aria-label') || a.innerText || a.textContent);
+    return t.length >= 2 && t.length <= 80 ? t : '';
+  }
+  const seen = new Set();
+  const out = [];
+  const anchors = Array.from(document.querySelectorAll('a[href]'));
+  for (const a of anchors) {
+    const href = a.getAttribute('href') || '';
+    if (!isDetail(href)) continue;
+    const url = abs(href);
+    const key = url.split('?')[0];
+    if (seen.has(key)) continue;
+    const r = a.getBoundingClientRect();
+    if (r.width < 4 || r.height < 4) continue;
+    const name = nameOf(a);
+    if (!name || /登录|注册|地图|筛选|更多|查看全部|全部酒店|List|Map|Filter|Homes|All hotels/i.test(name)) continue;
+    seen.add(key);
+    out.push({ name, url });
+    if (out.length >= 8) break;
+  }
+  return { ok: true, hotels: out };
+}`;
+
+/** 飞书网页：登录 / 消息 / 汇报。 */
+export const FEISHU_STAGE_SCRIPT = `(() => {
+  const url = String(location.href || "");
+  const text = String((document.body && document.body.innerText) || "").slice(0, 5000);
+  const login =
+    /accounts\\.feishu|passport\\.feishu|\\/login|accounts\\.larksuite/i.test(url) ||
+    /扫码登录|短信登录|账号登录|登录飞书/.test(text);
+  const journal = /\\/report|汇报|写日志|写日报|写周报/.test(url + text);
+  const doc = /\\/docx|\\/docs|\\/wiki|\\/drive/.test(url);
+  const messenger = /\\/next\\/messenger|\\/messenger|larksuite\\.com\\/messenger/i.test(url);
+  const boxes = Array.from(
+    document.querySelectorAll('[contenteditable="true"], textarea, [role="textbox"]'),
+  ).filter((el) => {
+    const r = el.getBoundingClientRect();
+    return r.width > 40 && r.height > 16;
+  });
+  let stage = "other";
+  if (login) stage = "login";
+  else if (journal) stage = "journal";
+  else if (doc) stage = "doc";
+  else if (messenger || boxes.length) stage = "messenger";
+  return {
+    ok: true,
+    stage,
+    url,
+    composer: boxes.length > 0,
+    login,
+  };
+})()`;
+
+export const FEISHU_OPEN_CHAT_SCRIPT = `(async (payload) => {
+  const name = String((payload && payload.to) || "").trim();
+  if (!name) return { ok: false, message: "缺少联系人" };
+  function visible(el) {
+    const r = el.getBoundingClientRect();
+    const st = window.getComputedStyle(el);
+    return r.width > 8 && r.height > 8 && st.visibility !== "hidden" && st.display !== "none";
+  }
+  function setVal(el, text) {
+    el.focus();
+    if (el.isContentEditable) {
+      document.execCommand("selectAll", false, null);
+      document.execCommand("insertText", false, text);
+      el.dispatchEvent(new InputEvent("input", { bubbles: true, data: text, inputType: "insertText" }));
+      return;
+    }
+    const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const desc = Object.getOwnPropertyDescriptor(proto, "value");
+    if (desc && desc.set) desc.set.call(el, text);
+    else el.value = text;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const nodes = Array.from(document.querySelectorAll("input, textarea, [contenteditable='true']"));
+  const search = nodes.find((el) => {
+    if (!visible(el)) return false;
+    const hint = (
+      el.getAttribute("placeholder") ||
+      el.getAttribute("aria-label") ||
+      el.getAttribute("title") ||
+      ""
+    );
+    return /搜索|search|联系人|聊天|找人/i.test(hint);
+  }) || nodes.find((el) => visible(el) && el.tagName === "INPUT");
+  if (!search) return { ok: false, message: "找不到飞书搜索框，请先点左侧搜索" };
+  setVal(search, name);
+  await sleep(700);
+  const hits = Array.from(document.querySelectorAll("span, div, a, [role='option'], [role='listitem']"))
+    .filter((el) => {
+      if (!visible(el)) return false;
+      const t = String(el.textContent || "").replace(/\\s+/g, " ").trim();
+      return t === name || (t.includes(name) && t.length <= name.length + 24);
+    });
+  const hit = hits.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0];
+  if (!hit) return { ok: false, message: "没找到联系人「" + name + "」，请你在左侧点开会话" };
+  hit.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+  return { ok: true, message: "已点开 " + name };
+})`;
+
+export const FEISHU_INJECT_TEXT_SCRIPT = `(async (payload) => {
+  const text = String((payload && payload.body) || "");
+  const title = String((payload && payload.title) || "");
+  if (!text && !title) return { ok: false, message: "没有可写入的正文" };
+  function visible(el) {
+    const r = el.getBoundingClientRect();
+    const st = window.getComputedStyle(el);
+    return r.width > 40 && r.height > 18 && st.visibility !== "hidden" && st.display !== "none";
+  }
+  function write(el, value) {
+    el.focus();
+    if (el.isContentEditable) {
+      document.execCommand("selectAll", false, null);
+      document.execCommand("insertText", false, value);
+      if (!(el.innerText || "").includes(String(value).slice(0, Math.min(8, value.length)))) {
+        el.textContent = value;
+      }
+      el.dispatchEvent(new InputEvent("input", { bubbles: true, data: value, inputType: "insertText" }));
+      return (el.innerText || "").length;
+    }
+    const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const desc = Object.getOwnPropertyDescriptor(proto, "value");
+    if (desc && desc.set) desc.set.call(el, value);
+    else el.value = value;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    return String(el.value || "").length;
+  }
+  const boxes = Array.from(
+    document.querySelectorAll('[contenteditable="true"], textarea, [role="textbox"]'),
+  ).filter(visible);
+  if (!boxes.length) return { ok: false, message: "找不到输入框。请先点开会话或日志编辑区。" };
+  boxes.sort((a, b) => b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom);
+  let titleLen = 0;
+  if (title && boxes.length >= 2) {
+    const top = [...boxes].sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0];
+    titleLen = write(top, title);
+  }
+  const composer = boxes[0];
+  const bodyLen = write(composer, text || title);
+  return {
+    ok: true,
+    message: "已写入草稿，未点发送",
+    titleLen,
+    bodyLen,
+  };
 })`;
 
 

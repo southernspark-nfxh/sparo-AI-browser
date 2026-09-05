@@ -1,4 +1,4 @@
-/** Feature flags for public Sparo build */
+/** Store edition: vertical listing packs never ship in the UI. */
 export function dxmEnabled(): boolean {
-  return process.env.SPARO_ENABLE_DXM === "1";
+  return false;
 }

@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>Sparo 侧栏改版 Demo</title>
+  <style>
+    :root {
+      --bg: #1a1a1e;
+      --bg2: #25252b;
+      --side: #161618;
+      --card: #222226;
+      --line: #33333a;
+      --text: #e8e8ea;
+      --muted: #9a9aa3;
+      --accent: #3d7eff;
+      --ok: #3dd68c;
+      --warn: #ffb020;
+      --bad: #ff5c5c;
+      --green: #1f6b45;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #0b0b0d;
+      color: var(--text);
+      font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+    }
+    .page {
+      padding: 28px 32px 48px;
+      max-width: 1280px;
+      margin: 0 auto;
+    }
+    h1 { font-size: 22px; font-weight: 650; margin: 0 0 6px; }
+    .lead { color: var(--muted); font-size: 13px; line-height: 1.5; margin: 0 0 18px; }
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .tabs button {
+      border: 1px solid var(--line);
+      background: #1c1c20;
+      color: var(--text);
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .tabs button.on {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .win {
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      height: 720px;
+      border: 1px solid #3a3a44;
+      border-radius: 12px;
+      overflow: hidden;
+      background: #111;
+    }
+    .chrome {
+      grid-column: 1;
+      background: var(--bg);
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      flex-direction: column;
+    }
+    .fake-app {
+      display: grid;
+      grid-template-rows: 76px 1fr;
+      grid-template-columns: 1fr 340px;
+      height: 100%;
+    }
+    .chrome {
+      grid-column: 1;
+      grid-row: 1;
+    }
+    .tabs-row {
+      height: 36px;
+      background: #121215;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 8px;
+      font-size: 12px;
+    }
+    .brand { display: flex; align-items: center; gap: 6px; font-weight: 650; }
+    .dot-logo {
+      width: 16px; height: 16px; border-radius: 4px;
+      background: linear-gradient(135deg, #7cffb2, #3d7eff);
+    }
+    .fake-tab {
+      background: #35353d;
+      border-radius: 8px 8px 0 0;
+      padding: 6px 12px;
+      color: #ddd;
+    }
+    .bar {
+      height: 40px;
+      background: var(--bg2);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 8px;
+    }
+    .nav-btn {
+      width: 28px; height: 26px; border: 0; border-radius: 6px;
+      background: transparent; color: var(--text);
+    }
+    .url {
+      flex: 1; height: 28px; border-radius: 14px;
+      border: 1px solid var(--line); background: #121215;
+      color: var(--muted); padding: 0 12px; font-size: 12px;
+      display: flex; align-items: center;
+    }
+    .page-hole {
+      grid-column: 1; grid-row: 2;
+      background: #f4f1ea;
+      color: #222;
+      padding: 28px 36px;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .page-hole h2 { margin: 0 0 8px; font-size: 20px; }
+    .page-hole p { margin: 0 0 10px; color: #444; }
+    .page-hole .box {
+      background: #fff; border: 1px solid #ddd; border-radius: 8px;
+      padding: 12px; max-width: 420px;
+    }
+
+    .sidebar {
+      grid-column: 2;
+      grid-row: 1 / 3;
+      background: var(--side);
+      border-left: 1px solid var(--line);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      position: relative;
+    }
+    .side-head {
+      padding: 12px 12px 8px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .side-head h1 {
+      font-size: 14px; margin: 0; display: flex; align-items: center; gap: 8px;
+    }
+    .tag { font-size: 11px; color: var(--muted); margin: 2px 0 0; }
+    .lang {
+      font-size: 11px; color: var(--muted);
+      border: 1px solid var(--line); background: #121215;
+      color: var(--text); border-radius: 6px; padding: 4px 6px;
+    }
+    .key-banner {
+      margin: 0 12px 8px;
+      background: #2a2418;
+      border: 1px solid #4a3a1a;
+      border-radius: 10px;
+      padding: 10px;
+    }
+    .key-banner .l { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+    .key-banner .h { font-size: 11px; color: var(--muted); margin-bottom: 8px; line-height: 1.4; }
+    .key-row { display: flex; gap: 6px; }
+    .key-row input {
+      flex: 1; height: 30px; border-radius: 8px; border: 1px solid var(--line);
+      background: #121215; color: var(--text); padding: 0 8px; font-size: 12px;
+    }
+    .btn {
+      border: 0; border-radius: 8px; padding: 8px 10px; color: #fff;
+      font-size: 12px; cursor: default;
+    }
+    .btn.primary { background: var(--accent); }
+    .btn.ghost { background: #333; color: var(--text); }
+    .btn.warn { background: #6b4a12; color: #ffd789; }
+    .btn.danger { background: #8b2e2e; }
+    .btn.block { width: 100%; }
+
+    .chat {
+      flex: 1;
+      min-height: 0;
+      margin: 0 12px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+    }
+    .label { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+    .log {
+      flex: 1; min-height: 0; overflow: auto;
+      background: #121215; border-radius: 8px; padding: 8px;
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .bub { max-width: 82%; padding: 6px 9px; border-radius: 10px; font-size: 12px; line-height: 1.45; }
+    .me { align-self: flex-end; background: #1a2a44; color: #cfe0ff; border-top-right-radius: 3px; }
+    .ai { align-self: flex-start; background: #1a2418; color: #d2e8d0; border-top-left-radius: 3px; }
+    textarea {
+      width: 100%; min-height: 64px; margin-top: 8px; resize: none;
+      border-radius: 8px; border: 1px solid var(--line);
+      background: #1c1c20; color: var(--text); padding: 8px;
+      font: 12px/1.4 inherit;
+    }
+    .chat-act { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; }
+    .hint { font-size: 11px; color: var(--muted); }
+
+    .jobs {
+      margin: 8px 12px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px 10px;
+    }
+    .status { font-size: 12px; margin-bottom: 8px; }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); margin-right: 6px; }
+    .dot.warn { background: var(--warn); }
+    .grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+    }
+    .grid .btn { padding: 9px 4px; }
+    .pause-bar {
+      margin-top: 8px;
+      display: flex; align-items: center; justify-content: space-between;
+      background: #2a2418; border-radius: 8px; padding: 6px 8px;
+      font-size: 11px; color: #ffd789;
+    }
+    .approve {
+      margin: 0 12px 8px;
+      background: #2a2418; border: 1px solid #4a3a1a;
+      border-radius: 10px; padding: 8px 10px;
+    }
+    .approve .row { display: flex; gap: 6px; margin-top: 8px; }
+    .approve .row .btn { flex: 1; }
+
+    .foot {
+      padding: 8px 12px 12px;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .linkish {
+      background: transparent; border: 0; color: var(--muted);
+      font-size: 12px; padding: 6px 0; cursor: default;
+    }
+    .gear {
+      background: #2a2a32; color: var(--text); border: 0;
+      border-radius: 8px; padding: 7px 10px; font-size: 12px;
+    }
+
+    .drawer {
+      position: absolute; inset: 0;
+      background: var(--side);
+      display: flex; flex-direction: column;
+    }
+    .drawer-h {
+      padding: 12px; display: flex; align-items: center; justify-content: space-between;
+      border-bottom: 1px solid var(--line);
+    }
+    .drawer-b { flex: 1; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+    .field { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+    .field label { width: 64px; font-size: 11px; color: var(--muted); flex-shrink: 0; }
+    .field input, .field select {
+      flex: 1; height: 28px; border-radius: 6px; border: 1px solid var(--line);
+      background: #121215; color: var(--text); padding: 0 8px; font-size: 12px;
+    }
+    .sticky {
+      border-top: 1px solid var(--line);
+      padding: 10px 12px;
+      display: flex; gap: 8px;
+      background: var(--side);
+    }
+    .sticky .btn { flex: 1; }
+    .sticky .danger { flex: 0 0 72px; }
+
+    .compare {
+      margin-top: 28px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+    .mini {
+      background: #121215;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+    }
+    .mini h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+    .mini p { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.45; }
+    .hide { display: none !important; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>Sparo 侧栏 · 想呈现的样子</h1>
+    <p class="lead">这是改版 Demo，不是正在跑的软件。切上面四个状态看：日常只留动手；没 Key 才置顶贴密钥；设置用抽屉盖住，不把对话压扁。</p>
+    <div class="tabs" id="tabs">
+      <button class="on" data-v="daily">日常（已配 Key）</button>
+      <button data-v="first">第一次打开</button>
+      <button data-v="paused">暂停 · 待确认</button>
+      <button data-v="settings">设置抽屉</button>
+    </div>
+
+    <div class="win">
+      <div class="fake-app">
+        <div class="chrome">
+          <div class="tabs-row">
+            <div class="brand"><span class="dot-logo"></span>Sparo</div>
+            <div class="fake-tab">某后台 · 待回复</div>
+          </div>
+          <div class="bar">
+            <button class="nav-btn">◀</button>
+            <button class="nav-btn">▶</button>
+            <button class="nav-btn">⟳</button>
+            <div class="url">https://example.com/inbox</div>
+          </div>
+        </div>
+        <div class="page-hole">
+          <h2>客户留言</h2>
+          <p>请问这单什么时候能发货？能不能便宜一点？</p>
+          <div class="box">回复输入框（页面上的发送，仍由你点）</div>
+        </div>
+
+        <aside class="sidebar" id="side">
+          <!-- daily / first / paused share this stack -->
+          <div class="side-head">
+            <div>
+              <h1><span class="dot-logo"></span>Sparo</h1>
+              <p class="tag">会动手 · 发送前你确认</p>
+            </div>
+            <select class="lang" aria-label="语言">
+              <option>中文</option>
+              <option>English</option>
+            </select>
+          </div>
+
+          <div class="key-banner hide" id="keyBanner">
+            <div class="l">贴上 Key 才能动手</div>
+            <div class="h">本软件不卖会员。模型费用走你自己的接口。</div>
+            <div class="key-row">
+              <input placeholder="sk-… API Key" />
+              <button class="btn primary">保存</button>
+            </div>
+          </div>
+
+          <div class="chat">
+            <div class="label">对话</div>
+            <div class="log" id="log">
+              <div class="bub me">总结这一页，起草回复，先别发</div>
+              <div class="bub ai">已读完。草稿会填进左边输入框，发送请你点页面上的按钮。</div>
+            </div>
+            <textarea placeholder="说要做什么，或点下面四个按钮"></textarea>
+            <div class="chat-act">
+              <span class="hint">它动手 · 网页发送由你点</span>
+              <button class="btn primary">让它动手</button>
+            </div>
+          </div>
+
+          <div class="jobs">
+            <div class="status" id="st"><span class="dot"></span>就绪</div>
+            <div class="grid">
+              <button class="btn primary">总结</button>
+              <button class="btn primary">填表</button>
+              <button class="btn primary">回复</button>
+              <button class="btn primary">发布</button>
+            </div>
+            <div class="pause-bar hide" id="pauseBar">
+              <span>已暂停，页面请你点</span>
+              <button class="btn warn">继续</button>
+            </div>
+          </div>
+
+          <div class="approve hide" id="approve">
+            <div class="label">待你确认</div>
+            <div style="font-size:12px">即将提交表单</div>
+            <div class="row">
+              <button class="btn ghost">拒绝</button>
+              <button class="btn primary">可以</button>
+            </div>
+          </div>
+
+          <div class="foot">
+            <button class="linkish">复制给 Agent</button>
+            <button class="gear" id="openSet">设置</button>
+          </div>
+
+          <div class="drawer hide" id="drawer">
+            <div class="drawer-h">
+              <strong style="font-size:14px">设置</strong>
+              <button class="btn ghost" id="closeSet">完成</button>
+            </div>
+            <div class="drawer-b">
+              <div class="jobs" style="margin:0">
+                <div class="label">语言</div>
+                <select class="lang" style="width:100%;height:30px">
+                  <option>中文</option>
+                  <option>English</option>
+                  <option>日本語</option>
+                  <option>한국어</option>
+                  <option>Español</option>
+                  <option>Português</option>
+                  <option>Deutsch</option>
+                  <option>Français</option>
+                  <option>Italiano</option>
+                </select>
+              </div>
+              <div class="jobs" style="margin:0">
+                <div class="label">模型</div>
+                <div class="hint" style="margin-bottom:6px">已就绪 · DeepSeek</div>
+                <div class="field"><label>品牌</label><select><option>DeepSeek</option><option>OpenAI</option></select></div>
+                <div class="field"><label>密钥</label><input placeholder="已保存 · 可更换" /></div>
+              </div>
+              <div class="jobs" style="margin:0">
+                <div class="label">工作偏好 · 只在这台电脑</div>
+                <div class="field"><label>怎么叫你</label><input placeholder="可选" /></div>
+                <div class="field"><label>回复时怎么说</label><input placeholder="运费、售后、价格" /></div>
+                <div class="field"><label>不要说</label><input placeholder="不承诺时效" /></div>
+              </div>
+              <p class="hint">录制操作、高级项放在更下面，日常不用看见。</p>
+            </div>
+            <div class="sticky">
+              <button class="btn primary">保存</button>
+              <button class="btn danger">清空</button>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+
+    <div class="compare">
+      <div class="mini">
+        <h3>和现在的差别</h3>
+        <p>路径不再当首页。复制给 Agent 变成底栏一句。四个任务按钮同色。暂停不再混进网格。</p>
+      </div>
+      <div class="mini">
+        <h3>滚动</h3>
+        <p>只滚对话。设置是盖住的抽屉，底栏钉死保存，填完口径不用再找按钮。</p>
+      </div>
+      <div class="mini">
+        <h3>用词</h3>
+        <p>对话主按钮叫「让它动手」，避免和网页「发送」撞车。口径改成「回复时怎么说」。</p>
+      </div>
+    </div>
+  </div>
+  <script>
+    const tabs = document.querySelectorAll("#tabs button");
+    const keyBanner = document.getElementById("keyBanner");
+    const pauseBar = document.getElementById("pauseBar");
+    const approve = document.getElementById("approve");
+    const drawer = document.getElementById("drawer");
+    const st = document.getElementById("st");
+    const log = document.getElementById("log");
+
+    function show(v) {
+      tabs.forEach((b) => b.classList.toggle("on", b.dataset.v === v));
+      drawer.classList.toggle("hide", v !== "settings");
+      keyBanner.classList.toggle("hide", v !== "first");
+      pauseBar.classList.toggle("hide", v !== "paused");
+      approve.classList.toggle("hide", v !== "paused");
+      if (v === "paused") {
+        st.innerHTML = '<span class="dot warn"></span>已暂停';
+      } else {
+        st.innerHTML = '<span class="dot"></span>就绪';
+      }
+      if (v === "first") {
+        log.innerHTML = '<div class="bub ai">还没有密钥。贴上之后就可以让我填、回、发。</div>';
+      } else {
+        log.innerHTML =
+          '<div class="bub me">总结这一页，起草回复，先别发</div>' +
+          '<div class="bub ai">已读完。草稿会填进左边输入框，发送请你点页面上的按钮。</div>';
+      }
+    }
+    tabs.forEach((b) => b.onclick = () => show(b.dataset.v));
+    document.getElementById("openSet").onclick = () => show("settings");
+    document.getElementById("closeSet").onclick = () => show("daily");
+  </script>
+</body>
+</html>

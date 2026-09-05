@@ -21,6 +21,17 @@ describe("normalizeLabel / matchScore", () => {
     const hit = bestFieldMatch("标题", fields);
     expect(hit?.field.ref).toBe("e2");
   });
+
+  it("does not map End time onto a USD number box", () => {
+    const fields = [
+      { label: "Daily budget", placeholder: "USD", name: "budget", ref: "e1", primitive: "number_input" },
+      { label: "End time", placeholder: "", name: "", ref: "e2", primitive: "date_picker_button" },
+    ];
+    const hit = bestFieldMatch("End time", fields);
+    expect(hit?.field.ref).toBe("e2");
+    expect(hit?.field.primitive).toBe("date_picker_button");
+    expect(bestFieldMatch("End time", [fields[0]!])).toBeNull();
+  });
 });
 
 describe("shouldRotateToken", () => {

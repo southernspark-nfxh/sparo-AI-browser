@@ -1,8 +1,9 @@
-# Sparo 能力扩展 · 产品任务书
+# Sparo 能力扩展 · 产品任务书（已归档）
 
-> 版本：v0.1 · 2026-08-11  
-> 状态：**待确认后开工**  
-> 范围：AI 客服助手、网页情报分析、图片下载、自动填表基建（含 Hermes 调度）
+> **已归档。现行任务、修改日志、QA、待办一律看 [PRODUCT-TASKBOOK.md](./PRODUCT-TASKBOOK.md)。**  
+> 版本：v0.1 · 2026-08-11（状态对照更新：2026-09-01）  
+> 原状态作废：A/B/C 已落地，D 未做成垂直情报模块。  
+> 商店发行线的定位、卖点、痛点以 **[PRODUCT.md](./PRODUCT.md)** 为准，不要把本任务书当商店文案。
 
 ---
 
@@ -299,6 +300,8 @@ analyze_page →（可选）把 required_fields 给用户确认 → execute_prim
 - [x] B1 Skill `universal-form-fill` + MCP/AGENTS/Hermes Playbook
 - [x] B2 `accept-analyzer` 脚本
 - [x] C0/C1 全站客服半自动草稿（`cs_scan` / `cs_draft_reply`，不自动发送）
-- [ ] D0/D1 全站页分析（下一迭代）
+- [ ] D0/D1 1688 垂直情报模块（**未做**）
+- [x] D0 通读页：任意站 `page_text` + 侧栏读页
+- [x] 下一轮转向一句话出行 / 生活查询（**商店版已落地**：见现行任务书 v0.3）
 
-**当前执行**：迭代 C 已实现；下一迭代 D。
+**当前执行**：不要再按「下一迭代 D」开工。去 [PRODUCT-TASKBOOK.md](./PRODUCT-TASKBOOK.md) 看 §8 待办。

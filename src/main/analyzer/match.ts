@@ -1,6 +1,4 @@
-/**
- * Label ↔ payload key fuzzy matching for execute_primitives.
- */
+import { looksLikeDatetime } from "./datetime.js";
 
 const ALIASES: Record<string, string[]> = {
   标题: ["标题", "title", "输入标题", "填写标题", "智能标题", "笔记标题"],
@@ -11,6 +9,8 @@ const ALIASES: Record<string, string[]> = {
   图片: ["图片", "image", "photo", "上传图片", "媒体"],
   搜索: ["搜索", "search", "wd", "q", "query", "keyword", "关键词"],
   wd: ["wd", "搜索", "search", "q"],
+  结束时间: ["结束时间", "end time", "end date", "endtime", "投放结束", "截止日期"],
+  "end time": ["end time", "结束时间", "end date", "endtime"],
 };
 
 export function normalizeLabel(s: string): string {
@@ -50,6 +50,11 @@ export function matchScore(
     if (/search|搜索|wd|q/.test(lab + name)) return 75;
     return 45;
   }
+  if (/endtime|enddate|结束时间|startdate|starttime|开始时间/.test(k + lab)) {
+    if (primitive === "date_picker_button") return 95;
+    if (primitive === "number_input" || primitive === "text_input") return 0;
+  }
+  if (primitive === "date_picker_button" && looksLikeDatetime(payloadKey)) return 90;
   if (k.length >= 2 && lab.includes(k.slice(0, 2))) return 40;
   return 0;
 }

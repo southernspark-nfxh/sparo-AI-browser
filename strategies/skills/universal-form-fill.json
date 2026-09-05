@@ -18,7 +18,8 @@
   "notes": [
     "Prefer site-specific skills (xhs-*) when they match.",
     "Pass params.payload as { 标题, 正文, … } or flat Chinese label keys.",
-    "Do NOT loop fill/click for multi-field forms."
+    "Do NOT loop fill/click for multi-field forms.",
+    "Date pickers (End time / Run indefinitely) are click-grid, not fill. Use pick_calendar or payload {\"End time\":\"2026-09-03 00:59\"}."
   ],
   "params": {
     "payload": {
@@ -42,6 +43,7 @@
   "agentPlaybook": [
     "Unknown form: run_skill({ query:'通用填表', params:{ payload:{…} } })",
     "Or call analyze_page then execute_primitives directly",
-    "Xiaohongshu long-form: use xhs-longform-publish instead"
+    "Xiaohongshu long-form: use xhs-longform-publish instead",
+    "Custom calendars: pick_calendar — never fill a date string into a text/USD box"
   ]
 }

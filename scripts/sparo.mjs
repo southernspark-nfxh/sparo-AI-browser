@@ -15,15 +15,15 @@ import { fileURLToPath } from "node:url";
 import http from "node:http";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const PORT = Number(process.env.SPARO_MCP_PORT || 3920);
+const PORT = Number(process.env.SPARO_MCP_PORT || 3921);
 const HEALTH = `http://127.0.0.1:${PORT}/health`;
 
 function configDir() {
   return (
     process.env.SPARO_CONFIG_DIR ||
     (process.platform === "win32" && process.env.APPDATA
-      ? join(process.env.APPDATA, "sparo")
-      : join(homedir(), ".config", "sparo"))
+      ? join(process.env.APPDATA, "sparo-store")
+      : join(homedir(), ".config", "sparo-store"))
   );
 }
 

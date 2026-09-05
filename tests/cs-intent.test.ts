@@ -18,6 +18,11 @@ describe("classifyIntent", () => {
     const r = classifyIntent([], "东西坏了要退款");
     expect(r.intent).toBe("after_sale");
   });
+
+  it("treats comment questions as inquiry", () => {
+    const r = classifyIntent([], "求教程，怎么一键回复留言？");
+    expect(r.intent).toBe("inquiry");
+  });
 });
 
 describe("templateDraft", () => {

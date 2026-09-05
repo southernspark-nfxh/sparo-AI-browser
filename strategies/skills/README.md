@@ -16,6 +16,7 @@ Hermes: [`docs/HERMES-PLAYBOOK.md`](../../docs/HERMES-PLAYBOOK.md).
 | `cs-semi-auto-reply` | 客服回复 / 帮我回客户 | **cs_scan → cs_draft_reply**（填草稿，不自动发送） |
 | `xhs-longform-publish` | 发小红书 / 小红书发布 | ensure editor → **inject** title/body → layout → next → inject topics → pause |
 | `xhs-longform-compose` | 小红书草稿 | shorter compose path; prefer `xhs-longform-publish` |
+| `feishu-web-work` | 飞书 / 打开飞书 / 飞书写日志 | 打开消息页，注入聊天或日志草稿，**不点发送** |
 
 ## How agents should call
 

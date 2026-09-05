@@ -10,6 +10,7 @@ import {
   type Skill,
   type SkillStep,
 } from "./store.js";
+import { skillConflictsWithQuery } from "../agent/intent-router.js";
 
 export type SkillBrowser = {
   getUrl(): string;
@@ -45,12 +46,22 @@ export type SkillBrowser = {
     includeOptional?: boolean;
     maxAttempts?: number;
   }): Promise<ToolResult>;
+  pickCalendar?(input: {
+    triggerRef?: string;
+    triggerText?: string;
+    triggerLabel?: string;
+    date?: string;
+    hours?: string | number;
+    minutes?: string | number;
+    value?: unknown;
+  }): Promise<ToolResult>;
   csScan?(): Promise<ToolResult>;
   csDraftReply?(input?: {
     draft?: string;
     fill?: boolean;
     preferLlm?: boolean;
   }): Promise<ToolResult>;
+  csOneClickReply?(): Promise<ToolResult>;
   xhsScrollBottom?(): Promise<ToolResult>;
   xhsAddTopics?(topics: string[]): Promise<ToolResult>;
   xhsPickCover?(): Promise<ToolResult>;
@@ -69,6 +80,17 @@ export type SkillBrowser = {
   xhsLayoutNext?(input?: {
     template?: string;
     timeoutMs?: number;
+  }): Promise<ToolResult>;
+  feishuPageStage?(): Promise<ToolResult>;
+  feishuEnsureMessenger?(): Promise<ToolResult>;
+  feishuOpenChat?(input: { to?: string }): Promise<ToolResult>;
+  feishuInjectChat?(input: { body?: string }): Promise<ToolResult>;
+  feishuInjectJournal?(input: { title?: string; body?: string }): Promise<ToolResult>;
+  feishuWork?(input?: {
+    kind?: string;
+    to?: string;
+    title?: string;
+    body?: string;
   }): Promise<ToolResult>;
   screenshot?(label?: string): Promise<ToolResult>;
   diagnose?(label?: string): Promise<ToolResult>;
@@ -117,8 +139,6 @@ const BUILTIN_ALIASES: Record<string, string[]> = {
     "发小红书",
     "小红书发布",
     "小红书长文",
-    "发布长文",
-    "写长文发布",
     "xhs",
     "xiaohongshu",
     "rednote",
@@ -126,8 +146,17 @@ const BUILTIN_ALIASES: Record<string, string[]> = {
   "xhs-longform-compose": [
     "小红书草稿",
     "小红书填文",
-    "写长文",
-    "compose长文",
+    "小红书长文草稿",
+  ],
+  "feishu-web-work": [
+    "飞书",
+    "打开飞书",
+    "飞书网页版",
+    "飞书发消息",
+    "飞书写日志",
+    "飞书日报",
+    "feishu",
+    "lark",
   ],
   "小红书发布-256a4a": [
     "小红书发布",
@@ -173,6 +202,8 @@ export function matchSkills(
   const skills = listSkills(configDir).filter((s) => s.enabled !== false);
   const scored: SkillMatch[] = [];
   for (const s of skills) {
+    const platform = String((s as { platform?: string }).platform || "");
+    if (skillConflictsWithQuery(query, s.id, platform)) continue;
     let score = 0;
     const reasons: string[] = [];
     const idL = s.id.toLowerCase();
@@ -182,21 +213,29 @@ export function matchSkills(
       score += 100;
       reasons.push("exact");
     }
-    if (idL.includes(q) || q.includes(idL)) {
+    if (idL.includes(q) || (q.includes(idL) && idL.length >= 4)) {
       score += 40;
       reasons.push("id");
     }
-    if (titleL.includes(q) || q.includes(titleL.slice(0, 8))) {
+    if (titleL.includes(q) || (q.includes(titleL.slice(0, 8)) && titleL.length >= 4)) {
       score += 35;
       reasons.push("title");
     }
-    if (intentL && (intentL.includes(q) || q.includes(intentL.slice(0, 8)))) {
+    if (intentL && (intentL.includes(q) || (q.includes(intentL.slice(0, 8)) && intentL.length >= 4))) {
       score += 25;
       reasons.push("intent");
     }
-    for (const alias of BUILTIN_ALIASES[s.id] || []) {
+    const aliases = [
+      ...(BUILTIN_ALIASES[s.id] || []),
+      ...(((s as { aliases?: string[] }).aliases) || []),
+    ];
+    for (const alias of aliases) {
       const a = alias.toLowerCase();
-      if (q.includes(a) || a.includes(q)) {
+      const hit =
+        q === a ||
+        (a.length >= 2 && q.includes(a)) ||
+        (q.length >= 4 && a.includes(q));
+      if (hit) {
         score += 50;
         reasons.push(`alias:${alias}`);
       }
@@ -211,7 +250,6 @@ export function matchSkills(
     if ((s as { distilled?: boolean }).distilled || (s as { cleanSkillId?: string }).cleanSkillId) {
       score += 5;
     }
-    if (s.id.startsWith("xhs-")) score += 3;
     if (score > 0) {
       scored.push({
         id: s.id,
@@ -740,6 +778,51 @@ async function runOneStep(
     case "cs_scan":
       if (!browser.csScan) return { ok: false, message: "csScan not available" };
       return wrap(browser.csScan());
+    case "cs_one_click_reply":
+      if (!browser.csOneClickReply) return { ok: false, message: "csOneClickReply not available" };
+      return wrap(browser.csOneClickReply());
+    case "feishu_page_stage":
+      if (!browser.feishuPageStage) return { ok: false, message: "feishuPageStage not available" };
+      return wrap(browser.feishuPageStage());
+    case "feishu_ensure_messenger":
+      if (!browser.feishuEnsureMessenger) {
+        return { ok: false, message: "feishuEnsureMessenger not available" };
+      }
+      return wrap(browser.feishuEnsureMessenger());
+    case "feishu_open_chat":
+      if (!browser.feishuOpenChat) return { ok: false, message: "feishuOpenChat not available" };
+      return wrap(
+        browser.feishuOpenChat({
+          to: String(args.to ?? vars.to ?? ""),
+        }),
+      );
+    case "feishu_inject_chat":
+      if (!browser.feishuInjectChat) return { ok: false, message: "feishuInjectChat not available" };
+      return wrap(
+        browser.feishuInjectChat({
+          body: String(args.body ?? vars.body ?? ""),
+        }),
+      );
+    case "feishu_inject_journal":
+      if (!browser.feishuInjectJournal) {
+        return { ok: false, message: "feishuInjectJournal not available" };
+      }
+      return wrap(
+        browser.feishuInjectJournal({
+          title: String(args.title ?? vars.title ?? ""),
+          body: String(args.body ?? vars.body ?? ""),
+        }),
+      );
+    case "feishu_work":
+      if (!browser.feishuWork) return { ok: false, message: "feishuWork not available" };
+      return wrap(
+        browser.feishuWork({
+          kind: args.kind != null ? String(args.kind) : vars.kind,
+          to: args.to != null ? String(args.to) : vars.to,
+          title: args.title != null ? String(args.title) : vars.title,
+          body: args.body != null ? String(args.body) : vars.body,
+        }),
+      );
     case "cs_draft_reply":
     case "cs_draft": {
       if (!browser.csDraftReply) return { ok: false, message: "csDraftReply not available" };
@@ -799,6 +882,23 @@ async function runOneStep(
           includeOptional: args.includeOptional !== false,
           maxAttempts:
             args.maxAttempts != null ? Number(args.maxAttempts) : undefined,
+        }),
+      );
+    }
+    case "pick_calendar":
+    case "set_datetime": {
+      if (!browser.pickCalendar) {
+        return { ok: false, message: "pickCalendar not available" };
+      }
+      return wrap(
+        browser.pickCalendar({
+          triggerRef: args.ref ? String(args.ref) : undefined,
+          triggerText: args.trigger ? String(args.trigger) : args.text ? String(args.text) : undefined,
+          triggerLabel: args.triggerLabel ? String(args.triggerLabel) : undefined,
+          date: args.date != null ? String(args.date) : undefined,
+          hours: args.hours as string | number | undefined,
+          minutes: args.minutes as string | number | undefined,
+          value: args.value ?? args.date,
         }),
       );
     }
