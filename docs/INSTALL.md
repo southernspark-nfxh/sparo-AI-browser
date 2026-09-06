@@ -1,42 +1,33 @@
 # 安装 Sparo
 
-两种方式，选一种即可。都是同一份 Windows 安装包。
+两种装法，选一个就行。
 
-## 1. 官网直接下载
+## 自己装（一分钟）
 
-1. 打开 [southernspark.dev/zh/products/sparo](https://southernspark.dev/zh/products/sparo)
-2. 点 **免费下载**，保存 `Sparo-Setup.exe`
-3. 双击安装，完成后从桌面或开始菜单打开 Sparo
+1. 下载 Windows 安装包（`Sparo-Setup.exe`）：
+   - 官网产品页：https://southernspark.dev/zh/products/sparo （点「免费下载」）
+   - GitHub 直链：https://github.com/southernspark-nfxh/sparo-agent-browser/releases/latest/download/Sparo-Setup.exe
+2. 双击安装包，按提示装完。装到自己的用户目录就好，不用动系统权限。
+3. 从桌面或开始菜单打开 Sparo。
 
-不要让使用者跑 `npm run start`。那是开发调试。
+安装包只有 Setup 一种，没有便携版，也不需要命令行。
 
-## 2. 复制给 AI 自动安装
+## 让 AI 帮你装
 
-把下面整段发给 Cursor / Claude / 任何能下文件并运行本机程序的 Agent：
+把下面这段原样复制给 Cursor / Claude：
 
 ```text
-请帮我安装 Sparo（Windows 人机同窗浏览器）。
-1. 下载最新安装包：
-   https://github.com/southernspark-nfxh/sparo-agent-browser/releases/latest/download/Sparo-Setup.exe
-2. 运行该安装包完成安装（用户目录，不要改系统盘权限）。
+请帮我安装 Sparo，一款装在 Windows 上的 AI 浏览器。
+1. 下载最新安装包：https://github.com/southernspark-nfxh/sparo-agent-browser/releases/latest/download/Sparo-Setup.exe
+2. 运行该安装包完成安装（用户目录即可，不要改系统盘权限）。
 3. 安装结束后从桌面或开始菜单打开 Sparo。不要用 npm run start。
 4. 打开后到设置：可贴自己的模型 Key，或登录体验云端模型。
-校验与发布说明：
-   https://github.com/southernspark-nfxh/sparo-agent-browser/releases/latest
 ```
 
 也可只复制这一行下载地址：
 
 ```text
 https://github.com/southernspark-nfxh/sparo-agent-browser/releases/latest/download/Sparo-Setup.exe
-```
-
-PowerShell 一键下载（仍要你双击安装包，Agent 不应静默改系统）：
-
-```powershell
-$out = Join-Path $env:USERPROFILE "Downloads\Sparo-Setup.exe"
-Invoke-WebRequest -Uri "https://github.com/southernspark-nfxh/sparo-agent-browser/releases/latest/download/Sparo-Setup.exe" -OutFile $out
-Start-Process $out
 ```
 
 ## 装好之后
@@ -48,7 +39,11 @@ Start-Process $out
 
 开发者从源码跑：本仓库 `npm install` 后 `npm run start`。打包：`npm run dist`，产物在 `release\`。
 
-## 校验（0.1.15）
+## 校验
+
+想确认下载的是原版：SHA256 校验和随每次 GitHub Release 公布：
+
+https://github.com/southernspark-nfxh/sparo-agent-browser/releases/latest
 
 | 文件 | SHA256 |
 |---|---|

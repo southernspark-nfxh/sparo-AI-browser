@@ -1,17 +1,23 @@
 # Sparo
 
-**会动手的 AI 浏览器。** 打开网页，AI 帮你填、帮你回、帮你发；发送前你确认。
+网页上的活——填表、回消息、发内容——可以有个 AI 替你干。
 
-聊天 AI 只能告诉你怎么填。Sparo 在你看着的那一页上动手——登录还是你的，窗口还是你的。免费永远自备 Key；云端模型可选，密钥不进电脑。
+Sparo 是装在你 Windows 上的浏览器。它就在你正看着的那一页上干活：草稿写进输入框，提交前停下来，等你点发送。登录和密钥都留在这台电脑。免费可以贴自己的模型 Key；想用云端模型，登录就行。
 
-## 安装（两种）
+## 安装（两种，选一个）
 
-| 方式 | 给谁 | 怎么做 |
-|---|---|---|
-| **官网直接下载** | 人 | 打开 [产品页](https://southernspark.dev/zh/products/sparo) 点「免费下载」，双击 `Sparo-Setup.exe` |
-| **复制给 AI** | Cursor / Claude 等 | 把 [docs/INSTALL.md](./docs/INSTALL.md) 里的安装段贴给 Agent，让它下载并跑安装包 |
+**自己装：** 打开 [官网产品页](https://southernspark.dev/zh/products/sparo)，点「免费下载」，双击 `Sparo-Setup.exe`，装完从桌面打开。
 
-GitHub 最新安装包：
+**让 AI 装：** 把下面这段原样复制给你的 Cursor / Claude，它替你下载、安装：
+
+```text
+请帮我安装 Sparo，一款装在 Windows 上的 AI 浏览器。
+1. 下载最新安装包：https://github.com/southernspark-nfxh/sparo-agent-browser/releases/latest/download/Sparo-Setup.exe
+2. 运行安装包完成安装（用户目录即可，不要改系统盘权限）。
+3. 装完从桌面或开始菜单打开 Sparo，不要用 npm run start。
+```
+
+最新安装包直链：
 
 ```
 https://github.com/southernspark-nfxh/sparo-agent-browser/releases/latest/download/Sparo-Setup.exe
@@ -19,14 +25,15 @@ https://github.com/southernspark-nfxh/sparo-agent-browser/releases/latest/downlo
 
 完整步骤：[docs/INSTALL.md](./docs/INSTALL.md)
 
-## 人怎么用
+## 装好之后
 
-1. 双击安装包（开发可 `npm run start`）
-2. 侧栏 **设置** 贴自己的模型 Key，或登录体验云端模型（见 [docs/API-KEYS.md](./docs/API-KEYS.md)）
-3. 打开网页，点 **总结 / 填表 / 回复 / 发布**，或直接说话。侧栏可切换中 / 英 / 日 / 韩 / 西 / 葡 / 德 / 法 / 意。
+1. 打开 Sparo，侧栏「设置」里贴上自己的模型 Key，或登录用云端模型（见 [docs/API-KEYS.md](./docs/API-KEYS.md)）
+2. 随便开个网页，点「总结 / 填表 / 回复 / 发布」，或者直接用说的
+3. 侧栏支持中文、English、日本語、한국어、Español、Português、Deutsch、Français、Italiano
 
-回复只填进输入框，发帖在提交前暂停。发送请你自己点。  
-侧栏也可以一句话说完出差、订票、比价、调研，打开结果页后出手册；付钱仍是你点。
+分寸是这样的：AI 写的回复只进输入框；要发布的内容，提交前停下等你确认。付钱、发送，永远你自己点。
+
+更大的活也能一句话交给它——安排出差、订票比价、查资料做调研。它会自己翻页面，把结果整理成一份手册给你。
 
 ## 让 Agent 控制这扇窗
 

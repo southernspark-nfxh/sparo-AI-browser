@@ -1,7 +1,7 @@
 # Sparo
 
-> **Sparo** — The AI browser that acts. You confirm send.
-> **Sparo 人机同窗浏览器** — 打开网页，AI 帮你填、帮你回、帮你发。发送前你确认。
+> **Sparo** — an AI browser for Windows. It works on the page you're looking at: summarizes, fills forms, drafts replies and posts. Nothing sends until you confirm.
+> **Sparo** — 装在 Windows 上的 AI 浏览器。AI 在你正在看的网页上总结、填表、起草回复和帖子；发送前由你确认。
 
 Local Chromium window + MCP. Humans stay in control.
 
