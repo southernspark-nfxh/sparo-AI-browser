@@ -6,7 +6,7 @@
 
 侧栏去掉「教一遍」录制和「已保存的操作」列表。内置发帖/填表/回复仍可用；不再从对话自动记成妙招。设置抽屉重排：模型置顶，已配置则收起表单；工作偏好/高级折叠；内存改开关；去掉重复入口和说明书。
 
-Windows 安装包：`Sparo-Setup.exe` / `Sparo-Portable.exe`。人从[官网产品页](https://southernspark.dev/zh/products/sparo)下载；AI 用 GitHub Release 最新地址。SHA256 见 [docs/INSTALL.md](./docs/INSTALL.md)。
+Windows 安装包：`Sparo-Setup.exe`。人从[官网产品页](https://southernspark.dev/zh/products/sparo)下载；AI 用 GitHub Release 最新地址。不提供便携版。SHA256 见 [docs/INSTALL.md](./docs/INSTALL.md)。
 
 ## [商店版 0.1.14] — 2026-09-04
 

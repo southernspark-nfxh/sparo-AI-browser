@@ -7,11 +7,11 @@ Sparo 是「手」。你的 Agent 是「脑」。操纵的是用户正在看的�
 
 ## Setup · 配置
 
-**给使用者：** Sparo 开着 → 点侧栏 **复制给 Agent** → 把剪贴板发给 Agent。不要让用户去翻端口和 Token 文件。安装包和便携版复制的都是真实程序位置。
+**给使用者：** Sparo 开着 → 点侧栏 **复制给 Agent** → 把剪贴板发给 Agent。不要让用户去翻端口和 Token 文件。安装包复制的是真实程序位置。
 
 **给开发 / 已会配 MCP 的 Agent：**
 
-1. 打开商店版 Sparo（安装包、便携版，或本目录 `npm run start`）  
+1. 打开商店版 Sparo（安装包，或本目录 `npm run start`）  
 2. 连接信息在 `%APPDATA%\sparo-store\mcp-auth.json`（端口 **3921**，不是原版 3920）  
 3. 用 `endpoint` + Bearer `token`
 

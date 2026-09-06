@@ -4,7 +4,7 @@
 
 ## 连接
 
-1. 商店版 Sparo 保持开着（安装包 / 便携版 / `npm run start`）
+1. 商店版 Sparo 保持开着（安装包 / `npm run start`）
 2. 优先：用户点侧栏 **复制给 Agent**，把剪贴板贴给你
 3. 或读 `%APPDATA%/sparo-store/mcp-auth.json` → MCP `endpoint` + Bearer `token`（端口 **3921**）
 4. 先调 `sparo_info` 看 fast_path 与 skills

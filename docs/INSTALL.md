@@ -8,8 +8,6 @@
 2. 点 **免费下载**，保存 `Sparo-Setup.exe`
 3. 双击安装，完成后从桌面或开始菜单打开 Sparo
 
-便携版：同一页也可下 `Sparo-Portable.exe`，不用安装。
-
 不要让使用者跑 `npm run start`。那是开发调试。
 
 ## 2. 复制给 AI 自动安装
@@ -55,4 +53,3 @@ Start-Process $out
 | 文件 | SHA256 |
 |---|---|
 | `Sparo-Setup.exe` | `3C29E2580D02B970DEB0886129DAE032B420B6EE33C1A69D36824B6678A7FC61` |
-| `Sparo-Portable.exe` | `BAA506C5C3C664E16F9D17C290E3413087900DA875B30E64553EDE5D25C077E6` |

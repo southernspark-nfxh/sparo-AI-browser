@@ -17,6 +17,5 @@ Jobs: Summarize · Fill form · Reply · Publish. Button: **Let it act**.
 ## Files
 
 - `Sparo-Setup.exe` — installer  
-- `Sparo-Portable.exe` — portable  
 
 Windows 10 (1809+) / 11, 64-bit.

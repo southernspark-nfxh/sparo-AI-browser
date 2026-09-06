@@ -23,7 +23,7 @@ API Key：[docs/API-KEYS.md](./docs/API-KEYS.md)
 
 ## 用户怎么打开
 
-命令行不是给用户的。用户双击 `Sparo-Setup.exe`，然后从桌面或开始菜单点 Sparo。也可以双击 `Sparo-Portable.exe`。
+命令行不是给用户的。用户双击 `Sparo-Setup.exe`，然后从桌面或开始菜单点 Sparo。
 
 开发者打包：`npm run dist`，产物在 `release\`。
 

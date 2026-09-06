@@ -21,7 +21,7 @@ https://github.com/southernspark-nfxh/sparo-agent-browser/releases/latest/downlo
 
 ## 人怎么用
 
-1. 双击安装包或便携版（开发可 `npm run start`）
+1. 双击安装包（开发可 `npm run start`）
 2. 侧栏 **设置** 贴自己的模型 Key，或登录体验云端模型（见 [docs/API-KEYS.md](./docs/API-KEYS.md)）
 3. 打开网页，点 **总结 / 填表 / 回复 / 发布**，或直接说话。侧栏可切换中 / 英 / 日 / 韩 / 西 / 葡 / 德 / 法 / 意。
 
@@ -53,4 +53,4 @@ npm install   # 仅首次
 npm run start
 ```
 
-打包 Windows 安装包与便携版：`npm run dist`，产物在 `release\`。
+打包 Windows 安装包：`npm run dist`，产物在 `release\`。

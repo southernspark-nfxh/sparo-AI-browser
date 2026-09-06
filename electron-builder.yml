@@ -23,7 +23,6 @@ win:
   signAndEditExecutable: false
   target:
     - nsis
-    - portable
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
@@ -41,6 +40,3 @@ nsis:
   installerLanguages:
     - zh_CN
     - en_US
-portable:
-  artifactName: Sparo-Portable.exe
-  requestExecutionLevel: user
