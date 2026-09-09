@@ -1,7 +1,8 @@
 # Connect an AI agent to Sparo · 连接 AI Agent（商店版）
 
 **Sparo** — *会动手的 AI 浏览器。发送前你确认。*  
-Sparo 是「手」。你的 Agent 是「脑」。操纵的是用户正在看的那一扇窗。
+Sparo 是「手」。你的 Agent 是「脑」。操纵的是用户正在看的那一扇窗。  
+**主线在本目录。** 原版 `D:\download\Sparo` 只同步能力，不要把云订阅搬过去。
 
 卖点与痛点：[PRODUCT.md](./PRODUCT.md) · 密钥：[API-KEYS.md](./API-KEYS.md) · 云订阅：[CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md)
 
