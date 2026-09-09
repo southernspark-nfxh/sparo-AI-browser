@@ -20,6 +20,8 @@ Tagline: *会动手的 AI 浏览器 — 发送前你确认。*
 | [CHANGELOG.md](./CHANGELOG.md) | 对外变更（现 0.1.16） |
 | [docs/PRODUCT.md](./docs/PRODUCT.md) | 商店定位，不是任务书 |
 
+**此后主线就在本目录改。** 原版 `D:\download\Sparo`（3920 / `%APPDATA%\sparo`）只同步侧栏能力，不要把云订阅搬过去。
+
 数据在 `%APPDATA%\sparo-store`。MCP：`http://127.0.0.1:3921`。  
 云端模型走独立代理服务（本仓库不含密钥）。**不要**把云端 Key 写进客户端。  
 不要改 `docs/listings/`（提审前另做一轮）。主进程不热更。安装包不会自动更新。
