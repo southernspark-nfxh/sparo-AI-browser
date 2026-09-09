@@ -25,7 +25,12 @@ import type {
 } from "../shared/types.js";
 import { parseLocalIntent, type ChatAction } from "./agent/stub.js";
 import { planUserGoal, shouldAskPlanner } from "./agent/planner.js";
-import { missionProgress, missionSynthesizePrompt, type Mission } from "./agent/mission.js";
+import {
+  missionProgress,
+  missionSynthesizePrompt,
+  shouldSkipHeavyPage,
+  type Mission,
+} from "./agent/mission.js";
 import {
   chromeUserAgent,
   oauthPopupWindowOptions,
@@ -48,10 +53,13 @@ import {
 import {
   ctripHotelListUrl,
   flightFallbackUrl,
+  trainFallbackUrl,
+  trainStationCode,
   lifeProgress,
   resolveCtripHotelCity,
   isFlightResultUrl,
   shouldFallbackFlight,
+  shouldFallbackTrain,
   travelListState,
   travelReadPrompt,
   travelResultUrl,
@@ -78,6 +86,24 @@ import {
 } from "./history.js";
 import { uniqueDownloadPath } from "./downloads.js";
 import { loadChatMemory, saveChatMemory, clearChatMemory, type ChatTurn } from "./profile/chat-memory.js";
+import {
+  actionKey,
+  detectFailure,
+  isCaptchaWall,
+  isLoginWall,
+  pageFinger,
+} from "./learning/detector.js";
+import { parseAnswer, questionFor } from "./learning/help.js";
+import { planFromLessons } from "./learning/apply.js";
+import {
+  deleteLesson,
+  findLessonsForHost,
+  lessonPublic,
+  loadLessons,
+  recordLessonApply,
+  upsertLesson,
+} from "./learning/store.js";
+import type { HelpAsk, ObservedAction } from "./learning/types.js";
 import {
   flightHintFromText,
   formatFlightLinks,
@@ -119,7 +145,7 @@ import {
 import { tx } from "../shared/i18n.js";
 import { storeConfigDir } from "./paths.js";
 import {
-  loadSettings,
+  persistLocaleIfMissing,
   saveSettings,
   settingsPublicView,
   type SparkSettings,
@@ -130,11 +156,13 @@ import {
   clearTokens,
   fetchMe,
   loadTokens,
+  describeCloudError,
   sendLoginCode,
   verifyLogin,
   type QuotaSnap,
 } from "./cloud/auth.js";
-import { assertAndStartTask, settleCloudTask } from "./cloud/quota.js";
+import { assertAndStartTask, createCloudCheckout, fetchCloudPlans, settleCloudTask } from "./cloud/quota.js";
+import { isCloudPlanId, type CloudPlanPublic } from "./cloud/pricing.js";
 import { cloudFetch, hasCloudSession } from "./cloud/session.js";
 import {
   dxmGuideMessage,
@@ -176,6 +204,7 @@ import {
   FOCUS_SCRIPT,
   LIST_PORTALS_SCRIPT,
   PAGE_PROBE_SCRIPT,
+  FILL_12306_SCRIPT,
   PAGE_TEXT_SCRIPT,
   RECORD_START_SCRIPT,
   RECORD_STOP_SCRIPT,
@@ -352,6 +381,7 @@ export class SparkBrowser {
   private llmRuntime: "byok" | "cloud" = "byok";
   private cloudTaskId: string | undefined;
   private cloudQuota: QuotaSnap | null = null;
+  private cloudPlans: CloudPlanPublic[] = [];
   private lastCloudRefuse = "";
   private memoryTimer: ReturnType<typeof setInterval> | null = null;
   private holeBounds: { x: number; y: number; width: number; height: number } | null = null;
@@ -360,6 +390,9 @@ export class SparkBrowser {
   private lastClosed: { url: string; envId?: string } | null = null;
   private lastDownloadPath = "";
   private downloadSessions = new WeakSet<Electron.Session>();
+  private helpAsk: HelpAsk | null = null;
+  private recentLearned: ObservedAction[] = [];
+  private learnedTold = new Set<string>();
 
   /** Active page view — keeps existing tool code working. */
   private getActiveTab(): TabInfo | null {
@@ -433,9 +466,11 @@ export class SparkBrowser {
     this.bookmarks = loadSavedBookmarks(this.configDir());
     seedBundledSkills(this.configDir());
     this.skillsCache = listSkills(this.configDir());
-    this.settings = loadSettings(this.configDir(), app.getLocale());
+    this.settings = persistLocaleIfMissing(this.configDir(), app.getLocale());
     this.rebuildDeepSeek();
-    void this.refreshCloudQuota().then(() => this.pushSidebarState());
+    void this.refreshCloudQuota()
+      .then(() => this.refreshCloudPlans())
+      .then(() => this.pushSidebarState());
     this.chatLog = loadChatMemory(this.configDir());
     this.window.on("resize", () => this.layout());
     this.window.on("maximize", () => this.layout());
@@ -1430,6 +1465,13 @@ export class SparkBrowser {
       this.setPaused(Boolean(paused));
       return { ok: true, paused: this.paused };
     });
+    handle("spark:learning-answer", async (_e, text: string) => this.answerLearning(String(text || "")));
+    handle("spark:learning-skip", async () => this.skipLearning());
+    handle("spark:delete-lesson", async (_e, id: string) => {
+      const ok = deleteLesson(this.configDir(), String(id || ""));
+      this.pushSidebarState();
+      return { ok };
+    });
     handle("spark:get-status", async () => this.getSidebarPayload());
     handle("spark:resolve-approval", async (_e, id: string, approved: boolean) =>
       this.resolveApproval(String(id), Boolean(approved)),
@@ -1518,7 +1560,9 @@ export class SparkBrowser {
       }
     });
     handle("spark:save-settings", async (_e, patch: Partial<SparkSettings>) => {
-      this.settings = saveSettings(this.configDir(), patch || {});
+      const next = { ...(patch || {}) };
+      if (next.locale === undefined) next.locale = this.settings.locale;
+      this.settings = saveSettings(this.configDir(), next, app.getLocale());
       this.rebuildDeepSeek();
       this.pushSidebarState();
       const hasKey = Boolean((this.settings.apiKey || this.settings.deepseekApiKey || "").trim());
@@ -1542,10 +1586,7 @@ export class SparkBrowser {
         const message = await sendLoginCode(String(email || ""));
         return { ok: true, message };
       } catch (error) {
-        return {
-          ok: false,
-          message: error instanceof Error ? error.message : String(error),
-        };
+        return { ok: false, message: this.cloudErrorText(error) };
       }
     });
     handle("spark:cloud-verify", async (_e, email: string, code: string) => {
@@ -1555,17 +1596,17 @@ export class SparkBrowser {
           String(email || ""),
           String(code || ""),
         );
-        if (this.settings.llmMode !== "cloud") {
-          this.settings = saveSettings(this.configDir(), { llmMode: "cloud" });
-        }
+        this.settings = saveSettings(
+          this.configDir(),
+          { llmMode: "cloud", onboardingDismissed: true, locale: this.settings.locale },
+          app.getLocale(),
+        );
         this.rebuildDeepSeek();
+        await this.refreshCloudPlans();
         this.pushSidebarState();
         return { ok: true, message: tx(this.settings.locale, "toast.cloudIn"), cloud: this.cloudPublic() };
       } catch (error) {
-        return {
-          ok: false,
-          message: error instanceof Error ? error.message : String(error),
-        };
+        return { ok: false, message: this.cloudErrorText(error) };
       }
     });
     handle("spark:cloud-logout", async () => {
@@ -1575,12 +1616,37 @@ export class SparkBrowser {
       this.pushSidebarState();
       return { ok: true, message: tx(this.settings.locale, "toast.cloudOut"), cloud: this.cloudPublic() };
     });
-    handle("spark:cloud-open-account", async () => {
-      await shell.openExternal(accountUrl());
+    handle("spark:cloud-open-account", async (_e, plan?: string) => {
+      const id = plan && isCloudPlanId(String(plan)) ? String(plan) : undefined;
+      await shell.openExternal(accountUrl(this.settings.locale, id));
       return { ok: true };
+    });
+    handle("spark:cloud-checkout", async (_e, plan?: string) => {
+      const id = String(plan || "").trim();
+      if (!isCloudPlanId(id)) {
+        return { ok: false, message: tx(this.settings.locale, "cloud.planUnknown") };
+      }
+      if (isMsftChannel()) {
+        await shell.openExternal(accountUrl(this.settings.locale, id));
+        return { ok: true };
+      }
+      if (!hasCloudSession(this.configDir())) {
+        await shell.openExternal(accountUrl(this.settings.locale, id));
+        return { ok: true, message: tx(this.settings.locale, "toast.cloudNeedLogin") };
+      }
+      try {
+        const out = await createCloudCheckout(this.configDir(), id);
+        const url = out.payUrl || accountUrl(this.settings.locale, id);
+        await shell.openExternal(url);
+        return { ok: true };
+      } catch {
+        await shell.openExternal(accountUrl(this.settings.locale, id));
+        return { ok: true };
+      }
     });
     handle("spark:cloud-refresh", async () => {
       await this.refreshCloudQuota();
+      await this.refreshCloudPlans();
       this.pushSidebarState();
       return { ok: true, cloud: this.cloudPublic() };
     });
@@ -1891,6 +1957,14 @@ export class SparkBrowser {
         workflow: "",
       },
       locale: this.settings.locale,
+      help: this.helpAsk
+        ? {
+            question: this.helpAsk.question,
+            kind: this.helpAsk.kind,
+            options: this.helpAsk.options || [],
+          }
+        : null,
+      lessons: loadLessons(this.configDir()).slice(0, 40).map(lessonPublic),
     };
   }
 
@@ -2186,6 +2260,115 @@ export class SparkBrowser {
     return { ok: false, message: "Agent is paused. Human has taken over." };
   }
 
+  async watchPageTool(
+    name: string,
+    args: Record<string, unknown>,
+    run: () => Promise<ToolResult>,
+  ): Promise<ToolResult> {
+    if (this.helpAsk) {
+      // 多站任务不能因为上一站登录墙就冻死。记下「先不管」，问题仍留在侧栏给人改。
+      this.skipLearning();
+    }
+    const before = pageFinger(this.getUrl(), this.getTitle());
+    const result = await run();
+    try {
+      this.observePageAction(name, args, before);
+    } catch (error) {
+      console.error("[learn] observe failed", error);
+    }
+    return result;
+  }
+
+  private observePageAction(
+    name: string,
+    args: Record<string, unknown>,
+    before: ReturnType<typeof pageFinger>,
+  ): void {
+    if (this.helpAsk) return;
+    const key = actionKey(name, args);
+    if (!key) return;
+    const after = pageFinger(this.getUrl(), this.getTitle());
+    this.recentLearned.push({ key, before, after });
+    if (this.recentLearned.length > 12) this.recentLearned = this.recentLearned.slice(-12);
+    const hit = detectFailure(this.recentLearned);
+    if (!hit) return;
+    this.openHelpAsk(hit);
+  }
+
+  private openHelpAsk(hit: ReturnType<typeof detectFailure>): void {
+    if (!hit || this.helpAsk) return;
+    const zh = this.settings.locale.startsWith("zh");
+    this.helpAsk = questionFor(hit, zh);
+    this.chatLog.push({ role: "assistant", text: this.helpAsk.question });
+    this.pushSidebarState();
+  }
+
+  private async applyHostLessons(): Promise<boolean> {
+    const lessons = findLessonsForHost(this.configDir(), this.getUrl());
+    if (!lessons.length) return false;
+    const plan = planFromLessons(lessons);
+    const zh = this.settings.locale.startsWith("zh");
+    if (plan.dismiss) {
+      await this.dismissOverlays().catch(() => undefined);
+    }
+    const here = pageFinger(this.getUrl(), this.getTitle());
+    const wall = isLoginWall(here) || isCaptchaWall(here);
+    const host = here.host;
+    if (!this.learnedTold.has(host)) {
+      const note = plan.notes[0] || (zh ? "用过这站的经验" : "Using a saved tip for this site");
+      this.chatLog.push({
+        role: "assistant",
+        text: zh ? `上次这站：${note}` : `Last time here: ${note}`,
+      });
+      this.learnedTold.add(host);
+    }
+    for (const l of lessons) recordLessonApply(this.configDir(), l.id);
+    if (plan.pause && wall) {
+      this.setPaused(true);
+      this.pushSidebarState();
+      return true;
+    }
+    this.pushSidebarState();
+    return false;
+  }
+
+  answerLearning(raw: string): ToolResult {
+    const ask = this.helpAsk;
+    if (!ask) return { ok: false, message: tx(this.settings.locale, "learn.none") };
+    const parsed = parseAnswer(ask, raw);
+    this.helpAsk = null;
+    this.recentLearned = [];
+    const zh = this.settings.locale.startsWith("zh");
+    if (parsed.skip || !parsed.trigger || !parsed.advice) {
+      this.setPaused(false);
+      const text = zh ? "好，先继续。" : "Okay, continuing.";
+      this.chatLog.push({ role: "assistant", text });
+      this.pushSidebarState();
+      return { ok: true, message: text };
+    }
+    const lesson = upsertLesson(this.configDir(), {
+      host: ask.failure.host || this.getUrl(),
+      trigger: parsed.trigger,
+      advice: parsed.advice,
+      note: parsed.note,
+    });
+    if (parsed.advice === "dismiss_overlay") {
+      void this.dismissOverlays();
+    }
+    const keepPaused = parsed.advice === "pause" || parsed.advice === "wait_human";
+    this.setPaused(keepPaused);
+    const text = zh
+      ? `记下了：${lesson.host} · ${lesson.note || lesson.trigger}`
+      : `Saved: ${lesson.host} · ${lesson.note || lesson.trigger}`;
+    this.chatLog.push({ role: "assistant", text });
+    this.pushSidebarState();
+    return { ok: true, message: text };
+  }
+
+  skipLearning(): ToolResult {
+    return this.answerLearning("先不管");
+  }
+
   async requestApproval(input: {
     action: string;
     reason: string;
@@ -2443,19 +2626,31 @@ export class SparkBrowser {
   private cloudPublic() {
     const tokens = loadTokens(this.configDir());
     const q = this.cloudQuota;
+    const hidePayCopy = isMsftChannel();
     return {
       loggedIn: Boolean(tokens?.access),
       email: q?.email || tokens?.email || "",
       canStart: Boolean(q?.canStart),
       points: q?.points ?? 0,
+      bonus: q?.bonus ?? 0,
       approxTasks: q?.approxTasks ?? 0,
-      trial: q?.trial || { used: 0, left: 0, cap: 3 },
+      trial: q?.trial || { used: 0, left: 0, cap: 0 },
       subscription: q?.subscription || { active: false, plan: null },
       llmMode: this.settings.llmMode,
       runtime: this.llmRuntime,
-      hidePayCopy: isMsftChannel(),
-      accountUrl: accountUrl(),
+      hidePayCopy,
+      showPlans: !hidePayCopy,
+      plans: hidePayCopy ? [] : this.cloudPlans,
+      accountUrl: accountUrl(this.settings.locale),
     };
+  }
+
+  private async refreshCloudPlans(): Promise<void> {
+    if (isMsftChannel()) {
+      this.cloudPlans = [];
+      return;
+    }
+    this.cloudPlans = await fetchCloudPlans();
   }
 
   private async refreshCloudQuota(): Promise<void> {
@@ -2614,7 +2809,9 @@ export class SparkBrowser {
   ): Promise<ToolResult> {
     switch (name) {
       case "navigate":
-        return this.navigate(String(args.url || ""), { asHuman: true });
+        return this.watchPageTool("navigate", args, () =>
+          this.navigate(String(args.url || ""), { asHuman: true }),
+        );
       case "get_url":
         return { ok: true, message: this.getUrl(), data: { url: this.getUrl() } };
       case "get_title":
@@ -2638,17 +2835,21 @@ export class SparkBrowser {
           args.selector ? String(args.selector) : undefined,
         );
       case "click":
-        return this.click({
-          selector: args.selector ? String(args.selector) : undefined,
-          ref: args.ref ? String(args.ref) : undefined,
-        });
-      case "fill":
-        return this.fill(
-          {
+        return this.watchPageTool("click", args, () =>
+          this.click({
             selector: args.selector ? String(args.selector) : undefined,
             ref: args.ref ? String(args.ref) : undefined,
-          },
-          String(args.value ?? ""),
+          }),
+        );
+      case "fill":
+        return this.watchPageTool("fill", args, () =>
+          this.fill(
+            {
+              selector: args.selector ? String(args.selector) : undefined,
+              ref: args.ref ? String(args.ref) : undefined,
+            },
+            String(args.value ?? ""),
+          ),
         );
       case "fill_suggest":
         return this.fillSuggest(String(args.value ?? args.query ?? ""), {
@@ -2670,10 +2871,12 @@ export class SparkBrowser {
       case "qa_check":
         return this.qaCheck();
       case "click_text":
-        return this.clickText(String(args.text || ""), {
-          withinPortal: Boolean(args.withinPortal),
-          caret: Boolean(args.caret),
-        });
+        return this.watchPageTool("click_text", args, () =>
+          this.clickText(String(args.text || ""), {
+            withinPortal: Boolean(args.withinPortal),
+            caret: Boolean(args.caret),
+          }),
+        );
       case "menu_click":
         return this.menuClick(String(args.trigger || ""), String(args.item || ""));
       case "dismiss_overlays":
@@ -2770,7 +2973,29 @@ export class SparkBrowser {
     dryRun?: boolean;
   }): Promise<ToolResult> {
     this.skillsCache = listSkills(this.configDir());
-    return runSkill(this, this.configDir(), input);
+    const r = await runSkill(this, this.configDir(), input);
+    const readings = (r.data as { readings?: Array<{ label?: string; text?: string; url?: string }> } | undefined)
+      ?.readings;
+    if (this.deepseek && Array.isArray(readings) && readings.length) {
+      const summary = await this.withTimeout(
+        this.deepseek.completePlain(
+          [
+            "用户要一份能执行的结果。只根据下面各步正文，没有的价格、店名、岗位写成未知。",
+            "登录墙如实说，仍给出已打开的结果页链接。付钱、投递必须写「请你在窗口里点」。",
+            `用户目标：${input.query || input.id || ""}`,
+            ...readings.map(
+              (x, i) => `### ${i + 1}. ${x.label || "读页"}\n${x.url || ""}\n${String(x.text || "").slice(0, 1600)}`,
+            ),
+          ].join("\n"),
+        ),
+        20000,
+        "",
+      );
+      if (String(summary).trim()) {
+        return { ...r, message: String(summary).trim() };
+      }
+    }
+    return r;
   }
 
   sparoInfoTool(): ToolResult {
@@ -2968,6 +3193,16 @@ export class SparkBrowser {
   private async handleChatJob(text: string): Promise<ToolResult> {
     this.chatLog.push({ role: "user", text });
     this.pushSidebarState();
+    if (this.helpAsk) {
+      const t = text.trim();
+      const looksAnswer =
+        isContinueHint(t) ||
+        t.length <= 12 ||
+        /^(是|否|有弹窗|要换入口|先登录|先不管|我过完了|yes|no|skip|overlay)/i.test(t);
+      if (looksAnswer) return this.answerLearning(t);
+      this.answerLearning("先不管");
+    }
+    this.recentLearned = [];
     let action = parseLocalIntent(text, this.settings.locale);
     if (
       action.type === "llm" &&
@@ -3006,6 +3241,12 @@ export class SparkBrowser {
     }
     if (this.paused && action.type !== "pause") {
       this.setPaused(false);
+    }
+    if (await this.applyHostLessons()) {
+      const msg = this.settings.locale.startsWith("zh")
+        ? "这站要你先处理登录或验证，处理好后说「继续」。"
+        : "This site needs you first. Finish login or the check, then say continue.";
+      return { ok: true, message: msg };
     }
     let reply = "";
     let replyDoc: ChatTurn["doc"];
@@ -3242,6 +3483,14 @@ export class SparkBrowser {
     }
   }
 
+  private cloudErrorText(error: unknown): string {
+    const kind = describeCloudError(error);
+    if (kind === "network") return this.L("cloud.proxyDown");
+    if (kind === "email") return this.L("cloud.emailInvalid");
+    if (kind === "code") return this.L("cloud.codeNeed");
+    return error instanceof Error ? error.message : String(error);
+  }
+
   private L(key: string, vars?: Record<string, string | number>): string {
     return tx(this.settings.locale, key, vars);
   }
@@ -3380,15 +3629,14 @@ export class SparkBrowser {
 
   private async runMission(mission: Mission, userAsk: string): Promise<string> {
     const findings: Array<{ label: string; url: string; text: string }> = [];
-    const heavyHost = /taobao\.com|tmall\.com|jd\.com|dianping\.com|maoyan\.com/;
-    for (const step of mission.steps.slice(0, 4)) {
+    for (const step of mission.steps.slice(0, 8)) {
       this.chatLog.push({ role: "assistant", text: `正在查：${step.label}` });
       this.pushSidebarState();
-      if (heavyHost.test(step.url)) {
+      if (shouldSkipHeavyPage(step.url)) {
         findings.push({
           label: step.label,
           url: step.url,
-          text: "商城和点评页会卡住窗口，只记下链接，不打开正文。",
+          text: "这是商城或点评首页，只记下链接，改走检索结果页。",
         });
         continue;
       }
@@ -3402,20 +3650,28 @@ export class SparkBrowser {
         continue;
       }
       const landed = this.getUrl() || step.url;
-      if (heavyHost.test(landed)) {
-        try {
-          this.pageView.webContents.stop();
-        } catch {
-          /* 停不住也别继续读 */
-        }
+      if (shouldSkipHeavyPage(landed)) {
         findings.push({
           label: step.label,
           url: step.url,
-          text: "落到了会卡死的商城页，改回检索链接，不读这一页。",
+          text: "落到了商城首页，改回检索链接，不读这一页。",
         });
         continue;
       }
-      if (mission.kind !== "compare_shop" && !/baidu\.com\/s/.test(landed)) {
+      if (/12306\.cn\/otn\/leftTicket/.test(landed) || /12306\.cn\/otn\/leftTicket/.test(step.url)) {
+        const pair = step.label.match(/([\u4e00-\u9fff]{2,8})\s*→\s*([\u4e00-\u9fff]{2,8})/);
+        const date = step.url.match(/date=(\d{4}-\d{2}-\d{2})/)?.[1] || "";
+        if (pair && date) {
+          await this.fill12306Form({
+            kind: "train",
+            site: "12306",
+            from: pair[1].replace(/出差/g, ""),
+            to: pair[2].replace(/出差/g, ""),
+            date,
+          });
+        }
+      }
+      if (!/baidu\.com\/s/.test(landed)) {
         await sleep(800);
         try {
           await this.scrollTravelList();
@@ -3429,6 +3685,14 @@ export class SparkBrowser {
         data: { text: "" },
       });
       const body = String(page.data?.text || "").trim();
+      if (/请登录|登录后|验证码|滑块|captcha|sign in to continue/i.test(body) && body.length < 800) {
+        findings.push({
+          label: step.label,
+          url: landed,
+          text: `这一页要登录或过验证，记下链接，去下一站。\n${landed}\n${body.slice(0, 400)}`,
+        });
+        continue;
+      }
       findings.push({
         label: step.label,
         url: landed,
@@ -3545,6 +3809,23 @@ export class SparkBrowser {
     }
   }
 
+  private async fill12306Form(q: Extract<TravelQuery, { kind: "train" }>): Promise<void> {
+    const fromCode = trainStationCode(q.from);
+    const toCode = trainStationCode(q.to);
+    if (!fromCode || !toCode) return;
+    const fromName = q.from.replace(/出差.*$/, "").slice(0, 8);
+    const toName = q.to.replace(/出差.*$/, "").slice(0, 8);
+    try {
+      await this.pageView.webContents.executeJavaScript(
+        `(${FILL_12306_SCRIPT})(${JSON.stringify(fromName)},${JSON.stringify(fromCode)},${JSON.stringify(toName)},${JSON.stringify(toCode)},${JSON.stringify(q.date)})`,
+        true,
+      );
+      await sleep(800);
+    } catch {
+      /* 填不上就读当前页 */
+    }
+  }
+
   private async waitTravelText(q: TravelQuery, ms = 6000): Promise<string> {
     const started = Date.now();
     let last = "";
@@ -3577,13 +3858,27 @@ export class SparkBrowser {
         if (!resolved) {
           return `找不到「${q.city}」对应的携程城市，请换个地名再试。`;
         }
-        url = ctripHotelListUrl(resolved.cityId, q.checkin, q.checkout);
+        url = ctripHotelListUrl(resolved.cityId, q.checkin, q.checkout, {
+          keyword: q.area,
+          priceMin: q.priceMin,
+          priceMax: q.priceMax,
+        });
       }
       if (!url) {
         return "还不知道怎么打开这一页，请换个站点名再试。";
       }
       const nav = await this.navigate(url, { asHuman: true });
-      if (!nav.ok) return nav.message;
+      if (!nav.ok) {
+        if (q.kind === "hotel") {
+          const retry = await this.navigate(url, { asHuman: true });
+          if (!retry.ok) return retry.message;
+        } else {
+          return nav.message;
+        }
+      }
+      if (q.kind === "train" && q.site === "12306") {
+        await this.fill12306Form(q);
+      }
       await sleep(opts.raw ? 800 : 1400);
       let text = await this.waitTravelText(q, opts.raw ? 5000 : 7000);
       let promptQ = q;
@@ -3597,7 +3892,7 @@ export class SparkBrowser {
         const fbUrl = flightFallbackUrl(q);
         this.chatLog.push({
           role: "assistant",
-          text: "携程列表没读全，改去 Trip.com 再查…",
+          text: "机票列表没读全，改去 Kayak 再查…",
         });
         this.pushSidebarState();
         const nav2 = await this.navigate(fbUrl, { asHuman: true });
@@ -3607,7 +3902,28 @@ export class SparkBrowser {
           const altState = travelListState("flight", alt);
           if (altState === "ready" || alt.length > text.length + 200) {
             text = alt;
-            promptQ = { ...q, site: "gflights" };
+            promptQ = { ...q, site: "kayak" };
+          }
+        }
+      }
+      if (
+        q.kind === "train" &&
+        q.site !== "12306" &&
+        shouldFallbackTrain(text, q.site)
+      ) {
+        const fbUrl = trainFallbackUrl(q);
+        this.chatLog.push({
+          role: "assistant",
+          text: "火车列表没读全，改去 12306 再查…",
+        });
+        this.pushSidebarState();
+        const nav2 = await this.navigate(fbUrl, { asHuman: true });
+        if (nav2.ok) {
+          await sleep(1000);
+          const alt = await this.waitTravelText(q, 7000);
+          if (travelListState("train", alt) === "ready" || alt.length > text.length + 200) {
+            text = alt;
+            promptQ = { ...q, site: "12306" };
           }
         }
       }
@@ -5122,7 +5438,17 @@ export class SparkBrowser {
         wc.on("did-fail-load", onFail);
       });
 
-      await wc.loadURL(target);
+      try {
+        if (wc.isLoading()) wc.stop();
+      } catch {
+        /* 停不下也继续 load */
+      }
+      try {
+        await wc.loadURL(target);
+      } catch {
+        await sleep(250);
+        await wc.loadURL(target);
+      }
 
       // Wait for finish, fail, or timeout — then always probe final state.
       await Promise.race([

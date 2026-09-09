@@ -6,13 +6,19 @@ import {
   pickCtripHotelCity,
   extractRoutePair,
   extractTravelCity,
+  detectFlightSite,
+  detectTrainSite,
   flightFallbackUrl,
   flightSearchUrl,
+  parseRelativeDate,
   isFlightResultUrl,
   parseLooseCheckin,
   parseTravelQuery,
   shouldFallbackFlight,
   travelListState,
+  hotelSearchUrl,
+  trainSearchUrl,
+  trainStationCode,
   travelResultUrl,
 } from "../src/main/agent/travel.js";
 import { expandTripPlan, parseTripPlan } from "../src/main/agent/trip-plan.js";
@@ -79,6 +85,43 @@ describe("parseTravelQuery", () => {
       site: "amap",
       from: "北京南站",
       to: "天安门",
+    });
+  });
+
+  it("未点名站点的火车票走 12306", () => {
+    const q = parseTravelQuery("查9月15日北京到上海的火车票", now);
+    expect(q).toMatchObject({
+      kind: "train",
+      site: "12306",
+      from: "北京",
+      to: "上海",
+    });
+    expect(detectTrainSite("北京到上海火车票")).toBe("12306");
+  });
+
+  it("未点名站点的国际机票走 Kayak", () => {
+    const q = parseTravelQuery("查9月15日北京到东京的机票", now);
+    expect(q).toMatchObject({
+      kind: "flight",
+      site: "kayak",
+      from: "北京",
+      to: "东京",
+    });
+    expect(detectFlightSite("北京到东京机票", "北京", "东京")).toBe("kayak");
+  });
+
+  it("下周周三是下个周三而不是 +7 天", () => {
+    expect(parseRelativeDate("下周周三出差", new Date(2026, 8, 9))).toBe("2026-09-16");
+  });
+
+  it("酒店带商圈和价带", () => {
+    const q = parseTravelQuery("查9月16日上海的酒店 陆家嘴 400-600元", now);
+    expect(q).toMatchObject({
+      kind: "hotel",
+      city: "上海",
+      area: "陆家嘴",
+      priceMin: 400,
+      priceMax: 600,
     });
   });
 
@@ -211,7 +254,7 @@ describe("travelListState", () => {
     ).toBe(true);
   });
 
-  it("Trip.com fallback uses IST date", () => {
+  it("机票空壳回退 Kayak", () => {
     expect(
       flightFallbackUrl({
         kind: "flight",
@@ -220,7 +263,7 @@ describe("travelListState", () => {
         to: "伊斯坦布尔",
         date: "2026-09-18",
       }),
-    ).toContain("tickets-pek-ist");
+    ).toContain("kayak.com/flights/PEK-IST/2026-09-18");
   });
 });
 
@@ -240,6 +283,62 @@ describe("ctripHotelListUrl", () => {
     expect(ctripHotelListUrl(532, "2026-09-15", "2026-09-16")).toContain(
       "checkin=2026-09-15",
     );
+    expect(
+      ctripHotelListUrl(2, "2026-09-16", "2026-09-18", {
+        keyword: "陆家嘴",
+        priceMin: 400,
+        priceMax: 600,
+      }),
+    ).toMatch(/keyword=%E9%99%86%E5%AE%B6%E5%98%B4|keyword=陆家嘴/);
+  });
+});
+
+describe("12306 and ctrip result urls", () => {
+  it("出差句子里的上海不是上海出差", () => {
+    expect(extractRoutePair("我下周要从北京去上海出差3天")).toEqual({
+      from: "北京",
+      to: "上海",
+    });
+    expect(trainStationCode("上海出差")).toBe("SHH");
+    expect(
+      trainSearchUrl({
+        kind: "train",
+        site: "12306",
+        from: "北京",
+        to: "上海出差",
+        date: "2026-09-16",
+      }),
+    ).toContain("date=2026-09-16");
+    expect(
+      trainSearchUrl({
+        kind: "train",
+        site: "12306",
+        from: "北京",
+        to: "上海",
+        date: "2026-09-16",
+      }),
+    ).toMatch(/BJP/);
+  });
+
+  it("携程酒店默认也能拼出东京京都大阪列表 URL", () => {
+    const tokyo = hotelSearchUrl({
+      kind: "hotel",
+      site: "ctrip",
+      city: "东京",
+      checkin: "2026-09-16",
+      checkout: "2026-09-18",
+    });
+    expect(tokyo).toContain("hotels.ctrip.com/hotels/list");
+    expect(tokyo).toContain("city=228");
+    expect(
+      travelResultUrl({
+        kind: "hotel",
+        site: "ctrip",
+        city: "京都",
+        checkin: "2026-09-18",
+        checkout: "2026-09-20",
+      }),
+    ).toContain("city=92");
   });
 });
 

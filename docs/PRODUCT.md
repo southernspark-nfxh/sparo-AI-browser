@@ -81,7 +81,7 @@ Chrome / Edge / Safari 是**人自己点、自己填**的浏览器。 Sparo 还�
 ## 人怎么用
 
 1. 双击 `Sparo-Setup.exe`，打开 Sparo。
-2. 在侧栏 **设置** 二选一：贴自己的模型 Key（DeepSeek / OpenAI，或兼容接口），或登录体验云端模型（每台设备 3 次，密钥不进电脑）。自己的 Key：[API-KEYS.md](./API-KEYS.md)。
+2. 在侧栏 **设置** 二选一：贴自己的模型 Key（DeepSeek / OpenAI，或兼容接口），或登录云端模型（登录送 10 点试用，密钥不进电脑）。自己的 Key：[API-KEYS.md](./API-KEYS.md)。点数货架见 [PRICING.md](./PRICING.md)。
 3. 打开要处理的网页。
 4. 用侧栏四个动作，或直接在对话里说目标：
 

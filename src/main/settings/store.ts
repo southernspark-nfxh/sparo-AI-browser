@@ -17,6 +17,10 @@ export type SparoSettings = {
   locale: AppLocale;
   /** byok = 用户自己的 key；cloud = 走 sparo-pay 代理（key 不进本机） */
   llmMode: LlmMode;
+  /** 关掉首次用法引导后不再全屏挡住。未就绪时侧栏仍留一条入口。 */
+  onboardingDismissed: boolean;
+  /** 配好后的「先做一件事」提示已关掉。 */
+  firstJobHintDismissed: boolean;
   /** Discard inactive tab renderers to free RAM (Chrome-style Memory Saver). */
   memorySaver: boolean;
   /** Minutes a background tab may stay alive before discard. */
@@ -83,6 +87,8 @@ const DEFAULTS: SparoSettings = {
   model: PROVIDER_PRESETS.deepseek.model,
   locale: "en",
   llmMode: "byok",
+  onboardingDismissed: false,
+  firstJobHintDismissed: false,
   memorySaver: true,
   memorySaverIdleMinutes: 2,
 };
@@ -117,7 +123,7 @@ function normalizeProvider(p: unknown): LlmProvider {
   return DEFAULTS.provider;
 }
 
-export function loadSettings(configDir: string, _fallbackLocale?: string): SparoSettings {
+export function loadSettings(configDir: string, fallbackLocale?: string): SparoSettings {
   mkdirSync(configDir, { recursive: true });
   const file = readFileSettings(configDir);
   const envKey = (process.env.SPARO_API_KEY || "").trim();
@@ -141,7 +147,7 @@ export function loadSettings(configDir: string, _fallbackLocale?: string): Sparo
   );
   const locale = file.locale
     ? normalizeLocale(file.locale)
-    : DEFAULTS.locale;
+    : normalizeLocale(fallbackLocale || DEFAULTS.locale);
 
   return {
     provider,
@@ -150,18 +156,28 @@ export function loadSettings(configDir: string, _fallbackLocale?: string): Sparo
     model,
     locale,
     llmMode: normalizeMode(file.llmMode),
+    onboardingDismissed: Boolean(file.onboardingDismissed),
+    firstJobHintDismissed: Boolean(file.firstJobHintDismissed),
     memorySaver: file.memorySaver !== false,
     memorySaverIdleMinutes: clampIdleMinutes(file.memorySaverIdleMinutes),
   };
 }
 
+/** 第一次打开：把系统语言写进 settings.json，避免之后保存时掉回英文。 */
+export function persistLocaleIfMissing(configDir: string, fallbackLocale?: string): SparoSettings {
+  const file = readFileSettings(configDir);
+  if (file.locale) return loadSettings(configDir, fallbackLocale);
+  return saveSettings(configDir, { locale: normalizeLocale(fallbackLocale) }, fallbackLocale);
+}
+
 export function saveSettings(
   configDir: string,
   patch: Partial<SparoSettings> & { applyPreset?: boolean },
+  fallbackLocale?: string,
 ): SparoSettings {
   mkdirSync(configDir, { recursive: true });
   const file = readFileSettings(configDir);
-  const current = loadSettings(configDir);
+  const current = loadSettings(configDir, fallbackLocale);
 
   const provider = normalizeProvider(
     patch.provider !== undefined ? patch.provider : file.provider || current.provider,
@@ -207,6 +223,14 @@ export function saveSettings(
     llmMode: normalizeMode(
       patch.llmMode !== undefined ? patch.llmMode : file.llmMode || current.llmMode,
     ),
+    onboardingDismissed:
+      patch.onboardingDismissed !== undefined
+        ? Boolean(patch.onboardingDismissed)
+        : Boolean(file.onboardingDismissed),
+    firstJobHintDismissed:
+      patch.firstJobHintDismissed !== undefined
+        ? Boolean(patch.firstJobHintDismissed)
+        : Boolean(file.firstJobHintDismissed),
     memorySaver:
       patch.memorySaver !== undefined
         ? Boolean(patch.memorySaver)
@@ -218,7 +242,7 @@ export function saveSettings(
     ),
   };
   writeFileSync(settingsPath(configDir), JSON.stringify(next, null, 2), "utf8");
-  return loadSettings(configDir);
+  return loadSettings(configDir, fallbackLocale);
 }
 
 /** @deprecated alias */
@@ -233,6 +257,8 @@ export function settingsPublicView(settings: SparoSettings): {
   apiKeyMasked: string;
   locale: AppLocale;
   llmMode: LlmMode;
+  onboardingDismissed: boolean;
+  firstJobHintDismissed: boolean;
   presets: typeof PROVIDER_PRESETS;
   gateways: CompatGateway[];
   memorySaver: boolean;
@@ -254,6 +280,8 @@ export function settingsPublicView(settings: SparoSettings): {
     apiKeyMasked,
     locale: settings.locale,
     llmMode: settings.llmMode,
+    onboardingDismissed: Boolean(settings.onboardingDismissed),
+    firstJobHintDismissed: Boolean(settings.firstJobHintDismissed),
     presets: PROVIDER_PRESETS,
     gateways: COMPAT_GATEWAYS,
     memorySaver: settings.memorySaver !== false,

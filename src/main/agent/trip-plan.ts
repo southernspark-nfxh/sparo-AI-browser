@@ -7,6 +7,7 @@ import {
   detectFlightSite,
   detectHotelSite,
   extractRoutePair,
+  isChinaCity,
   isTripPlanQuery,
   parseLooseCheckin,
   parseRelativeDate,
@@ -55,7 +56,10 @@ const PLACE_ALIASES: Record<string, string> = {
   杭州: "杭州",
   东京: "东京",
   tokyo: "东京",
+  京都: "京都",
+  kyoto: "京都",
   大阪: "大阪",
+  osaka: "大阪",
   首尔: "首尔",
   曼谷: "曼谷",
   新加坡: "新加坡",
@@ -253,7 +257,7 @@ export function parseTripPlan(text: string, now = new Date()): TripPlan | null {
   const origin =
     canonPlace(originHit?.[1] || "") ||
     (route && canonPlace(route.from)) ||
-    placesInText(t)[0] ||
+    placesInText(t).find((p) => isChinaCity(p)) ||
     "北京";
 
   const hops = parseStayHops(t).filter((h) => h.city !== origin);
@@ -292,7 +296,10 @@ export function parseTripPlan(text: string, now = new Date()): TripPlan | null {
   if (!cities.length) return null;
 
   if (!nights) {
-    const dayHit = t.match(/(?:出差|待|住|玩)?\s*([一二三四五六七八九十两\d]+)\s*天/);
+    const dayHit =
+      t.match(/([一二三四五六七八九十两\d]+)\s*日(?:游|自由行|行程)/) ||
+      t.match(/(?:出差|待|住|玩)\s*([一二三四五六七八九十两\d]+)\s*[天晚]/) ||
+      t.match(/([一二三四五六七八九十两\d]+)\s*天(?:行程|出差|游|自由行)?/);
     const n = dayHit ? parseDayCount(dayHit[1]) : 0;
     if (n >= 1) {
       nights = cities.map(() => (cities.length === 1 ? n : Math.max(1, Math.floor(n / cities.length))));
@@ -313,7 +320,7 @@ export function parseTripPlan(text: string, now = new Date()): TripPlan | null {
     startDate,
     endDate,
     nights,
-    flightSite: detectFlightSite(t),
+    flightSite: detectFlightSite(t, origin, cities[0]),
     hotelSite: detectHotelSite(t),
   };
 }
@@ -321,7 +328,9 @@ export function parseTripPlan(text: string, now = new Date()): TripPlan | null {
 export function expandTripPlan(plan: TripPlan): TripStep[] {
   const stays = splitStays(plan.cities, plan.startDate, plan.endDate, plan.nights);
   const steps: TripStep[] = [];
+  const japanCity = (c: string) => /东京|京都|大阪|名古屋|札幌|福冈/.test(c);
   const flight = (from: string, to: string, date: string, label: string) => {
+    if (japanCity(from) && japanCity(to)) return;
     steps.push({
       label,
       query: {

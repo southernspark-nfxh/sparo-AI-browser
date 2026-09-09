@@ -1,0 +1,48 @@
+{
+  "id": "life-compare-shop",
+  "title": "电商比价：京东 / 淘宝 / 拼多多结果页读价",
+  "kind": "life",
+  "version": 1,
+  "distilled": true,
+  "shareable": true,
+  "platform": "multi",
+  "aliases": ["比价", "电商比价", "京东淘宝拼多多", "买前比价"],
+  "createdAt": "2026-09-09T00:00:00.000Z",
+  "updatedAt": "2026-09-09T00:00:00.000Z",
+  "intent": "同一商品在京东、淘宝、拼多多比价。只打开搜索结果页，不直开商城首页，不代买。",
+  "declared_domains": ["search.jd.com", "s.taobao.com", "mobile.yangkeduo.com"],
+  "declared_actions": ["navigate", "wait_for", "page_text"],
+  "human_gates": ["login", "pay", "captcha"],
+  "params": {
+    "query": {
+      "type": "string",
+      "required": true,
+      "example": "索尼WH-1000XM5"
+    }
+  },
+  "steps": [
+    { "id": "jd", "tool": "navigate", "args": { "url": "https://search.jd.com/Search?keyword={{queryEnc}}&enc=utf-8" } },
+    { "id": "jd-wait", "tool": "wait_for", "args": { "text": "¥", "timeoutMs": 20000 }, "optional": true },
+    { "id": "jd-read", "tool": "page_text" },
+    { "id": "tb", "tool": "navigate", "args": { "url": "https://s.taobao.com/search?q={{queryEnc}}" } },
+    { "id": "tb-wait", "tool": "wait_for", "args": { "text": "¥", "timeoutMs": 20000 }, "optional": true },
+    { "id": "tb-read", "tool": "page_text" },
+    { "id": "pdd", "tool": "navigate", "args": { "url": "https://mobile.yangkeduo.com/search_result.html?search_key={{queryEnc}}" } },
+    { "id": "pdd-wait", "tool": "wait_for", "args": { "text": "¥", "timeoutMs": 20000 }, "optional": true },
+    { "id": "pdd-read", "tool": "page_text" }
+  ],
+  "fallbacks": ["拼多多跳登录页就 pause，等人登录后再 run 一次"],
+  "knownGaps": [
+    "列表页到货日经常没有，要进商详",
+    "拼多多同款混配件/灰产，不能把最低价当官旗",
+    "优惠券位置不固定"
+  ],
+  "notes": [
+    "只汇总同型号头戴/整机，排除单耳、配件、明显非官旗低价。",
+    "Do not loop fill. Do not open mall homepages."
+  ],
+  "agentPlaybook": [
+    "run_skill({ query: '比价', params: { query: '索尼WH-1000XM5' } })",
+    "读三页 page_text，出对照表：价 / 优惠 / 到货是否写明"
+  ]
+}

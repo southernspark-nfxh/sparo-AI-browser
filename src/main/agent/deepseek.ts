@@ -313,7 +313,7 @@ const TOOLS = [
     function: {
       name: "run_skill",
       description:
-        "FAST PATH: run a saved 妙招 end-to-end in the shared browser. Prefer this over manual click/fill for known flows (小红书发布, etc). Pass id or query; optional params.title/body/topics/mdPath.",
+        "FAST PATH: run a saved 妙招 end-to-end. Life/research: 比价 / 出差 / 新闻汇总 / AI浏览器竞品 / 求职 / 远程办公 / 家电清单 / 宠物智能硬件 / 日本自由行 / AI写作. Also 小红书/填表/飞书/客服. Pass id or query; optional params.",
       parameters: {
         type: "object",
         properties: {

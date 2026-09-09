@@ -471,6 +471,89 @@ input, textarea, select, .chat-log, .chat-log .bubble {
   overflow: auto;
   padding: 8px 20px 12px;
 }
+.welcome {
+  padding: 4px 0 16px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.welcome-kicker {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0 0 4px;
+}
+.welcome h3 {
+  font-size: 16px;
+  font-weight: 620;
+  margin: 0 0 8px;
+  color: var(--text);
+}
+.welcome .save { margin-top: 12px; }
+.welcome .ghost {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-top: 6px;
+}
+.welcome .cap { margin: 4px 0 10px; }
+.welcome-nudge {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0 12px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+}
+.welcome-nudge .linkish { margin: 0; }
+.welcome-jobs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+.welcome-jobs button {
+  width: 100%;
+  text-align: left;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  padding: 0 12px;
+  cursor: pointer;
+}
+.welcome-jobs button:hover { border-color: var(--accent); }
+.plan-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0 4px;
+}
+.plan-list button {
+  width: 100%;
+  text-align: left;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  padding: 10px 12px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+.plan-list button:hover { border-color: var(--accent); }
+.plan-list .plan-meta { color: var(--muted); white-space: nowrap; }
+  padding: 0 12px;
+  border-radius: var(--radius-btn);
+  background: #efeae4;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 560;
+}
 .chat-log {
   min-height: 0;
   font-size: 14px;
@@ -1022,12 +1105,88 @@ input, textarea, select, .chat-log, .chat-log .bubble {
           <button type="button" id="btnClearChatDock" data-i18n="chat.clear">清空对话</button>
         </div>
         <div class="thread">
+          <div class="welcome" id="welcome">
+            <div id="welcomeHome">
+              <p class="welcome-kicker" data-i18n="welcome.kicker">第一次打开</p>
+              <h3 data-i18n="welcome.title">先选一种用法</h3>
+              <p class="hint" data-i18n="welcome.lead">不会配模型也没关系。先用邮箱登录，免费用几次。会配的人，把密钥贴进来。</p>
+              <p class="cap" data-i18n="welcome.noEmail">没有邮箱？让家人帮你贴密钥，或先当普通浏览器用。</p>
+              <button type="button" class="save" id="welcomeTry" data-i18n="welcome.try">先试用，不用自己配</button>
+              <p class="cap" data-i18n="welcome.tryHint">邮箱收验证码即可。密钥不会进这台电脑。</p>
+              <button type="button" class="ghost" id="welcomeKeyBtn" data-i18n="welcome.key">我有自己的模型</button>
+              <p class="cap" data-i18n="welcome.keyHint">把密钥贴进来。可选 DeepSeek 或 OpenAI。</p>
+              <button type="button" class="ghost" id="welcomeLater" data-i18n="welcome.later">稍后再说</button>
+            </div>
+            <div id="welcomeCloud" class="hide">
+              <p class="welcome-kicker" data-i18n="welcome.kicker">第一次打开</p>
+              <h3 data-i18n="welcome.cloudTitle">用邮箱登录</h3>
+              <p class="hint" data-i18n="welcome.cloudLead">验证码发到你的邮箱。登录后这台电脑可以免费用几次。</p>
+              <div class="field">
+                <label for="welcomeEmail" data-i18n="cloud.email">邮箱</label>
+                <input id="welcomeEmail" type="email" autocomplete="username" />
+              </div>
+              <div class="field">
+                <label for="welcomeCode" data-i18n="cloud.code">验证码</label>
+                <input id="welcomeCode" type="text" inputmode="numeric" autocomplete="one-time-code" />
+              </div>
+              <button type="button" class="save" id="welcomeSendCode" data-i18n="cloud.sendCode">发送验证码</button>
+              <button type="button" class="save" id="welcomeVerify" data-i18n="cloud.verify">登录</button>
+              <button type="button" class="ghost" id="welcomeCloudNoMail" data-i18n="welcome.cloudNoMail">没有邮箱，改用密钥</button>
+              <button type="button" class="ghost" id="welcomeCloudBack" data-i18n="welcome.back">返回</button>
+            </div>
+            <div id="welcomeByok" class="hide">
+              <p class="welcome-kicker" data-i18n="welcome.kicker">第一次打开</p>
+              <h3 data-i18n="welcome.keyTitle">贴上你的密钥</h3>
+              <p class="hint" data-i18n="welcome.keyLead">密钥只留在这台电脑。选好品牌再贴。</p>
+              <div class="field">
+                <label for="welcomeProvider" data-i18n="welcome.provider">品牌</label>
+                <select id="welcomeProvider">
+                  <option value="deepseek" data-i18n="ds.opt.deepseek">DeepSeek（默认）</option>
+                  <option value="openai" data-i18n="ds.opt.openai">OpenAI</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="welcomeKeyInput" data-i18n="ds.key">密钥</label>
+                <input id="welcomeKeyInput" type="password" data-i18n-placeholder="welcome.keyPh" placeholder="sk-…" autocomplete="off" />
+              </div>
+              <button type="button" class="save" id="welcomeKeySave" data-i18n="welcome.keySave">保存并开始用</button>
+              <button type="button" class="ghost" id="welcomeByokBack" data-i18n="welcome.back">返回</button>
+            </div>
+            <div id="welcomePay" class="hide">
+              <p class="welcome-kicker" data-i18n="welcome.payKicker">云端模型</p>
+              <h3 data-i18n="welcome.payTitle">点数用完了</h3>
+              <p class="hint" id="welcomePayLead" data-i18n="welcome.payLead">可以选一档开通（在系统浏览器付款），或改成用自己的密钥。应用里不会收款。</p>
+              <div class="plan-list" id="welcomePlanList"></div>
+              <button type="button" class="save" id="welcomePayGo" data-i18n="welcome.payGo">去官网开通云端模型</button>
+              <button type="button" class="ghost" id="welcomePayKey" data-i18n="welcome.payKey">改成用自己的密钥</button>
+            </div>
+            <div id="welcomeDone" class="hide">
+              <p class="welcome-kicker" data-i18n="welcome.kicker">第一次打开</p>
+              <h3 data-i18n="welcome.doneTitle">可以开始了</h3>
+              <p class="hint" data-i18n="welcome.doneLead">先做一件小事。网页上的发送，始终由你点。</p>
+              <div class="welcome-jobs">
+                <button type="button" id="welcomeJobSummarize" data-i18n="welcome.jobSummarize">总结这一页</button>
+                <button type="button" id="welcomeJobWeather" data-i18n="welcome.jobWeather">查今天天气</button>
+                <button type="button" id="welcomeJobReply" data-i18n="welcome.jobReply">写一条回复</button>
+              </div>
+              <button type="button" class="ghost" id="welcomeDoneOk" data-i18n="welcome.doneOk">我自己说</button>
+            </div>
+          </div>
+          <div class="welcome-nudge hide" id="welcomeNudge">
+            <span data-i18n="welcome.nudge">还没选好用法</span>
+            <button type="button" class="linkish" id="welcomeNudgeGo" data-i18n="welcome.nudgeGo">开始设置</button>
+          </div>
           <div class="chat-log" id="chat"></div>
         </div>
 
         <div class="pause-bar hide" id="pauseBar">
           <span id="status"><span class="dot" id="dot"></span><span data-i18n="status.ready">就绪</span></span>
           <button type="button" id="btnResume" data-i18n="act.resume">继续</button>
+        </div>
+        <div class="ask-card hide" id="helpCard">
+          <div class="value" id="helpTitle"></div>
+          <p class="hint" id="helpQ"></p>
+          <div class="row" id="helpBtns" style="margin-top:8px;flex-wrap:wrap;gap:8px"></div>
         </div>
         <div class="ask-card" id="approvalsCard" style="display:none">
           <div id="approvals"><p class="hint" data-i18n="approvals.empty">暂无</p></div>
@@ -1119,9 +1278,10 @@ input, textarea, select, .chat-log, .chat-log .bubble {
               </div>
               <div id="cloudLoggedIn" style="display:none">
                 <p class="hint" id="cloudEmailShow"></p>
+                <div class="plan-list" id="cloudPlanList"></div>
                 <button type="button" class="ghost" id="btnCloudLogout" data-i18n="cloud.logout">退出登录</button>
               </div>
-              <button type="button" class="ghost" id="btnCloudAccount" data-i18n="cloud.manage" style="margin-top:8px">去官网管理订阅</button>
+              <button type="button" class="ghost" id="btnCloudAccount" data-i18n="cloud.manage" style="margin-top:8px">去官网开通 / 管理</button>
             </div>
           </div>
 
@@ -1158,6 +1318,14 @@ input, textarea, select, .chat-log, .chat-log .bubble {
                 <button type="button" class="ghost" id="btnPfView" data-i18n="work.view">查看</button>
                 <button type="button" class="danger" id="btnPfClear" data-i18n="work.clear">清空</button>
               </div>
+            </div>
+          </details>
+
+          <details class="fold">
+            <summary data-i18n="learn.lessons">学到的经验</summary>
+            <div class="fold-body">
+              <p class="hint" id="lessonEmpty" data-i18n="learn.empty">还没有记下任何站点经验。卡住时问你之后会出现在这里。</p>
+              <div id="lessonList"></div>
             </div>
           </details>
 
@@ -1242,6 +1410,9 @@ input, textarea, select, .chat-log, .chat-log .bubble {
       let userProfile = { nickname: "" };
 
       let lastSidebar = null;
+      let welcomeStep = "home";
+      let welcomeReopen = false;
+      let welcomeForceByok = false;
       let moreOpen = false;
       let GATEWAYS = [];
 
@@ -1574,6 +1745,72 @@ input, textarea, select, .chat-log, .chat-log .bubble {
       };
       document.getElementById("btnHistory").onclick = () => window.sparkShell.openHistory();
 
+      function renderHelp(help) {
+        const card = document.getElementById("helpCard");
+        const q = document.getElementById("helpQ");
+        const title = document.getElementById("helpTitle");
+        const btns = document.getElementById("helpBtns");
+        if (!card || !q || !btns || !title) return;
+        if (!help || !help.question) {
+          card.classList.add("hide");
+          btns.innerHTML = "";
+          return;
+        }
+        card.classList.remove("hide");
+        title.textContent = t("learn.title");
+        q.textContent = help.question;
+        btns.innerHTML = "";
+        const add = (label, value) => {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "ghost";
+          b.textContent = label;
+          b.onclick = () => window.sparkShell.learningAnswer(value);
+          btns.appendChild(b);
+        };
+        if (help.kind === "yes_no") {
+          add(t("learn.yes"), "是");
+          add(t("learn.no"), "否");
+        } else if (help.kind === "continue") {
+          add(t("learn.done"), "我过完了");
+        } else {
+          for (const opt of help.options || []) add(opt, opt);
+        }
+        const skip = document.createElement("button");
+        skip.type = "button";
+        skip.textContent = t("learn.skip");
+        skip.onclick = () => window.sparkShell.learningSkip();
+        btns.appendChild(skip);
+      }
+
+      function renderLessons(list) {
+        const root = document.getElementById("lessonList");
+        const empty = document.getElementById("lessonEmpty");
+        if (!root) return;
+        root.innerHTML = "";
+        if (!list || !list.length) {
+          if (empty) empty.style.display = "";
+          return;
+        }
+        if (empty) empty.style.display = "none";
+        for (const item of list) {
+          const row = document.createElement("div");
+          row.className = "approval";
+          row.innerHTML =
+            '<div class="value"><b>' +
+            escapeHtml(item.host || "") +
+            "</b> · " +
+            escapeHtml(item.note || item.trigger || "") +
+            '</div><div class="row" style="margin-top:6px"></div>';
+          const del = document.createElement("button");
+          del.className = "danger";
+          del.textContent = t("learn.delete");
+          del.onclick = () => window.sparkShell.deleteLesson(item.id);
+          row.querySelector(".row").appendChild(del);
+          root.appendChild(row);
+        }
+      }
+
       function renderApprovals(list) {
         const root = document.getElementById("approvals");
         const card = document.getElementById("approvalsCard");
@@ -1818,10 +2055,8 @@ input, textarea, select, .chat-log, .chat-log .bubble {
                 model: ds.model || "deepseek-v4-flash",
                 env: ds.fromEnv ? t("ds.fromEnv") : "",
               });
-          if (cloudReady && cloud.subscription && cloud.subscription.active) {
+          if (cloudReady) {
             hint.textContent = t("cloud.quotaMonth", { n: cloud.approxTasks || 0 });
-          } else if (cloudReady && cloud.trial) {
-            hint.textContent = t("cloud.quotaTrial", { n: cloud.trial.left || 0 });
           } else {
             hint.textContent = t("chat.hintReady");
           }
@@ -1830,13 +2065,139 @@ input, textarea, select, .chat-log, .chat-log .bubble {
           dsEl.textContent = t("ds.needKey");
           hint.textContent = t("chat.hintNeedCloud");
         }
+        renderWelcome(ds, cloud);
         renderCs(payload.cs);
         renderApprovals(payload.approvals);
+        renderHelp(payload.help);
+        renderLessons(payload.lessons);
         renderQa(payload.qa);
         renderChat(payload.chat);
         if (payload.profile) {
           userProfile.nickname = payload.profile.nickname || "";
         }
+      }
+
+      function showWelcomePanel(panel) {
+        ["welcomeHome", "welcomeCloud", "welcomeByok", "welcomePay", "welcomeDone"].forEach((id) => {
+          const el = document.getElementById(id);
+          if (el) el.classList.toggle("hide", id !== panel);
+        });
+      }
+
+      function applyPayCopy(cloud) {
+        const hidePay = Boolean(cloud && cloud.hidePayCopy);
+        const lead = document.getElementById("welcomePayLead");
+        const go = document.getElementById("welcomePayGo");
+        if (lead) lead.textContent = t(hidePay ? "welcome.msftPayLead" : "welcome.payLead");
+        if (go) go.textContent = t(hidePay ? "welcome.msftPayGo" : "welcome.payGo");
+        const manage = document.getElementById("btnCloudAccount");
+        if (manage) manage.textContent = t(hidePay ? "cloud.manageMsft" : "cloud.manage");
+        fillPlanList("welcomePlanList", cloud);
+        fillPlanList("cloudPlanList", cloud);
+      }
+
+      function planLabel(id) {
+        return t("cloud.plan." + id) || id;
+      }
+
+      function fillPlanList(elId, cloud) {
+        const el = document.getElementById(elId);
+        if (!el) return;
+        el.innerHTML = "";
+        const need =
+          cloud &&
+          cloud.loggedIn &&
+          cloud.canStart === false &&
+          cloud.showPlans &&
+          Array.isArray(cloud.plans) &&
+          cloud.plans.length > 0 &&
+          !cloud.hidePayCopy;
+        if (!need) {
+          el.style.display = "none";
+          return;
+        }
+        el.style.display = "";
+        cloud.plans.forEach((plan) => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.dataset.plan = plan.id;
+          const left = document.createElement("span");
+          left.textContent = planLabel(plan.id);
+          const right = document.createElement("span");
+          right.className = "plan-meta";
+          right.textContent =
+            t("cloud.planPoints", { n: plan.points || 0 }) +
+            (plan.money ? " · ¥" + plan.money : "");
+          btn.appendChild(left);
+          btn.appendChild(right);
+          btn.onclick = async () => {
+            try {
+              if (window.sparkShell.cloudCheckout) {
+                await window.sparkShell.cloudCheckout(plan.id);
+              } else {
+                await window.sparkShell.cloudOpenAccount(plan.id);
+              }
+            } catch (err) {
+              console.error(err);
+              toast(t("toast.fail"));
+            }
+          };
+          el.appendChild(btn);
+        });
+      }
+
+      function renderWelcome(ds, cloud) {
+        const card = document.getElementById("welcome");
+        const nudge = document.getElementById("welcomeNudge");
+        if (!card || !nudge) return;
+        applyPayCopy(cloud);
+        const ready = Boolean(ds && ds.configured);
+        const dismissed = Boolean(ds && ds.onboardingDismissed);
+        const jobHintDone = Boolean(ds && ds.firstJobHintDismissed);
+        const exhausted =
+          !ready &&
+          cloud &&
+          cloud.llmMode === "cloud" &&
+          cloud.loggedIn &&
+          cloud.canStart === false;
+        if (ready) {
+          welcomeForceByok = false;
+          welcomeReopen = false;
+          nudge.classList.add("hide");
+          if (dismissed && !jobHintDone) {
+            card.classList.remove("hide");
+            showWelcomePanel("welcomeDone");
+            return;
+          }
+          card.classList.add("hide");
+          return;
+        }
+        if (welcomeForceByok || welcomeStep === "byok") {
+          card.classList.remove("hide");
+          nudge.classList.add("hide");
+          showWelcomePanel("welcomeByok");
+          return;
+        }
+        if (exhausted) {
+          card.classList.remove("hide");
+          nudge.classList.add("hide");
+          showWelcomePanel("welcomePay");
+          return;
+        }
+        if (welcomeStep === "cloud") {
+          card.classList.remove("hide");
+          nudge.classList.add("hide");
+          showWelcomePanel("welcomeCloud");
+          return;
+        }
+        if (dismissed && !welcomeReopen) {
+          card.classList.add("hide");
+          nudge.classList.remove("hide");
+          return;
+        }
+        card.classList.remove("hide");
+        nudge.classList.add("hide");
+        showWelcomePanel("welcomeHome");
       }
 
       let byokEditOpen = false;
@@ -1872,17 +2233,16 @@ input, textarea, select, .chat-log, .chat-log .bubble {
         const emailShow = document.getElementById("cloudEmailShow");
         if (emailShow) emailShow.textContent = loggedIn ? (cloud.email || "") : "";
         if (quotaEl) {
-          if (mode === "cloud" && loggedIn && cloud.subscription && cloud.subscription.active) {
+          if (mode === "cloud" && loggedIn) {
             quotaEl.textContent = t("cloud.quotaMonthDetail", {
               n: cloud.approxTasks || 0,
               p: cloud.points || 0,
             });
-          } else if (mode === "cloud" && loggedIn && cloud.trial) {
-            quotaEl.textContent = t("cloud.quotaTrial", { n: cloud.trial.left || 0 });
           } else {
             quotaEl.textContent = "";
           }
         }
+        fillPlanList("cloudPlanList", cloud);
       }
 
       function renderCs(cs) {
@@ -1996,6 +2356,214 @@ input, textarea, select, .chat-log, .chat-log .bubble {
         }
         moreBtn.onclick = () => setMore(true);
         if (moreChev) moreChev.onclick = () => setMore(false);
+
+        function sidebarDsCloud() {
+          return {
+            ds: lastSidebar && lastSidebar.deepseek,
+            cloud: (lastSidebar && lastSidebar.cloud) || {},
+          };
+        }
+        const welcomeTry = document.getElementById("welcomeTry");
+        if (welcomeTry) {
+          welcomeTry.onclick = async () => {
+            welcomeStep = "cloud";
+            welcomeReopen = true;
+            const { ds, cloud } = sidebarDsCloud();
+            renderWelcome(ds, cloud);
+            try {
+              await window.sparkShell.saveSettings({ llmMode: "cloud" });
+            } catch (err) {
+              console.error(err);
+              toast(t("toast.saveFail"));
+            }
+          };
+        }
+        const welcomeKeyBtn = document.getElementById("welcomeKeyBtn");
+        if (welcomeKeyBtn) {
+          welcomeKeyBtn.onclick = () => {
+            welcomeStep = "byok";
+            welcomeForceByok = true;
+            welcomeReopen = true;
+            const { ds, cloud } = sidebarDsCloud();
+            renderWelcome(ds, cloud);
+          };
+        }
+        const welcomeLater = document.getElementById("welcomeLater");
+        if (welcomeLater) {
+          welcomeLater.onclick = async () => {
+            welcomeStep = "home";
+            welcomeReopen = false;
+            welcomeForceByok = false;
+            try {
+              await window.sparkShell.saveSettings({ onboardingDismissed: true });
+            } catch (err) {
+              console.error(err);
+              const { ds, cloud } = sidebarDsCloud();
+              if (ds) ds.onboardingDismissed = true;
+              renderWelcome(ds, cloud);
+            }
+          };
+        }
+        const welcomeNudgeGo = document.getElementById("welcomeNudgeGo");
+        if (welcomeNudgeGo) {
+          welcomeNudgeGo.onclick = () => {
+            welcomeStep = "home";
+            welcomeReopen = true;
+            welcomeForceByok = false;
+            const { ds, cloud } = sidebarDsCloud();
+            renderWelcome(ds, cloud);
+          };
+        }
+        const welcomeCloudBack = document.getElementById("welcomeCloudBack");
+        if (welcomeCloudBack) {
+          welcomeCloudBack.onclick = () => {
+            welcomeStep = "home";
+            const { ds, cloud } = sidebarDsCloud();
+            renderWelcome(ds, cloud);
+          };
+        }
+        const welcomeByokBack = document.getElementById("welcomeByokBack");
+        if (welcomeByokBack) {
+          welcomeByokBack.onclick = () => {
+            welcomeStep = "home";
+            welcomeForceByok = false;
+            const { ds, cloud } = sidebarDsCloud();
+            renderWelcome(ds, cloud);
+          };
+        }
+        const welcomeSendCode = document.getElementById("welcomeSendCode");
+        if (welcomeSendCode) {
+          welcomeSendCode.onclick = async () => {
+            const email = document.getElementById("welcomeEmail").value.trim();
+            try {
+              const r = await window.sparkShell.cloudSendCode(email);
+              if (r && r.ok === false) {
+                toast(r.message || t("toast.saveFail"));
+                return;
+              }
+              toast((r && r.message) || t("cloud.codeSent"));
+            } catch (err) {
+              console.error(err);
+              toast(t("toast.saveFail"));
+            }
+          };
+        }
+        const welcomeVerify = document.getElementById("welcomeVerify");
+        if (welcomeVerify) {
+          welcomeVerify.onclick = async () => {
+            const email = document.getElementById("welcomeEmail").value.trim();
+            const code = document.getElementById("welcomeCode").value.trim();
+            try {
+              const r = await window.sparkShell.cloudVerify(email, code);
+              if (r && r.ok === false) {
+                toast(r.message || t("toast.saveFail"));
+                return;
+              }
+              toast((r && r.message) || t("toast.cloudIn"));
+            } catch (err) {
+              console.error(err);
+              toast(t("toast.saveFail"));
+            }
+          };
+        }
+        const welcomeKeySave = document.getElementById("welcomeKeySave");
+        if (welcomeKeySave) {
+          welcomeKeySave.onclick = async () => {
+            const key = document.getElementById("welcomeKeyInput").value.trim();
+            if (!key) {
+              toast(t("welcome.keyNeed"));
+              return;
+            }
+            const provider = (document.getElementById("welcomeProvider") || {}).value || "deepseek";
+            try {
+              const r = await window.sparkShell.saveSettings({
+                provider,
+                apiKey: key,
+                llmMode: "byok",
+                onboardingDismissed: true,
+                applyPreset: true,
+              });
+              document.getElementById("welcomeKeyInput").value = "";
+              welcomeForceByok = false;
+              toast(r && r.message ? r.message : t("toast.apiOk"));
+            } catch (err) {
+              console.error(err);
+              toast(t("toast.saveFail"));
+            }
+          };
+        }
+        const welcomePayGo = document.getElementById("welcomePayGo");
+        if (welcomePayGo) {
+          welcomePayGo.onclick = async () => {
+            try {
+              await window.sparkShell.cloudOpenAccount();
+            } catch (err) {
+              console.error(err);
+              toast(t("toast.fail"));
+            }
+          };
+        }
+        const welcomePayKey = document.getElementById("welcomePayKey");
+        if (welcomePayKey) {
+          welcomePayKey.onclick = () => {
+            welcomeStep = "byok";
+            welcomeForceByok = true;
+            const { ds, cloud } = sidebarDsCloud();
+            renderWelcome(ds, cloud);
+          };
+        }
+        const welcomeCloudNoMail = document.getElementById("welcomeCloudNoMail");
+        if (welcomeCloudNoMail) {
+          welcomeCloudNoMail.onclick = () => {
+            welcomeStep = "byok";
+            welcomeForceByok = true;
+            const { ds, cloud } = sidebarDsCloud();
+            renderWelcome(ds, cloud);
+          };
+        }
+        async function dismissFirstJob(then) {
+          try {
+            await window.sparkShell.saveSettings({ firstJobHintDismissed: true });
+          } catch (err) {
+            console.error(err);
+            const { ds, cloud } = sidebarDsCloud();
+            if (ds) ds.firstJobHintDismissed = true;
+            renderWelcome(ds, cloud);
+          }
+          if (typeof then === "function") then();
+        }
+        const welcomeDoneOk = document.getElementById("welcomeDoneOk");
+        if (welcomeDoneOk) welcomeDoneOk.onclick = () => dismissFirstJob();
+        const welcomeJobSummarize = document.getElementById("welcomeJobSummarize");
+        if (welcomeJobSummarize) {
+          welcomeJobSummarize.onclick = () => {
+            dismissFirstJob(() => {
+              const btn = document.getElementById("btnSummarize");
+              if (btn) btn.click();
+            });
+          };
+        }
+        const welcomeJobWeather = document.getElementById("welcomeJobWeather");
+        if (welcomeJobWeather) {
+          welcomeJobWeather.onclick = () => {
+            dismissFirstJob(() => {
+              const box = document.getElementById("chatInput");
+              if (box) {
+                box.value = t("welcome.jobWeatherFill");
+                box.focus();
+              }
+            });
+          };
+        }
+        const welcomeJobReply = document.getElementById("welcomeJobReply");
+        if (welcomeJobReply) {
+          welcomeJobReply.onclick = () => {
+            dismissFirstJob(() => {
+              const btn = document.getElementById("btnCsOneClick");
+              if (btn) btn.click();
+            });
+          };
+        }
 
         const btnResume = document.getElementById("btnResume");
         if (btnResume) btnResume.onclick = () => window.sparkShell.setPaused(false);
@@ -2196,6 +2764,10 @@ input, textarea, select, .chat-log, .chat-log .bubble {
             const email = document.getElementById("cloudEmail").value.trim();
             try {
               const r = await window.sparkShell.cloudSendCode(email);
+              if (r && r.ok === false) {
+                toast(r.message || t("toast.saveFail"));
+                return;
+              }
               toast(r && r.message ? r.message : t("cloud.codeSent"));
             } catch (err) {
               console.error(err);
@@ -2210,6 +2782,10 @@ input, textarea, select, .chat-log, .chat-log .bubble {
             const code = document.getElementById("cloudCode").value.trim();
             try {
               const r = await window.sparkShell.cloudVerify(email, code);
+              if (r && r.ok === false) {
+                toast(r.message || t("toast.saveFail"));
+                return;
+              }
               toast(r && r.message ? r.message : t("toast.cloudIn"));
             } catch (err) {
               console.error(err);

@@ -163,6 +163,16 @@ const BUILTIN_ALIASES: Record<string, string[]> = {
     "发小红书",
     "小红书长文发布",
   ],
+  "life-compare-shop": ["比价", "电商比价", "京东淘宝拼多多"],
+  "life-cn-business-trip": ["出差", "高铁酒店", "陆家嘴酒店", "本帮菜"],
+  "life-news-digest": ["新闻汇总", "评测汇总", "最近一周新闻"],
+  "research-ai-browser": ["AI浏览器竞品", "浏览器竞品"],
+  "life-job-search": ["求职", "AI产品经理", "Boss直聘"],
+  "research-remote-tools": ["远程办公", "协作工具"],
+  "life-home-appliance": ["家电清单", "买家电"],
+  "research-pet-hardware": ["宠物智能硬件", "智能喂食器"],
+  "life-japan-trip": ["日本自由行", "东京京都大阪"],
+  "research-ai-writing": ["AI写作", "写作助手竞品"],
 };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -398,10 +408,16 @@ function buildVars(
     autoPublish: String(params.autoPublish ?? false),
   };
   for (const [k, v] of Object.entries(params)) {
-    if (typeof v === "string") vars[k] = v;
-    else if (typeof v === "number" || typeof v === "boolean") vars[k] = String(v);
-    else if (Array.isArray(v)) vars[k] = JSON.stringify(v);
-    else if (v && typeof v === "object") vars[k] = JSON.stringify(v);
+    if (typeof v === "string") {
+      vars[k] = v;
+      vars[`${k}Enc`] = encodeURIComponent(v);
+    } else if (typeof v === "number" || typeof v === "boolean") {
+      vars[k] = String(v);
+    } else if (Array.isArray(v)) {
+      vars[k] = JSON.stringify(v);
+    } else if (v && typeof v === "object") {
+      vars[k] = JSON.stringify(v);
+    }
   }
   return vars;
 }
@@ -988,6 +1004,7 @@ export async function runSkill(
   }
 
   const log: Array<{ i: number; tool: string; ok: boolean; message: string }> = [];
+  const readings: Array<{ label: string; text: string; url?: string }> = [];
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
     const tool = stepTool(step);
@@ -1007,6 +1024,15 @@ export async function runSkill(
       ok: result.ok,
       message: result.message,
     });
+    if (tool === "page_text" && result.ok) {
+      const text = String((result.data as { text?: string } | undefined)?.text || result.message || "").trim();
+      if (text) {
+        readings.push({
+          label: String(step.id || `读页 ${i + 1}`),
+          text: text.slice(0, 8000),
+        });
+      }
+    }
     if (!result.ok) {
       let diag: ToolResult | undefined;
       try {
@@ -1040,9 +1066,14 @@ export async function runSkill(
       await sleep(450);
     }
   }
+  const excerpt = readings
+    .map((r) => `【${r.label}】\n${r.text.slice(0, 1200)}`)
+    .join("\n\n");
   return {
     ok: true,
-    message: `妙招「${skill.title}」完成（${log.length} 步）`,
-    data: { skillId: skill.id, title: skill.title, log },
+    message: readings.length
+      ? `妙招「${skill.title}」完成（${log.length} 步）\n\n${excerpt}`
+      : `妙招「${skill.title}」完成（${log.length} 步）`,
+    data: { skillId: skill.id, title: skill.title, log, readings },
   };
 }

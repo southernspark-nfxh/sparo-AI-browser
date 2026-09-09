@@ -83,6 +83,7 @@
 | `settings/store.ts` | `llmMode: byok \| cloud` |
 | `cloud/auth.ts` `quota.ts` `session.ts` | 登录、任务配额、带 JWT 的 fetch |
 | 独立 `sparo-pay` 服务 | 代理 + 支付回调（不要把云端 Key 并进本仓库） |
+| `learning/*` | 卡住就问；经验在本机 `lessons.json`，见 [AI-LEARNING.md](./AI-LEARNING.md) |
 
 内部类名仍是 `SparkBrowser`；对外产品名是 Sparo。
 

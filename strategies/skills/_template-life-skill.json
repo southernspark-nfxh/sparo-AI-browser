@@ -1,0 +1,37 @@
+{
+  "id": "TEMPLATE-life-or-research",
+  "title": "TEMPLATE：日常 / 调研技能",
+  "kind": "life",
+  "enabled": false,
+  "shareable": true,
+  "version": 1,
+  "platform": "multi",
+  "aliases": ["TEMPLATE_ONLY"],
+  "intent": "复制本文件。只走结果页 URL，读页用 page_text。",
+  "declared_domains": ["example.com"],
+  "declared_actions": ["navigate", "wait_for", "page_text"],
+  "human_gates": ["login", "pay", "captcha"],
+  "params": {
+    "query": { "type": "string", "required": true, "example": "关键词" }
+  },
+  "steps": [
+    {
+      "id": "open",
+      "tool": "navigate",
+      "args": { "url": "https://example.com/search?q={{queryEnc}}" }
+    },
+    {
+      "id": "ready",
+      "tool": "wait_for",
+      "args": { "text": "页面上稳定出现的字", "timeoutMs": 20000 },
+      "optional": true
+    },
+    { "id": "read", "tool": "page_text" }
+  ],
+  "fallbacks": ["空列表就换备用域名，不要在首页弹层空点"],
+  "knownGaps": ["写清楚技能做不到的"],
+  "agentPlaybook": [
+    "run_skill({ query: '口语别名', params: { query } })",
+    "登录 / 验证码 / 付钱：pause，等人"
+  ]
+}

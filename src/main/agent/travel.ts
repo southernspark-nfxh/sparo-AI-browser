@@ -16,6 +16,9 @@ export type TravelQuery =
       city: string;
       checkin: string;
       checkout: string;
+      area?: string;
+      priceMin?: number;
+      priceMax?: number;
     }
   | {
       kind: "flight";
@@ -50,6 +53,7 @@ const CITY_EN: Record<string, string> = {
   成都: "Chengdu",
   杭州: "Hangzhou",
   东京: "Tokyo",
+  京都: "Kyoto",
   大阪: "Osaka",
   首尔: "Seoul",
   曼谷: "Bangkok",
@@ -90,6 +94,10 @@ const FLIGHT_CODE: Record<string, { ctrip: string; kayak: string }> = {
   台北: { ctrip: "tpe", kayak: "TPE" },
   东京: { ctrip: "tyo", kayak: "TYO" },
   tokyo: { ctrip: "tyo", kayak: "TYO" },
+  京都: { ctrip: "kyo", kayak: "UKY" },
+  kyoto: { ctrip: "kyo", kayak: "UKY" },
+  大阪: { ctrip: "osa", kayak: "OSA" },
+  osaka: { ctrip: "osa", kayak: "OSA" },
   伊斯坦布尔: { ctrip: "ist", kayak: "IST" },
   istanbul: { ctrip: "ist", kayak: "IST" },
   伦敦: { ctrip: "lon", kayak: "LON" },
@@ -187,7 +195,7 @@ export function parseRelativeDate(text: string, now = new Date()): string | null
   if (/后天/.test(t)) return addDays(ymd(now), 2);
   if (/下周一|下星期一/.test(t)) return nextWeekdayIso(now, 1);
   if (/下周二/.test(t)) return nextWeekdayIso(now, 2);
-  if (/下周三/.test(t)) return nextWeekdayIso(now, 3);
+  if (/下周三/.test(t) || (/下周/.test(t) && /周三/.test(t))) return nextWeekdayIso(now, 3);
   if (/下周四/.test(t)) return nextWeekdayIso(now, 4);
   if (/下周五/.test(t)) return nextWeekdayIso(now, 5);
   if (/下周六/.test(t)) return nextWeekdayIso(now, 6);
@@ -262,17 +270,27 @@ function cleanPlace(raw: string): string {
   const t = raw
     .replace(STOP_WORDS, "")
     .replace(/做一个|做一份|做个|出一份/g, "")
+    .replace(/出差|高铁|火车|车票|酒店|机票|航班/g, "")
     .replace(/的.+$/, "")
     .replace(/怎么[走去]?|路线|导航$/g, "")
     .replace(/^从/, "")
     .replace(/回$/, "")
     .replace(/的$/g, "")
     .trim();
-  const known = Object.keys(FLIGHT_CODE)
+  const keys = Object.keys(FLIGHT_CODE)
     .concat(Object.keys(CITY_EN))
-    .sort((a, b) => b.length - a.length)
-    .find((k) => t === k || t.endsWith(k));
+    .sort((a, b) => b.length - a.length);
+  const known = keys.find((k) => t === k || t.endsWith(k));
   return known || t;
+}
+
+export function trainStationCode(name: string): string | undefined {
+  const t = String(name || "").trim();
+  if (TRAIN_CODE[t]) return TRAIN_CODE[t];
+  const hit = Object.keys(TRAIN_CODE)
+    .sort((a, b) => b.length - a.length)
+    .find((k) => t === k || t.startsWith(k) || t.endsWith(k));
+  return hit ? TRAIN_CODE[hit] : undefined;
 }
 
 const ROUTE_CONN = "飞往|飞回|飞|回到|返回|到|至|→|去";
@@ -313,27 +331,58 @@ export function detectHotelSite(text: string): HotelSite {
   return "ctrip";
 }
 
-export function detectFlightSite(text: string): FlightSite {
+const CHINA_MAINLAND = new Set([
+  "北京",
+  "上海",
+  "广州",
+  "深圳",
+  "成都",
+  "杭州",
+  "南京",
+  "武汉",
+  "西安",
+  "重庆",
+  "天津",
+  "青岛",
+  "厦门",
+  "昆明",
+  "大理",
+  "丽江",
+  "三亚",
+  "苏州",
+  "长沙",
+  "香港",
+  "台北",
+]);
+
+export function isChinaCity(name: string): boolean {
+  const t = String(name || "").trim();
+  return CHINA_MAINLAND.has(t) || CHINA_MAINLAND.has(t.toLowerCase());
+}
+
+export function detectFlightSite(text: string, from?: string, to?: string): FlightSite {
   if (/kayak/i.test(text)) return "kayak";
   if (/google\.com\/travel\/flights|google\s*flights/i.test(text)) return "gflights";
   if (/去哪儿|qunar/i.test(text)) return "qunar";
   if (/携程|ctrip/i.test(text)) return "ctrip";
+  if (from && to && (!isChinaCity(from) || !isChinaCity(to))) return "kayak";
+  if (/日本|东京|大阪|京都|韩国|首尔|曼谷|新加坡|伦敦|巴黎|纽约/i.test(text)) return "kayak";
   return /[\u4e00-\u9fff]{2}/.test(text) ? "ctrip" : "gflights";
 }
 
 export function detectTrainSite(text: string): TrainSite {
-  if (/12306/i.test(text)) return "12306";
+  if (/携程|ctrip/i.test(text)) return "ctrip";
   if (/trainline/i.test(text)) return "trainline";
   if (/omio/i.test(text)) return "omio";
-  if (/携程|ctrip/i.test(text)) return "ctrip";
-  return /[\u4e00-\u9fff]{2}/.test(text) ? "ctrip" : "trainline";
+  if (/12306/i.test(text) || /[\u4e00-\u9fff]{2}/.test(text)) return "12306";
+  return "trainline";
 }
 
 /** 多段行程（往返 + 多城 + 机票酒店一起问），不要当成单次导航。 */
 export function isTripPlanQuery(text: string): boolean {
   const t = text.trim();
   if (t.length < 20) return false;
-  const planish = /规划|行程|安排|怎么安排|旅行计划|出差|报销|见客户|全路线|整条路线|攻略|旅游/.test(t);
+  const planish = /规划|行程|安排|怎么安排|旅行计划|自由行|出差|报销|见客户|全路线|整条路线|攻略|旅游/.test(t);
   const flights = /机票|航班|flights?/i.test(t);
   const stays = /酒店|宾馆|住宿|民宿|入住|hotels?/i.test(t);
   const multiIntent = flights && stays;
@@ -346,6 +395,8 @@ export function isTripPlanQuery(text: string): boolean {
   if (multiIntent && (planish || round || multiPlace || hopStays || backHome)) return true;
   if (planish && round && (multiPlace || stays || flights)) return true;
   if (hopStays && backHome && (stays || flights || planish || /路线/.test(t))) return true;
+  if (/自由行|旅游攻略/.test(t) && (flights || stays || /行程|景点|酒店|机票/.test(t))) return true;
+  if (planish && /日本/.test(t) && /[天日晚]/.test(t)) return true;
   return false;
 }
 
@@ -361,6 +412,8 @@ export function parseTravelQuery(text: string, now = new Date()): TravelQuery | 
   const t = text.trim();
   if (!t) return null;
   if (isTripPlanQuery(t)) return null;
+  // 出差三件套（高铁+酒店+餐厅）交给 parseMission，不要只开一页火车。
+  if (/出差/.test(t) && /酒店/.test(t) && /高铁|火车|餐厅|本帮/.test(t)) return null;
 
   const pair = extractRoutePair(t);
   const date = parseLooseCheckin(t, now) || addDays(ymd(now), 1);
@@ -374,7 +427,7 @@ export function parseTravelQuery(text: string, now = new Date()): TravelQuery | 
   if (pair && /机票|航班|flights?/i.test(t)) {
     return {
       kind: "flight",
-      site: detectFlightSite(t),
+      site: detectFlightSite(t, pair.from, pair.to),
       from: pair.from,
       to: pair.to,
       date,
@@ -399,12 +452,17 @@ export function parseTravelQuery(text: string, now = new Date()): TravelQuery | 
     const checkout = range
       ? parseLooseCheckin(range[2], now) || addDays(checkin, 1)
       : addDays(checkin, 1);
+    const area = (t.match(/陆家嘴|外滩|静安|徐家汇|望京|国贸|三里屯|南山|天河/) || [])[0];
+    const price = t.match(/(\d{3,4})\s*[-~到至]\s*(\d{3,4})\s*元?/);
     return {
       kind: "hotel",
       site: detectHotelSite(t),
       city,
       checkin,
       checkout: checkout <= checkin ? addDays(checkin, 1) : checkout,
+      area,
+      priceMin: price ? Number(price[1]) : undefined,
+      priceMax: price ? Number(price[2]) : undefined,
     };
   }
   return null;
@@ -473,6 +531,8 @@ export const CTRIP_HOTEL_CITY_ID: Record<string, number> = {
   武汉: 477,
   伊斯坦布尔: 532,
   东京: 228,
+  京都: 92,
+  大阪: 59,
   首尔: 274,
 };
 
@@ -532,12 +592,16 @@ export function ctripHotelListUrl(
   cityId: number,
   checkin: string,
   checkout: string,
+  opts?: { keyword?: string; priceMin?: number; priceMax?: number },
 ): string {
   const q = new URLSearchParams({
     city: String(cityId),
     checkin,
     checkout,
   });
+  if (opts?.keyword) q.set("keyword", opts.keyword);
+  if (opts?.priceMin != null) q.set("lowPrice", String(opts.priceMin));
+  if (opts?.priceMax != null) q.set("highPrice", String(opts.priceMax));
   return `https://hotels.ctrip.com/hotels/list?${q.toString()}`;
 }
 
@@ -570,7 +634,15 @@ export function hotelSearchUrl(q: Extract<TravelQuery, { kind: "hotel" }>): stri
     });
     return `https://hotel.tuniu.com/list?${p}`;
   }
-  return "";
+  const cityId = CTRIP_HOTEL_CITY_ID[q.city] || CTRIP_HOTEL_CITY_ID[en] || 0;
+  if (cityId) {
+    return ctripHotelListUrl(cityId, q.checkin, q.checkout, {
+      keyword: q.area,
+      priceMin: q.priceMin,
+      priceMax: q.priceMax,
+    });
+  }
+  return ctripHotelListUrl(228, q.checkin, q.checkout, { keyword: q.city || en });
 }
 
 export function flightSearchUrl(q: Extract<TravelQuery, { kind: "flight" }>): string {
@@ -619,10 +691,12 @@ export function isFlightResultUrl(url: string): boolean {
 
 export function trainSearchUrl(q: Extract<TravelQuery, { kind: "train" }>): string {
   if (q.site === "12306") {
-    const fs = TRAIN_CODE[q.from];
-    const ts = TRAIN_CODE[q.to];
+    const fs = trainStationCode(q.from);
+    const ts = trainStationCode(q.to);
+    const fromName = Object.keys(TRAIN_CODE).find((k) => TRAIN_CODE[k] === fs) || q.from.replace(/出差.*$/, "");
+    const toName = Object.keys(TRAIN_CODE).find((k) => TRAIN_CODE[k] === ts) || q.to.replace(/出差.*$/, "");
     if (fs && ts) {
-      return `https://kyfw.12306.cn/otn/leftTicket/init?linktypeid=dc&fs=${encodeURIComponent(q.from)},${fs}&ts=${encodeURIComponent(q.to)},${ts}&date=${q.date}&flag=N,N,Y`;
+      return `https://kyfw.12306.cn/otn/leftTicket/init?linktypeid=dc&fs=${encodeURIComponent(fromName)},${fs}&ts=${encodeURIComponent(toName)},${ts}&date=${q.date}&flag=N,N,Y`;
     }
     return "https://kyfw.12306.cn/otn/leftTicket/init";
   }
@@ -687,6 +761,12 @@ export function travelListState(kind: TravelQuery["kind"], text: string): Travel
     if (raw.length < 1600 && /我的订单|关于携程|ICP证/.test(raw)) return "pending";
     return raw.length > 4000 && hasPrice ? "ready" : "pending";
   }
+  if (kind === "train") {
+    if (/\bG\d+|二等座|商务座|余票/.test(raw) && /\d{1,2}:\d{2}/.test(raw)) return "ready";
+    if (raw.length < 400 && /Copyright|ctrip\.com|all rights reserved/i.test(raw)) return "pending";
+    if (/暂无列车|没有符合条件的车次/.test(raw)) return "empty";
+    return raw.length > 800 ? "ready" : "pending";
+  }
   if (kind === "hotel") {
     if (/酒店|Hotel|房源|住宿/i.test(raw) && (/[¥￥$€]\s*\d{2,}/.test(raw) || /\d\.\d\s*分/.test(raw))) {
       return "ready";
@@ -704,16 +784,18 @@ export function shouldFallbackFlight(text: string, site: string, url = ""): bool
   return s === "empty" || s === "pending";
 }
 
+export function shouldFallbackTrain(text: string, site: string): boolean {
+  if (site === "12306") return false;
+  const s = travelListState("train", text);
+  return s === "empty" || s === "pending";
+}
+
 export function flightFallbackUrl(q: Extract<TravelQuery, { kind: "flight" }>): string {
-  const fromCode = flightCodes(q.from);
-  const toCode = flightCodes(q.to);
-  const enFrom = cityEnglish(q.from);
-  const enTo = cityEnglish(q.to);
-  if (fromCode && toCode) {
-    const slug = (s: string) => s.toLowerCase().replace(/\s+/g, "-");
-    return `https://www.trip.com/flights/${slug(enFrom)}-to-${slug(enTo)}/tickets-${fromCode.kayak.toLowerCase()}-${toCode.kayak.toLowerCase()}?ddate=${q.date}&flighttype=ow`;
-  }
-  return flightSearchUrl({ ...q, site: "gflights" });
+  return flightSearchUrl({ ...q, site: "kayak" });
+}
+
+export function trainFallbackUrl(q: Extract<TravelQuery, { kind: "train" }>): string {
+  return trainSearchUrl({ ...q, site: "12306" });
 }
 
 export function travelReadPrompt(q: TravelQuery): string {

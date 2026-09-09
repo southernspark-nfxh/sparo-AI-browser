@@ -1,0 +1,75 @@
+{
+  "id": "life-cn-business-trip",
+  "title": "国内出差：12306 火车 + 携程酒店 + 点评餐厅",
+  "kind": "life",
+  "version": 2,
+  "distilled": true,
+  "shareable": true,
+  "platform": "multi",
+  "aliases": ["出差", "高铁酒店", "陆家嘴酒店", "本帮菜", "京沪高铁"],
+  "createdAt": "2026-09-09T00:00:00.000Z",
+  "updatedAt": "2026-09-09T00:00:00.000Z",
+  "intent": "国内短差：火车走 12306 余票页，酒店走携程列表 URL，餐厅走点评检索。不直开点评首页，不点城市弹层。",
+  "declared_domains": [
+    "kyfw.12306.cn",
+    "hotels.ctrip.com",
+    "www.dianping.com"
+  ],
+  "declared_actions": ["navigate", "wait_for", "page_text"],
+  "human_gates": ["login", "pay", "captcha"],
+  "params": {
+    "from": { "type": "string", "default": "北京" },
+    "to": { "type": "string", "default": "上海" },
+    "fromCode": { "type": "string", "default": "BJP" },
+    "toCode": { "type": "string", "default": "SHH" },
+    "date": { "type": "string", "required": true, "example": "2026-09-16" },
+    "checkin": { "type": "string", "required": true, "example": "2026-09-16" },
+    "checkout": { "type": "string", "required": true, "example": "2026-09-18" },
+    "cityId": { "type": "string", "default": "2" },
+    "area": { "type": "string", "default": "陆家嘴" },
+    "foodQuery": { "type": "string", "default": "陆家嘴本帮菜" },
+    "dpCity": { "type": "string", "default": "1" }
+  },
+  "steps": [
+    {
+      "id": "train",
+      "tool": "navigate",
+      "args": {
+        "url": "https://kyfw.12306.cn/otn/leftTicket/init?linktypeid=dc&fs={{fromEnc}},{{fromCode}}&ts={{toEnc}},{{toCode}}&date={{date}}&flag=N,N,Y"
+      }
+    },
+    { "id": "train-wait", "tool": "wait_for", "args": { "text": "二等座", "timeoutMs": 20000 }, "optional": true },
+    { "id": "train-read", "tool": "page_text" },
+    {
+      "id": "hotel",
+      "tool": "navigate",
+      "args": {
+        "url": "https://hotels.ctrip.com/hotels/list?city={{cityId}}&checkin={{checkin}}&checkout={{checkout}}&keyword={{areaEnc}}&lowPrice=400&highPrice=600"
+      }
+    },
+    { "id": "hotel-wait", "tool": "wait_for", "args": { "text": "起", "timeoutMs": 25000 }, "optional": true },
+    { "id": "hotel-read", "tool": "page_text" },
+    {
+      "id": "food",
+      "tool": "navigate",
+      "args": {
+        "url": "https://www.dianping.com/search/keyword/{{dpCity}}/10_{{foodQueryEnc}}"
+      }
+    },
+    { "id": "food-wait", "tool": "wait_for", "args": { "text": "人均", "timeoutMs": 20000 }, "optional": true },
+    { "id": "food-read", "tool": "page_text" }
+  ],
+  "fallbacks": [
+    "携程火车 leftTicketList 经常空壳，不要当第一站",
+    "酒店 keyword 不等于商圈，读列表时丢掉明显外区广告"
+  ],
+  "knownGaps": [
+    "12306 列表常无票价",
+    "酒店 400-600 价带要人点筛选或进详情",
+    "城市码 / 点评城市 id 目前靠 params，不会自己猜全世界"
+  ],
+  "agentPlaybook": [
+    "run_skill({ query: '出差', params: { date, checkin, checkout, area, food } })",
+    "从 page_text 筛发车 8:00-10:00；酒店只留点名商圈且价带内"
+  ]
+}

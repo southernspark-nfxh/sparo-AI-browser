@@ -1,0 +1,38 @@
+{
+  "id": "research-remote-tools",
+  "title": "远程办公工具：检索评测与定价线索",
+  "kind": "research",
+  "version": 2,
+  "distilled": true,
+  "shareable": true,
+  "platform": "www.baidu.com",
+  "aliases": ["远程办公", "协作工具", "Slack Zoom Notion"],
+  "createdAt": "2026-09-09T00:00:00.000Z",
+  "updatedAt": "2026-09-09T00:00:00.000Z",
+  "intent": "收集远程协作工具名单和公开价。丢掉爱采购广告。统计和案例必须点进正文才写数字。",
+  "declared_domains": ["www.baidu.com"],
+  "declared_actions": ["navigate", "wait_for", "page_text"],
+  "human_gates": ["login"],
+  "params": {
+    "query": {
+      "type": "string",
+      "default": "2026 远程协作工具对比 飞书 钉钉 Slack Zoom Notion"
+    }
+  },
+  "steps": [
+    { "id": "open", "tool": "navigate", "args": { "url": "https://www.baidu.com/s?wd={{queryEnc}}" } },
+    { "id": "wait", "tool": "wait_for", "args": { "text": "相关搜索", "timeoutMs": 15000 }, "optional": true },
+    { "id": "read", "tool": "page_text" },
+    { "id": "price", "tool": "navigate", "args": { "url": "https://www.baidu.com/s?wd=%E9%A3%9E%E4%B9%A6%20%E9%92%89%E9%92%89%20Slack%20Notion%20%E5%AE%9A%E4%BB%B7" } },
+    { "id": "price-read", "tool": "page_text" }
+  ],
+  "fallbacks": ["批发/爱采购结果整段丢掉"],
+  "knownGaps": [
+    "官网定价页要另开 slack.com / notion.so 等，本技能只给检索",
+    "权威统计（人数增长）检索页经常没有"
+  ],
+  "agentPlaybook": [
+    "run_skill({ query: '远程办公' })",
+    "列出工具名 + 摘要里的价；没有来源的增长率不要写"
+  ]
+}

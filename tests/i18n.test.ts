@@ -40,6 +40,18 @@ describe("tx", () => {
     expect(tx("zh", "chat.clear")).toBe("清空对话");
     expect(tx("zh", "act.replyBusy")).toBe("起草中…");
     expect(tx("en", "mem.slept", { n: 3 })).toMatch(/3/);
+    expect(tx("zh", "welcome.try")).toMatch(/试用/);
+    expect(tx("en", "welcome.try")).toMatch(/Try first/i);
+    expect(tx("zh", "cloud.intro")).toMatch(/10/);
+    expect(tx("zh", "cloud.usedThis")).toMatch(/点/);
+    expect(tx("zh", "welcome.payGo")).not.toMatch(/\$|¥|元|美元/);
+    expect(tx("en", "welcome.payLead")).toMatch(/does not take payment/i);
+    expect(tx("ja", "ds.needKey")).not.toMatch(/その他の設定/);
+    expect(tx("ko", "ds.needKey")).not.toMatch(/추가 설정/);
+    expect(tx("ja", "welcome.title")).toMatch(/使い方/);
+    expect(tx("zh", "welcome.noEmail")).toMatch(/邮箱/);
+    expect(tx("zh", "welcome.msftPayGo")).not.toMatch(/订阅|价格|¥|\$/);
+    expect(tx("en", "llm.needKey")).toMatch(/card above/i);
   });
 });
 

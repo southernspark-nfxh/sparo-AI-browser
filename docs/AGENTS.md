@@ -81,9 +81,10 @@ Do **not** loop `fill` on multi-field pages.
 
 用户点名途牛 / Booking / Airbnb 就去该站。不要在热门城市弹层空点。  
 比价 / 周末安排：不要直开京东、淘宝、点评。出差和调研会出手册。  
+10 个基础场景用技能包：`run_skill({ query: "比价" })` 等，见 [SKILL-FORMAT.md](./SKILL-FORMAT.md)。  
 左上角只剩半截导航：网页没铺满页面洞，见 [ARCHITECTURE.md](./ARCHITECTURE.md)。  
 现行任务与 QA：[PRODUCT-TASKBOOK.md](./PRODUCT-TASKBOOK.md) v0.3.5。  
-云端模型：侧栏设置「自己的 Key / 云端模型」；一句对话一个任务。见 [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md)。不要把云端 Key 写进客户端。
+云端模型：侧栏设置「自己的 Key / 云端模型」；登录送 10 点（约 7 天）；一句对话一个任务。见 [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) · [PRICING.md](./PRICING.md)。不要把云端 Key 写进客户端。
 
 ### Customer service · 客服半自动
 
