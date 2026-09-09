@@ -589,6 +589,20 @@ function registerTools(server: McpServer, handlers: ToolHandlers): void {
   );
 
   server.tool(
+    "learning_skip",
+    "Skip the sidebar learning question (先不管) so multi-site tasks can continue.",
+    {},
+    async () => textResult(await handlers.learning_skip()),
+  );
+
+  server.tool(
+    "learning_answer",
+    "Answer the sidebar learning question: 是/否/有弹窗/要换入口/先登录/先不管.",
+    { text: z.string().min(1) },
+    async ({ text }) => textResult(await handlers.learning_answer(text)),
+  );
+
+  server.tool(
     "list_workflows",
     "List optional vertical workflows (disabled in public Sparo unless SPARO_ENABLE_DXM=1)",
     {},

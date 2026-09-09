@@ -3,6 +3,9 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { safeStorage } from "electron";
 import { cloudApiBase } from "./config.js";
+import { isValidEmail } from "./validate.js";
+
+export { describeCloudError, isValidEmail, type CloudErrorKind } from "./validate.js";
 
 export type CloudTokens = {
   access: string;
@@ -13,6 +16,7 @@ export type CloudTokens = {
 export type QuotaSnap = {
   canStart: boolean;
   points: number;
+  bonus?: number;
   approxTasks: number;
   trial: { used: number; left: number; cap: number };
   subscription: { active: boolean; plan: string | null };
@@ -94,7 +98,12 @@ async function api(
   };
   if (init.token) headers.Authorization = `Bearer ${init.token}`;
   if (init.deviceId) headers["X-Sparo-Device"] = init.deviceId;
-  const res = await fetch(`${cloudApiBase()}${path}`, { ...init, headers });
+  let res: Response;
+  try {
+    res = await fetch(`${cloudApiBase()}${path}`, { ...init, headers });
+  } catch {
+    throw new Error("NETWORK");
+  }
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) {
     throw new Error(String(json.error || json.message || `HTTP ${res.status}`));
@@ -103,7 +112,8 @@ async function api(
 }
 
 export async function sendLoginCode(email: string): Promise<string> {
-  const j = await api("/auth/send-code", { method: "POST", body: JSON.stringify({ email }) });
+  if (!isValidEmail(email)) throw new Error("EMAIL");
+  const j = await api("/auth/send-code", { method: "POST", body: JSON.stringify({ email: email.trim() }) });
   return String(j.message || "已发送");
 }
 
@@ -112,6 +122,8 @@ export async function verifyLogin(
   email: string,
   code: string,
 ): Promise<QuotaSnap> {
+  if (!isValidEmail(email)) throw new Error("EMAIL");
+  if (!String(code || "").trim()) throw new Error("CODE");
   const deviceId = getDeviceId(configDir);
   const j = await api("/auth/verify", {
     method: "POST",

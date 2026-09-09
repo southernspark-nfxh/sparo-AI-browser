@@ -1,0 +1,43 @@
+{
+  "id": "life-job-search",
+  "title": "求职检索：打开 Boss 结果页并读岗位（不代投）",
+  "kind": "life",
+  "version": 2,
+  "distilled": true,
+  "shareable": true,
+  "platform": "www.zhipin.com",
+  "aliases": ["求职", "AI产品经理", "Boss直聘", "招聘"],
+  "createdAt": "2026-09-09T00:00:00.000Z",
+  "updatedAt": "2026-09-09T00:00:00.000Z",
+  "intent": "打开已登录的 Boss 职位结果页，读公司、要求、当前页 URL。不代点立即沟通。",
+  "declared_domains": ["www.zhipin.com"],
+  "declared_actions": ["navigate", "wait_for", "page_text"],
+  "human_gates": ["login"],
+  "params": {
+    "role": { "type": "string", "required": true, "example": "AI产品经理" },
+    "city": { "type": "string", "default": "101010100" },
+    "salary": { "type": "string", "default": "406" },
+    "scale": { "type": "string", "default": "303" }
+  },
+  "steps": [
+    {
+      "id": "open",
+      "tool": "navigate",
+      "args": {
+        "url": "https://www.zhipin.com/web/geek/job?query={{roleEnc}}&city={{city}}&salary={{salary}}&scale={{scale}}&sort=2"
+      }
+    },
+    { "id": "wait", "tool": "wait_for", "args": { "text": "职位", "timeoutMs": 20000 }, "optional": true },
+    { "id": "read", "tool": "page_text" }
+  ],
+  "fallbacks": ["未登录只读得到残缺卡片就 pause"],
+  "knownGaps": [
+    "薪资若仍是反爬字体，page_text 会尽量从页面 JSON 抽 salaryDesc",
+    "近 7 天用 sort=2 近似，不是精确日历筛选",
+    "投递链接多是立即沟通，没有稳定外链"
+  ],
+  "agentPlaybook": [
+    "run_skill({ query: '求职', params: { role: 'AI产品经理' } })",
+    "表格：公司、可见要求、当前职位 URL。薪资读不清就写「页上加密」"
+  ]
+}

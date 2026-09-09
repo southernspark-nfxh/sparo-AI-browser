@@ -1,0 +1,45 @@
+{
+  "id": "life-home-appliance",
+  "title": "家电清单：冰箱 / 洗衣机 / 空调 / 电视京东结果页",
+  "kind": "life",
+  "version": 2,
+  "distilled": true,
+  "shareable": true,
+  "platform": "search.jd.com",
+  "aliases": ["家电清单", "买家电", "冰箱洗衣机空调电视"],
+  "createdAt": "2026-09-09T00:00:00.000Z",
+  "updatedAt": "2026-09-09T12:00:00.000Z",
+  "intent": "新家四件套一次打开四个京东检索结果页。不直开商城首页，不代下单。",
+  "declared_domains": ["search.jd.com"],
+  "declared_actions": ["navigate", "wait_for", "page_text"],
+  "human_gates": ["login", "pay"],
+  "params": {
+    "fridge": { "type": "string", "default": "冰箱 性价比 一级能效" },
+    "washer": { "type": "string", "default": "洗衣机 性价比" },
+    "ac": { "type": "string", "default": "空调 性价比 一级能效" },
+    "tv": { "type": "string", "default": "电视 性价比" }
+  },
+  "steps": [
+    { "id": "fridge", "tool": "navigate", "args": { "url": "https://search.jd.com/Search?keyword={{fridgeEnc}}&enc=utf-8" } },
+    { "id": "fridge-wait", "tool": "wait_for", "args": { "text": "¥", "timeoutMs": 20000 }, "optional": true },
+    { "id": "fridge-read", "tool": "page_text" },
+    { "id": "washer", "tool": "navigate", "args": { "url": "https://search.jd.com/Search?keyword={{washerEnc}}&enc=utf-8" } },
+    { "id": "washer-wait", "tool": "wait_for", "args": { "text": "¥", "timeoutMs": 20000 }, "optional": true },
+    { "id": "washer-read", "tool": "page_text" },
+    { "id": "ac", "tool": "navigate", "args": { "url": "https://search.jd.com/Search?keyword={{acEnc}}&enc=utf-8" } },
+    { "id": "ac-wait", "tool": "wait_for", "args": { "text": "¥", "timeoutMs": 20000 }, "optional": true },
+    { "id": "ac-read", "tool": "page_text" },
+    { "id": "tv", "tool": "navigate", "args": { "url": "https://search.jd.com/Search?keyword={{tvEnc}}&enc=utf-8" } },
+    { "id": "tv-wait", "tool": "wait_for", "args": { "text": "¥", "timeoutMs": 20000 }, "optional": true },
+    { "id": "tv-read", "tool": "page_text" }
+  ],
+  "fallbacks": ["某类打不开就记下链接，继续下一类"],
+  "knownGaps": [
+    "差评要进商详，列表只有已售/好评数",
+    "2 万预算组合是读完四页后的汇总，不是页面功能"
+  ],
+  "agentPlaybook": [
+    "run_skill({ query: '家电清单' })",
+    "每类留 3 个自营/国补型号；总价超 2 万就换更小容量"
+  ]
+}

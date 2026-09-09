@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it, afterEach } from "vitest";
-import { loadSettings, saveSettings, COMPAT_GATEWAYS, settingsPublicView } from "../src/main/settings/store.js";
+import { loadSettings, saveSettings, persistLocaleIfMissing, COMPAT_GATEWAYS, settingsPublicView } from "../src/main/settings/store.js";
 
 const dirs: string[] = [];
 
@@ -65,10 +65,40 @@ describe("loadSettings", () => {
     expect(loadSettings(dir).locale).toBe("ja");
   });
 
-  it("defaults to English when settings.json has no locale", () => {
+  it("uses OS locale when settings.json has no locale", () => {
     const dir = tmpDir();
     expect(loadSettings(dir).locale).toBe("en");
-    expect(loadSettings(dir, "zh-CN").locale).toBe("en");
+    expect(loadSettings(dir, "zh-CN").locale).toBe("zh");
+    expect(loadSettings(dir, "en-US").locale).toBe("en");
+    const s = saveSettings(dir, { onboardingDismissed: true }, "zh-CN");
+    expect(s.locale).toBe("zh");
+    expect(loadSettings(dir).locale).toBe("zh");
+  });
+
+  it("writes OS locale on first launch when file has none", () => {
+    const dir = tmpDir();
+    const s = persistLocaleIfMissing(dir, "zh-CN");
+    expect(s.locale).toBe("zh");
+    expect(loadSettings(dir).locale).toBe("zh");
+    expect(persistLocaleIfMissing(dir, "en-US").locale).toBe("zh");
+  });
+
+  it("defaults onboardingDismissed false and persists", () => {
+    const dir = tmpDir();
+    expect(loadSettings(dir).onboardingDismissed).toBe(false);
+    expect(settingsPublicView(loadSettings(dir)).onboardingDismissed).toBe(false);
+    const s = saveSettings(dir, { onboardingDismissed: true });
+    expect(s.onboardingDismissed).toBe(true);
+    expect(loadSettings(dir).onboardingDismissed).toBe(true);
+    expect(settingsPublicView(s).onboardingDismissed).toBe(true);
+  });
+
+  it("persists firstJobHintDismissed", () => {
+    const dir = tmpDir();
+    expect(loadSettings(dir).firstJobHintDismissed).toBe(false);
+    const s = saveSettings(dir, { firstJobHintDismissed: true });
+    expect(s.firstJobHintDismissed).toBe(true);
+    expect(settingsPublicView(s).firstJobHintDismissed).toBe(true);
   });
 
   it("defaults memory saver on and persists idle minutes", () => {

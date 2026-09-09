@@ -381,6 +381,37 @@ export const PAGE_PROBE_SCRIPT = `(() => {
   }));
 })()`;
 
+/** 12306 经常把 URL 参数丢掉，用表单把站名和日期补回去再点查询。 */
+export const FILL_12306_SCRIPT = `(fromName, fromCode, toName, toCode, date) => {
+  function setVal(el, value) {
+    if (!el) return;
+    el.removeAttribute('readonly');
+    el.removeAttribute('disabled');
+    el.focus();
+    el.value = value;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  const fromText = document.getElementById('fromStationText');
+  const fromHid = document.getElementById('fromStation');
+  const toText = document.getElementById('toStationText');
+  const toHid = document.getElementById('toStation');
+  const dateEl = document.getElementById('train_date');
+  setVal(fromText, fromName);
+  setVal(fromHid, fromCode);
+  setVal(toText, toName);
+  setVal(toHid, toCode);
+  setVal(dateEl, date);
+  const btn = document.getElementById('query_ticket') || document.querySelector('a.btn92s, #query_ticket, button.query-ticket');
+  if (btn && typeof btn.click === 'function') btn.click();
+  return {
+    ok: Boolean(fromHid && toHid && dateEl),
+    from: fromHid && fromHid.value,
+    to: toHid && toHid.value,
+    date: dateEl && dateEl.value,
+  };
+}`;
+
 /** Timeline / body text probe — always return JSON-serializable plain data. */
 export const PAGE_TEXT_SCRIPT = `(() => {
   function stripSurrogates(s) {
@@ -402,18 +433,56 @@ export const PAGE_TEXT_SCRIPT = `(() => {
     if (!el) return '';
     try { return String(el.innerText || el.textContent || ''); } catch (_) { return ''; }
   }
-  const app = document.getElementById('app');
-  let text = visibleText(app);
-  const body = visibleText(document.body || document.documentElement);
-  if (body.length > text.length) text = body;
-  if (text.length < 2200) {
-    const extra = [];
-    document.querySelectorAll('[class*="list"],[class*="result"],[class*="flight"],[class*="hotel"],[class*="price"]').forEach((el) => {
-      const t = visibleText(el);
-      if (t.length > 80) extra.push(t);
-    });
-    if (extra.length) text = [text].concat(extra).join('\\n');
+  function pickMain() {
+    var host = String(location.hostname || '').toLowerCase();
+    if (host.indexOf('baidu.com') >= 0) {
+      var box = document.getElementById('content_left') || document.querySelector('#content_left, #results, .c-container');
+      if (box) {
+        var clone = box.cloneNode(true);
+        var ads = clone.querySelectorAll('[cmatchid], .ec_tuiguang_container, [data-tuiguang], .ec-ad');
+        ads.forEach(function (n) { try { n.parentNode && n.parentNode.removeChild(n); } catch (_) {} });
+        return visibleText(clone);
+      }
+    }
+    if (host.indexOf('zhipin.com') >= 0) {
+      var bits = [];
+      try {
+        var html = String(document.documentElement && document.documentElement.innerHTML || '');
+        var re = /"salaryDesc"\\s*:\\s*"([^"]+)"/g;
+        var m;
+        var salaries = [];
+        while ((m = re.exec(html)) && salaries.length < 20) salaries.push(m[1]);
+        var names = [];
+        var nr = /"jobName"\\s*:\\s*"([^"]+)"/g;
+        while ((m = nr.exec(html)) && names.length < 20) names.push(m[1]);
+        var brands = [];
+        var br = /"brandName"\\s*:\\s*"([^"]+)"/g;
+        while ((m = br.exec(html)) && brands.length < 20) brands.push(m[1]);
+        for (var i = 0; i < Math.max(names.length, salaries.length, brands.length); i++) {
+          bits.push([brands[i] || '', names[i] || '', salaries[i] || ''].join(' ').trim());
+        }
+      } catch (_) {}
+      document.querySelectorAll('[class*="job-card"],[class*="job-list"], li[class*="job"]').forEach(function (el) {
+        var t = visibleText(el);
+        if (t.length > 20) bits.push(t);
+      });
+      if (bits.length) return bits.join('\\n');
+    }
+    var app = document.getElementById('app');
+    var text = visibleText(app);
+    var body = visibleText(document.body || document.documentElement);
+    if (body.length > text.length) text = body;
+    if (text.length < 2200) {
+      var extra = [];
+      document.querySelectorAll('[class*="list"],[class*="result"],[class*="flight"],[class*="hotel"],[class*="price"]').forEach(function (el) {
+        var t = visibleText(el);
+        if (t.length > 80) extra.push(t);
+      });
+      if (extra.length) text = [text].concat(extra).join('\\n');
+    }
+    return text;
   }
+  let text = pickMain();
   text = stripSurrogates(text);
   const payload = { text: text.slice(0, 80000), length: text.length };
   return JSON.parse(JSON.stringify(payload));

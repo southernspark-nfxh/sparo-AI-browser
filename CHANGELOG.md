@@ -1,10 +1,18 @@
 # Changelog
 
+## [商店版 0.1.16] — 2026-09-09
+
+安装包默认连接官网云端 API（`https://southernspark.dev/sparo-api`）。本地 `npm start` 仍走本机 `127.0.0.1:3940`。货架与试用点数与 v4 一致。
+
+10 个基础场景可独立跑：比价打开京东/淘宝/拼多多结果页（不再整站跳过）；火车默认 12306，国际机票默认 Kayak，空壳再回退；酒店带商圈和价带；求职带薪资/规模；家电一次四类；日本行程含京都大阪。卡住就问不再冻死翻页。`page_text` 读百度主栏和 Boss `salaryDesc`。侧栏原句即可，不必先 `run_skill`。
+
 ## [商店版 0.1.15] — 2026-09-05
 
-可选云端模型（M1，代码已落地，人测/上架未完）。免费永远自备 Key；登录后每台设备 3 次云端体验；订阅走服务端代理，Key 不进电脑。一句侧栏对话计 1 个任务，不是一次 HTTP。商店内无支付按钮，订阅走官网。给后续 Agent：[docs/CLOUD-SUBSCRIPTION.md](./docs/CLOUD-SUBSCRIPTION.md)。`listings/` 未改，提审前另做一轮。安装见 [docs/INSTALL.md](./docs/INSTALL.md)。
+可选云端模型（点数 v4，2026-09-07）。免费永远自备 Key；登录送 10 点（约 7 天）；按加权 token 折点（1 万=1 点）。货架：入门 50(7天) / 包月 400(30天) / 包季 1000(90天) / 包年 4000(365天) / 加购 100(不过期)。入门单价高于包月，逼升级。点数用尽才露出档位，付款走系统浏览器。`STORE_CHANNEL=msft` 不写价格。给后续 Agent：[docs/CLOUD-SUBSCRIPTION.md](./docs/CLOUD-SUBSCRIPTION.md) · [docs/PRICING.md](./docs/PRICING.md)。`listings/` 未改。安装见 [docs/INSTALL.md](./docs/INSTALL.md)。
 
 侧栏去掉「教一遍」录制和「已保存的操作」列表。内置发帖/填表/回复仍可用；不再从对话自动记成妙招。设置抽屉重排：模型置顶，已配置则收起表单；工作偏好/高级折叠；内存改开关；去掉重复入口和说明书。
+
+第一次打开侧栏出现用法引导：不会配的人走邮箱登录试用；会配的人可贴 DeepSeek 或 OpenAI。没有邮箱也能改走密钥或先当普通浏览器用。配好后给出可点的第一件事。点数用完后外开官网或选档位；云服务挂了会说人话。中文 Windows 无本地设置时按系统语言写入配置。
 
 Windows 安装包：`Sparo-Setup.exe`。人从[官网产品页](https://southernspark.dev/zh/products/sparo)下载；AI 用 GitHub Release 最新地址。不提供便携版。SHA256 见 [docs/INSTALL.md](./docs/INSTALL.md)。
 

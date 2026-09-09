@@ -1,0 +1,42 @@
+{
+  "id": "research-pet-hardware",
+  "title": "宠物智能硬件：规模检索 + 京东类目榜",
+  "kind": "research",
+  "version": 2,
+  "distilled": true,
+  "shareable": true,
+  "platform": "multi",
+  "aliases": ["宠物智能硬件", "智能喂食器", "宠物硬件调研"],
+  "createdAt": "2026-09-09T00:00:00.000Z",
+  "updatedAt": "2026-09-09T00:00:00.000Z",
+  "intent": "市场规模用检索摘要并标明来源冲突；品牌用京东「智能喂食器」列表，不编前十名。",
+  "declared_domains": ["www.baidu.com", "search.jd.com"],
+  "declared_actions": ["navigate", "wait_for", "page_text"],
+  "human_gates": ["login"],
+  "params": {
+    "marketQuery": {
+      "type": "string",
+      "default": "宠物智能硬件 市场规模 2026"
+    },
+    "product": { "type": "string", "default": "智能喂食器" }
+  },
+  "steps": [
+    { "id": "market", "tool": "navigate", "args": { "url": "https://www.baidu.com/s?wd={{marketQueryEnc}}" } },
+    { "id": "market-read", "tool": "page_text" },
+    { "id": "shop", "tool": "navigate", "args": { "url": "https://search.jd.com/Search?keyword={{productEnc}}&enc=utf-8" } },
+    { "id": "shop-wait", "tool": "wait_for", "args": { "text": "¥", "timeoutMs": 20000 }, "optional": true },
+    { "id": "shop-read", "tool": "page_text" },
+    { "id": "reviews", "tool": "navigate", "args": { "url": "https://www.baidu.com/s?wd={{productEnc}}%20%E5%B7%AE%E8%AF%84" } },
+    { "id": "reviews-read", "tool": "page_text" }
+  ],
+  "fallbacks": ["付费行业报告打不开就写「仅公开摘要」"],
+  "knownGaps": [
+    "公开规模数字互相打架，必须并列来源",
+    "社媒痛点本技能不采",
+    "差评要再进商详"
+  ],
+  "agentPlaybook": [
+    "run_skill({ query: '宠物智能硬件' })",
+    "品牌只写京东列表里出现的；机会风险标成判断不是事实"
+  ]
+}

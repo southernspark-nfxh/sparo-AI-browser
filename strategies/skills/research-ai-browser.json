@@ -1,0 +1,46 @@
+{
+  "id": "research-ai-browser",
+  "title": "AI 浏览器竞品：先检索名单，再尝试官网",
+  "kind": "research",
+  "version": 2,
+  "distilled": true,
+  "shareable": true,
+  "platform": "multi",
+  "aliases": ["AI浏览器竞品", "浏览器竞品", "Atlas Comet"],
+  "createdAt": "2026-09-09T00:00:00.000Z",
+  "updatedAt": "2026-09-09T00:00:00.000Z",
+  "intent": "找 AI 浏览器竞品的官网、卖点、定价线索。海外官网常被拦，拦了就记 URL，不要编定价。",
+  "declared_domains": [
+    "www.baidu.com",
+    "chatgpt.com",
+    "www.perplexity.ai"
+  ],
+  "declared_actions": ["navigate", "wait_for", "page_text"],
+  "human_gates": ["login", "captcha"],
+  "params": {
+    "query": {
+      "type": "string",
+      "default": "AI浏览器 竞品 官网 定价 Atlas Comet Arc"
+    }
+  },
+  "steps": [
+    { "id": "serp", "tool": "navigate", "args": { "url": "https://www.baidu.com/s?wd={{queryEnc}}" } },
+    { "id": "serp-read", "tool": "page_text" },
+    { "id": "reviews", "tool": "navigate", "args": { "url": "https://www.baidu.com/s?wd=AI%E6%B5%8F%E8%A7%88%E5%99%A8%20%E5%B7%AE%E8%AF%84%20Atlas%20Comet" } },
+    { "id": "reviews-read", "tool": "page_text" },
+    { "id": "atlas", "tool": "navigate", "args": { "url": "https://chatgpt.com/zh-Hans-CN/atlas/" }, "optional": true },
+    { "id": "atlas-read", "tool": "page_text", "optional": true }
+  ],
+  "fallbacks": [
+    "chatgpt.com / perplexity.ai 被 Cloudflare 拦就停，写「官网打不开」",
+    "comet-china.com 当镜像，不当官方"
+  ],
+  "knownGaps": [
+    "差评在应用商店/社媒，本技能不自动扫商店",
+    "社媒账号不能从检索摘要编造"
+  ],
+  "agentPlaybook": [
+    "run_skill({ query: 'AI浏览器竞品' })",
+    "表格只填页面上出现的官网/卖点；空着就空着"
+  ]
+}

@@ -87,6 +87,29 @@
 23. 打印 / 存 PDF  
 24. 翻译整页  
 
+### 3.1 上架前 10 个基础场景（2026-09-09）
+
+任务书 `D:\Hermes\sparo-10-scenarios-qa-task.md` 的 10 条，当作**能不能对外推**的底线。  
+2026-09-09 QA：**0 条完全完成**。报告：`D:\Hermes\sparo-10-scenarios-qa-report.md`。  
+2026-09-09 已改产品：侧栏原句走 `parseMission` / `parseTripPlan`（比价读三家结果页、出差火车 12306、国际机票 Kayak、家电四类、求职带筛选）；技能包升到 v2。登录/验证码仍由人过，不算产品失败。
+
+对应技能包（固定 id，开机写入本机，调用 `run_skill`）：
+
+| 场景 | 技能 id | 口语 |
+|---|---|---|
+| 电商比价 | `life-compare-shop` | 比价 |
+| 国内出差 | `life-cn-business-trip` | 出差 |
+| 新闻汇总 | `life-news-digest` | 新闻汇总 |
+| AI 浏览器竞品 | `research-ai-browser` | AI浏览器竞品 |
+| 求职 | `life-job-search` | 求职 |
+| 远程办公素材 | `research-remote-tools` | 远程办公 |
+| 家电清单 | `life-home-appliance` | 家电清单 |
+| 宠物硬件调研 | `research-pet-hardware` | 宠物智能硬件 |
+| 日本 7 日 | `life-japan-trip` | 日本自由行 |
+| AI 写作竞品 | `research-ai-writing` | AI写作 |
+
+格式：[SKILL-FORMAT.md](./SKILL-FORMAT.md)。技能能打开对的页；卡点（空列表、薪资乱码、到货日）仍要改产品，不能只靠再写一份 JSON。
+
 ---
 
 ## 4. 国内外对标站
@@ -240,14 +263,15 @@ RAG是什么 打开百度百科和知乎做成笔记
 | 问题 | 改动 |
 |---|---|
 | 「约 150 次」对不齐一次订酒店 | 1 次任务 = 一次 `handleChatJob`；多轮 HTTP 同一 `task_id`，按加权 token 扣点 |
-| 大众没 Key 用不了 | 登录后每设备 3 次云端体验（按任务，不是积分礼包） |
+| 大众没 Key 用不了 | 登录送 10 点（7 天）；用尽再开通 |
 | 云端 Key 进本机有上架风险 | 服务端代理；JWT 进 `safeStorage`；设置目录无真 Key |
-| 商店包不能出现支付 | 应用内只「登录 / 去官网管理订阅」；`STORE_CHANNEL=msft` 更严 |
+| 商店包不能出现支付 | 点数用尽才列档位；msft 只「去官网继续」；应用内零收款 |
+| 入门与包月单价一样 | v4：入门 50 点/7 天（¥0.10），包月 400/30 天（¥0.05） |
 | 代理挂了整窗废掉 | 未登录或 5xx → 退回已保存的 BYOK |
 
-砍出 M1：加购、Gumroad、Skill 社区、`declared_domains`。文案已改 PRODUCT / PRIVACY / 侧栏；**`listings/` 未改**。
+砍出：Skill 社区、`declared_domains`、默认自动续费。加购已进货架。文案已改 PRODUCT / PRIVACY / 侧栏；**`listings/` 未改**。
 
-交接全文：[CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md)。安装：[INSTALL.md](./INSTALL.md)。
+交接全文：[CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) · [PRICING.md](./PRICING.md)。安装：[INSTALL.md](./INSTALL.md)。
 
 ---
 
@@ -305,9 +329,27 @@ RAG是什么 打开百度百科和知乎做成笔记
 | 项 | 结果 |
 |---|---|
 | 商店版 `npx vitest run` | **164** 通过（含 `llmMode` 持久化、need-key 文案） |
-| sparo-pay `node --test test` | **7** 通过（3 次体验、同 task 多轮只扣一次、七象验签、计价） |
+| sparo-pay `node --test test` | **10** 通过（登录送 10、包月 400、入门/加购、到期作废、验签、货架） |
+| 商店版点数货架 sanitize | `tests/cloud-pricing.test.ts` |
 | Electron 侧栏登录 / 余量 / 订酒店计 1 次 | **未在本机点完**，后续 Agent 用开发窗补 |
 | `listings/` 与商店页「不设云端账号」 | **未改**，提审前单独一轮 |
+
+### 6.6 首次打开引导（2026-09-06）
+
+| 项 | 结果 |
+|---|---|
+| 双击 exe 后设置关着、无引导 | **已改**：侧栏对话区先出「先选一种用法」 |
+| 不懂 API Key 的人 | 主按钮「先试用」→ 邮箱验证码，不提 Key |
+| 会配模型的人 | 「我有自己的模型」→ 贴密钥，默认 DeepSeek |
+| 体验用尽 | 卡片「点数用完了」；非 msft 可列档位外开付款；msft 只「在官网继续」 |
+| 点数文案 | 「大约还能做 N 次 · 余 P 点」；这次用了 X 点 |
+| 中文系统第一次却是英文界面 | **已修**：无 locale 时按系统语言写入 `settings.json` |
+| 配好后不知道做什么 | **已修**：第一次就绪后给出总结 / 天气 / 回复 |
+| 没有邮箱的人 | **已修**：首页说明 + 登录页可改走密钥 |
+| 美国程序员要换 OpenAI | **已修**：引导里可选品牌 |
+| 日韩旧文案「去更多设置贴 Key」 | **已修** |
+| 用尽后官网 404 | **已修**：`/sparo/account` 与 `/zh/sparo/account` 落地页（开通通道未通时说实话） |
+| 云服务挂了仍提示已登录 | **已修**：网络/邮箱/验证码人话错误 |
 
 ---
 
@@ -352,7 +394,9 @@ RAG是什么 打开百度百科和知乎做成笔记
 - [x] 网页视图铺满页面洞，左上角不再露半截导航（2026-09-03）
 - [x] 飞书网页：打开消息、写聊天/日志草稿，不代点发送（2026-09-04）
 - [x] 云订阅 M1 代码：sparo-pay + 商店版双模式 / 配额 / 文案（2026-09-05）
-- [ ] 云订阅 M1 人测：侧栏登录、3 次体验、订酒店只计 1 任务、断网退回 BYOK
+- [x] 第一次打开侧栏用法引导：试用 / 自己的 Key / 用尽去官网（2026-09-06）
+- [ ] 云订阅人测：侧栏登录送 10 点、订酒店只计 1 任务、用尽跳档位/官网、断网退回 BYOK
+- [x] 点数 v4：试用 10/7 天；入门 50/7 天；月 400/30；季 1000/90；年 4000/365；加购 100 不过期（2026-09-07）
 - [ ] `listings/` 按新叙事改一轮再提审（本次故意未动）
 
 ### P2
@@ -360,7 +404,7 @@ RAG是什么 打开百度百科和知乎做成笔记
 - [x] 出差组合：机票 + 酒店一次报（两城往返会拆步骤；三城以上未测）
 - [ ] 美团网页门票（站点本身常封网页入口）  
 - [ ] 1688 情报（旧任务 D）  
-- [ ] Skill 社区 / 分成（**M1 人测过完再开**）
+- [ ] Skill 社区（**M2，未开工**）：先分享/点赞/留言，不做积分买卖。方案：[SKILL-COMMUNITY-M2.md](./SKILL-COMMUNITY-M2.md)
 
 ### 不做
 
@@ -392,6 +436,8 @@ RAG是什么 打开百度百科和知乎做成笔记
 | 本文 `PRODUCT-TASKBOOK.md` | 现行任务、日志、QA、待办 |
 | [CHANGELOG.md](../CHANGELOG.md) | 对外变更（现 0.1.15） |
 | [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) | 云订阅 M1 交接（计量、目录、验收） |
+| [SKILL-COMMUNITY-M2.md](./SKILL-COMMUNITY-M2.md) | 技能社区 M2（存档，未开工） |
+| [AI-LEARNING.md](./AI-LEARNING.md) | 本机卡住就问 |
 | [PRODUCT.md](./PRODUCT.md) | 商店定位（不是任务书） |
 | [HERMES-PLAYBOOK.md](./HERMES-PLAYBOOK.md) | Agent 决策树 |
 | [UNIVERSAL-ANALYZER.md](./UNIVERSAL-ANALYZER.md) | 填表 / 日历 |

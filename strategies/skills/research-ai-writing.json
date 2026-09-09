@@ -1,0 +1,38 @@
+{
+  "id": "research-ai-writing",
+  "title": "AI 写作竞品：检索名单与公开评测",
+  "kind": "research",
+  "version": 2,
+  "distilled": true,
+  "shareable": true,
+  "platform": "www.baidu.com",
+  "aliases": ["AI写作", "写作助手竞品", "Jasper 豆包 元宝"],
+  "createdAt": "2026-09-09T00:00:00.000Z",
+  "updatedAt": "2026-09-09T00:00:00.000Z",
+  "intent": "列出写作助手竞品和评测里出现的功能/价。定位建议标成判断。不编官网价表。",
+  "declared_domains": ["www.baidu.com"],
+  "declared_actions": ["navigate", "wait_for", "page_text"],
+  "human_gates": ["login"],
+  "params": {
+    "query": {
+      "type": "string",
+      "default": "AI写作助手 竞品 定价 豆包 腾讯元宝 Jasper"
+    }
+  },
+  "steps": [
+    { "id": "open", "tool": "navigate", "args": { "url": "https://www.baidu.com/s?wd={{queryEnc}}" } },
+    { "id": "wait", "tool": "wait_for", "args": { "text": "相关搜索", "timeoutMs": 15000 }, "optional": true },
+    { "id": "read", "tool": "page_text" },
+    { "id": "reviews", "tool": "navigate", "args": { "url": "https://www.baidu.com/s?wd=%E8%B1%86%E5%8C%85%20%E8%85%BE%E8%AE%AF%E5%85%83%E5%AE%9D%20%E5%86%99%E4%BD%9C%20%E8%AF%84%E6%B5%8B" } },
+    { "id": "reviews-read", "tool": "page_text" }
+  ],
+  "fallbacks": ["论文代写/灰色生成器不进推荐名单"],
+  "knownGaps": [
+    "功能矩阵要进各官网，本技能只有检索",
+    "用户评论、广告投放没有自动源"
+  ],
+  "agentPlaybook": [
+    "run_skill({ query: 'AI写作' })",
+    "名单来自页面；空白点和定位单独标「判断」"
+  ]
+}

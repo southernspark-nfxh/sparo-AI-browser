@@ -32,6 +32,9 @@ contextBridge.exposeInMainWorld("sparkShell", {
 
   // sidebar → main
   setPaused: (paused: boolean) => ipcRenderer.invoke("spark:set-paused", paused),
+  learningAnswer: (text: string) => ipcRenderer.invoke("spark:learning-answer", text),
+  learningSkip: () => ipcRenderer.invoke("spark:learning-skip"),
+  deleteLesson: (id: string) => ipcRenderer.invoke("spark:delete-lesson", id),
   getStatus: () => ipcRenderer.invoke("spark:get-status"),
   resolveApproval: (id: string, approved: boolean) =>
     ipcRenderer.invoke("spark:resolve-approval", id, approved),
@@ -56,6 +59,8 @@ contextBridge.exposeInMainWorld("sparkShell", {
     deepseekBaseUrl?: string;
     deepseekModel?: string;
     locale?: string;
+    onboardingDismissed?: boolean;
+    firstJobHintDismissed?: boolean;
     memorySaver?: boolean;
     memorySaverIdleMinutes?: number;
   }) => ipcRenderer.invoke("spark:save-settings", patch),
@@ -63,7 +68,8 @@ contextBridge.exposeInMainWorld("sparkShell", {
   cloudVerify: (email: string, code: string) =>
     ipcRenderer.invoke("spark:cloud-verify", email, code),
   cloudLogout: () => ipcRenderer.invoke("spark:cloud-logout"),
-  cloudOpenAccount: () => ipcRenderer.invoke("spark:cloud-open-account"),
+  cloudOpenAccount: (plan?: string) => ipcRenderer.invoke("spark:cloud-open-account", plan),
+  cloudCheckout: (plan: string) => ipcRenderer.invoke("spark:cloud-checkout", plan),
   cloudRefresh: () => ipcRenderer.invoke("spark:cloud-refresh"),
   getProfile: () => ipcRenderer.invoke("spark:get-profile"),
   saveIdentity: (patch: {

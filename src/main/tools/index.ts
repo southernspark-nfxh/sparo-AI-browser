@@ -10,12 +10,17 @@ import {
 
 export function createToolHandlers(browser: SparkBrowser) {
   return {
-    navigate: (url: string) => navigateTool(browser, url),
+    navigate: (url: string) =>
+      browser.watchPageTool("navigate", { url }, () => navigateTool(browser, url)),
     snapshot: (selector?: string) => snapshotTool(browser, selector),
     click: (target: { ref?: string; selector?: string; caret?: boolean }) =>
-      clickTool(browser, target),
+      browser.watchPageTool("click", target as Record<string, unknown>, () =>
+        clickTool(browser, target),
+      ),
     fill: (target: { ref?: string; selector?: string }, value: string) =>
-      fillTool(browser, target, value),
+      browser.watchPageTool("fill", { ...target, value } as Record<string, unknown>, () =>
+        fillTool(browser, target, value),
+      ),
     execute: (script: string, opts?: { frame?: number | string }) =>
       browser.execute(script, opts),
     select: (target: { ref?: string; selector?: string }, value: string) =>
@@ -25,7 +30,10 @@ export function createToolHandlers(browser: SparkBrowser) {
     click_text: (
       text: string,
       opts?: { exact?: boolean; withinPortal?: boolean; caret?: boolean },
-    ) => browser.clickText(text, opts),
+    ) =>
+      browser.watchPageTool("click_text", { text, ...opts }, () =>
+        browser.clickText(text, opts),
+      ),
     menu_click: (trigger: string, item: string) =>
       browser.menuClick(trigger, item),
     dismiss_overlays: () => browser.dismissOverlays(),
@@ -138,6 +146,8 @@ export function createToolHandlers(browser: SparkBrowser) {
       browser.setPaused(false);
       return { ok: true, message: "Agent resumed" };
     },
+    learning_skip: () => browser.skipLearning(),
+    learning_answer: (text: string) => browser.answerLearning(text),
     list_workflows: async () => ({
       ok: true,
       message: `workflows: ${listWorkflowSummaries().length}`,

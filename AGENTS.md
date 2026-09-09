@@ -10,10 +10,14 @@ Tagline: *会动手的 AI 浏览器 — 发送前你确认。*
 |---|---|
 | 本文 | 30 秒路径、禁区 |
 | [docs/INSTALL.md](./docs/INSTALL.md) | 人下载安装包 / 复制给 AI 自动装 |
-| [docs/CLOUD-SUBSCRIPTION.md](./docs/CLOUD-SUBSCRIPTION.md) | 云订阅 M1：计量、客户端、验收、禁区 |
+| [docs/CLOUD-SUBSCRIPTION.md](./docs/CLOUD-SUBSCRIPTION.md) | 云订阅：计量、客户端、验收、禁区 |
+| [docs/PRICING.md](./docs/PRICING.md) | 点数货架（v3） |
 | [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) | 模块、侧栏闭环、页面洞 |
+| [docs/AI-LEARNING.md](./docs/AI-LEARNING.md) | 卡住就问、经验只留本机 |
+| [docs/SKILL-COMMUNITY-M2.md](./docs/SKILL-COMMUNITY-M2.md) | 技能社区（**未开工**，M1 人测过完再开） |
+| [docs/SKILL-FORMAT.md](./docs/SKILL-FORMAT.md) | 技能包命名与字段（本机 `run_skill`，以后才分享） |
 | [docs/PRODUCT-TASKBOOK.md](./docs/PRODUCT-TASKBOOK.md) | 现行任务、QA、待办（v0.3.5） |
-| [CHANGELOG.md](./CHANGELOG.md) | 对外变更（现 0.1.15） |
+| [CHANGELOG.md](./CHANGELOG.md) | 对外变更（现 0.1.16） |
 | [docs/PRODUCT.md](./docs/PRODUCT.md) | 商店定位，不是任务书 |
 
 数据在 `%APPDATA%\sparo-store`。MCP：`http://127.0.0.1:3921`。  

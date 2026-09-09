@@ -1,5 +1,6 @@
 import { fetchMe, getDeviceId, loadTokens, refreshIfNeeded } from "./auth.js";
 import { cloudApiBase } from "./config.js";
+import { sanitizePlans, type CloudPlanPublic } from "./pricing.js";
 import type { QuotaSnap } from "./auth.js";
 
 export type CloudTask = {
@@ -46,8 +47,9 @@ export async function assertAndStartTask(configDir: string): Promise<CloudTask> 
     snap: {
       canStart: true,
       points: Number(json.points || 0),
+      bonus: Number(json.bonus || 0),
       approxTasks: Number(json.approxTasks || 0),
-      trial: (json.trial as QuotaSnap["trial"]) || { used: 0, left: 0, cap: 3 },
+      trial: (json.trial as QuotaSnap["trial"]) || { used: 0, left: 0, cap: 0 },
       subscription: (json.subscription as QuotaSnap["subscription"]) || {
         active: false,
         plan: null,
@@ -63,8 +65,31 @@ export async function settleCloudTask(
   const json = await authed(configDir, "/tasks/settle", { taskId });
   const me = await fetchMe(configDir);
   return {
-    approxTasksUsed: Number(json.approxTasksUsed || 1),
+    approxTasksUsed: Number(json.approxTasksUsed || 0),
     approxTasks: me?.approxTasks ?? 0,
     points: Number(json.points || 0),
+  };
+}
+
+export async function fetchCloudPlans(): Promise<CloudPlanPublic[]> {
+  try {
+    const res = await fetch(`${cloudApiBase()}/plans`);
+    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    return sanitizePlans(json.plans);
+  } catch {
+    return [];
+  }
+}
+
+export async function createCloudCheckout(
+  configDir: string,
+  plan: string,
+  type = "alipay",
+): Promise<{ payUrl?: string; plan?: string; money?: string }> {
+  const json = await authed(configDir, "/pay/create", { plan, type });
+  return {
+    payUrl: json.payUrl ? String(json.payUrl) : undefined,
+    plan: json.plan ? String(json.plan) : plan,
+    money: json.money ? String(json.money) : undefined,
   };
 }

@@ -1,0 +1,74 @@
+{
+  "id": "life-japan-trip",
+  "title": "日本出行：Kayak 机票 + 携程当地酒店列表",
+  "kind": "life",
+  "version": 2,
+  "distilled": true,
+  "shareable": true,
+  "platform": "multi",
+  "aliases": ["日本自由行", "东京京都大阪", "日本机票酒店"],
+  "createdAt": "2026-09-09T00:00:00.000Z",
+  "updatedAt": "2026-09-09T00:00:00.000Z",
+  "intent": "国际机票不要先开携程航班列表（经常空壳）。先 Kayak 结果页，酒店用携程城市列表 URL。每日行程不是这一条技能能跑完的。",
+  "declared_domains": ["www.kayak.com", "hotels.ctrip.com", "flights.ctrip.com"],
+  "declared_actions": ["navigate", "wait_for", "page_text"],
+  "human_gates": ["login", "pay", "captcha"],
+  "params": {
+    "fromKayak": { "type": "string", "default": "PEK" },
+    "toKayak": { "type": "string", "default": "TYO" },
+    "date": { "type": "string", "required": true, "example": "2026-10-01" },
+    "checkout": { "type": "string", "required": true, "example": "2026-10-03" },
+    "cityId": { "type": "string", "default": "228" }
+  },
+  "steps": [
+    {
+      "id": "flight",
+      "tool": "navigate",
+      "args": {
+        "url": "https://www.kayak.com/flights/{{fromKayak}}-{{toKayak}}/{{date}}?sort=bestflight_a"
+      }
+    },
+    { "id": "flight-wait", "tool": "wait_for", "args": { "text": "nonstop", "timeoutMs": 25000 }, "optional": true },
+    { "id": "flight-read", "tool": "page_text" },
+    {
+      "id": "hotel-tokyo",
+      "tool": "navigate",
+      "args": {
+        "url": "https://hotels.ctrip.com/hotels/list?city={{cityId}}&checkin={{date}}&checkout={{checkout}}"
+      }
+    },
+    { "id": "hotel-tokyo-wait", "tool": "wait_for", "args": { "text": "起", "timeoutMs": 25000 }, "optional": true },
+    { "id": "hotel-tokyo-read", "tool": "page_text" },
+    {
+      "id": "hotel-kyoto",
+      "tool": "navigate",
+      "args": {
+        "url": "https://hotels.ctrip.com/hotels/list?city=92&checkin={{date}}&checkout={{checkout}}"
+      }
+    },
+    { "id": "hotel-kyoto-wait", "tool": "wait_for", "args": { "text": "起", "timeoutMs": 25000 }, "optional": true },
+    { "id": "hotel-kyoto-read", "tool": "page_text" },
+    {
+      "id": "hotel-osaka",
+      "tool": "navigate",
+      "args": {
+        "url": "https://hotels.ctrip.com/hotels/list?city=59&checkin={{date}}&checkout={{checkout}}"
+      }
+    },
+    { "id": "hotel-osaka-wait", "tool": "wait_for", "args": { "text": "起", "timeoutMs": 25000 }, "optional": true },
+    { "id": "hotel-osaka-read", "tool": "page_text" }
+  ],
+  "fallbacks": [
+    "Kayak 失败再试 Google Flights，最后才试携程国际机票",
+    "京都 cityId=92，大阪 cityId=59。不要用东京列表冒充三城"
+  ],
+  "knownGaps": [
+    "7 日逐日景点/交通/餐饮不会自动规划",
+    "JR Pass、门票要另开官方页才写进预订单",
+    "总预算是读完机票+酒店后的汇总"
+  ],
+  "agentPlaybook": [
+    "run_skill({ query: '日本自由行', params: { date: '2026-10-01', checkout: '2026-10-03' } })",
+    "手册里把「页上核实」和「待人确认」分开写"
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "id": "life-news-digest",
+  "title": "新闻评测汇总：检索页先读，再点进 2～3 篇正文",
+  "kind": "life",
+  "version": 2,
+  "distilled": true,
+  "shareable": true,
+  "platform": "www.baidu.com",
+  "aliases": ["新闻汇总", "评测汇总", "最近一周新闻", "信息汇总"],
+  "createdAt": "2026-09-09T00:00:00.000Z",
+  "updatedAt": "2026-09-09T00:00:00.000Z",
+  "intent": "按主题搜新闻/评测。先读检索页，再开少量正文。日期以文内时间为准，检索页摘要不算「最近一周」。",
+  "declared_domains": ["www.baidu.com"],
+  "declared_actions": ["navigate", "wait_for", "page_text"],
+  "human_gates": ["login", "captcha"],
+  "params": {
+    "topic": { "type": "string", "required": true, "example": "AI浏览器 评测" },
+    "year": { "type": "string", "default": "2026" }
+  },
+  "steps": [
+    {
+      "id": "search",
+      "tool": "navigate",
+      "args": { "url": "https://www.baidu.com/s?wd={{topicEnc}}%20评测%20{{year}}" }
+    },
+    { "id": "wait", "tool": "wait_for", "args": { "text": "相关搜索", "timeoutMs": 15000 }, "optional": true },
+    { "id": "read", "tool": "page_text" },
+    {
+      "id": "news",
+      "tool": "navigate",
+      "args": { "url": "https://www.baidu.com/s?tn=news&word={{topicEnc}}%20{{year}}" }
+    },
+    { "id": "news-wait", "tool": "wait_for", "args": { "text": "资讯", "timeoutMs": 15000 }, "optional": true },
+    { "id": "news-read", "tool": "page_text" }
+  ],
+  "fallbacks": ["广告/下载站丢掉；点进什么值得买、媒体、百科，不点软件站"],
+  "knownGaps": [
+    "检索页没有可靠时间过滤",
+    "价格和用户评价多半要进官网或应用商店",
+    "技能只打开检索，不会自动点进 5 篇"
+  ],
+  "agentPlaybook": [
+    "run_skill({ query: '新闻汇总', params: { topic: 'AI浏览器 评测' } })",
+    "从摘要列出产品名，再 navigate 2～3 个可信链接 page_text"
+  ]
+}
