@@ -40,20 +40,18 @@ describe("trip plan", () => {
     const plan = parseTripPlan(USER_TRIP, now);
     expect(plan).not.toBeNull();
     const steps = expandTripPlan(plan!);
-    expect(steps.map((s) => s.query.kind)).toEqual([
-      "flight",
-      "hotel",
-      "flight",
-      "hotel",
-      "flight",
+    const kinds = steps.map((s) => s.query.kind);
+    // search(路线) + flight(去程) + hotel + search(美食) + flight(城际) + hotel + search(美食) + flight(回程)
+    expect(kinds).toEqual([
+      "search", "flight", "hotel", "search", "flight", "hotel", "search", "flight",
     ]);
-    expect(steps[0].query).toMatchObject({
+    expect(steps[1].query).toMatchObject({
       kind: "flight",
       from: "北京",
       to: "伊斯坦布尔",
       date: "2026-09-18",
     });
-    expect(steps[4].query).toMatchObject({
+    expect(steps[7].query).toMatchObject({
       kind: "flight",
       from: "第比利斯",
       to: "北京",
@@ -85,14 +83,19 @@ describe("trip plan", () => {
     });
     const steps = expandTripPlan(plan!);
     expect(steps.map((s) => s.label)).toEqual([
+      "三亚→上海→昆明→大理 路线推荐",
       "去程机票 北京 → 三亚 2026-09-18",
       "三亚 住宿 2026-09-18 至 2026-09-21",
-      "城际机票 三亚 → 上海 2026-09-21",
+      "三亚 美食推荐",
+      "城际火车 三亚 → 上海 2026-09-21",
       "上海 住宿 2026-09-21 至 2026-09-22",
-      "城际机票 上海 → 昆明 2026-09-22",
+      "上海 美食推荐",
+      "城际火车 上海 → 昆明 2026-09-22",
       "昆明 住宿 2026-09-22 至 2026-09-25",
-      "城际机票 昆明 → 大理 2026-09-25",
+      "昆明 美食推荐",
+      "城际火车 昆明 → 大理 2026-09-25",
       "大理 住宿 2026-09-25 至 2026-09-26",
+      "大理 美食推荐",
       "回程机票 大理 → 北京 2026-09-26",
     ]);
     const a = parseLocalIntent(CHINA_HOPS);
@@ -113,14 +116,15 @@ describe("trip plan", () => {
       endDate: "2026-09-22",
     });
     const steps = expandTripPlan(plan!);
-    expect(steps.map((s) => s.query.kind)).toEqual(["flight", "hotel", "flight"]);
+    // 单城：flight(去程) + hotel + search(美食) + flight(回程)
+    expect(steps.map((s) => s.query.kind)).toEqual(["flight", "hotel", "search", "flight"]);
     expect(steps[0].query).toMatchObject({
       kind: "flight",
       from: "北京",
       to: "曼谷",
       date: "2026-09-16",
     });
-    expect(steps[2].query).toMatchObject({
+    expect(steps[3].query).toMatchObject({
       kind: "flight",
       from: "曼谷",
       to: "北京",
@@ -128,5 +132,13 @@ describe("trip plan", () => {
     });
     const a = parseLocalIntent(BKK);
     expect(a.type).toBe("trip_plan");
+  });
+
+  it("云南句不把「我打算」写成出发地", () => {
+    const plan = parseTripPlan(
+      "你好 我打算去云南旅游 时间是七天 请帮我规划旅游的路线 包含机票酒店 9月20日出发 9月28日回到",
+      now,
+    );
+    expect(plan?.origin).not.toBe("我打算");
   });
 });

@@ -60,6 +60,7 @@ export function saveIdentity(
     writingStyle: patch.writingStyle ?? current.identity.writingStyle,
     forbidden: patch.forbidden ?? current.identity.forbidden,
     workNotes: patch.workNotes ?? current.identity.workNotes,
+    homeCity: patch.homeCity ?? current.identity.homeCity,
   };
   return saveProfile(configDir, { ...current, identity });
 }
@@ -148,6 +149,7 @@ function normalizeIdentity(raw: unknown): UserIdentity {
     writingStyle: typeof r.writingStyle === "string" ? r.writingStyle : "",
     forbidden: typeof r.forbidden === "string" ? r.forbidden : "",
     workNotes: typeof r.workNotes === "string" ? r.workNotes : "",
+    homeCity: typeof r.homeCity === "string" ? r.homeCity : "",
   };
 }
 

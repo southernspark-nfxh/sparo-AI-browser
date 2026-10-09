@@ -1,0 +1,60 @@
+{
+  "id": "life-software-download",
+  "title": "官方下载",
+  "kind": "life",
+  "version": 1,
+  "distilled": true,
+  "shareable": true,
+  "platform": "multi",
+  "aliases": [
+    "官方下载",
+    "安装步骤"
+  ],
+  "createdAt": "2026-09-09T00:00:00.000Z",
+  "updatedAt": "2026-09-09T00:00:00.000Z",
+  "intent": "侧栏原句优先走 parseMission。本技能给 run_skill 打开第一张结果页。",
+  "declared_domains": [
+    "obsproject.com"
+  ],
+  "declared_actions": [
+    "navigate",
+    "wait_for",
+    "page_text"
+  ],
+  "human_gates": [
+    "login",
+    "pay",
+    "captcha"
+  ],
+  "params": {
+    "name": {
+      "type": "string",
+      "required": true,
+      "example": "OBS Studio"
+    }
+  },
+  "steps": [
+    {
+      "id": "open",
+      "tool": "navigate",
+      "args": {
+        "url": "https://obsproject.com/download"
+      }
+    },
+    {
+      "id": "read",
+      "tool": "page_text"
+    }
+  ],
+  "fallbacks": [
+    "登录墙 pause，等人后再读"
+  ],
+  "knownGaps": [
+    "页上没有的数字不要编",
+    "完整多站对比以侧栏 parseMission 为准"
+  ],
+  "agentPlaybook": [
+    "侧栏贴任务书原句",
+    "run_skill 只开第一站"
+  ]
+}

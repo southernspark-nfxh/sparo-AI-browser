@@ -14,8 +14,8 @@
 │  │ shell.html │◄───►│ browser.ts          │  │
 │  │ 标签+侧栏  │     │  handleChat 队列    │  │
 │  └────────────┘     │         │           │  │
-│                     │  stub / intent-router│  │
-│                     │  planner（脏句填槽） │  │
+│                     │  kernel 推理下一步   │  │
+│                     │  runtime / slots     │  │
 │                     │  travel / trip-plan  │  │
 │                     │  mission（日常多步） │  │
 │                     │  report-html 手册    │  │
@@ -52,13 +52,12 @@
 
 ```text
 用户原话
-  → parseLocalIntent / routeUserGoal
-       回复 / 填表 / 行程 trip_plan / 单次出行 travel
-       / 日常任务 mission / 打开站点+后半句 / 读页
-  → 句子脏或像出行目标：planner 让模型只填槽（不点网页）
-  → 执行器打开结果页（禁止频道首页、禁止会卡死的商城首页）
-  → page_text 读正文
-  → 写成 HTML 手册，侧栏出卡片
+  → kernel 入句分类：新开 / 续跑 / 补槽 / 改需求 / 取消 / 旁路读页
+  → 工作单：blocked(合法空槽) | propose(省名拆城) | running
+  → 推理器每次只决定下一步（看见观察再改路），护栏否决非法 ask
+  → 能力表执行一手，回报 finding
+  → 契约验收：酒店页不能算餐厅。齐了才合成手册
+  → 学习层挂当前 step，不关单
 ```
 
 上一句没写完手册，下一句进 `chatQueue`，避免把手册写脏。
@@ -69,10 +68,14 @@
 |---|---|
 | `index.ts` | 进程生命周期、MCP 鉴权文件 |
 | `browser.ts` | 共享窗口、标签、点击填写、`handleChat` / 队列、出行与任务执行、超时停加载 |
-| `agent/stub.ts` | 侧栏本地意图 → `ChatAction` |
+| `agent/stub.ts` | 本地意图 → `ChatAction`（手，不是脑） |
+| `agent/kernel/` | Agent 内核：入句、推理下一步、能力表、契约验收 |
+| `agent/runtime.ts` | 工作单开单/续跑/补槽 |
+| `agent/slots.ts` | 槽位表：出发地/目的地/日期，地点表否决假地名 |
+| `agent/loop.ts` | 交付物与手的编译（给能力表用，不当整轮脑） |
+| `agent/place.ts` | 城 / 省 / 不是地点；动词不能当城 |
 | `agent/intent-router.ts` | 路由：行程 / 出行 / 任务 / 飞书 / 打开+后半句 / 读页 |
 | `agent/feishu.ts` | 飞书网页：打开消息、找人、写聊天/日志草稿（不发送） |
-| `agent/planner.ts` | 脏 travel 句让模型填槽（Hermes/龙虾式：模型是脑） |
 | `agent/travel.ts` | 酒店/机票/火车/路线解析与结果页 URL |
 | `agent/trip-plan.ts` | 往返/出差拆步骤 |
 | `agent/mission.ts` | 比价、周末、调研、求职、租房、挂号、材料、选课、文献、物流 |
@@ -89,7 +92,7 @@
 
 ## 任务五步（统一）
 
-1. 理解原话填槽（正则快路径，脏了走规划器）  
+1. 侧栏每一句进 Agent 内核：有未关的单就续跑；推理器每次只走下一步；合法空槽才问  
 2. 打开**结果页**（机票不要 `/online/channel`；比价不要京东/淘宝首页）  
 3. 读出可点实体（店名、航班、商品、出处）  
 4. 写成手册  

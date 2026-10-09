@@ -63,7 +63,16 @@ export function createToolHandlers(browser: SparkBrowser) {
     browser.xhsInjectPublish(input),
   xhs_layout_next: (input?: { template?: string; timeoutMs?: number }) =>
     browser.xhsLayoutNext(input),
-  screenshot: (label?: string) => browser.screenshot(label),
+  screenshot: (input?: string | {
+    label?: string;
+    selector?: string;
+    clip?: { x: number; y: number; width: number; height: number };
+    fullPage?: boolean;
+    format?: "png" | "jpeg";
+    quality?: number;
+    includeBase64?: boolean;
+  }) => browser.screenshot(typeof input === "string" ? input : { ...input, includeBase64: true }),
+  describe_page: (question?: string) => browser.describePage(question),
   diagnose: (label?: string) => browser.diagnose(label),
   save_sessions: (siteIds?: string[]) => browser.saveSessions(siteIds),
   list_sessions: () => browser.listSessions(),
@@ -123,6 +132,8 @@ export function createToolHandlers(browser: SparkBrowser) {
     }) => browser.waitFor(input),
     qa_check: () => browser.qaCheck(),
     qa_gate: () => browser.qaGate(),
+    sidebar_chat: (text: string, hands?: boolean) =>
+      browser.sidebarChatTool(text, { hands }),
     get_url: async () => ({
       ok: true,
       message: browser.getUrl(),

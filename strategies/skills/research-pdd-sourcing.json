@@ -1,0 +1,60 @@
+{
+  "id": "research-pdd-sourcing",
+  "title": "1688选品",
+  "kind": "research",
+  "version": 1,
+  "distilled": true,
+  "shareable": true,
+  "platform": "multi",
+  "aliases": [
+    "选品",
+    "1688供应商"
+  ],
+  "createdAt": "2026-09-09T00:00:00.000Z",
+  "updatedAt": "2026-09-09T00:00:00.000Z",
+  "intent": "侧栏原句优先走 parseMission。本技能给 run_skill 打开第一张结果页。",
+  "declared_domains": [
+    "s.1688.com"
+  ],
+  "declared_actions": [
+    "navigate",
+    "wait_for",
+    "page_text"
+  ],
+  "human_gates": [
+    "login",
+    "pay",
+    "captcha"
+  ],
+  "params": {
+    "query": {
+      "type": "string",
+      "required": true,
+      "example": "便携式榨汁杯"
+    }
+  },
+  "steps": [
+    {
+      "id": "open",
+      "tool": "navigate",
+      "args": {
+        "url": "https://s.1688.com/selloffer/offer_search.htm?keywords={{queryEnc}}"
+      }
+    },
+    {
+      "id": "read",
+      "tool": "page_text"
+    }
+  ],
+  "fallbacks": [
+    "登录墙 pause，等人后再读"
+  ],
+  "knownGaps": [
+    "页上没有的数字不要编",
+    "完整多站对比以侧栏 parseMission 为准"
+  ],
+  "agentPlaybook": [
+    "侧栏贴任务书原句",
+    "run_skill 只开第一站"
+  ]
+}

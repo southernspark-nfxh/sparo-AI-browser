@@ -9,7 +9,7 @@ import { daysBetween, type TripPlan } from "./trip-plan.js";
 export type ChatDoc = {
   title: string;
   path: string;
-  kind: "trip" | "read";
+  kind: "trip" | "read" | "research";
 };
 
 export function escapeHtml(s: string): string {
@@ -28,7 +28,9 @@ export function markdownToHtml(md: string): string {
   let i = 0;
   const inline = (s: string) => {
     const links: { t: string; u: string }[] = [];
-    const marked = s.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, (_, t, u) => {
+    // 模型缺数据时会写 [机票：未知](未知) 这类非 URL 假链接：降级成纯文本，别把 markdown 括号漏给用户
+    const cleaned = s.replace(/\[([^\]]+)\]\((?!https?:)[^)\s]{0,40}\)/g, "$1");
+    const marked = cleaned.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, (_, t, u) => {
       links.push({ t, u });
       return `\u0000L${links.length - 1}\u0000`;
     });
@@ -120,7 +122,14 @@ export function markdownToHtml(md: string): string {
       para.push(lines[i]);
       i += 1;
     }
-    if (para.length) out.push(`<p>${inline(para.join(" "))}</p>`);
+    if (para.length) {
+      out.push(`<p>${inline(para.join(" "))}</p>`);
+    } else {
+      // 含「|」但下一行不是表格分隔线（网页正文里的散装竖线）：当普通段落消费，
+      // 否则 i 不前进，外层 while 死循环冻结整个主进程。
+      out.push(`<p>${inline(line)}</p>`);
+      i += 1;
+    }
   }
   return out.join("\n");
 }
@@ -433,10 +442,11 @@ function flightBlock(leg: FlightLink | undefined, fallback: string): string {
 function itineraryHtml(plan: TripPlan, flights: FlightLink[], hotels: HotelLink[]): string {
   const stays = staysOf(plan);
   if (!stays.length) return "";
+  const origin = plan.origin.trim();
   const cards: string[] = [];
   stays.forEach((stay, i) => {
-    const from = i === 0 ? plan.origin : stays[i - 1].city;
-    const leg = findLeg(flights, from, stay.city);
+    const from = i === 0 ? origin : stays[i - 1].city;
+    const leg = from ? findLeg(flights, from, stay.city) : undefined;
     const picks = hotelsInCity(hotels, stay.city, stay.nights);
     const hotelList = picks.length
       ? `<ul class="picks">${picks
@@ -446,26 +456,32 @@ function itineraryHtml(plan: TripPlan, flights: FlightLink[], hotels: HotelLink[
           })
           .join("")}</ul>`
       : `<p class="dates">这城还没抽到可点的店，先看机票页再补。</p>`;
+    // 开口行程（「杭州进上海出」）第一站没有出发地，只展示抵达与住宿，不放假机票行
+    const legRow = from
+      ? `<div class="row"><span class="k">机票</span>${flightBlock(leg, `${from} → ${stay.city}`)}</div>`
+      : "";
     cards.push(`<article class="day">
       <div class="day-top">
         <time>${escapeHtml(md(stay.checkin))}<span class="wk">周${weekday(stay.checkin)}</span></time>
         <p class="where">到${escapeHtml(stay.city)} · 住${stay.nights}晚</p>
       </div>
       <p class="pitch">${escapeHtml(stayPitch(stay.city, stay.nights))}</p>
-      <div class="row"><span class="k">机票</span>${flightBlock(leg, `${from} → ${stay.city}`)}</div>
+      ${legRow}
       <div class="row"><span class="k">住宿</span><div>${hotelList}</div></div>
     </article>`);
   });
-  const last = stays[stays.length - 1];
-  const home = findLeg(flights, last.city, plan.origin);
-  cards.push(`<article class="day">
-    <div class="day-top">
-      <time>${escapeHtml(md(plan.endDate))}<span class="wk">周${weekday(plan.endDate)}</span></time>
-      <p class="where">回${escapeHtml(plan.origin)}</p>
-    </div>
-    <p class="pitch">当天回程。想白天再玩一会儿，选傍晚直飞；想早点到家，选上午班。</p>
-    <div class="row"><span class="k">机票</span>${flightBlock(home, `${last.city} → ${plan.origin}`)}</div>
-  </article>`);
+  if (origin) {
+    const last = stays[stays.length - 1];
+    const home = findLeg(flights, last.city, origin);
+    cards.push(`<article class="day">
+      <div class="day-top">
+        <time>${escapeHtml(md(plan.endDate))}<span class="wk">周${weekday(plan.endDate)}</span></time>
+        <p class="where">回${escapeHtml(origin)}</p>
+      </div>
+      <p class="pitch">当天回程。想白天再玩一会儿，选傍晚直飞；想早点到家，选上午班。</p>
+      <div class="row"><span class="k">机票</span>${flightBlock(home, `${last.city} → ${origin}`)}</div>
+    </article>`);
+  }
   return `<h2>按天走，先看怎么选，再点开订</h2><div class="days">${cards.join("")}</div>`;
 }
 
@@ -476,13 +492,16 @@ export function tripReportHtml(opts: {
   hotels?: HotelLink[];
   flights?: FlightLink[];
 }): string {
-  const title = `${opts.plan.origin} → ${opts.plan.cities.join(" → ")} → ${opts.plan.origin}`;
+  const o0 = opts.plan.origin.trim();
+  const chain0 = opts.plan.cities.join(" → ");
+  const title = o0 ? `${o0} → ${chain0} → ${o0}` : chain0;
   const nights = Math.max(0, daysBetween(opts.plan.startDate, opts.plan.endDate));
+  const flightCount = (opts.flights || []).length;
   const chips = [
     `${md(opts.plan.startDate)} – ${md(opts.plan.endDate)}`,
     `${nights}晚`,
     `${opts.plan.cities.length}座城`,
-    `${(opts.flights || []).length || opts.plan.cities.length}段机票`,
+    flightCount ? `${flightCount}段机票` : `${opts.plan.cities.length}段城际`,
   ];
   const detail = markdownToHtml(opts.summary || "");
   return `<!doctype html>
@@ -506,6 +525,37 @@ export function tripReportHtml(opts: {
       ${detail ? `<details class="more"><summary>航班时刻、粗算和说明</summary><div class="more-body">${detail}</div></details>` : ""}
     </div>
     <p class="foot">价格是打开结果页时看到的「起」价，下单前再核一次。每城先给 3 家不同理由的店，不够再点列表。</p>
+  </article>
+</body>
+</html>`;
+}
+
+export function researchReportHtml(opts: {
+  title: string;
+  userAsk: string;
+  body: string;
+  chips?: string[];
+  eyebrow?: string;
+}): string {
+  const chips = (opts.chips || []).map((c) => String(c || "").trim()).filter(Boolean);
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>${escapeHtml(opts.title)} · Sparo 筛选报告</title>
+<style>${reportCss()}</style>
+</head>
+<body>
+  <article class="page">
+    <header class="ticket">
+      <p class="eyebrow">${escapeHtml(opts.eyebrow || "SPARO 筛选报告")}</p>
+      <h1>${escapeHtml(opts.title)}</h1>
+      ${chips.length ? `<ul class="chips">${chips.map((c) => `<li>${escapeHtml(c)}</li>`).join("")}</ul>` : ""}
+      <p class="dates">${escapeHtml(opts.userAsk || "按页上能看到的信息筛选，没有的写成未知。")}</p>
+    </header>
+    <div class="body">${markdownToHtml(opts.body)}</div>
+    <p class="foot">价格、评分、尺码以打开结果页时为准，下单前再核一次。付钱仍由你在窗口里点。</p>
   </article>
 </body>
 </html>`;

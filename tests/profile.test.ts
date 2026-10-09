@@ -77,6 +77,7 @@ describe("mergeAccounts", () => {
     writingStyle: "",
     forbidden: "",
     workNotes: "",
+    homeCity: "",
   };
   const learned: LearnedProfile = {
     preferredSites: [],
@@ -133,6 +134,7 @@ describe("profileBrief", () => {
         writingStyle: "短句、口语",
         forbidden: "",
         workNotes: "",
+        homeCity: "成都",
       },
       learned: {
         preferredSites: ["weibo.com", "zhihu.com"],
@@ -147,6 +149,7 @@ describe("profileBrief", () => {
     expect(brief).toContain("weibo(laowang)");
     expect(brief).toContain("AI");
     expect(brief).toContain("短句、口语");
+    expect(brief).toContain("成都");
     expect(brief).not.toContain("weibo.com");
     expect(brief).not.toContain("21:00");
     expect(brief).not.toContain("深夜发微博");

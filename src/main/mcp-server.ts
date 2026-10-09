@@ -302,9 +302,46 @@ function registerTools(server: McpServer, handlers: ToolHandlers): void {
 
   server.tool(
     "screenshot",
-    "Capture active page PNG under %APPDATA%/sparo/diag/ for debugging.",
-    { label: z.string().optional().describe("Filename label") },
-    async ({ label }) => textResult(await handlers.screenshot(label)),
+    "Capture the active page and return a PNG/JPEG. data.base64 is the image (Agent can analyze it). Also saved under %APPDATA%/sparo-store/diag/.",
+    {
+      label: z.string().optional().describe("Filename label"),
+      selector: z.string().optional().describe("Optional CSS selector to crop"),
+      clip: z
+        .object({
+          x: z.number(),
+          y: z.number(),
+          width: z.number(),
+          height: z.number(),
+        })
+        .optional(),
+      fullPage: z.boolean().optional().describe("Capture beyond the viewport"),
+      format: z.enum(["png", "jpeg"]).optional(),
+      quality: z.number().min(30).max(100).optional(),
+    },
+    async ({ label, selector, clip, fullPage, format, quality }) =>
+      textResult(
+        await handlers.screenshot({
+          label,
+          selector,
+          clip,
+          fullPage,
+          format,
+          quality,
+          includeBase64: true,
+        }),
+      ),
+  );
+
+  server.tool(
+    "describe_page",
+    "Screenshot the current page and ask the configured vision model to describe it in Chinese. Needs a vision-capable model (GPT-4o / Claude / Gemini / Qwen-VL). Text-only models return a fallback hint.",
+    {
+      question: z
+        .string()
+        .optional()
+        .describe("Optional question about the screenshot, e.g. 标题是什么"),
+    },
+    async ({ question }) => textResult(await handlers.describe_page(question)),
   );
 
   server.tool(
@@ -546,6 +583,16 @@ function registerTools(server: McpServer, handlers: ToolHandlers): void {
     async () => textResult(await handlers.qa_gate()),
   );
 
+  server.tool(
+    "sidebar_chat",
+    "Send a line through the Sparo sidebar (Cortex + hands). Shows the window. Set hands=false to judge only and not open pages.",
+    {
+      text: z.string().min(1),
+      hands: z.boolean().optional(),
+    },
+    async ({ text, hands }) => textResult(await handlers.sidebar_chat(text, hands)),
+  );
+
   server.tool("get_url", "Get current page URL", {}, async () =>
     textResult(await handlers.get_url()),
   );
@@ -676,7 +723,7 @@ export async function startMcpServer(handlers: ToolHandlers): Promise<{
           agent: {
             read: "AGENTS.md",
             open_example: "npm run open -- https://weibo.com",
-            auth: "%APPDATA%/sparo/mcp-auth.json",
+            auth: "%APPDATA%/sparo-store/mcp-auth.json",
           },
         }),
       );

@@ -6,6 +6,13 @@ import { dxmEnabled } from "../features.js";
 import { chatCompletionsUrl } from "../settings/llm-url.js";
 import { tx } from "../../shared/i18n.js";
 import { agentCapabilityBrief } from "./intent-router.js";
+import {
+  buildUserContent,
+  flattenVisionContent,
+  isVisionModel,
+  sanitizeImageDataUrls,
+  type ImagePart,
+} from "./vision.js";
 
 export type AgentToolName =
   | "navigate"
@@ -49,7 +56,7 @@ export type DeepSeekConfig = {
 
 type ChatMessage = {
   role: "system" | "user" | "assistant" | "tool";
-  content?: string | null;
+  content?: string | ImagePart[] | null;
   tool_calls?: Array<{
     id: string;
     type: "function";
@@ -313,7 +320,7 @@ const TOOLS = [
     function: {
       name: "run_skill",
       description:
-        "FAST PATH: run a saved 妙招 end-to-end. Life/research: 比价 / 出差 / 新闻汇总 / AI浏览器竞品 / 求职 / 远程办公 / 家电清单 / 宠物智能硬件 / 日本自由行 / AI写作. Also 小红书/填表/飞书/客服. Pass id or query; optional params.",
+        "FAST PATH: run a saved 妙招 end-to-end. Life/research: 比价 / 出差 / 天气 / 电影票 / 快递 / 翻译 / 下载 / 打卡 / 选品 / 租房 / 论文 / 课程 / 热搜 / 新闻汇总 / 求职 / 日本自由行 / 泰国自由行. Also 小红书/填表/飞书/客服. Pass id or query; optional params.",
       parameters: {
         type: "object",
         properties: {
@@ -447,6 +454,7 @@ export class DeepSeekAgentProvider {
       profileBrief?: string;
       locale?: string;
       pageText?: string;
+      images?: string[];
     },
   ): Promise<string> {
     if (!this.config.apiKey && this.config.mode !== "cloud") {
@@ -462,7 +470,12 @@ export class DeepSeekAgentProvider {
         content: turn.text,
       });
     }
-    messages.push({ role: "user", content: input });
+    const images = sanitizeImageDataUrls(ctx.images);
+    const vision = isVisionModel(this.config.model);
+    messages.push({
+      role: "user",
+      content: flattenVisionContent(buildUserContent(input, images), vision),
+    });
 
     const toolNotes: string[] = [];
     const recentFingerprints: string[] = [];
@@ -591,12 +604,16 @@ export class DeepSeekAgentProvider {
     error?: { message?: string };
   }> {
     const url = chatCompletionsUrl(this.config.baseUrl);
+    const model = String(this.config.model || "").trim();
     const body: Record<string, unknown> = {
-      model: this.config.model,
       messages,
       temperature: 0.2,
     };
+    if (model) body.model = model;
     if (toolChoice === "none") {
+      body.tool_choice = "none";
+    } else if (Array.isArray(messages.at(-1)?.content)) {
+      /* 带图时不少网关不能同时跑 tool_choice=auto */
       body.tool_choice = "none";
     } else {
       body.tools = TOOLS;
@@ -608,6 +625,9 @@ export class DeepSeekAgentProvider {
       Authorization: `Bearer ${this.config.apiKey}`,
       "api-key": this.config.apiKey,
     };
+    if (/anthropic\.com/i.test(this.config.baseUrl || "")) {
+      headers["anthropic-version"] = "2023-06-01";
+    }
     if (this.config.mode === "cloud" && this.config.taskId) {
       headers["X-Sparo-Task"] = this.config.taskId;
     }
@@ -623,7 +643,11 @@ export class DeepSeekAgentProvider {
       error?: { message?: string };
     };
     if (!res.ok) {
-      const msg = raw?.error?.message || `HTTP ${res.status}`;
+      const err = raw?.error;
+      const msg =
+        (typeof err === "string" && err) ||
+        (err && typeof err === "object" && "message" in err ? String(err.message || "") : "") ||
+        `HTTP ${res.status}`;
       throw new Error(`LLM API: ${msg}`);
     }
     return raw;

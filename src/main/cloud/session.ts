@@ -1,5 +1,5 @@
 import { getDeviceId, loadTokens, refreshIfNeeded } from "./auth.js";
-import { chatCompletionsCloudUrl, cloudApiBase } from "./config.js";
+import { chatCompletionsCloudUrl } from "./config.js";
 
 export function hasCloudSession(configDir: string): boolean {
   return Boolean(loadTokens(configDir)?.access);
@@ -17,7 +17,7 @@ export async function cloudFetch(
   headers.set("Authorization", `Bearer ${tokens.access}`);
   headers.set("X-Sparo-Task", taskId);
   headers.set("X-Sparo-Device", getDeviceId(configDir));
-  const target = url.includes("/chat/completions") ? url : `${cloudApiBase()}/v1/chat/completions`;
+  const target = chatCompletionsCloudUrl();
   let res = await fetch(target, { ...init, headers });
   if (res.status === 401) {
     tokens = await refreshIfNeeded(configDir);

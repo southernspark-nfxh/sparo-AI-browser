@@ -2,6 +2,7 @@
  * 稍复杂的行程：拆成「去程机票 → 各城酒店 → 城际机票 → 回程机票」，再汇总。
  * 跨国路段不走高德驾车。
  */
+import { canonCity, findCities } from "./place.js";
 import {
   addDays,
   detectFlightSite,
@@ -9,6 +10,7 @@ import {
   extractRoutePair,
   isChinaCity,
   isTripPlanQuery,
+  looksLikeTripDesign,
   parseLooseCheckin,
   parseRelativeDate,
   ymd,
@@ -26,65 +28,15 @@ export type TripPlan = {
   nights?: number[];
   flightSite: FlightSite;
   hotelSite: HotelSite;
+  /** 酒店约束：300元以内 / 评分4.5以上。 */
+  hotelPriceMax?: number;
+  hotelMinRating?: number;
+  extras?: Array<{ label: string; url: string }>;
 };
 
 export type TripStep = {
   label: string;
   query: TravelQuery;
-};
-
-const PLACE_ALIASES: Record<string, string> = {
-  土耳其: "伊斯坦布尔",
-  turkey: "伊斯坦布尔",
-  格鲁吉亚: "第比利斯",
-  georgia: "第比利斯",
-  伊斯坦布尔: "伊斯坦布尔",
-  istanbul: "伊斯坦布尔",
-  第比利斯: "第比利斯",
-  tbilisi: "第比利斯",
-  巴统: "巴统",
-  batumi: "巴统",
-  安卡拉: "安卡拉",
-  ankara: "安卡拉",
-  北京: "北京",
-  beijing: "北京",
-  上海: "上海",
-  shanghai: "上海",
-  广州: "广州",
-  深圳: "深圳",
-  成都: "成都",
-  杭州: "杭州",
-  东京: "东京",
-  tokyo: "东京",
-  京都: "京都",
-  kyoto: "京都",
-  大阪: "大阪",
-  osaka: "大阪",
-  首尔: "首尔",
-  曼谷: "曼谷",
-  新加坡: "新加坡",
-  伦敦: "伦敦",
-  london: "伦敦",
-  巴黎: "巴黎",
-  paris: "巴黎",
-  纽约: "纽约",
-  香港: "香港",
-  台北: "台北",
-  日本: "东京",
-  韩国: "首尔",
-  泰国: "曼谷",
-  英国: "伦敦",
-  法国: "巴黎",
-  三亚: "三亚",
-  昆明: "昆明",
-  大理: "大理",
-  丽江: "丽江",
-  厦门: "厦门",
-  西安: "西安",
-  重庆: "重庆",
-  南京: "南京",
-  武汉: "武汉",
-  青岛: "青岛",
 };
 
 const CN_INT: Record<string, number> = {
@@ -105,7 +57,7 @@ function canonPlace(raw: string): string | null {
   const t = raw.trim();
   if (!t) return null;
   if (/攻略|旅游|酒店|机票|航班|出发|回来|规划|行程|手册/.test(t)) return null;
-  return PLACE_ALIASES[t] || PLACE_ALIASES[t.toLowerCase()] || (/^[\u4e00-\u9fff]{2,4}$/.test(t) ? t : null);
+  return canonCity(t);
 }
 
 /** 「22日回来」跟出发月；日比出发日小则跨月。 */
@@ -168,29 +120,7 @@ function extractAllIsoDates(text: string, now: Date): string[] {
 }
 
 function placesInText(text: string): string[] {
-  const keys = Object.keys(PLACE_ALIASES).sort((a, b) => b.length - a.length);
-  const hits: { at: number; name: string }[] = [];
-  const used: [number, number][] = [];
-  const overlaps = (a: number, b: number) => used.some(([s, e]) => a < e && b > s);
-  for (const key of keys) {
-    const re = new RegExp(key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(text))) {
-      const at = m.index;
-      const end = at + m[0].length;
-      if (overlaps(at, end)) continue;
-      const name = canonPlace(m[0]);
-      if (!name) continue;
-      used.push([at, end]);
-      hits.push({ at, name });
-    }
-  }
-  hits.sort((a, b) => a.at - b.at);
-  const uniq: string[] = [];
-  for (const h of hits) {
-    if (!uniq.includes(h.name)) uniq.push(h.name);
-  }
-  return uniq;
+  return findCities(text);
 }
 
 export function daysBetween(a: string, b: string): number {
@@ -254,11 +184,12 @@ export function parseTripPlan(text: string, now = new Date()): TripPlan | null {
     t.match(/从([\u4e00-\u9fffA-Za-z]{2,12})(?:飞往|飞)/) ||
     t.match(/(?:搜|查)([\u4e00-\u9fff]{2,4})\s*\d{1,2}\s*月/);
   const route = extractRoutePair(t);
-  const origin =
-    canonPlace(originHit?.[1] || "") ||
-    (route && canonPlace(route.from)) ||
-    placesInText(t).find((p) => isChinaCity(p)) ||
-    "北京";
+  const spokenOrigin =
+    canonPlace(originHit?.[1] || "") || (route ? canonPlace(route.from) : null);
+  const chinaHint =
+    /出发|从/.test(t) ? placesInText(t).find((p) => isChinaCity(p)) : undefined;
+  // 没说出发地就不要编「北京」。当地短途设计可以没有 origin。
+  const origin = spokenOrigin || chinaHint || "";
 
   const hops = parseStayHops(t).filter((h) => h.city !== origin);
   const land = t.match(/落地([\u4e00-\u9fffA-Za-z]{2,12})/);
@@ -314,6 +245,24 @@ export function parseTripPlan(text: string, now = new Date()): TripPlan | null {
     addDays(startDate, Math.max(8, cities.length * 2));
   if (endDate <= startDate) endDate = addDays(startDate, Math.max(1, hopNights || 8));
 
+  const extras: Array<{ label: string; url: string }> = tripDesignExtras(t, cities);
+  if (/签证|预算|注意事项|物品清单|攻略/.test(t)) {
+    const dest = cities.join(" ");
+    const enc = encodeURIComponent;
+    extras.push({
+      label: `${dest} 签证`,
+      url: `https://www.baidu.com/s?wd=${enc(`${dest} 签证 中国护照 办理 费用`)}`,
+    });
+    extras.push({
+      label: `${dest} 行程攻略`,
+      url: `https://www.baidu.com/s?wd=${enc(`${dest} 5天 自由行 行程 景点`)}`,
+    });
+    extras.push({
+      label: `${dest} 注意事项`,
+      url: `https://www.baidu.com/s?wd=${enc(`${dest} 旅游 注意事项 必备物品 预算`)}`,
+    });
+  }
+
   return {
     origin,
     cities,
@@ -322,13 +271,39 @@ export function parseTripPlan(text: string, now = new Date()): TripPlan | null {
     nights,
     flightSite: detectFlightSite(t, origin, cities[0]),
     hotelSite: detectHotelSite(t),
+    extras: extras.length ? extras : undefined,
   };
+}
+
+/** 设计行程时必查吃/玩，不能只开酒店。 */
+export function tripDesignExtras(
+  ask: string,
+  cities: string[],
+): Array<{ label: string; url: string }> {
+  const dest = (cities[0] || "").trim();
+  if (!dest) return [];
+  if (!looksLikeTripDesign(ask) && !/餐厅|美食|景点|怎么玩|设计/.test(ask)) return [];
+  const enc = encodeURIComponent;
+  const days = ask.match(/([一二三四五六七八九十两\d]+)\s*天/)?.[1] || "两";
+  return [
+    {
+      label: `${dest} 餐厅`,
+      url: `https://www.baidu.com/s?wd=${enc(`${dest} 必吃 餐厅 推荐`)}`,
+    },
+    {
+      label: `${dest} 景点`,
+      url: `https://www.baidu.com/s?wd=${enc(`${dest} ${days}日 必去景点 行程`)}`,
+    },
+  ];
 }
 
 export function expandTripPlan(plan: TripPlan): TripStep[] {
   const stays = splitStays(plan.cities, plan.startDate, plan.endDate, plan.nights);
   const steps: TripStep[] = [];
   const japanCity = (c: string) => /东京|京都|大阪|名古屋|札幌|福冈/.test(c);
+  const foreignCity = (c: string) =>
+    /伊斯坦布尔|第比利斯|曼谷|清迈|普吉|巴厘|首尔|釜山|新加坡|吉隆坡|仰光|曼德勒|河内|胡志明|金边|暹粒|马尔代夫|塞班|沙巴|兰卡威|巴黎|伦敦|罗马|米兰|威尼斯|法兰克福|慕尼黑|柏林|马德里|巴塞罗那|悉尼|墨尔本|奥克兰|温哥华|多伦多|洛杉矶|旧金山|纽约|莫斯科|圣彼得堡|迪拜|开罗|内罗毕/.test(c);
+  const isCN = (c: string) => !japanCity(c) && !foreignCity(c) && /[\u4e00-\u9fff]/.test(c);
   const flight = (from: string, to: string, date: string, label: string) => {
     if (japanCity(from) && japanCity(to)) return;
     steps.push({
@@ -336,6 +311,18 @@ export function expandTripPlan(plan: TripPlan): TripStep[] {
       query: {
         kind: "flight",
         site: plan.flightSite,
+        from,
+        to,
+        date,
+      },
+    });
+  };
+  const train = (from: string, to: string, date: string, label: string) => {
+    steps.push({
+      label,
+      query: {
+        kind: "train",
+        site: "12306",
         from,
         to,
         date,
@@ -351,36 +338,67 @@ export function expandTripPlan(plan: TripPlan): TripStep[] {
         city,
         checkin,
         checkout,
+        priceMax: plan.hotelPriceMax,
       },
     });
   };
+  const search = (query: string, label: string) => {
+    steps.push({ label, query: { kind: "search", site: "baidu", query } });
+  };
 
-  flight(
-    plan.origin,
-    stays[0].city,
-    plan.startDate,
-    `去程机票 ${plan.origin} → ${stays[0].city} ${plan.startDate}`,
-  );
-  hotel(stays[0].city, stays[0].checkin, stays[0].checkout);
-  for (let i = 0; i < stays.length - 1; i++) {
-    flight(
-      stays[i].city,
-      stays[i + 1].city,
-      stays[i].checkout,
-      `城际机票 ${stays[i].city} → ${stays[i + 1].city} ${stays[i].checkout}`,
-    );
-    hotel(stays[i + 1].city, stays[i + 1].checkin, stays[i + 1].checkout);
+  // 先搜路线推荐，让模型有全局视野
+  if (stays.length >= 2) {
+    search(`${plan.cities.join("")}旅游必去景点美食推荐`, `${plan.cities.join("→")} 路线推荐`);
   }
-  flight(
-    stays[stays.length - 1].city,
-    plan.origin,
-    plan.endDate,
-    `回程机票 ${stays[stays.length - 1].city} → ${plan.origin} ${plan.endDate}`,
-  );
-  return steps.slice(0, 12);
+
+  const localOnly = !plan.origin || plan.origin === stays[0].city;
+  if (!localOnly) {
+    flight(
+      plan.origin,
+      stays[0].city,
+      plan.startDate,
+      `去程机票 ${plan.origin} → ${stays[0].city} ${plan.startDate}`,
+    );
+  }
+  hotel(stays[0].city, stays[0].checkin, stays[0].checkout);
+  search(`${stays[0].city}必吃美食推荐`, `${stays[0].city} 美食推荐`);
+  for (let i = 0; i < stays.length - 1; i++) {
+    // 城际交通：中国城市优先搜火车（动车/高铁），日本城市搜飞机
+    if (!localOnly) {
+      if (isCN(stays[i].city) && isCN(stays[i + 1].city)) {
+        train(
+          stays[i].city,
+          stays[i + 1].city,
+          stays[i].checkout,
+          `城际火车 ${stays[i].city} → ${stays[i + 1].city} ${stays[i].checkout}`,
+        );
+      } else {
+        flight(
+          stays[i].city,
+          stays[i + 1].city,
+          stays[i].checkout,
+          `城际机票 ${stays[i].city} → ${stays[i + 1].city} ${stays[i].checkout}`,
+        );
+      }
+    }
+    hotel(stays[i + 1].city, stays[i + 1].checkin, stays[i + 1].checkout);
+    search(`${stays[i + 1].city}必吃美食推荐`, `${stays[i + 1].city} 美食推荐`);
+  }
+  if (!localOnly) {
+    flight(
+      stays[stays.length - 1].city,
+      plan.origin,
+      plan.endDate,
+      `回程机票 ${stays[stays.length - 1].city} → ${plan.origin} ${plan.endDate}`,
+    );
+  }
+  return steps.slice(0, 16);
 }
 
 export function tripPlanProgress(plan: TripPlan): string {
+  if (!plan.origin) {
+    return `正在设计 ${plan.cities.join("、")} ${plan.startDate} 至 ${plan.endDate}：先查住宿、餐厅、景点，再写成每日安排。`;
+  }
   return `正在拆行程：${plan.startDate} 从${plan.origin}出发，途经 ${plan.cities.join("、")}，${plan.endDate} 回${plan.origin}。先查机票和酒店，再汇总路线与价格。`;
 }
 
@@ -394,16 +412,27 @@ export function tripSynthesizePrompt(
     .join("\n\n");
   return [
     "用户要一份可执行的旅行规划，不是读当前某一页。",
-    "你已经按步骤打开了机票/酒店结果页。只根据下面各步正文汇总，不要编造航班号、酒店名、价格。",
+    plan.origin
+      ? "你已经按步骤打开了机票/酒店/攻略结果页。只根据下面各步正文汇总，不要编造航班号、酒店名、价格。"
+      : "这是当地短途设计，没有往返机票。根据住宿、餐厅、景点正文写成每日安排，不要编造没出现的店名和票价。",
     "正文没有的数字写成「未知，需在窗口里再看」，不要估算假价格。",
     "某步写「列表未加载」或只有邻近城市时，不要写成当天没有航班；骨架仍按原计划。",
-    `行程骨架：${plan.startDate} ${plan.origin}出发 → ${plan.cities.join(" → ")} → ${plan.endDate} 回${plan.origin}。`,
+    plan.origin
+      ? `行程骨架：${plan.startDate} ${plan.origin}出发 → ${plan.cities.join(" → ")} → ${plan.endDate} 回${plan.origin}。`
+      : `行程骨架：${plan.startDate} 至 ${plan.endDate} 在 ${plan.cities.join("、")}。`,
+    plan.hotelPriceMax || plan.hotelMinRating
+      ? `酒店硬条件：${[plan.hotelPriceMax ? `价格≤${plan.hotelPriceMax}元` : "", plan.hotelMinRating ? `评分≥${plan.hotelMinRating}` : ""].filter(Boolean).join("、")}。不符合的不要列，正文里没有符合的写「未知，需在窗口里再看」。`
+      : "",
     "用中文写出：",
-    "1. 日程表（哪天在哪座城、住几晚）",
-    "2. 各段机票：写成 [北京 → 三亚 9/18](结果页链接)。必须写价格区间、最早一班几点、有没有直飞。没有明细也要保留链接，不要写成当天没航班。",
+    "1. 日程表（哪天在哪座城、住几晚；当地短途按上午/下午/晚上排景点与餐厅）",
+    plan.origin
+      ? "2. 各段机票：写成 [北京 → 三亚 9/18](结果页链接)。必须写价格区间、最早一班几点、有没有直飞。没有明细也要保留链接，不要写成当天没航班。"
+      : "2. 不要写往返机票。没说出发地就不要编航班。",
     "3. 各城酒店：各列 2～3 家，写成 [店名](链接)。每家用一两句说为什么选（地段/连住/赶飞机）、大约多少钱。没有链接不要编店名。",
-    "4. 粗算总价：只加正文里的数字；缺的标未知",
-    "5. 为什么这样排（时差、中转、入住夜数）。跨国路段用机票，不要写高德驾车。",
+    "4. 餐厅：每城至少 3 个，写成 [店名](链接)，并标适合哪一餐。正文没有的写未知。",
+    "5. 景点：按地理靠近排进日程，写成 [景点](链接)。不要只堆酒店。",
+    "6. 粗算总价：只加正文里的数字；缺的标未知",
+    "7. 签证/注意事项：只写检索页上的；没有就写未知。跨国路段用机票，不要写高德驾车。",
     `用户原话：${userAsk}`,
     blocks,
   ].join("\n");

@@ -8,7 +8,14 @@ import { join } from "node:path";
 
 export type ChatDoc = { title: string; path: string; kind?: string };
 
-export type ChatTurn = { role: "user" | "assistant"; text: string; doc?: ChatDoc };
+export type ChatTurn = {
+  role: "user" | "assistant";
+  text: string;
+  doc?: ChatDoc;
+  images?: string[];
+  /** Cortex 停问 / 出思路，侧栏出按钮。 */
+  cortex?: { mode: "ask" | "propose" | "loop"; need?: string; approach?: string };
+};
 
 const CAP = 40;
 
@@ -31,15 +38,16 @@ export function loadChatMemory(configDir: string): ChatTurn[] {
           typeof (t as ChatTurn).text === "string",
       )
       .map((t) => {
-        const doc = (t as ChatTurn).doc;
+        const { images: _imgs, ...base } = t as ChatTurn;
+        const doc = base.doc;
         if (
           doc &&
           typeof doc.title === "string" &&
           typeof doc.path === "string"
         ) {
-          return t;
+          return base;
         }
-        const { doc: _drop, ...rest } = t as ChatTurn;
+        const { doc: _drop, ...rest } = base;
         return rest;
       })
       .slice(-CAP);
@@ -51,7 +59,10 @@ export function loadChatMemory(configDir: string): ChatTurn[] {
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function saveChatMemory(configDir: string, log: ChatTurn[]): void {
-  const trimmed = log.slice(-CAP);
+    const trimmed = log.slice(-CAP).map((t) => {
+      const { images: _drop, ...rest } = t;
+      return rest;
+    });
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
