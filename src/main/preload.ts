@@ -1,10 +1,12 @@
 /**
  * Preload for page WebContentsView.
- * Phase 1 keeps page sandbox strict; automation runs via executeJavaScript from main.
- * This file exists so Electron has a preload entry and we can extend later.
+ * 只给官网账号页露出云会话，其它站点拿不到 token。
  */
-import { contextBridge } from "electron";
+import { contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("sparkPage", {
   version: "0.1.0",
+  cloudSession: () => ipcRenderer.invoke("spark:cloud-page-session"),
+  cloudCheckout: (plan: string, type?: string) =>
+    ipcRenderer.invoke("spark:cloud-checkout", plan, type),
 });

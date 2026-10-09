@@ -3,6 +3,7 @@
  * 先解析站点+地点+日期，再走结果页 URL，避免在城市弹层里空转。
  */
 import { monthIndex } from "../analyzer/datetime.js";
+import { isChinaCity as isChinaCityName, isCity, canonCity, plausiblePlace } from "./place.js";
 
 export type HotelSite = "ctrip" | "tuniu" | "booking" | "airbnb";
 export type FlightSite = "ctrip" | "qunar" | "gflights" | "kayak";
@@ -39,6 +40,11 @@ export type TravelQuery =
       site: MapsSite;
       from: string;
       to: string;
+    }
+  | {
+      kind: "search";
+      site: "baidu";
+      query: string;
     };
 
 const STOP_WORDS =
@@ -116,15 +122,89 @@ const FLIGHT_CODE: Record<string, { ctrip: string; kayak: string }> = {
   安卡拉: { ctrip: "ank", kayak: "ESB" },
   ankara: { ctrip: "ank", kayak: "ESB" },
   三亚: { ctrip: "syx", kayak: "SYX" },
+  海口: { ctrip: "hak", kayak: "HAK" },
   昆明: { ctrip: "kmg", kayak: "KMG" },
   大理: { ctrip: "dlu", kayak: "DLU" },
   丽江: { ctrip: "ljg", kayak: "LJG" },
+  西双版纳: { ctrip: "jhg", kayak: "JHG" },
+  香格里拉: { ctrip: "dig", kayak: "DIG" },
   厦门: { ctrip: "xmn", kayak: "XMN" },
+  泉州: { ctrip: "jjn", kayak: "JJN" },
+  福州: { ctrip: "foc", kayak: "FOC" },
   西安: { ctrip: "sia", kayak: "XIY" },
   重庆: { ctrip: "ckg", kayak: "CKG" },
   南京: { ctrip: "nkg", kayak: "NKG" },
   武汉: { ctrip: "wuh", kayak: "WUH" },
+  宜昌: { ctrip: "yih", kayak: "YIH" },
   青岛: { ctrip: "tao", kayak: "TAO" },
+  济南: { ctrip: "tna", kayak: "TNA" },
+  烟台: { ctrip: "ynt", kayak: "YNT" },
+  威海: { ctrip: "weh", kayak: "WEH" },
+  长沙: { ctrip: "csx", kayak: "CSX" },
+  张家界: { ctrip: "dyg", kayak: "DYG" },
+  凤凰: { ctrip: "ten", kayak: "TEN" },
+  乌鲁木齐: { ctrip: "urc", kayak: "URC" },
+  喀纳斯: { ctrip: "kji", kayak: "KJI" },
+  伊宁: { ctrip: "yin", kayak: "YIN" },
+  贵阳: { ctrip: "kwe", kayak: "KWE" },
+  安顺: { ctrip: "ava", kayak: "AVA" },
+  兰州: { ctrip: "lhw", kayak: "LHW" },
+  敦煌: { ctrip: "dnh", kayak: "DNH" },
+  嘉峪关: { ctrip: "jgn", kayak: "JGN" },
+  西宁: { ctrip: "xnn", kayak: "XNN" },
+  银川: { ctrip: "inc", kayak: "INC" },
+  呼和浩特: { ctrip: "het", kayak: "HET" },
+  太原: { ctrip: "tyn", kayak: "TYN" },
+  大同: { ctrip: "dat", kayak: "DAT" },
+  石家庄: { ctrip: "sjw", kayak: "SJW" },
+  沈阳: { ctrip: "she", kayak: "SHE" },
+  大连: { ctrip: "dlc", kayak: "DLC" },
+  长春: { ctrip: "cgq", kayak: "CGQ" },
+  延吉: { ctrip: "ynj", kayak: "YNJ" },
+  长白山: { ctrip: "nbs", kayak: "NBS" },
+  哈尔滨: { ctrip: "hrb", kayak: "HRB" },
+  合肥: { ctrip: "hfe", kayak: "HFE" },
+  黄山: { ctrip: "txn", kayak: "TXN" },
+  南昌: { ctrip: "khn", kayak: "KHN" },
+  郑州: { ctrip: "cgo", kayak: "CGO" },
+  洛阳: { ctrip: "lya", kayak: "LYA" },
+  无锡: { ctrip: "wux", kayak: "WUX" },
+  宁波: { ctrip: "ngb", kayak: "NGB" },
+  温州: { ctrip: "wnz", kayak: "WNZ" },
+  南宁: { ctrip: "nng", kayak: "NNG" },
+  桂林: { ctrip: "kwl", kayak: "KWL" },
+  北海: { ctrip: "bhy", kayak: "BHY" },
+  珠海: { ctrip: "zuh", kayak: "ZUH" },
+  湛江: { ctrip: "zha", kayak: "ZHA" },
+  天津: { ctrip: "tsn", kayak: "TSN" },
+  九寨沟: { ctrip: "jzh", kayak: "JZH" },
+  常州: { ctrip: "czx", kayak: "CZX" },
+  南通: { ctrip: "ntg", kayak: "NTG" },
+  徐州: { ctrip: "xuz", kayak: "XUZ" },
+};
+
+/**
+ * 景区没有民航机场时走门户城市机场（手只负责把地名落到能飞的站点，不改大脑选的目的地）。
+ */
+const GATEWAY_AIR_CODE: Record<string, { ctrip: string; kayak: string }> = {
+  鼓浪屿: { ctrip: "xmn", kayak: "XMN" },
+  南靖: { ctrip: "xmn", kayak: "XMN" },
+  漳州: { ctrip: "xmn", kayak: "XMN" },
+  乌镇: { ctrip: "hgh", kayak: "HGH" },
+  西塘: { ctrip: "hgh", kayak: "HGH" },
+  绍兴: { ctrip: "hgh", kayak: "HGH" },
+  嘉兴: { ctrip: "hgh", kayak: "HGH" },
+  周庄: { ctrip: "sha", kayak: "SHA" },
+  同里: { ctrip: "sha", kayak: "SHA" },
+  南浔: { ctrip: "sha", kayak: "SHA" },
+  青海湖: { ctrip: "xnn", kayak: "XNN" },
+  茶卡盐湖: { ctrip: "xnn", kayak: "XNN" },
+  都江堰: { ctrip: "ctu", kayak: "CTU" },
+  青城山: { ctrip: "ctu", kayak: "CTU" },
+  凯里: { ctrip: "kwe", kayak: "KWE" },
+  荔波: { ctrip: "kwe", kayak: "KWE" },
+  峨眉山: { ctrip: "ctu", kayak: "CTU" },
+  乐山: { ctrip: "ctu", kayak: "CTU" },
 };
 
 const TRAIN_CODE: Record<string, string> = {
@@ -136,8 +216,26 @@ const TRAIN_CODE: Record<string, string> = {
   南京: "NJH",
   成都: "CDW",
   西安: "XAY",
-  武汉: "WHN",
+  武汉: "WUH",
   天津: "TJP",
+  苏州: "SZH",
+  无锡: "WXH",
+  常州: "CZH",
+  嘉兴: "JXH",
+  桐乡: "TCH",
+  绍兴: "SXH",
+  宁波: "NGH",
+  温州: "VRH",
+  长沙: "CWQ",
+  张家界: "DIQ",
+  怀化: "HHQ",
+  厦门: "XMS",
+  贵阳: "KEW",
+  凯里: "KLW",
+  安顺: "AUE",
+  郑州: "ZZF",
+  重庆: "CUW",
+  南宁: "NFZ",
 };
 
 function pad2(n: number): string {
@@ -173,6 +271,9 @@ export function flightCodes(name: string): { ctrip: string; kayak: string } | nu
     FLIGHT_CODE[key] ||
     Object.entries(FLIGHT_CODE).find(([k]) => k.toLowerCase() === key)?.[1];
   if (direct) return direct;
+  // 景区：先门户机场，再按名字里的城市模糊匹配（不改目的地，只决定落到哪个机场）
+  const gateway = GATEWAY_AIR_CODE[raw];
+  if (gateway) return gateway;
   const hit = Object.keys(FLIGHT_CODE)
     .sort((a, b) => b.length - a.length)
     .find((k) => raw.includes(k) || raw.toLowerCase().includes(k.toLowerCase()));
@@ -193,6 +294,18 @@ export function parseRelativeDate(text: string, now = new Date()): string | null
   if (/今天/.test(t)) return ymd(now);
   if (/明天/.test(t)) return addDays(ymd(now), 1);
   if (/后天/.test(t)) return addDays(ymd(now), 2);
+  // 「这周末/周末两天」从周六起；「下周末」再推一周。必须排在单个「周日」规则之前，
+  // 否则句尾「周日回」会被错当出发日。
+  if (/下周末/.test(t)) {
+    const dow = now.getDay();
+    const toSat = dow === 6 ? 0 : (6 - dow + 7) % 7;
+    return addDays(ymd(now), toSat + 7);
+  }
+  if (/这?周末|本周末|双休日/.test(t)) {
+    const dow = now.getDay();
+    const add = dow === 6 ? 0 : dow === 0 ? 6 : 6 - dow;
+    return addDays(ymd(now), add);
+  }
   if (/下周一|下星期一/.test(t)) return nextWeekdayIso(now, 1);
   if (/下周二/.test(t)) return nextWeekdayIso(now, 2);
   if (/下周三/.test(t) || (/下周/.test(t) && /周三/.test(t))) return nextWeekdayIso(now, 3);
@@ -207,11 +320,25 @@ export function parseRelativeDate(text: string, now = new Date()): string | null
   return parseLooseCheckin(t, now);
 }
 
-/** 9月15日 / Sep 15 / 2026-09-15。早于今天则落到明年。 */
+/** 9月15日 / 本月18日 / Sep 15 / 2026-09-15。早于今天则落到明年（本月则落下月）。 */
 export function parseLooseCheckin(text: string, now = new Date()): string | null {
   const iso = text.match(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/);
   if (iso) {
     return `${iso[1]}-${pad2(Number(iso[2]))}-${pad2(Number(iso[3]))}`;
+  }
+  const thisMonth = text.match(/本月(\d{1,2})\s*[日号]?/);
+  if (thisMonth) {
+    const day = Number(thisMonth[1]);
+    let year = now.getFullYear();
+    let month = now.getMonth();
+    if (day < now.getDate()) {
+      month += 1;
+      if (month > 11) {
+        month = 0;
+        year += 1;
+      }
+    }
+    return `${year}-${pad2(month + 1)}-${pad2(day)}`;
   }
   const cn = text.match(/(?:(20\d{2})\s*年\s*)?(\d{1,2})\s*月\s*(\d{1,2})\s*日?/);
   if (cn) {
@@ -356,8 +483,7 @@ const CHINA_MAINLAND = new Set([
 ]);
 
 export function isChinaCity(name: string): boolean {
-  const t = String(name || "").trim();
-  return CHINA_MAINLAND.has(t) || CHINA_MAINLAND.has(t.toLowerCase());
+  return isChinaCityName(name);
 }
 
 export function detectFlightSite(text: string, from?: string, to?: string): FlightSite {
@@ -366,7 +492,7 @@ export function detectFlightSite(text: string, from?: string, to?: string): Flig
   if (/去哪儿|qunar/i.test(text)) return "qunar";
   if (/携程|ctrip/i.test(text)) return "ctrip";
   if (from && to && (!isChinaCity(from) || !isChinaCity(to))) return "kayak";
-  if (/日本|东京|大阪|京都|韩国|首尔|曼谷|新加坡|伦敦|巴黎|纽约/i.test(text)) return "kayak";
+  if (/日本|东京|大阪|京都|韩国|首尔|曼谷|清迈|泰国|新加坡|伦敦|巴黎|纽约/i.test(text)) return "kayak";
   return /[\u4e00-\u9fff]{2}/.test(text) ? "ctrip" : "gflights";
 }
 
@@ -378,10 +504,30 @@ export function detectTrainSite(text: string): TrainSite {
   return "trainline";
 }
 
+/**
+ * 用户要的是「一份行程设计」，不是单次查酒店。
+ * 住+吃+景点、或「两天 + 设计/安排」都算。
+ */
+export function looksLikeTripDesign(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  const design = /设计|规划|安排|行程|怎么玩|自由行|给我设计/.test(t);
+  const stay = /住|酒店|住宿|宾馆|民宿/.test(t);
+  const food = /餐厅|美食|吃|饭/.test(t);
+  const play = /景点|玩|逛|打卡/.test(t);
+  const days = /两天|三天|几天|[一二三四五六七八九十两\d]+\s*天/.test(t);
+  const facets = [stay, food, play].filter(Boolean).length;
+  if (design && facets >= 2) return true;
+  if (design && facets >= 1 && days) return true;
+  if (facets >= 3) return true;
+  return false;
+}
+
 /** 多段行程（往返 + 多城 + 机票酒店一起问），不要当成单次导航。 */
 export function isTripPlanQuery(text: string): boolean {
   const t = text.trim();
-  if (t.length < 20) return false;
+  if (t.length < 16) return false;
+  if (looksLikeTripDesign(t)) return true;
   const planish = /规划|行程|安排|怎么安排|旅行计划|自由行|出差|报销|见客户|全路线|整条路线|攻略|旅游/.test(t);
   const flights = /机票|航班|flights?/i.test(t);
   const stays = /酒店|宾馆|住宿|民宿|入住|hotels?/i.test(t);
@@ -442,7 +588,8 @@ export function parseTravelQuery(text: string, now = new Date()): TravelQuery | 
       date,
     };
   }
-  if (/酒店|宾馆|住宿|民宿|房源|hotels?/i.test(t)) {
+  if (/租房|链家|自如|贝壳|一居|两居|三居/.test(t)) return null;
+  if (/酒店|宾馆|住宿|民宿|hotels?/i.test(t)) {
     const city = extractTravelCity(t);
     if (!city) return null;
     const range = t.match(
@@ -477,6 +624,9 @@ export function lifeProgress(q: TravelQuery): string {
   }
   if (q.kind === "train") {
     return `正在查 ${q.from} → ${q.to} ${q.date} 的车票…`;
+  }
+  if (q.kind === "search") {
+    return `正在搜 ${q.query}…`;
   }
   return `正在查 ${q.from} 到 ${q.to} 怎么走…`;
 }
@@ -534,6 +684,8 @@ export const CTRIP_HOTEL_CITY_ID: Record<string, number> = {
   京都: 92,
   大阪: 59,
   首尔: 274,
+  曼谷: 359,
+  清迈: 720,
 };
 
 export function pickCtripHotelCity(
@@ -646,8 +798,18 @@ export function hotelSearchUrl(q: Extract<TravelQuery, { kind: "hotel" }>): stri
 }
 
 export function flightSearchUrl(q: Extract<TravelQuery, { kind: "flight" }>): string {
+  // 门控只看「能不能落到机场」（含景区门户映射），不再要求地名必须在本地城市词库。
   const fromCode = flightCodes(q.from);
   const toCode = flightCodes(q.to);
+  if (!fromCode || !toCode) {
+    // 两端都像真地名（小城/景区）只是没机场码 → 退到百度搜机票；
+    // 明显是垃圾词（「我打算」之类）仍返回空，让上层提示说清出发地。
+    const looksPlace = (s: string) => Boolean(canonCity(s) || plausiblePlace(s));
+    if (looksPlace(q.from) && looksPlace(q.to)) {
+      return `https://www.baidu.com/s?wd=${encodeURIComponent(`${q.from} 到 ${q.to} ${q.date} 机票`)}`;
+    }
+    return "";
+  }
   const enFrom = cityEnglish(q.from);
   const enTo = cityEnglish(q.to);
   if (q.site === "gflights") {
@@ -741,6 +903,7 @@ export function travelResultUrl(q: TravelQuery): string {
   if (q.kind === "hotel") return hotelSearchUrl(q);
   if (q.kind === "flight") return flightSearchUrl(q);
   if (q.kind === "train") return trainSearchUrl(q);
+  if (q.kind === "search") return `https://www.baidu.com/s?wd=${encodeURIComponent(q.query)}`;
   return mapsSearchUrl(q);
 }
 

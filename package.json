@@ -1,6 +1,6 @@
 {
   "name": "sparo-store",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "private": true,
   "description": "Sparo — the AI browser that acts. Fill, reply, and publish on the page you see. You confirm send. Use your own key, or optional cloud models.",
   "main": "./out/main/index.js",

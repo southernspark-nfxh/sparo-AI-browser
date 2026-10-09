@@ -29,6 +29,26 @@ Hermes: [`docs/HERMES-PLAYBOOK.md`](../../docs/HERMES-PLAYBOOK.md).
 | `research-pet-hardware` | 宠物智能硬件 | 规模检索 + 京东类目 |
 | `life-japan-trip` | 日本自由行 | Kayak 机票 + 携程酒店（不先开携程机票空壳） |
 | `research-ai-writing` | AI写作 | 检索竞品评测 |
+| `life-express-track` | 查快递 | 快递 100 查单号 |
+| `life-translate-page` | 翻译网页 | 打开原文，`page_text` 后译+5 条要点 |
+| `life-movie-tickets` | 电影票 | 猫眼/淘票票，不走周末聚餐 |
+| `life-weather-wear` | 天气 | 中国天气网 + 穿衣 |
+| `life-software-download` | 官方下载 | 先官网，不点镜像 |
+| `life-city-spots` | 打卡地 | 点评/携程景点 |
+| `research-pdd-sourcing` | 选品 | 1688 + 拼多多，不去京东 |
+| `research-papers` | 学术论文 | 百度学术 / Scholar |
+| `life-rent-compare` | 租房对比 | 链家 / 贝壳 / 自如 |
+| `research-insurance` | 重疾险 | 公开介绍页对比 |
+| `life-week-events` | 本周展览 | 豆瓣 / 活动行 |
+| `life-online-courses` | 在线课程 | Coursera / Udemy / 网易云课堂 |
+| `research-weibo-hot` | 微博热搜 | 热搜榜 |
+| `research-cross-border` | 跨境选品 | 亚马逊 + 1688 |
+| `life-thailand-trip` | 泰国自由行 | 曼谷+清迈，含签证检索 |
+| `research-saas-gtm` | SaaS竞品 | 项目管理工具 + GTM |
+| `research-bom-lamp` | 供应链 | 台灯零部件 1688 |
+| `research-tech-stack` | 技术选型 | 前后端+数据库对比 |
+| `research-media-ops` | 自媒体运营 | 平台与选题 |
+| `research-pet-economy` | 宠物经济 | 行业研报，不是喂食器 |
 
 ## How agents should call
 

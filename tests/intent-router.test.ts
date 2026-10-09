@@ -113,9 +113,14 @@ describe("parseLocalIntent site routing", () => {
     const a = parseLocalIntent("帮我查查携程 找一些 9月15日 伊斯坦布尔的酒店");
     expect(a.type).toBe("travel_search");
     if (a.type === "travel_search" && a.kind === "hotel") {
+      // 9月15日：今天若已过 9/15，代码按"过去日期推明年"逻辑落到下一年
+      const now = new Date();
+      const sep15ThisYear = new Date(now.getFullYear(), 8, 15);
+      const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const expectedYear = sep15ThisYear < todayMidnight ? now.getFullYear() + 1 : now.getFullYear();
       expect(a.city).toBe("伊斯坦布尔");
-      expect(a.checkin).toBe("2026-09-15");
-      expect(a.checkout).toBe("2026-09-16");
+      expect(a.checkin).toBe(`${expectedYear}-09-15`);
+      expect(a.checkout).toBe(`${expectedYear}-09-16`);
       expect(a.site).toBe("ctrip");
     }
   });
@@ -210,5 +215,21 @@ describe("agentCapabilityBrief", () => {
     expect(agentCapabilityBrief("zh")).toMatch(/会动手的 AI 浏览器/);
     expect(agentCapabilityBrief("zh")).not.toMatch(/小红书/);
     expect(agentCapabilityBrief()).toMatch(/You are Sparo/);
+  });
+
+  it("中文不重复发帖授权和画像两句，也不教模型去调 intent-router", () => {
+    const zh = agentCapabilityBrief("zh");
+    const lines = zh.split("\n").filter(Boolean);
+    expect(new Set(lines).size).toBe(lines.length);
+    expect(zh.split("用户明确说「发 / 发布 / 发三条」").length - 1).toBe(1);
+    expect(zh.split("你越用越懂这个用户").length - 1).toBe(1);
+    expect(zh).toMatch(/本机先拆/);
+    expect(zh).not.toMatch(/intent-router 先判断/);
+  });
+
+  it("英文说明本机先拆多步任务", () => {
+    const en = agentCapabilityBrief("en");
+    expect(en).toMatch(/already split on this PC/i);
+    expect(en.split("You are Sparo").length - 1).toBe(1);
   });
 });

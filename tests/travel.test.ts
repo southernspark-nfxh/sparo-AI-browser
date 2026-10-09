@@ -192,6 +192,18 @@ describe("result urls", () => {
     expect(url).not.toContain("/channel");
   });
 
+  it("假出发地不拼 Google Flights", () => {
+    expect(
+      flightSearchUrl({
+        kind: "flight",
+        site: "gflights",
+        from: "我打算",
+        to: "昆明",
+        date: "2026-09-20",
+      }),
+    ).toBe("");
+  });
+
   it("flight ctrip uses bjs-ist not sha", () => {
     const url = flightSearchUrl({
       kind: "flight",
