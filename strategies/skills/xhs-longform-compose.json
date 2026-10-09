@@ -1,6 +1,7 @@
 {
   "id": "xhs-longform-compose",
   "title": "小红书长文草稿：ensure_editor → inject_compose（停在编辑页）",
+  "intent": "只注入小红书标题和正文，停在编辑页。完整发布用 xhs-longform-publish。",
   "platform": "xiaohongshu-creator",
   "version": 2,
   "aliases": ["小红书草稿", "小红书填文", "compose长文"],

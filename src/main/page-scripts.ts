@@ -441,6 +441,9 @@ export const PAGE_TEXT_SCRIPT = `(() => {
         var clone = box.cloneNode(true);
         var ads = clone.querySelectorAll('[cmatchid], .ec_tuiguang_container, [data-tuiguang], .ec-ad');
         ads.forEach(function (n) { try { n.parentNode && n.parentNode.removeChild(n); } catch (_) {} });
+        // 页脚噪音：大家还在搜 / 相关搜索 / 右侧热榜，不进正文。
+        var junk = clone.querySelectorAll('#rs, #content_bottom, #con-ar, .cr-right, [class*="toplist"], [class*="hot-"], [id*="hotword"], .c-gap-top-large');
+        junk.forEach(function (n) { try { n.parentNode && n.parentNode.removeChild(n); } catch (_) {} });
         return visibleText(clone);
       }
     }
@@ -2727,5 +2730,51 @@ export const FEISHU_INJECT_TEXT_SCRIPT = `(async (payload) => {
     bodyLen,
   };
 })`;
+
+export const EXTRACT_1688_OFFERS_SCRIPT = `() => {
+  function abs(href) {
+    try { return new URL(href, location.href).href; } catch (_) { return ''; }
+  }
+  function clean(s) { return String(s || '').replace(/\\s+/g, ' ').trim(); }
+  function yuan(s) {
+    const m = String(s || '').replace(/,/g, '').match(/(\\d+(?:\\.\\d+)?)/);
+    return m ? m[1] : '';
+  }
+  const seen = new Set();
+  const out = [];
+  const anchors = Array.from(document.querySelectorAll('a[href]'));
+  for (const a of anchors) {
+    const url = abs(a.getAttribute('href') || '');
+    if (!/detail\\.1688\\.com\\/offer\\/\\d+|m\\.1688\\.com\\/offer\\/\\d+|offerId=\\d{8,}/i.test(url)) continue;
+    const id = (url.match(/offer\\/(\\d{8,})/) || url.match(/offerId=(\\d{8,})/) || [])[1];
+    if (!id || seen.has(id)) continue;
+    const card = a.closest('[class*="offer" i], [class*="card" i], [class*="item" i], li, article') || a.parentElement || a;
+    const titled = clean(
+      a.getAttribute('title') ||
+      ((card && card.querySelector('[class*="title" i], [class*="name" i], h3, h4')) || {}).innerText ||
+      a.innerText
+    ).slice(0, 80);
+    if (titled.length < 6) continue;
+    const blob = clean((card && card.innerText) || '').slice(0, 500);
+    const priceHit = blob.match(/¥\\s*(\\d+(?:\\.\\d+)?)/);
+    const salesHit = blob.match(/(\\d+\\+?)\\s*件/);
+    const shopEl = card && card.querySelector('[class*="company" i], [class*="shop" i], [class*="seller" i], [class*="factory" i]');
+    seen.add(id);
+    out.push({
+      name: titled,
+      url: 'https://detail.1688.com/offer/' + id + '.html',
+      price: priceHit ? ('¥' + priceHit[1]) : '',
+      sales: salesHit ? (salesHit[1] + '件') : '',
+      shop: clean((shopEl && shopEl.innerText) || ''),
+    });
+    if (out.length >= 30) break;
+  }
+  const body = document.body ? (document.body.innerText || '') : '';
+  return {
+    ok: true,
+    offers: out,
+    empty: /空空如也/.test(body) && out.length === 0,
+  };
+}`;
 
 

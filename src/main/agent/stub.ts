@@ -70,7 +70,7 @@ export function parseLocalIntent(input: string, locale?: string): ChatAction {
     return { type: "print" };
   }
   if (/暂停|接管|pause/i.test(t)) return { type: "pause", paused: true };
-  if (/恢复\s*Agent|恢复操控|resume/i.test(t) || /^恢复$/i.test(t)) {
+  if (/恢复\s*Agent|恢复操控|resume/i.test(t) || /^恢复$/i.test(t) || /^继续[吧啊]?$/.test(t)) {
     return { type: "pause", paused: false };
   }
 

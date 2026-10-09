@@ -11,15 +11,38 @@ export function cloudApiBase(): string {
   return (process.env.SPARO_CLOUD_API || defaultCloudApi()).replace(/\/$/, "");
 }
 
-export function accountUrl(locale?: string, plan?: string): string {
+export function usesOfficialCloud(): boolean {
+  return cloudApiBase().includes("southernspark.dev");
+}
+
+export function isOfficialAccountUrl(raw: string): boolean {
+  try {
+    const u = new URL(String(raw || ""));
+    const host = u.hostname.toLowerCase();
+    if (host !== "southernspark.dev" && host !== "www.southernspark.dev") return false;
+    return /\/sparo\/account\/?$/.test(u.pathname);
+  } catch {
+    return false;
+  }
+}
+
+export function accountUrl(locale?: string, plan?: string, access?: string): string {
   const base = process.env.SPARO_ACCOUNT_URL
     ? process.env.SPARO_ACCOUNT_URL
     : String(locale || "").toLowerCase().startsWith("zh")
       ? "https://southernspark.dev/zh/sparo/account"
       : "https://southernspark.dev/sparo/account";
-  if (!plan) return base;
-  const join = base.includes("?") ? "&" : "?";
-  return `${base}${join}plan=${encodeURIComponent(plan)}`;
+  let out = base;
+  const id = String(plan || "").trim();
+  if (id) {
+    const join = out.includes("?") ? "&" : "?";
+    out = `${out}${join}plan=${encodeURIComponent(id)}`;
+  }
+  const token = String(access || "").trim();
+  if (token) {
+    out = `${out}#access=${encodeURIComponent(token)}`;
+  }
+  return out;
 }
 
 export function isMsftChannel(): boolean {

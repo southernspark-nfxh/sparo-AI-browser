@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld("sparkShell", {
   // chrome → main
   pageHoleBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
     ipcRenderer.send("spark:page-hole", bounds),
+  focusShell: () => ipcRenderer.send("spark:focus-shell"),
   navigate: (url: string) => ipcRenderer.invoke("spark:navigate", url),
   goBack: () => ipcRenderer.invoke("spark:go-back"),
   goForward: () => ipcRenderer.invoke("spark:go-forward"),
@@ -39,7 +40,7 @@ contextBridge.exposeInMainWorld("sparkShell", {
   resolveApproval: (id: string, approved: boolean) =>
     ipcRenderer.invoke("spark:resolve-approval", id, approved),
   runQa: () => ipcRenderer.invoke("spark:qa-check"),
-  chat: (text: string) => ipcRenderer.invoke("spark:chat", text),
+  chat: (text: string, images?: string[]) => ipcRenderer.invoke("spark:chat", text, images),
   openReport: (filePath: string) => ipcRenderer.invoke("spark:open-report", filePath),
   csScan: (opts?: { fromHuman?: boolean }) => ipcRenderer.invoke("spark:cs-scan", opts),
   csDraft: (opts?: { draft?: string; fill?: boolean; preferLlm?: boolean; fromHuman?: boolean }) =>
@@ -80,6 +81,7 @@ contextBridge.exposeInMainWorld("sparkShell", {
     writingStyle?: string;
     forbidden?: string;
     workNotes?: string;
+    homeCity?: string;
   }) => ipcRenderer.invoke("spark:save-identity", patch),
   clearProfile: () => ipcRenderer.invoke("spark:clear-profile"),
   listEnvs: () => ipcRenderer.invoke("spark:list-envs"),
@@ -144,5 +146,11 @@ contextBridge.exposeInMainWorld("sparkShell", {
     const handler = (_: Electron.IpcRendererEvent, payload: { items: unknown }) => cb(payload || {});
     ipcRenderer.on("spark:history", handler);
     return () => ipcRenderer.removeListener("spark:history", handler);
+  },
+  // 主进程在窗口恢复后主动要求重新测量并上报 page-hole（恢复过渡的 ResizeObserver 回调可能丢失）
+  onRequestHole: (cb: () => void) => {
+    const handler = () => cb();
+    ipcRenderer.on("spark:request-hole", handler);
+    return () => ipcRenderer.removeListener("spark:request-hole", handler);
   },
 });

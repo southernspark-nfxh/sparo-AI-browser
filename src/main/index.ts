@@ -1,6 +1,6 @@
-import { app, BrowserWindow, session } from "electron";
+import { app, BrowserWindow, session, crashReporter } from "electron";
 import { chromeUserAgent } from "./oauth-popups.js";
-import { writeFileSync, mkdirSync, existsSync, readFileSync, copyFileSync } from "node:fs";
+import { writeFileSync, mkdirSync, existsSync, readFileSync, copyFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
@@ -82,9 +82,78 @@ async function main(): Promise<void> {
   // Store edition keeps its own tree so it never shares cookies with the original Sparo.
   const configDir = resolveConfigDir();
   mkdirSync(configDir, { recursive: true });
+  mkdirSync(join(configDir, "diag"), { recursive: true });
+  app.setPath("userData", configDir);
+  try {
+    app.setPath("crashDumps", join(configDir, "diag", "dumps"));
+  } catch {
+    /* 某些版本没有这个 path */
+  }
+
+  const gpuFlag = join(configDir, "diag", "disable-gpu");
+  if (existsSync(gpuFlag)) {
+    app.disableHardwareAcceleration();
+    console.log("[sparo] last GPU crash — hardware acceleration off this launch");
+  }
+
+  // 黑匣子：崩溃/异常落盘，下次好查。
+  const crashLog = join(configDir, "diag", "crash.log");
+  const appendCrash = (tag: string, err: unknown) => {
+    try {
+      mkdirSync(join(configDir, "diag"), { recursive: true });
+      const msg =
+        err instanceof Error ? `${err.message}\n${err.stack || ""}` : String(err);
+      writeFileSync(
+        crashLog,
+        `${new Date().toISOString()} [${tag}] ${msg}\n`,
+        { flag: "a" },
+      );
+    } catch {
+      /* 写不进就算了 */
+    }
+  };
+  process.on("uncaughtException", (err) => appendCrash("uncaughtException", err));
+  process.on("unhandledRejection", (err) => appendCrash("unhandledRejection", err));
+  app.on("child-process-gone", (_e, details) => {
+    appendCrash(
+      "child-process-gone",
+      `${details.type} reason=${details.reason} code=${details.exitCode}`,
+    );
+    if (String(details.type).toLowerCase() === "gpu") {
+      try {
+        writeFileSync(gpuFlag, new Date().toISOString());
+      } catch {
+        /* ignore */
+      }
+    }
+  });
+  app.on("render-process-gone", (_e, _wc, details) =>
+    appendCrash("render-process-gone", `reason=${details.reason}`),
+  );
+
+  // 原生崩溃转储 + 事件循环卡顿哨兵（AppHang 取证）。
+  try {
+    crashReporter.start({ productName: "Sparo", submitURL: "", uploadToServer: false });
+  } catch {
+    /* 某些环境起不来 */
+  }
+  let lastBeat = Date.now();
+  setInterval(() => {
+    const now = Date.now();
+    if (now - lastBeat > 13_000) {
+      appendCrash("event-loop-blocked", `主进程事件循环卡住约 ${Math.round((now - lastBeat) / 1000)} 秒`);
+    }
+    lastBeat = now;
+  }, 5_000);
+  setTimeout(() => {
+    try {
+      if (existsSync(gpuFlag)) unlinkSync(gpuFlag);
+    } catch {
+      /* ignore */
+    }
+  }, 90_000);
   // Packaged install is a blank product. Do not copy API keys from the original Sparo.
   if (!app.isPackaged) seedSettingsFromOriginal(configDir);
-  app.setPath("userData", configDir);
 
   const gotLock = app.requestSingleInstanceLock();
   if (!gotLock) {

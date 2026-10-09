@@ -2,8 +2,137 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { normalizeLocale, type AppLocale } from "../../shared/i18n.js";
 
-export type LlmProvider = "deepseek" | "openai" | "custom";
+export type ProviderGroup = "cn" | "global" | "local" | "custom";
+
+export type ProviderPreset = {
+  label: string;
+  baseUrl: string;
+  model: string;
+  hint: string;
+  group: ProviderGroup;
+};
+
+/** OpenAI-compatible hosts. Native Anthropic Messages / Gemini RPC 请走对应兼容地址或 OpenRouter。 */
+export const PROVIDER_PRESETS = {
+  deepseek: {
+    label: "DeepSeek",
+    baseUrl: "https://api.deepseek.com",
+    model: "deepseek-v4-flash",
+    hint: "platform.deepseek.com",
+    group: "cn",
+  },
+  dashscope: {
+    label: "通义千问",
+    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    model: "qwen-plus",
+    hint: "阿里云百炼兼容模式",
+    group: "cn",
+  },
+  moonshot: {
+    label: "Kimi",
+    baseUrl: "https://api.moonshot.cn/v1",
+    model: "moonshot-v1-auto",
+    hint: "platform.moonshot.cn",
+    group: "cn",
+  },
+  zhipu: {
+    label: "智谱 GLM",
+    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+    model: "glm-4-flash",
+    hint: "open.bigmodel.cn",
+    group: "cn",
+  },
+  volcengine: {
+    label: "豆包 / 火山方舟",
+    baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+    model: "doubao-1.5-pro-32k",
+    hint: "模型名请填方舟控制台的接入点 ID",
+    group: "cn",
+  },
+  siliconflow: {
+    label: "硅基流动",
+    baseUrl: "https://api.siliconflow.cn/v1",
+    model: "deepseek-ai/DeepSeek-V3",
+    hint: "cloud.siliconflow.cn",
+    group: "cn",
+  },
+  openai: {
+    label: "OpenAI",
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4.1-mini",
+    hint: "platform.openai.com",
+    group: "global",
+  },
+  anthropic: {
+    label: "Claude",
+    baseUrl: "https://api.anthropic.com/v1",
+    model: "claude-sonnet-4-5",
+    hint: "Anthropic 的 OpenAI 兼容接口",
+    group: "global",
+  },
+  gemini: {
+    label: "Gemini",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    model: "gemini-2.0-flash",
+    hint: "Google AI Studio",
+    group: "global",
+  },
+  xai: {
+    label: "Grok",
+    baseUrl: "https://api.x.ai/v1",
+    model: "grok-3-mini",
+    hint: "console.x.ai",
+    group: "global",
+  },
+  openrouter: {
+    label: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    model: "openai/gpt-4.1-mini",
+    hint: "一家密钥可接多家模型",
+    group: "global",
+  },
+  groq: {
+    label: "Groq",
+    baseUrl: "https://api.groq.com/openai/v1",
+    model: "llama-3.3-70b-versatile",
+    hint: "console.groq.com",
+    group: "global",
+  },
+  ollama: {
+    label: "Ollama",
+    baseUrl: "http://127.0.0.1:11434/v1",
+    model: "llama3.2",
+    hint: "先在本机启动 Ollama；本机可留空密钥",
+    group: "local",
+  },
+  custom: {
+    label: "兼容接口",
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4.1-mini",
+    hint: "任何 OpenAI 兼容地址，自行填写接口和模型名",
+    group: "custom",
+  },
+} as const satisfies Record<string, ProviderPreset>;
+
+export type LlmProvider = keyof typeof PROVIDER_PRESETS;
 export type LlmMode = "byok" | "cloud";
+
+export const PROVIDER_ORDER: LlmProvider[] = [
+  "deepseek",
+  "dashscope",
+  "moonshot",
+  "zhipu",
+  "volcengine",
+  "siliconflow",
+  "openai",
+  "anthropic",
+  "gemini",
+  "xai",
+  "openrouter",
+  "groq",
+  "ollama",
+  "custom",
+];
 
 export type SparoSettings = {
   /** @deprecated use apiKey — kept for migration */
@@ -27,32 +156,6 @@ export type SparoSettings = {
   memorySaverIdleMinutes: number;
 };
 
-/** Presets: picking a brand fills base URL + default model. Key alone is not enough. */
-export const PROVIDER_PRESETS: Record<
-  LlmProvider,
-  { label: string; baseUrl: string; model: string; hint: string }
-> = {
-  deepseek: {
-    label: "DeepSeek",
-    baseUrl: "https://api.deepseek.com",
-    model: "deepseek-v4-flash",
-    hint: "Recommended. Key from platform.deepseek.com",
-  },
-  openai: {
-    label: "OpenAI",
-    baseUrl: "https://api.openai.com/v1",
-    model: "gpt-4.1-mini",
-    hint: "Key from platform.openai.com — uses OpenAI API host",
-  },
-  custom: {
-    label: "Custom (OpenAI-compatible)",
-    baseUrl: "https://api.openai.com/v1",
-    model: "gpt-4.1-mini",
-    hint: "Any OpenAI-compatible gateway — set Base URL + Model yourself",
-  },
-};
-
-/** OpenAI-compatible hosts. Native Anthropic / Gemini APIs are not this path. */
 export type CompatGateway = {
   id: string;
   label: string;
@@ -60,19 +163,12 @@ export type CompatGateway = {
   model: string;
 };
 
-export const COMPAT_GATEWAYS: CompatGateway[] = [
-  { id: "openrouter", label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", model: "openai/gpt-4.1-mini" },
-  { id: "groq", label: "Groq", baseUrl: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile" },
-  { id: "xai", label: "xAI Grok", baseUrl: "https://api.x.ai/v1", model: "grok-3-mini" },
-  { id: "mistral", label: "Mistral", baseUrl: "https://api.mistral.ai/v1", model: "mistral-small-latest" },
-  { id: "together", label: "Together", baseUrl: "https://api.together.xyz/v1", model: "meta-llama/Llama-3.3-70B-Instruct-Turbo" },
-  { id: "siliconflow", label: "硅基流动 SiliconFlow", baseUrl: "https://api.siliconflow.cn/v1", model: "deepseek-ai/DeepSeek-V3" },
-  { id: "dashscope", label: "通义 compatible", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus" },
-  { id: "moonshot", label: "Kimi 月之暗面", baseUrl: "https://api.moonshot.cn/v1", model: "moonshot-v1-auto" },
-  { id: "zhipu", label: "智谱 GLM", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash" },
-  { id: "volcengine", label: "火山方舟 Ark", baseUrl: "https://ark.cn-beijing.volces.com/api/v3", model: "deepseek-v3-250324" },
-  { id: "ollama", label: "Ollama 本机", baseUrl: "http://127.0.0.1:11434/v1", model: "llama3.2" },
-];
+export const COMPAT_GATEWAYS: CompatGateway[] = PROVIDER_ORDER.filter(
+  (id) => id !== "deepseek" && id !== "openai" && id !== "custom",
+).map((id) => {
+  const p = PROVIDER_PRESETS[id];
+  return { id, label: p.label, baseUrl: p.baseUrl, model: p.model };
+});
 
 function clampIdleMinutes(n: unknown): number {
   const v = Number(n);
@@ -119,7 +215,7 @@ function normalizeMode(p: unknown): LlmMode {
 }
 
 function normalizeProvider(p: unknown): LlmProvider {
-  if (p === "openai" || p === "custom" || p === "deepseek") return p;
+  if (typeof p === "string" && p in PROVIDER_PRESETS) return p as LlmProvider;
   return DEFAULTS.provider;
 }
 
@@ -272,7 +368,7 @@ export function settingsPublicView(settings: SparoSettings): {
       key.length <= 8 ? "••••" + key.slice(-2) : key.slice(0, 4) + "••••" + key.slice(-4);
   }
   return {
-    configured: Boolean(key),
+    configured: Boolean(key) || settings.provider === "ollama",
     fromEnv,
     provider: settings.provider,
     baseUrl: settings.baseUrl,

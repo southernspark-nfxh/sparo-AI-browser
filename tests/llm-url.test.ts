@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { chatCompletionsCloudUrl } from "../src/main/cloud/config.js";
 import { chatCompletionsUrl } from "../src/main/settings/llm-url.js";
 
 describe("chatCompletionsUrl", () => {
@@ -24,5 +25,12 @@ describe("chatCompletionsUrl", () => {
     expect(chatCompletionsUrl("https://openrouter.ai/api/v1/")).toBe(
       "https://openrouter.ai/api/v1/chat/completions",
     );
+  });
+
+  it("points the packaged cloud client at /v1/chat/completions", () => {
+    expect(chatCompletionsUrl("https://southernspark.dev/sparo-api")).toBe(
+      "https://southernspark.dev/sparo-api/chat/completions",
+    );
+    expect(chatCompletionsCloudUrl()).toMatch(/\/v1\/chat\/completions$/);
   });
 });

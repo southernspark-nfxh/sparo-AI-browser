@@ -26,6 +26,8 @@ export type UserIdentity = {
   writingStyle: string;
   forbidden: string;
   workNotes: string;
+  /** 常住城：缺出发地时先问「按这里出发可以吗？」 */
+  homeCity: string;
 };
 
 export type LearnedProfile = {
@@ -56,6 +58,7 @@ export function emptyProfile(): ProfileFile {
       writingStyle: "",
       forbidden: "",
       workNotes: "",
+      homeCity: "",
     },
     learned: {
       preferredSites: [],
@@ -143,6 +146,7 @@ export function profileBrief(profile: ProfileFile): string {
   const id = profile.identity;
 
   if (id.nickname) lines.push(`Nickname: ${id.nickname}`);
+  if (id.homeCity) lines.push(`Home city: ${id.homeCity}`);
   if (id.workNotes) lines.push(`Work notes: ${id.workNotes}`);
   if (id.forbidden) lines.push(`Do not say: ${id.forbidden}`);
 

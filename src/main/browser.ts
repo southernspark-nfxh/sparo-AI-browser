@@ -8,10 +8,11 @@ import {
   session,
   clipboard,
   shell,
+  screen,
   type MenuItemConstructorOptions,
   type WebContents,
 } from "electron";
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomBytes } from "node:crypto";
@@ -24,10 +25,32 @@ import type {
   ToolResult,
 } from "../shared/types.js";
 import { parseLocalIntent, type ChatAction } from "./agent/stub.js";
-import { planUserGoal, shouldAskPlanner } from "./agent/planner.js";
+import {
+  compileHands,
+  goalProgress,
+  reviewLesson,
+  synthesizePrompt,
+  type AgentGoal,
+  type AgentStep,
+  type StepFinding,
+} from "./agent/loop.js";
+import {
+  applyTurn,
+  applyTurnAsync,
+  observe,
+  thoughtFor,
+  thoughtForAsync,
+  reconsiderMission,
+  verifyContracts,
+  type ActiveMission,
+} from "./agent/kernel/index.js";
+import { writeExperience } from "./agent/experience.js";
+import { canonCity, isCity, plausiblePlace } from "./agent/place.js";
+import { distillSkillFromTrace } from "./agent/remember.js";
 import {
   missionProgress,
   missionSynthesizePrompt,
+  parseMission,
   shouldSkipHeavyPage,
   type Mission,
 } from "./agent/mission.js";
@@ -42,7 +65,7 @@ import {
   copyForAgent,
   type AgentTarget,
 } from "./agent-connect.js";
-import { isContinueHint, readPageInstruction, sameSite } from "./agent/intent-router.js";
+import { detectSite, isContinueHint, readPageInstruction, sameSite } from "./agent/intent-router.js";
 import {
   alreadyOnFeishuTask,
   FEISHU_MESSENGER_URL,
@@ -63,8 +86,16 @@ import {
   travelListState,
   travelReadPrompt,
   travelResultUrl,
+  addDays,
+  detectHotelSite,
+  detectFlightSite,
+  ymd,
   type TravelQuery,
+  type HotelSite,
+  type FlightSite,
+  type TrainSite,
 } from "./agent/travel.js";
+import { isLegalSite, searchResultUrl } from "./agent/brain/sites.js";
 import {
   expandTripPlan,
   tripPlanProgress,
@@ -109,11 +140,36 @@ import {
   formatFlightLinks,
   formatHotelLinks,
   readingReportHtml,
+  researchReportHtml,
   tripReportHtml,
   writeHtmlReport,
+  type ChatDoc,
   type FlightLink,
   type HotelLink,
 } from "./agent/report-html.js";
+import {
+  filterShopOffers,
+  formatShopPicks,
+  looksLikeEatPlayAsk,
+  looksLikeResearchAsk,
+  cleanSearchPageText,
+  missionNeedsReport,
+  reportChips,
+  researchChatBrief,
+  researchReportTitle,
+  shouldSealShopReport,
+  tripChatBrief,
+  type ShopOffer,
+} from "./agent/research-report.js";
+import {
+  isUsableCaptureBuffer,
+  parseScreenshotInput,
+  sanitizeImageDataUrls,
+  validClip,
+  wantsPageShot,
+  type ScreenshotOpts,
+} from "./agent/vision.js";
+import { withJsonModel } from "./cloud/request-body.js";
 import {
   cloneEnv,
   createEnv,
@@ -151,11 +207,18 @@ import {
   type SparkSettings,
 } from "./settings/store.js";
 import { chatCompletionsUrl } from "./settings/llm-url.js";
-import { accountUrl, cloudApiBase, isMsftChannel } from "./cloud/config.js";
+import {
+  accountUrl,
+  chatCompletionsCloudUrl,
+  cloudApiBase,
+  isMsftChannel,
+  isOfficialAccountUrl,
+} from "./cloud/config.js";
 import {
   clearTokens,
   fetchMe,
   loadTokens,
+  refreshIfNeeded,
   describeCloudError,
   sendLoginCode,
   verifyLogin,
@@ -223,6 +286,7 @@ import {
   CALENDAR_INSPECT_SCRIPT,
   SET_SPIN_SCRIPT,
   EXTRACT_HOTEL_LINKS_SCRIPT,
+  EXTRACT_1688_OFFERS_SCRIPT,
   FIND_DEST_INPUT_SCRIPT,
   PICK_SUGGEST_SCRIPT,
   FEISHU_STAGE_SCRIPT,
@@ -296,7 +360,31 @@ function resolveAppIconPath(): string {
   return "";
 }
 
-const DEFAULT_URL = "https://www.google.com";
+const DEFAULT_URL = "https://www.baidu.com";
+
+function noteHang(tag: string, detail: string): void {
+  try {
+    const dir = join(storeConfigDir(), "diag");
+    mkdirSync(dir, { recursive: true });
+    appendFileSync(join(dir, "crash.log"), `${new Date().toISOString()} [${tag}] ${detail}\n`);
+  } catch {
+    /* 写不进就算了 */
+  }
+}
+
+// 临时诊断：行程多步任务的落盘 trace（定位卡死点后删除）
+function tripTrace(tag: string, detail = ""): void {
+  try {
+    const dir = join(storeConfigDir(), "diag");
+    mkdirSync(dir, { recursive: true });
+    appendFileSync(
+      join(dir, "trip-trace.log"),
+      `${Date.now()} ${new Date().toISOString()} [${tag}] ${detail}\n`,
+    );
+  } catch {
+    /* 写不进就算了 */
+  }
+}
 const CHROME_H = 104; // tabs 36 + omnibox 40 + bookmarks bar 28
 const SIDEBAR_W = 312;
 
@@ -354,6 +442,24 @@ function normalizeUrl(url: string): string {
   return `https://${target}`;
 }
 
+/**
+ * 模型 navigate 步骤里的 query 解析成真实 URL：
+ * - 合法 http(s) URL（host 无中文）原样用；裸 ASCII 域名补 https
+ * - 中文站名（百度/哔哩哔哩/12306…）查站点表拿 homeUrl
+ * - 都不命中：百度搜索兜底，绝不能把中文直接当域名导航成 punycode
+ */
+function resolveStepUrl(raw: string): string {
+  const q = String(raw || "").trim();
+  const m = q.match(/^https?:\/\/([^\s/?#]+)/i);
+  if (m && !/[一-鿿]/.test(m[1])) return q;
+  if (/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:[/?#].*)?$/i.test(q) && !/[一-鿿]/.test(q)) {
+    return `https://${q}`;
+  }
+  const hit = detectSite(q);
+  if (hit?.homeUrl) return hit.homeUrl;
+  return `https://www.baidu.com/s?wd=${encodeURIComponent(q.replace(/^https?:\/\//i, ""))}`;
+}
+
 export class SparkBrowser {
   readonly window: BrowserWindow;
   /** @deprecated use active tab via pageView getter */
@@ -367,8 +473,10 @@ export class SparkBrowser {
   private approvals = new Map<string, ApprovalRequest>();
   private lastQa: QaReport | null = null;
   private chatLog: ChatTurn[] = [];
+  private activeMission: ActiveMission | undefined;
+  private lastMission: ActiveMission | undefined;
   private chatRunning = false;
-  private chatQueue: string[] = [];
+  private chatQueue: Array<{ text: string; images?: string[] }> = [];
   private ipcReady = false;
   private bookmarks: BookmarkItem[] = [];
   private recording = false;
@@ -385,6 +493,9 @@ export class SparkBrowser {
   private lastCloudRefuse = "";
   private memoryTimer: ReturnType<typeof setInterval> | null = null;
   private holeBounds: { x: number; y: number; width: number; height: number } | null = null;
+  // 最近一次正常的窗口客户区尺寸。最小化→恢复瞬间 getContentSize 会短暂返回 0，
+  // 不能拿 0 去算页面 bounds（会把视图夹到 100px 并残留）。
+  private lastGoodContent = { width: 0, height: 0 };
   private overlay: "none" | "history" = "none";
   private findOpen = false;
   private lastClosed: { url: string; envId?: string } | null = null;
@@ -427,7 +538,7 @@ export class SparkBrowser {
       minHeight: 560,
       title: "Sparo",
       backgroundColor: "#f3f0ec",
-      show: true,
+      show: false,
       autoHideMenuBar: true,
       titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
       ...(process.platform === "darwin"
@@ -449,6 +560,22 @@ export class SparkBrowser {
       },
     });
     this.window.setMenuBarVisibility(false);
+    this.window.webContents.on("render-process-gone", (_e, details) => {
+      console.error("[shell] render-process-gone", details.reason);
+      noteHang("shell-render-gone", details.reason);
+      if (details.reason !== "clean-exit" && details.reason !== "killed") {
+        try {
+          this.window.webContents.reload();
+        } catch {
+          /* 已销毁 */
+        }
+      }
+    });
+    this.window.webContents.on("unresponsive", () => {
+      console.error("[shell] unresponsive");
+      noteHang("shell-unresponsive", "sidebar");
+      this.ensureWindowVisible();
+    });
     this.attachChromeShortcuts(this.window.webContents);
     this.attachDownloads(session.defaultSession);
     this.window.webContents.on("context-menu", (_e, params) => {
@@ -477,6 +604,11 @@ export class SparkBrowser {
     this.window.on("unmaximize", () => this.layout());
     this.window.on("enter-full-screen", () => this.layout());
     this.window.on("leave-full-screen", () => this.layout());
+    // Windows 上最小化→恢复不一定补一次有效 resize（事件可能在尺寸还是 0 时触发），
+    // 显式监听并延迟补排，防止页面视图停在 100px 窄条。
+    this.window.on("unminimize", () => this.scheduleLayout(150));
+    this.window.on("restore", () => this.scheduleLayout(150));
+    this.window.on("show", () => this.scheduleLayout(150));
     this.window.once("ready-to-show", () => this.presentWindow());
     this.window.webContents.once("did-finish-load", () => this.presentWindow());
     this.window.webContents.on("did-fail-load", (_e, code, desc, url) => {
@@ -602,6 +734,22 @@ export class SparkBrowser {
     });
     this.attachChromeShortcuts(wc);
     wc.setUserAgent(chromeUserAgent());
+    wc.on("render-process-gone", (_e, details) => {
+      console.error("[page] render-process-gone", details.reason, tab.url);
+      noteHang("page-render-gone", `${details.reason} ${tab.url}`);
+      if (details.reason !== "clean-exit" && details.reason !== "killed") {
+        this.recoverHungPage(tab);
+      }
+    });
+    // 渲染进程卡死：不要原址刷新（Google/B站会再卡死），离开该页并保证窗体在屏幕上。
+    let lastUnresponsiveRecover = 0;
+    wc.on("unresponsive", () => {
+      console.error("[page] unresponsive", tab.url);
+      const now = Date.now();
+      if (now - lastUnresponsiveRecover < 60_000) return;
+      lastUnresponsiveRecover = now;
+      this.recoverHungPage(tab);
+    });
     wc.on("did-create-window", (child) => {
       try {
         child.setMenuBarVisibility(false);
@@ -611,6 +759,11 @@ export class SparkBrowser {
       } catch {
         /* ignore */
       }
+    });
+    // 安全网：活动页每次加载完成后重排一次。行程任务会连续跳转，
+    // 即使某一帧被夹窄，下一次导航也会立刻恢复。
+    wc.on("dom-ready", () => {
+      if (this.activeTabId === id) this.scheduleLayout(60);
     });
     wc.setWindowOpenHandler((details) => {
       if (shouldAllowOauthPopup(details)) {
@@ -916,16 +1069,67 @@ export class SparkBrowser {
       const iconPath = resolveAppIconPath();
       if (iconPath) this.window.setIcon(iconPath);
       this.layout();
-      if (this.window.isMinimized()) this.window.restore();
-      if (!this.didPlaceWindow) {
-        this.window.center();
-        this.didPlaceWindow = true;
-      }
-      this.window.show();
-      this.window.focus();
+      const first = !this.didPlaceWindow;
+      this.ensureWindowVisible(first);
+      this.didPlaceWindow = true;
+      if (first) setTimeout(() => this.ensureWindowVisible(false), 1600);
     } catch (error) {
       console.error("[shell] presentWindow failed:", error);
     }
+  }
+
+  /** 最小化 / 甩到屏幕外时拉回工作区，避免任务栏只剩「未响应」。 */
+  private ensureWindowVisible(recenter = false): void {
+    if (this.window.isDestroyed()) return;
+    try {
+      if (this.window.isMinimized()) this.window.restore();
+      const wa = screen.getPrimaryDisplay().workArea;
+      const b = this.window.getBounds();
+      const onScreen =
+        b.width >= 400 &&
+        b.height >= 300 &&
+        b.x + b.width > wa.x + 40 &&
+        b.y + b.height > wa.y + 40 &&
+        b.x < wa.x + wa.width - 40 &&
+        b.y < wa.y + wa.height - 40;
+      if (recenter || !onScreen) {
+        const width = Math.min(1360, Math.max(800, wa.width - 48));
+        const height = Math.min(900, Math.max(560, wa.height - 48));
+        this.window.setBounds({
+          x: wa.x + Math.round((wa.width - width) / 2),
+          y: wa.y + Math.round((wa.height - height) / 2),
+          width,
+          height,
+        });
+      }
+      this.window.show();
+      this.window.focus();
+      // restore/setBounds 后客户区尺寸可能下一帧才有效，补一次延迟布局。
+      this.scheduleLayout(120);
+      this.scheduleLayout(400);
+    } catch (error) {
+      console.error("[shell] ensureWindowVisible failed:", error);
+    }
+  }
+
+  private recoverHungPage(tab: TabInfo): void {
+    noteHang("page-hung", tab.url || "");
+    this.ensureWindowVisible(false);
+    const wc = tab.view?.webContents;
+    if (!wc || wc.isDestroyed()) return;
+    try {
+      wc.stop();
+    } catch {
+      /* ignore */
+    }
+    const cur = String(tab.url || wc.getURL() || "");
+    const next = /baidu\.com/i.test(cur) || cur === DEFAULT_URL ? "about:blank" : DEFAULT_URL;
+    try {
+      void wc.loadURL(next);
+    } catch {
+      /* ignore */
+    }
+    this.sendToast(tx(this.settings.locale, "page.hung"));
   }
 
   private attachChromeShortcuts(wc: WebContents): void {
@@ -1315,26 +1519,56 @@ export class SparkBrowser {
     this.applyViewBounds();
   }
 
-  private pageBounds(): { x: number; y: number; width: number; height: number } {
+  private pageBounds(): { x: number; y: number; width: number; height: number } | null {
+    const [rawW, rawH] = this.window.getContentSize();
+    let minimized = false;
+    try {
+      minimized = this.window.isMinimized();
+    } catch {
+      /* ignore */
+    }
+    // 恢复/显示瞬间 content size 可能为 0，或窗口处于最小化：沿用上次正常尺寸，
+    // 两者都没有就放弃本轮布局。绝不能把视图 setBounds 成窄条——网页按窄视口重排后
+    // 不会自己恢复，且 Windows 恢复过渡的 resize 事件可能在尺寸还是 0 时就发完了。
+    if (!minimized && rawW >= 400 && rawH >= 300) {
+      this.lastGoodContent = { width: rawW, height: rawH };
+    }
+    const width = !minimized && rawW >= 400 ? rawW : this.lastGoodContent.width;
+    const height = !minimized && rawH >= 300 ? rawH : this.lastGoodContent.height;
+    if (!width || !height) return null;
+    // 洞的宽/x 由 shell 的固定 grid 唯一决定（1fr + 312px 侧栏），永远以窗口几何为准，
+    // 不采信 shell 在恢复过渡期可能发来的旧洞宽——那正是视图被夹成 100px 的来源。
+    const viewW = Math.max(100, width - SIDEBAR_W);
+    const fallback = {
+      x: 0,
+      y: CHROME_H,
+      width: viewW,
+      height: Math.max(100, height - CHROME_H),
+    };
     if (
       this.holeBounds &&
       this.holeBounds.width >= 80 &&
       this.holeBounds.height >= 80
     ) {
-      return this.holeBounds;
+      const b = { ...this.holeBounds };
+      b.x = 0;
+      b.width = viewW;
+      // y/高度只在合理区间采信（书签栏/查找栏等顶部行变化），异常就回退常量。
+      if (b.y < 40 || b.y > 200) b.y = CHROME_H;
+      if (b.height < 200 || b.height > height) b.height = fallback.height;
+      return b;
     }
-    const [width, height] = this.window.getContentSize();
-    return {
-      x: 0,
-      y: CHROME_H,
-      width: Math.max(100, width - SIDEBAR_W),
-      height: Math.max(100, height - CHROME_H),
-    };
+    return fallback;
   }
 
   private applyViewBounds(): void {
     if (this.window.isDestroyed()) return;
     const bounds = this.pageBounds();
+    // 窗口尺寸此刻无效（最小化/恢复/隐藏过渡）：不动任何视图，稍后尺寸回来再排。
+    if (!bounds) {
+      this.scheduleLayout(250);
+      return;
+    }
     const hidePage = this.overlay !== "none";
     for (const [id, tab] of this.tabs) {
       if (!tab.view) continue;
@@ -1359,8 +1593,37 @@ export class SparkBrowser {
     }
   }
 
+  private layoutTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 向 shell 要一次最新的 page-hole 测量（恢复过渡的回调可能丢过）。 */
+  private requestHoleReport(): void {
+    try {
+      if (this.window.isDestroyed()) return;
+      this.window.webContents.send("spark:request-hole");
+    } catch {
+      /* ignore */
+    }
+  }
+  /** 延迟补排：窗口恢复过渡尺寸回来后，确保有一次用真实尺寸的布局。 */
+  private scheduleLayout(delay = 200): void {
+    if (this.layoutTimer) clearTimeout(this.layoutTimer);
+    this.layoutTimer = setTimeout(() => {
+      this.layoutTimer = null;
+      this.requestHoleReport();
+      this.layout();
+    }, delay);
+  }
+
   private layout(): void {
     this.applyViewBounds();
+  }
+
+  private focusShell(): void {
+    try {
+      if (this.window.isDestroyed()) return;
+      this.window.webContents.focus();
+    } catch {
+      /* ignore */
+    }
   }
 
   private focusActivePage(): void {
@@ -1419,6 +1682,8 @@ export class SparkBrowser {
     };
     ipcMain.removeAllListeners("spark:page-hole");
     ipcMain.on("spark:page-hole", (_e, raw) => this.setPageHoleBounds(raw || {}));
+    ipcMain.removeAllListeners("spark:focus-shell");
+    ipcMain.on("spark:focus-shell", () => this.focusShell());
     handle("spark:navigate", async (_e, url: string) =>
       this.navigate(String(url || ""), { asHuman: true }),
     );
@@ -1477,7 +1742,9 @@ export class SparkBrowser {
       this.resolveApproval(String(id), Boolean(approved)),
     );
     handle("spark:qa-check", async () => this.qaCheck());
-    handle("spark:chat", async (_e, text: string) => this.handleChat(String(text || "")));
+    handle("spark:chat", async (_e, text: string, images?: unknown) =>
+      this.handleChat(String(text || ""), sanitizeImageDataUrls(images)),
+    );
     handle("spark:open-report", async (_e, filePath: string) =>
       this.openReport(String(filePath || "")),
     );
@@ -1565,7 +1832,7 @@ export class SparkBrowser {
       this.settings = saveSettings(this.configDir(), next, app.getLocale());
       this.rebuildDeepSeek();
       this.pushSidebarState();
-      const hasKey = Boolean((this.settings.apiKey || this.settings.deepseekApiKey || "").trim());
+      const hasKey = this.hasByokKey();
       const toastKey =
         this.settings.llmMode === "cloud"
           ? hasCloudSession(this.configDir())
@@ -1616,31 +1883,46 @@ export class SparkBrowser {
       this.pushSidebarState();
       return { ok: true, message: tx(this.settings.locale, "toast.cloudOut"), cloud: this.cloudPublic() };
     });
+    handle("spark:cloud-page-session", async (e) => {
+      if (!isOfficialAccountUrl(String(e.sender?.getURL?.() || ""))) {
+        return { ok: false };
+      }
+      const access = await this.cloudAccessToken();
+      const email = loadTokens(this.configDir())?.email || "";
+      if (!access) return { ok: false };
+      return { ok: true, access, email };
+    });
     handle("spark:cloud-open-account", async (_e, plan?: string) => {
       const id = plan && isCloudPlanId(String(plan)) ? String(plan) : undefined;
-      await shell.openExternal(accountUrl(this.settings.locale, id));
+      const href = await this.officialAccountHref(id);
+      await this.navigate(href, { asHuman: true });
       return { ok: true };
     });
-    handle("spark:cloud-checkout", async (_e, plan?: string) => {
+    handle("spark:cloud-checkout", async (e, plan?: string, type?: string) => {
+      const fromPage = !this.senderIsShell(e.sender);
+      if (fromPage && !isOfficialAccountUrl(String(e.sender?.getURL?.() || ""))) {
+        return { ok: false, message: "forbidden" };
+      }
       const id = String(plan || "").trim();
       if (!isCloudPlanId(id)) {
         return { ok: false, message: tx(this.settings.locale, "cloud.planUnknown") };
       }
+      const payType = String(type || "alipay").trim() || "alipay";
       if (isMsftChannel()) {
-        await shell.openExternal(accountUrl(this.settings.locale, id));
+        await this.navigate(await this.officialAccountHref(id), { asHuman: true });
         return { ok: true };
       }
       if (!hasCloudSession(this.configDir())) {
-        await shell.openExternal(accountUrl(this.settings.locale, id));
+        await this.navigate(await this.officialAccountHref(id), { asHuman: true });
         return { ok: true, message: tx(this.settings.locale, "toast.cloudNeedLogin") };
       }
       try {
-        const out = await createCloudCheckout(this.configDir(), id);
-        const url = out.payUrl || accountUrl(this.settings.locale, id);
-        await shell.openExternal(url);
+        const out = await createCloudCheckout(this.configDir(), id, payType);
+        const url = out.payUrl || (await this.officialAccountHref(id));
+        await this.navigate(url, { asHuman: true });
         return { ok: true };
       } catch {
-        await shell.openExternal(accountUrl(this.settings.locale, id));
+        await this.navigate(await this.officialAccountHref(id), { asHuman: true });
         return { ok: true };
       }
     });
@@ -2607,12 +2889,37 @@ export class SparkBrowser {
   }
 
   private hasByokKey(): boolean {
-    return Boolean((this.settings.apiKey || this.settings.deepseekApiKey || "").trim());
+    if ((this.settings.apiKey || this.settings.deepseekApiKey || "").trim()) return true;
+    return this.settings.provider === "ollama";
   }
 
   private modelReady(): boolean {
     if (this.hasByokKey()) return true;
     return this.settings.llmMode === "cloud" && Boolean(this.cloudQuota?.canStart);
+  }
+
+  private senderIsShell(sender?: Electron.WebContents | null): boolean {
+    try {
+      return Boolean(
+        sender && this.window && !this.window.isDestroyed() && sender === this.window.webContents,
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  private async cloudAccessToken(): Promise<string | undefined> {
+    if (!hasCloudSession(this.configDir())) return undefined;
+    try {
+      const tokens = (await refreshIfNeeded(this.configDir())) || loadTokens(this.configDir());
+      return tokens?.access || undefined;
+    } catch {
+      return loadTokens(this.configDir())?.access || undefined;
+    }
+  }
+
+  private async officialAccountHref(plan?: string): Promise<string> {
+    return accountUrl(this.settings.locale, plan);
   }
 
   private settingsPublic() {
@@ -2666,7 +2973,7 @@ export class SparkBrowser {
   }
 
   private actionNeedsLlm(action: ChatAction, text: string): boolean {
-    if (shouldAskPlanner(action, text)) return true;
+    void text;
     switch (action.type) {
       case "llm":
       case "act":
@@ -2688,6 +2995,7 @@ export class SparkBrowser {
     text: string,
   ): Promise<"ok" | "skip" | "refused"> {
     if (this.llmRuntime !== "cloud") return "skip";
+    if (this.cloudTaskId) return "ok";
     if (!this.actionNeedsLlm(action, text)) return "skip";
     try {
       const t = await assertAndStartTask(this.configDir());
@@ -2738,7 +3046,9 @@ export class SparkBrowser {
   }
 
   private rebuildDeepSeek(force?: "byok" | "cloud"): void {
-    const byokKey = (this.settings.apiKey || this.settings.deepseekApiKey || "").trim();
+    const byokKey =
+      (this.settings.apiKey || this.settings.deepseekApiKey || "").trim() ||
+      (this.settings.provider === "ollama" ? "ollama" : "");
     const byokBase =
       (this.settings.baseUrl || this.settings.deepseekBaseUrl || "").trim().replace(/\/$/, "") ||
       "https://api.deepseek.com";
@@ -2753,10 +3063,11 @@ export class SparkBrowser {
       this.llmRuntime = "cloud";
       this.applyDeepSeekCfg({
         apiKey: "cloud",
-        baseUrl: cloudApiBase(),
-        model: byokModel,
+        baseUrl: chatCompletionsCloudUrl(),
+        model: "",
         mode: "cloud",
-        fetchImpl: (url, init) => this.cloudOrByokFetch(String(url), init ?? {}, byokKey, byokBase),
+        fetchImpl: (url, init) =>
+          this.cloudOrByokFetch(String(url), init ?? {}, byokKey, byokBase, byokModel),
       });
       return;
     }
@@ -2779,6 +3090,7 @@ export class SparkBrowser {
     init: RequestInit,
     byokKey: string,
     byokBase: string,
+    byokModel: string,
   ): Promise<Response> {
     try {
       const res = await cloudFetch(this.configDir(), this.cloudTaskId || "", url, init);
@@ -2786,21 +3098,33 @@ export class SparkBrowser {
         return res;
       }
       if (res.status >= 500 && byokKey) {
-        return this.byokFetch(byokKey, byokBase, init);
+        return this.byokFetch(byokKey, byokBase, byokModel, init);
       }
       return res;
     } catch {
-      if (byokKey) return this.byokFetch(byokKey, byokBase, init);
+      if (byokKey) return this.byokFetch(byokKey, byokBase, byokModel, init);
       throw new Error(tx(this.settings.locale, "cloud.proxyDown"));
     }
   }
 
-  private byokFetch(apiKey: string, baseUrl: string, init: RequestInit): Promise<Response> {
+  private byokFetch(
+    apiKey: string,
+    baseUrl: string,
+    model: string,
+    init: RequestInit,
+  ): Promise<Response> {
     const headers = new Headers(init.headers);
     headers.set("Authorization", `Bearer ${apiKey}`);
     headers.set("api-key", apiKey);
+    if (/anthropic\.com/i.test(baseUrl)) {
+      headers.set("anthropic-version", "2023-06-01");
+    }
     headers.delete("X-Sparo-Task");
-    return fetch(chatCompletionsUrl(baseUrl), { ...init, headers });
+    return fetch(chatCompletionsUrl(baseUrl), {
+      ...init,
+      headers,
+      body: withJsonModel(init.body, model),
+    });
   }
 
   private async runAgentTool(
@@ -3170,84 +3494,75 @@ export class SparkBrowser {
     };
   }
 
-  async handleChat(text: string): Promise<ToolResult> {
-    if (this.chatRunning) {
-      this.chatQueue.push(text);
-      this.chatLog.push({
-        role: "assistant",
-        text: `「${text.slice(0, 28)}」已排队，等当前任务写出手册再做。`,
+  /** 侧栏原话走工作单运行时。QA / Agent 用：窗口先弹出来。 */
+  async sidebarChatTool(
+    text: string,
+    opts?: { hands?: boolean },
+  ): Promise<ToolResult> {
+    this.presentWindow();
+    const ask = String(text || "").trim();
+    const beforeUrl = this.getUrl();
+    const homeCity = loadProfile(this.configDir()).identity.homeCity;
+    if (opts?.hands === false) {
+      const preview = applyTurn(ask, {
+        active: this.activeMission,
+        last: this.lastMission,
+        homeCity: homeCity || undefined,
+        now: new Date(),
+        paused: this.paused,
       });
+      this.chatLog.push({ role: "user", text: ask });
+      const line =
+        preview.effect === "run"
+          ? `工作单准备动手：${preview.mission?.goal.approach || preview.say}`
+          : preview.say;
+      this.chatLog.push({ role: "assistant", text: line });
       this.pushSidebarState();
-      return { ok: true, message: "queued" };
+      return {
+        ok: true,
+        message: line,
+        data: {
+          kind: preview.effect,
+          briefKind: preview.mission?.goal.kind,
+          hands: false,
+          navigated: false,
+          beforeUrl,
+          url: beforeUrl,
+          origin: preview.mission?.goal.known.origin,
+          approach: preview.mission?.goal.approach,
+          pending: preview.mission?.state === "blocked" || preview.mission?.state === "propose",
+        },
+      };
     }
-    this.chatRunning = true;
-    try {
-      return await this.handleChatJob(text);
-    } finally {
-      this.chatRunning = false;
-      const next = this.chatQueue.shift();
-      if (next) void this.handleChat(next);
-    }
+    const r = await this.handleChat(ask);
+    const last = [...this.chatLog].reverse().find((t) => t.role === "assistant");
+    const url = this.getUrl();
+    const m = this.activeMission || this.lastMission;
+    return {
+      ok: r.ok,
+      message: r.message,
+      data: {
+        kind: (r.data as { kind?: string } | undefined)?.kind || last?.cortex?.mode,
+        briefKind: (r.data as { briefKind?: string } | undefined)?.briefKind || m?.goal.kind,
+        hands: true,
+        navigated: url !== beforeUrl,
+        beforeUrl,
+        url,
+        cortex: last?.cortex || null,
+        pending: Boolean(this.activeMission && (this.activeMission.state === "blocked" || this.activeMission.state === "propose")),
+        origin: m?.goal.known.origin,
+        ask: m?.ask,
+        approach: m?.goal.approach,
+      },
+    };
   }
 
-  private async handleChatJob(text: string): Promise<ToolResult> {
-    this.chatLog.push({ role: "user", text });
-    this.pushSidebarState();
-    if (this.helpAsk) {
-      const t = text.trim();
-      const looksAnswer =
-        isContinueHint(t) ||
-        t.length <= 12 ||
-        /^(是|否|有弹窗|要换入口|先登录|先不管|我过完了|yes|no|skip|overlay)/i.test(t);
-      if (looksAnswer) return this.answerLearning(t);
-      this.answerLearning("先不管");
-    }
-    this.recentLearned = [];
-    let action = parseLocalIntent(text, this.settings.locale);
-    if (
-      action.type === "llm" &&
-      isContinueHint(text) &&
-      this.lastFeishuTask
-    ) {
-      action = { type: "feishu", task: this.lastFeishuTask };
-    }
-    const cloudGate = await this.beginCloudTaskIfNeeded(action, text);
-    if (cloudGate === "refused") {
-      const reply = this.lastCloudRefuse || this.L("cloud.exhausted");
-      this.chatLog.push({ role: "assistant", text: reply });
-      this.pushSidebarState();
-      return { ok: false, message: reply };
-    }
-    const cloudOpened = cloudGate === "ok";
-    try {
-    if (this.deepseek && shouldAskPlanner(action, text)) {
-      this.chatLog.push({
-        role: "assistant",
-        text: "先对照能力，弄清你要做什么…",
-      });
-      this.pushSidebarState();
-      try {
-        const planned = await planUserGoal(text, (prompt) =>
-          this.deepseek!.completePlain(prompt),
-        );
-        if (planned && planned.type !== "none") {
-          action = planned as ChatAction;
-        } else if (action.type === "travel_search") {
-          action = { type: "llm", text };
-        }
-      } catch {
-        /* 规划失败就沿用正则结果 */
-      }
-    }
-    if (this.paused && action.type !== "pause") {
-      this.setPaused(false);
-    }
-    if (await this.applyHostLessons()) {
-      const msg = this.settings.locale.startsWith("zh")
-        ? "这站要你先处理登录或验证，处理好后说「继续」。"
-        : "This site needs you first. Finish login or the check, then say continue.";
-      return { ok: true, message: msg };
-    }
+  private async executeHand(
+    action: ChatAction,
+    userAsk: string,
+    jobImages: string[],
+    kind?: string,
+  ): Promise<{ reply: string; replyDoc?: ChatTurn["doc"] }> {
     let reply = "";
     let replyDoc: ChatTurn["doc"];
     if (action.type === "reply") {
@@ -3255,10 +3570,9 @@ export class SparkBrowser {
     } else if (action.type === "print") {
       try {
         this.pageView.webContents.print();
-        reply =
-          this.settings.locale.startsWith("zh")
-            ? "已打开系统打印。选打印机或另存为 PDF。"
-            : "Print dialog opened. Choose a printer or Save as PDF.";
+        reply = this.settings.locale.startsWith("zh")
+          ? "已打开系统打印。选打印机或另存为 PDF。"
+          : "Print dialog opened. Choose a printer or Save as PDF.";
       } catch (error) {
         reply =
           "没法自动打印：" +
@@ -3270,15 +3584,12 @@ export class SparkBrowser {
       reply = action.paused ? "已暂停，人可接管。" : "已恢复 Agent 操控。";
     } else if (action.type === "navigate") {
       const nav = await this.navigate(action.url, { asHuman: true });
-      if (!nav.ok) {
-        reply = nav.message;
-      } else if (action.after === "dxm_arrived") {
+      if (!nav.ok) reply = nav.message;
+      else if (action.after === "dxm_arrived") {
         reply = "已打开店小蜜。若未登录请先登录；然后点开商品编辑页，说「处理好这个商品」。";
       } else if (action.after === "dxm_crawl") {
         reply = "已打开采集箱。点进商品编辑页后说「处理好」或「继续」。";
-      } else {
-        reply = action.note || nav.message;
-      }
+      } else reply = action.note || nav.message;
     } else if (action.type === "dxm_guide") {
       reply = dxmGuideMessage(this.getUrl(), action.mode);
     } else if (action.type === "set_title") {
@@ -3286,133 +3597,120 @@ export class SparkBrowser {
     } else if (action.type === "translate_title") {
       reply = (await this.translateDxmTitle(action.lang)).message;
     } else if (action.type === "qa") {
-      const qa = await this.qaCheck();
-      reply = qa.message;
+      reply = (await this.qaCheck()).message;
     } else if (action.type === "workflow") {
-      const label =
-        action.id === "dxm_autopilot" ? "Autopilot（全自动，完成后暂停等你审）" : action.id;
-      this.chatLog.push({
-        role: "assistant",
-        text: `正在执行「${label}」…`,
-      });
+      const label = action.id === "dxm_autopilot" ? "Autopilot（全自动，完成后暂停等你审）" : action.id;
+      this.chatLog.push({ role: "assistant", text: `正在执行「${label}」…` });
       this.pushSidebarState();
-      const r = await runWorkflow(this, action.id);
-      reply = r.message;
-      this.pushSidebarState(); // reflect pause after autopilot
+      reply = (await runWorkflow(this, action.id)).message;
+      this.pushSidebarState();
     } else if (action.type === "list_skills") {
       this.skillsCache = listSkills(this.configDir());
-      if (!this.skillsCache.length) {
-        reply = "内置能力可直接说「发小红书」「填表」「回复」。这一版不提供录制新操作。";
-      } else {
-        reply =
-          `已有 ${this.skillsCache.length} 个可用操作：\n` +
+      reply = this.skillsCache.length
+        ? `已有 ${this.skillsCache.length} 个可用操作：\n` +
           this.skillsCache
             .slice(0, 12)
             .map((s, i) => `${i + 1}. ${s.title}（${s.stepCount} 步）`)
             .join("\n") +
-          "\n\n直接说「发小红书」或「填表」即可。这一版不提供录制新操作。";
-      }
+          "\n\n直接说「发小红书」或「填表」即可。这一版不提供录制新操作。"
+        : "内置能力可直接说「发小红书」「填表」「回复」。这一版不提供录制新操作。";
     } else if (action.type === "one_click_reply") {
-      this.chatLog.push({
-        role: "assistant",
-        text: this.L("chat.scanningReply"),
-      });
+      this.chatLog.push({ role: "assistant", text: this.L("chat.scanningReply") });
       this.pushSidebarState();
-      const r = await this.csOneClickReply();
-      reply = r.message;
+      reply = (await this.csOneClickReply()).message;
       this.pushSidebarState();
     } else if (action.type === "summarize") {
-      this.chatLog.push({
-        role: "assistant",
-        text: this.L("chat.readingPage"),
-      });
+      this.chatLog.push({ role: "assistant", text: this.L("chat.readingPage") });
       this.pushSidebarState();
-      reply = await this.summarizeActivePage(text);
+      reply = await this.summarizeActivePage(userAsk);
     } else if (action.type === "trip_plan") {
-      this.chatLog.push({
-        role: "assistant",
-        text: tripPlanProgress(action.plan),
-      });
+      this.chatLog.push({ role: "assistant", text: tripPlanProgress(action.plan) });
       this.pushSidebarState();
-      const tripOut = await this.runTripPlan(action.plan, text);
+      const tripOut = await this.runTripPlan(action.plan, userAsk);
       reply = tripOut.text;
-      try {
-        const title = `${action.plan.origin} → ${action.plan.cities.join(" → ")} → ${action.plan.origin}`;
-        const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-        replyDoc = writeHtmlReport(
-          this.configDir(),
-          `trip-${stamp}`,
-          tripReportHtml({
+      // 只要有非空目的地就出手册；开口行程（「杭州进上海出」、高铁环游）可以没有出发地，
+      // expandTripPlan 会自行只排火车/酒店，不能因 origin 空就把整本手册毙掉。
+      const placesOk = action.plan.cities.some((c) => c.trim());
+      if (!placesOk) {
+        reply = "目的地还不是城，先说清再出手册。";
+      } else {
+        try {
+          const o = action.plan.origin.trim();
+          const chain = action.plan.cities.join(" → ");
+          const title = o ? `${o} → ${chain} → ${o}` : chain;
+          const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+          tripTrace("render-begin", `summary=${reply.length}字 hotels=${tripOut.hotels.length} flights=${tripOut.flights.length}`);
+          const html = tripReportHtml({
             plan: action.plan,
-            userAsk: text,
+            userAsk,
             summary: reply,
             hotels: tripOut.hotels,
             flights: tripOut.flights,
-          }),
-          { title, kind: "trip" },
-        );
-        reply = `行程手册已写好：${action.plan.startDate} ${title}，${action.plan.endDate} 返回。点下面卡片，在窗口里打开完整页。`;
-      } catch {
-        /* 写文档失败就仍用侧栏长文 */
+          });
+          tripTrace("render-html", `${html.length}字`);
+          replyDoc = writeHtmlReport(
+            this.configDir(),
+            `trip-${stamp}`,
+            html,
+            { title, kind: "trip" },
+          );
+          tripTrace("render-written", replyDoc.path);
+          reply = tripChatBrief(
+            o
+              ? `${action.plan.startDate} ${title}，${action.plan.endDate} 返回`
+              : `${action.plan.startDate} ${title}，${action.plan.endDate} 返程`,
+          );
+          this.openReportQuiet(replyDoc.path);
+          tripTrace("render-done");
+        } catch (e) {
+          tripTrace("render-error", String(e instanceof Error ? e.message : e));
+          /* 写文档失败就仍用侧栏长文 */
+        }
       }
     } else if (action.type === "mission") {
-      this.chatLog.push({
-        role: "assistant",
-        text: missionProgress(action.mission),
-      });
+      this.chatLog.push({ role: "assistant", text: missionProgress(action.mission) });
       this.pushSidebarState();
-      const out = await this.runMission(action.mission, text);
-      reply = out;
-      try {
-        const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-        replyDoc = writeHtmlReport(
-          this.configDir(),
-          `mission-${action.mission.kind}-${stamp}`,
-          readingReportHtml({
-            title: action.mission.title,
-            body: out,
-            eyebrow: "SPARO 任务手册",
-          }),
-          { title: action.mission.title, kind: "read" },
-        );
-        reply = `手册已写好：${action.mission.title}。点下面卡片在窗口里打开。`;
-      } catch {
-        /* 仍用侧栏长文 */
-      }
+      const out = await this.runMission(action.mission, userAsk);
+      const eatplay = kind === "eatplay" || /吃喝玩/.test(action.mission.title);
+      if (eatplay) {
+        const sealed = this.sealResearchReport({
+          title: action.mission.title,
+          userAsk,
+          body: out,
+          chips: reportChips(action.mission.slots),
+          stem: "eatplay",
+        });
+        reply = sealed.reply;
+        replyDoc = sealed.doc;
+      } else if (missionNeedsReport(action.mission.kind) || looksLikeResearchAsk(userAsk)) {
+        const sealed = this.sealResearchReport({
+          title: action.mission.title,
+          userAsk,
+          body: out,
+          chips: reportChips(action.mission.slots),
+          stem: `mission-${action.mission.kind}`,
+        });
+        reply = sealed.reply;
+        replyDoc = sealed.doc;
+      } else reply = out;
     } else if (action.type === "travel_search") {
-      this.chatLog.push({
-        role: "assistant",
-        text: lifeProgress(action),
-      });
+      this.chatLog.push({ role: "assistant", text: lifeProgress(action) });
       this.pushSidebarState();
       reply = await this.runTravelSearch(action);
     } else if (action.type === "feishu") {
       this.lastFeishuTask = action.task;
-      this.chatLog.push({
-        role: "assistant",
-        text: "正在打开飞书网页版…",
-      });
+      this.chatLog.push({ role: "assistant", text: "正在打开飞书网页版…" });
       this.pushSidebarState();
       reply = await this.runFeishu(action.task);
     } else if (action.type === "fill_form") {
-      this.chatLog.push({
-        role: "assistant",
-        text: this.L("chat.detectingFields"),
-      });
+      this.chatLog.push({ role: "assistant", text: this.L("chat.detectingFields") });
       this.pushSidebarState();
-      reply = await this.previewFormFill(text);
+      reply = await this.previewFormFill(userAsk);
     } else if (action.type === "run_skill") {
       const label = action.id || action.query;
-      this.chatLog.push({
-        role: "assistant",
-        text: `正在按妙招「${label}」执行…`,
-      });
+      this.chatLog.push({ role: "assistant", text: `正在按妙招「${label}」执行…` });
       this.pushSidebarState();
-      const r = await this.runSkillTool({
-        id: action.id,
-        query: action.query,
-      });
-      reply = r.message;
+      reply = (await this.runSkillTool({ id: action.id, query: action.query })).message;
       this.pushSidebarState();
     } else if (action.type === "run") {
       const map =
@@ -3421,66 +3719,641 @@ export class SparkBrowser {
           : action.script === "dxm-translate"
             ? "dxm_translate_zh_en"
             : "";
-      if (map) {
-        const r = await runWorkflow(this, map);
-        reply = r.message;
-      } else {
-        reply = `未知脚本 ${action.script}`;
-      }
+      reply = map ? (await runWorkflow(this, map)).message : `未知脚本 ${action.script}`;
     } else if (action.type === "act") {
       if (action.url && !sameSite(this.getUrl(), action.url)) {
         const nav = await this.navigate(action.url, { asHuman: true });
-        if (!nav.ok) {
-          reply = nav.message;
-        } else {
-          this.chatLog.push({
-            role: "assistant",
-            text: this.L("chat.openedSite"),
-          });
+        if (!nav.ok) reply = nav.message;
+        else {
+          this.chatLog.push({ role: "assistant", text: this.L("chat.openedSite") });
           this.pushSidebarState();
-          reply = await this.runLlmGoal(action.text);
+          reply = await this.runLlmGoal(action.text, jobImages);
         }
       } else {
-        this.chatLog.push({
-          role: "assistant",
-          text: this.L("chat.actingHere"),
-        });
+        this.chatLog.push({ role: "assistant", text: this.L("chat.actingHere") });
         this.pushSidebarState();
-        reply = await this.runLlmGoal(action.text);
+        reply = await this.runLlmGoal(action.text, jobImages);
       }
     } else if (action.type === "llm") {
-      reply = await this.runLlmGoal(action.text);
+      reply = await this.runLlmGoal(action.text, jobImages);
     } else {
       reply = this.L("chat.unknown");
     }
-    if (cloudOpened) {
-      const settle = await this.finishCloudTask();
-      if (settle) {
-        reply = `${reply}\n\n${this.L("cloud.usedThis", {
-          x: settle.approxTasksUsed,
-          n: settle.approxTasks,
-        })}`;
-      }
+    return { reply, replyDoc };
+  }
+
+  private async executeMission(mission: ActiveMission, jobImages: string[]): Promise<ToolResult> {
+    this.activeMission = mission;
+    const goal = mission.goal;
+    const cloudGate = await this.beginCloudTaskIfNeeded({ type: "llm", text: goal.raw }, goal.raw);
+    if (cloudGate === "refused") {
+      const reply = this.lastCloudRefuse || this.L("cloud.exhausted");
+      this.chatLog.push({ role: "assistant", text: reply });
+      this.pushSidebarState();
+      return { ok: false, message: reply };
     }
-    if (!replyDoc && reply.length >= 1600) {
+    try {
+      if (await this.applyHostLessons()) {
+        mission.state = "waiting_human";
+        this.activeMission = mission;
+        const msg = this.settings.locale.startsWith("zh")
+          ? "这站要你先处理登录或验证，处理好后说「继续」。"
+          : "This site needs you first. Finish login or the check, then say continue.";
+        this.chatLog.push({ role: "assistant", text: msg });
+        this.pushSidebarState();
+        return { ok: true, message: msg, data: { loop: "waiting_human", briefKind: goal.kind } };
+      }
+
+      this.chatLog.push({
+        role: "assistant",
+        text: goalProgress(goal),
+        cortex: { mode: "loop", need: goal.intent, approach: goal.approach },
+      });
+      this.pushSidebarState();
+
+      let current = mission;
+      const ran: AgentStep[] = [];
+      let stall = 0;
+      let missionOkRuns = 0;
+      tripTrace("mission-loop-begin", `kind=${goal.kind} hands=${mission.plan?.length ?? 0}`);
+      for (let i = 0; i < 8; i++) {
+        if (this.helpAsk) {
+          current.state = "waiting_human";
+          this.activeMission = current;
+          return {
+            ok: true,
+            message: this.helpAsk.question,
+            data: { loop: "waiting_human", briefKind: current.goal.kind },
+          };
+        }
+        const thought = await (async () => {
+          // 整合整手（行程手册 / 调研 mission）必须先行：reasoner（模型）不能跳过它
+          // 先散查——散手机票酒店出不了逐日手册，散手 search_read 只读百度壳页出不了对照报告。
+          const needReport = current.goal.deliverables.some((d) => d.required && d.id === "report");
+          const forced =
+            (current.plan || []).find((s) => s.cap === "trip_plan" && s.trip) ||
+            (needReport
+              ? (current.plan || []).find((s) => s.cap === "mission" && s.mission)
+              : undefined);
+          const forcedRan = forced ? ran.some((s) => s.cap === forced!.cap) : false;
+          if (forced && !forcedRan) {
+            return {
+              intent: current.goal.intent,
+              deliverables: current.goal.deliverables.map((d) => d.id),
+              next: forced,
+              why:
+                forced.cap === "trip_plan"
+                  ? "行程整合手册先行：一手里含逐日路线、交通和每城住宿。"
+                  : "调研整手先行：多路检索 + 深读 + 对照表一次做完。",
+            } as const;
+          }
+          if (this.deepseek) {
+            return this.withTimeout(
+              thoughtForAsync(current, (p) => this.deepseek!.completePlain(p)),
+              15000,
+              thoughtFor(current),
+              false,
+            );
+          }
+          return thoughtFor(current);
+        })();
+        // 调研报告执行层守卫：report mission 整手已【成功】跑过、证据够了，模型再想扫一遍
+        // mission（实测会连扫 5 遍同一目标，每遍 ~100s 直到客户端超时）→ 直接收摊去合成。
+        // 非 mission 的定点补查（search_read 等）不受限，模型仍可补漏。
+        if (
+          current.goal.deliverables.some((d) => d.required && d.id === "report") &&
+          missionOkRuns >= 1 &&
+          (current.findings?.length ?? 0) >= 3 &&
+          thought.next?.cap === "mission"
+        ) {
+          tripTrace("loop-guard", "report mission 已跑过，跳过重复整手，收摊合成");
+          break;
+        }
+        if (thought.ask) {
+          current.state = "blocked";
+          current.ask = thought.ask;
+          this.activeMission = current;
+          this.chatLog.push({
+            role: "assistant",
+            text: thought.ask,
+            cortex: { mode: "ask", need: current.goal.intent, approach: current.goal.approach },
+          });
+          this.pushSidebarState();
+          return { ok: true, message: thought.ask, data: { loop: "ask", briefKind: current.goal.kind } };
+        }
+        if (thought.synthesize || !thought.next) break;
+        this.chatLog.push({
+          role: "assistant",
+          text: `正在做 ${i + 1}/… ${thought.next.label}。${thought.why}`,
+        });
+        this.pushSidebarState();
+        ran.push(thought.next);
+        tripTrace("loop-step-begin", `#${i + 1} cap=${thought.next.cap} ${thought.next.label.slice(0, 40)}`);
+        const ls0 = Date.now();
+        const finding = await this.runLoopStep(thought.next, current.goal);
+        tripTrace("loop-step-done", `#${i + 1} ${Date.now() - ls0}ms ok=${finding.ok}`);
+        if (thought.next.cap === "mission" && finding.ok) missionOkRuns += 1;
+        current = observe(current, finding);
+        // 登录墙 / 人机验证墙：只有人能过。停下问人，不再烧步骤。
+        // 但只对「本来就要在墙内操作」的步骤生效（fill_form/act/read_page 等）；
+        // search_read / navigate 是要离开墙去别的域的，导航失败按普通失败走自纠，不误报卡墙。
+        const wallFinger = pageFinger(this.getUrl(), this.getTitle());
+        const onWall = isLoginWall(wallFinger) || isCaptchaWall(wallFinger);
+        const ns = thought.next;
+        const stepHost = (() => {
+          try {
+            return ns.query ? new URL(ns.query).host : "";
+          } catch {
+            return "";
+          }
+        })();
+        const wallAppliesToStep =
+          !["search_read", "navigate", "video_search"].includes(ns.cap) ||
+          (Boolean(stepHost) && Boolean(wallFinger.host) && stepHost === wallFinger.host);
+        if (onWall && wallAppliesToStep) {
+          current.state = "waiting_human";
+          this.activeMission = current;
+          const wallQ = isCaptchaWall(wallFinger)
+            ? "页面在等人机验证。请你在网页上完成（验证码不要发给我），完成后说「继续」。"
+            : `这一步卡在登录页（${wallFinger.host}）。你在窗口里登录后说「继续」，我接着做。`;
+          this.chatLog.push({ role: "assistant", text: wallQ });
+          this.pushSidebarState();
+          return {
+            ok: true,
+            message: wallQ,
+            data: { loop: "waiting_human", briefKind: current.goal.kind },
+          };
+        }
+        // 连续三步没进展：提前收摊，把已查到的如实汇总，不空烧剩余步骤。
+        stall = finding.ok ? 0 : stall + 1;
+        if (stall >= 3) {
+          this.chatLog.push({
+            role: "assistant",
+            text: `连着 ${stall} 步都没进展，我先汇总已查到的。`,
+          });
+          this.pushSidebarState();
+          break;
+        }
+        const revised = this.deepseek
+          ? await this.withTimeout(
+              reconsiderMission(current, (p) => this.deepseek!.completePlain(p)),
+              12000,
+              current,
+              false,
+            )
+          : await reconsiderMission(current);
+        if (revised.goal.intent !== current.goal.intent || revised.goal.kind !== current.goal.kind) {
+          this.chatLog.push({
+            role: "assistant",
+            text: `看完这一页，题改成：${revised.goal.intent}`,
+            cortex: { mode: "loop", need: revised.goal.intent, approach: revised.goal.approach },
+          });
+        }
+        current = revised;
+        this.activeMission = current;
+      }
+
+      const live = current.goal;
+      const findings = current.findings;
+      tripTrace("loop-end", `findings=${findings.length}`);
+      this.chatLog.push({ role: "assistant", text: "对照目标汇总…" });
+      this.pushSidebarState();
+      const readyDoc = [...findings].reverse().find((f) => f.doc)?.doc;
+      let synthesized = findings
+        .map((f) => f.text)
+        .filter((t) => t && t.length > 20)
+        .join("\n\n");
+      if (this.deepseek && findings.some((f) => !f.doc)) {
+        const sp = synthesizePrompt(live, findings);
+        tripTrace("final-synth-begin", `${sp.length}字`);
+        const f0 = Date.now();
+        synthesized =
+          (
+            await this.withTimeout(
+              this.deepseek.completePlain(sp),
+              90_000,
+              "",
+            )
+          ).trim() || synthesized;
+        tripTrace("final-synth-done", `${Date.now() - f0}ms ${synthesized.length}字`);
+      }
+      tripTrace("verify-begin", "");
+      const verify = verifyContracts(live, findings, { synthesized });
+      tripTrace("verify-done", `complete=${verify.complete}`);
       try {
+        writeExperience(this.configDir(), reviewLesson(live, verify, ran.length ? ran : compileHands(live)));
+      } catch {
+        /* 复盘写不进就算了 */
+      }
+
+      let reply = synthesized;
+      let replyDoc = readyDoc;
+      const facetCount = live.deliverables.filter((d) =>
+        d.required && ["stay", "food", "sights", "itinerary", "report"].includes(d.id),
+      ).length;
+      const needDoc =
+        !replyDoc &&
+        synthesized.length > 80 &&
+        (facetCount >= 2 ||
+          live.kind === "research" ||
+          live.kind === "trip" ||
+          live.deliverables.some((d) => d.required && d.id === "report"));
+      if (needDoc) {
+        const title = live.known.cities?.length
+          ? `${live.known.cities.join("、")} · ${live.deliverables
+              .filter((d) => d.required)
+              .map((d) => d.label)
+              .join("、")}`
+          : live.intent.slice(0, 24);
         const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
         replyDoc = writeHtmlReport(
           this.configDir(),
-          `read-${stamp}`,
-          readingReportHtml({ title: "Sparo 阅读页", body: reply }),
-          { title: "阅读页", kind: "read" },
+          `goal-${stamp}`,
+          readingReportHtml({
+            title,
+            body: synthesized,
+            eyebrow: verify.complete ? "SPARO 手册" : "未完成",
+          }),
+          { title, kind: live.kind === "research" ? "research" : "read" },
         );
-      } catch {
-        /* 可选 */
+        reply = verify.complete
+          ? `${title} 已写好。窗口里打开完整页。`
+          : `${title} 先写了已查到的。${verify.notes}`;
+        this.openReportQuiet(replyDoc.path);
+      } else if (!verify.complete && !replyDoc) {
+        reply = `${synthesized}\n\n${verify.notes}`;
       }
-    }
-    this.chatLog.push({ role: "assistant", text: reply, doc: replyDoc });
-    this.pushSidebarState();
-    return { ok: true, message: reply, data: { action, chat: this.chatLog.slice(-20) } };
+
+      if (cloudGate === "ok") {
+        const settle = await this.finishCloudTask();
+        if (settle) {
+          reply = `${reply}\n\n${this.L("cloud.usedThis", {
+            x: settle.approxTasksUsed,
+            n: settle.approxTasks,
+          })}`;
+        }
+      }
+      current.findings = findings;
+      current.state = "done";
+      this.lastMission = current;
+      this.activeMission = undefined;
+      this.chatLog.push({ role: "assistant", text: reply, doc: replyDoc });
+      this.pushSidebarState();
+      return {
+        ok: true,
+        message: reply,
+        data: {
+          loop: "done",
+          briefKind: live.kind,
+          covered: verify.covered,
+          missing: verify.missing,
+          intent: live.intent,
+        },
+      };
     } finally {
       if (this.cloudTaskId) void this.finishCloudTask();
     }
+  }
+
+  private async runLoopStep(step: AgentStep, goal: AgentGoal): Promise<StepFinding> {
+    const city = step.city || goal.known.cities?.[0] || "";
+    const start = step.checkin || goal.known.start || addDays(ymd(new Date()), 1);
+    const end = step.checkout || goal.known.end || addDays(start, 2);
+    const fail = (text: string): StepFinding => ({
+      step,
+      text,
+      url: this.getUrl(),
+      ok: false,
+    });
+    try {
+      if (step.cap === "hotel_search" && city) {
+        const text = await this.runTravelSearch(
+          {
+            kind: "hotel",
+            site: (step.site && isLegalSite("hotel", step.site)
+              ? step.site
+              : detectHotelSite(goal.raw)) as HotelSite,
+            city,
+            checkin: start,
+            checkout: end,
+            priceMax: goal.known.hotelPriceMax,
+            area: [goal.known.audience, goal.known.cheaper ? "便宜" : ""].filter(Boolean).join(" ") || undefined,
+          },
+          { raw: true },
+        );
+        return { step, text, url: this.getUrl(), ok: text.length > 40 };
+      }
+      const scatteredLeg = (
+        s: AgentStep,
+      ): { from: string; to: string; date: string } | null => {
+        if (s.from && s.to && s.date) return { from: s.from, to: s.to, date: s.date };
+        // 模型散手只给了自由文本（如「搜北京→成都 10月8日机票」）：从原话已知事实补齐
+        const origin = goal.known.origin || "";
+        const target = s.city || goal.known.cities?.[0] || "";
+        let from = origin;
+        let to = target;
+        const m = String(s.query || "").match(
+          /([一-龥A-Za-z·]{2,8})\s*(?:→|->|—|-|飞|到|至)\s*([一-龥A-Za-z·]{2,8})/,
+        );
+        if (m) {
+          const a = canonCity(m[1]) || plausiblePlace(m[1]);
+          const b = canonCity(m[2]) || plausiblePlace(m[2]);
+          if (a && b) {
+            from = a;
+            to = b;
+          }
+        }
+        const date = goal.known.start || "";
+        return from && to && date ? { from, to, date } : null;
+      };
+      const flightLeg = step.cap === "flight_search" ? scatteredLeg(step) : null;
+      if (step.cap === "flight_search" && flightLeg) {
+        const text = await this.runTravelSearch(
+          {
+            kind: "flight",
+            site: (step.site && isLegalSite("flight", step.site)
+              ? step.site
+              : detectFlightSite(goal.raw, flightLeg.from, flightLeg.to)) as FlightSite,
+            from: flightLeg.from,
+            to: flightLeg.to,
+            date: flightLeg.date,
+          },
+          { raw: true },
+        );
+        return { step, text, url: this.getUrl(), ok: text.length > 40 };
+      }
+      const trainLeg = step.cap === "train_search" ? scatteredLeg(step) : null;
+      if (step.cap === "train_search" && trainLeg) {
+        const text = await this.runTravelSearch(
+          {
+            kind: "train",
+            site: (step.site && isLegalSite("train", step.site) ? step.site : "12306") as TrainSite,
+            from: trainLeg.from,
+            to: trainLeg.to,
+            date: trainLeg.date,
+          },
+          { raw: true },
+        );
+        return { step, text, url: this.getUrl(), ok: text.length > 40 };
+      }
+      if (step.cap === "navigate" && step.query) {
+        // query 可能是 URL、英文域名或中文站名；中文站名映射真实域名，不直接当域名导航
+        const url = resolveStepUrl(step.query);
+        const nav = await this.withTimeout(this.navigate(url, { asHuman: true }), 12000, {
+          ok: false,
+          message: "打开超时",
+        });
+        if (!nav.ok) return fail(nav.message);
+        const page = await this.withTimeout(this.pageText(), 8000, {
+          ok: true,
+          message: "",
+          data: { text: "" },
+        });
+        const text = String(page.data?.text || "").trim();
+        return { step, text, url: this.getUrl() || url, ok: text.length > 40 };
+      }
+      if (step.cap === "search_read" && step.query) {
+        const site = step.site && isLegalSite("search", step.site) ? step.site : "baidu";
+        const url =
+          searchResultUrl(site, step.query) ||
+          `https://www.baidu.com/s?wd=${encodeURIComponent(step.query)}`;
+        const nav = await this.withTimeout(this.navigate(url, { asHuman: true }), 12000, {
+          ok: false,
+          message: "打开超时",
+        });
+        if (!nav.ok) return fail(nav.message);
+        const page = await this.withTimeout(this.pageText(), 8000, {
+          ok: true,
+          message: "",
+          data: { text: "" },
+        });
+        const text = cleanSearchPageText(String(page.data?.text || "").trim());
+        return { step, text, url: this.getUrl() || url, ok: text.length > 40 };
+      }
+      if (step.cap === "video_search" && step.query) {
+        const zh = /[一-鿿]/.test(step.query);
+        const url = zh
+          ? `https://search.bilibili.com/all?keyword=${encodeURIComponent(step.query)}`
+          : `https://www.youtube.com/results?search_query=${encodeURIComponent(step.query)}`;
+        const nav = await this.withTimeout(this.navigate(url, { asHuman: true }), 12000, {
+          ok: false,
+          message: "打开超时",
+        });
+        if (!nav.ok) return fail(nav.message);
+        const page = await this.withTimeout(this.pageText(), 8000, {
+          ok: true,
+          message: "",
+          data: { text: "" },
+        });
+        const text = String(page.data?.text || "").trim();
+        return { step, text, url: this.getUrl() || url, ok: text.length > 40 };
+      }
+      if (step.cap === "read_page") {
+        const text = await this.summarizeActivePage(goal.raw);
+        return { step, text, url: this.getUrl(), ok: text.length > 20 };
+      }
+      if (step.cap === "fill_form") {
+        const text = await this.previewFormFill(goal.raw);
+        return { step, text, url: this.getUrl(), ok: Boolean(text) };
+      }
+      if (step.cap === "act" && (step.query || step.action)) {
+        const hand = await this.executeHand(
+          step.action || { type: "llm", text: step.query || goal.raw },
+          goal.raw,
+          [],
+          goal.kind,
+        );
+        return { step, text: hand.reply, url: this.getUrl(), ok: hand.reply.length > 8, doc: hand.replyDoc };
+      }
+      if (step.cap === "trip_plan" && step.trip) {
+        const hand = await this.executeHand({ type: "trip_plan", plan: step.trip }, goal.raw, [], goal.kind);
+        return { step, text: hand.reply, url: this.getUrl(), ok: Boolean(hand.reply), doc: hand.replyDoc };
+      }
+      if (step.cap === "mission") {
+        // 模型编 mission 步可能不带 mission 载荷：用本地 parseMission 按原话兜底解析，
+        // 拿不到整手就如实失败，不能静默掉成 0ms 失败还占一步。
+        const mission = step.mission || parseMission(goal.raw);
+        if (!mission) return fail("这一步没有对应的手。");
+        const hand = await this.executeHand({ type: "mission", mission }, goal.raw, [], goal.kind);
+        return { step, text: hand.reply, url: this.getUrl(), ok: Boolean(hand.reply), doc: hand.replyDoc };
+      }
+      if (step.action) {
+        const hand = await this.executeHand(step.action, goal.raw, [], goal.kind);
+        return { step, text: hand.reply, url: this.getUrl(), ok: Boolean(hand.reply), doc: hand.replyDoc };
+      }
+      return fail("这一步没有对应的手。");
+    } catch (err) {
+      return fail(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async handleChat(text: string, images?: string[]): Promise<ToolResult> {
+    const pics = sanitizeImageDataUrls(images);
+    if (this.chatRunning) {
+      this.chatQueue.push({ text, images: pics });
+      this.chatLog.push({
+        role: "assistant",
+        text: `「${text.slice(0, 28)}」已排队，等当前任务写出手册再做。`,
+      });
+      this.pushSidebarState();
+      return { ok: true, message: "queued" };
+    }
+    this.chatRunning = true;
+    try {
+      return await this.handleChatJob(text, pics);
+    } finally {
+      this.chatRunning = false;
+      const next = this.chatQueue.shift();
+      if (next) void this.handleChat(next.text, next.images);
+    }
+  }
+
+  private async handleChatJob(text: string, images?: string[]): Promise<ToolResult> {
+    let jobImages = sanitizeImageDataUrls(images);
+    this.chatLog.push({
+      role: "user",
+      text: text || (jobImages.length ? "（附图）" : ""),
+      images: jobImages.length ? jobImages : undefined,
+    });
+    this.pushSidebarState();
+    if (this.helpAsk) {
+      const t = text.trim();
+      // 只把真正像回答的话当回答（选项/是/否/登录/继续）；普通短句（如「搜今天北京天气」）不当回答，放行到正常分诊
+      const looksAnswer =
+        isContinueHint(t) ||
+        /^(是|对|要|需要|否|不是|不用|没有|有弹窗|弹层|要换入口|换入口|换个入口|先登录|要登录|先不管|跳过|不管|我过完了|yes|no|skip|overlay)/i.test(t) ||
+        /登录|登陆|sign\s?in/i.test(t);
+      if (looksAnswer) {
+        const learned = this.answerLearning(t);
+        if (this.activeMission && (this.activeMission.state === "waiting_human" || this.activeMission.state === "running")) {
+          return this.executeMission(this.activeMission, jobImages);
+        }
+        return learned;
+      }
+      this.answerLearning("先不管");
+    }
+    this.recentLearned = [];
+
+    if (jobImages.length && /附图|这张图|看看图|识图/.test(text)) {
+      const cloudGate = await this.beginCloudTaskIfNeeded({ type: "llm", text }, text);
+      if (cloudGate === "refused") {
+        const reply = this.lastCloudRefuse || this.L("cloud.exhausted");
+        this.chatLog.push({ role: "assistant", text: reply });
+        this.pushSidebarState();
+        return { ok: false, message: reply };
+      }
+      try {
+        const hand = await this.executeHand({ type: "llm", text }, text, jobImages, "chat");
+        this.chatLog.push({ role: "assistant", text: hand.reply, doc: hand.replyDoc });
+        this.pushSidebarState();
+        return { ok: true, message: hand.reply };
+      } finally {
+        if (this.cloudTaskId) void this.finishCloudTask();
+      }
+    }
+
+    const homeCity = loadProfile(this.configDir()).identity.homeCity;
+    const complete = this.deepseek ? (p: string) => this.deepseek!.completePlain(p) : undefined;
+    const turn = complete
+      ? await this.withTimeout(
+          applyTurnAsync(
+            text,
+            {
+              active: this.activeMission,
+              last: this.lastMission,
+              homeCity: homeCity || undefined,
+              now: new Date(),
+              page: { url: this.getUrl(), title: this.getTitle() },
+              paused: this.paused,
+            },
+            complete,
+            this.configDir(),
+          ),
+          20000,
+          applyTurn(text, {
+            active: this.activeMission,
+            last: this.lastMission,
+            homeCity: homeCity || undefined,
+            now: new Date(),
+            paused: this.paused,
+          }),
+          false,
+        )
+      : applyTurn(text, {
+          active: this.activeMission,
+          last: this.lastMission,
+          homeCity: homeCity || undefined,
+          now: new Date(),
+          paused: this.paused,
+        });
+
+    if (turn.effect === "pause") {
+      this.setPaused(true);
+      this.chatLog.push({ role: "assistant", text: turn.say });
+      this.pushSidebarState();
+      return { ok: true, message: turn.say, data: { kind: "pause" } };
+    }
+    if (turn.effect === "resume") {
+      this.setPaused(false);
+      this.chatLog.push({ role: "assistant", text: turn.say });
+      this.pushSidebarState();
+      if (this.activeMission && (this.activeMission.state === "waiting_human" || this.activeMission.state === "running")) {
+        return this.executeMission(this.activeMission, jobImages);
+      }
+      return { ok: true, message: turn.say, data: { kind: "resume" } };
+    }
+    if (turn.effect === "cancel") {
+      this.lastMission = turn.mission || this.activeMission;
+      this.activeMission = undefined;
+      this.chatLog.push({ role: "assistant", text: turn.say });
+      this.pushSidebarState();
+      return { ok: true, message: turn.say, data: { kind: "cancel" } };
+    }
+    if (turn.effect === "ask" || turn.effect === "propose" || turn.effect === "chat") {
+      this.activeMission = turn.effect === "chat" ? undefined : turn.mission || undefined;
+      if (turn.effect === "chat") this.lastMission = turn.mission || this.lastMission;
+      const mode = turn.effect === "chat" ? undefined : turn.effect;
+      this.chatLog.push({
+        role: "assistant",
+        text: turn.say,
+        cortex: mode
+          ? { mode, need: turn.mission?.goal.intent, approach: turn.mission?.goal.approach }
+          : undefined,
+      });
+      this.pushSidebarState();
+      return {
+        ok: true,
+        message: turn.say,
+        data: {
+          kind: turn.effect,
+          briefKind: turn.mission?.goal.kind,
+          ask: turn.effect === "ask" ? turn.say : undefined,
+          approach: turn.mission?.goal.approach,
+        },
+      };
+    }
+
+    if (turn.side) {
+      const parked = turn.mission;
+      const sideMission = turn.side;
+      const sideOut = await this.executeMission(sideMission, jobImages);
+      // side 跑完如果还卡着（waiting_human/blocked/running），留在前台；只有 side 完成才恢复 parked
+      if (sideMission.state === "done" || sideMission.state === "cancelled") {
+        this.activeMission = parked || undefined;
+      } else {
+        this.activeMission = sideMission;
+      }
+      return sideOut;
+    }
+
+    if (turn.mission) {
+      this.activeMission = turn.mission;
+      return this.executeMission(turn.mission, jobImages);
+    }
+
+    this.chatLog.push({ role: "assistant", text: turn.say || "好。" });
+    this.pushSidebarState();
+    return { ok: true, message: turn.say || "好。" };
   }
 
   private cloudErrorText(error: unknown): string {
@@ -3627,9 +4500,119 @@ export class SparkBrowser {
     }
   }
 
+  private openReportQuiet(filePath: string): void {
+    try {
+      this.openReport(filePath);
+    } catch {
+      /* 打开失败仍留侧栏卡片 */
+    }
+  }
+
+  private sealResearchReport(opts: {
+    title: string;
+    userAsk: string;
+    body: string;
+    chips?: string[];
+    stem?: string;
+  }): { reply: string; doc?: ChatDoc } {
+    try {
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const doc = writeHtmlReport(
+        this.configDir(),
+        `${opts.stem || "research"}-${stamp}`,
+        researchReportHtml({
+          title: opts.title,
+          userAsk: opts.userAsk,
+          body: opts.body,
+          chips: opts.chips,
+        }),
+        { title: opts.title, kind: "research" },
+      );
+      this.openReportQuiet(doc.path);
+      return { reply: researchChatBrief(opts.title), doc };
+    } catch {
+      return { reply: researchChatBrief(opts.title) };
+    }
+  }
+
+  private async polishResearchBody(userAsk: string, raw: string): Promise<string> {
+    const text = String(raw || "").trim();
+    if (!this.deepseek || !/陷入了重复工具调用|snapshot:|page_text:|navigate:/.test(text)) {
+      return text;
+    }
+    if (looksLikeEatPlayAsk(userAsk) || /吃喝玩/.test(userAsk)) {
+      return text;
+    }
+    const polished = await this.withTimeout(
+      this.deepseek.completePlain(
+        [
+          "把下面操作记录整理成筛选报告。只根据记录里出现的商品和数字。没有的写未知。最多 5 款。有链接就写成 [名称](网址)。不要再要求继续点页面。",
+          `用户原话：${userAsk}`,
+          text.slice(0, 8000),
+        ].join("\n"),
+      ),
+      15000,
+      text,
+    );
+    return String(polished).trim() || text;
+  }
+
+  private async extract1688Offers(): Promise<ShopOffer[]> {
+    try {
+      const raw = (await this.pageView.webContents.executeJavaScript(
+        `(${EXTRACT_1688_OFFERS_SCRIPT})()`,
+        true,
+      )) as { offers?: ShopOffer[] };
+      return (raw.offers || []).filter((o) => o.name && o.url);
+    } catch {
+      return [];
+    }
+  }
+
+  private async runShopPick(mission: Mission, userAsk: string): Promise<string> {
+    const want = Number(mission.slots.count) || 10;
+    const budget = Number(mission.slots.budget) || 0;
+    const collected: ShopOffer[] = [];
+    const searchUrls: string[] = [];
+    for (const step of mission.steps.slice(0, 4)) {
+      this.chatLog.push({ role: "assistant", text: `正在查：${step.label}` });
+      this.pushSidebarState();
+      searchUrls.push(step.url);
+      const nav = await this.withTimeout(
+        this.navigate(step.url, { asHuman: true }),
+        15000,
+        { ok: false, message: "打开超时" },
+      );
+      if (!nav.ok) continue;
+      await sleep(1800);
+      try {
+        await this.scrollTravelList();
+      } catch {
+        /* 继续抽当前卡片 */
+      }
+      await sleep(600);
+      collected.push(...(await this.extract1688Offers()));
+      const enough = filterShopOffers(collected, { budget, want: want + 4 });
+      if (enough.length >= want) break;
+    }
+    const picked = filterShopOffers(collected, { budget, want });
+    return formatShopPicks(picked, {
+      userAsk,
+      count: want,
+      searchUrls,
+    });
+  }
+
   private async runMission(mission: Mission, userAsk: string): Promise<string> {
+    if (mission.kind === "sourcing" && mission.slots.intent === "buy") {
+      return this.runShopPick(mission, userAsk);
+    }
     const findings: Array<{ label: string; url: string; text: string }> = [];
-    for (const step of mission.steps.slice(0, 8)) {
+    // 检索页是壳时，有界地打开前两条自然结果读正文（全程最多 8 个正文页，每步最多 2 个，不点进详情循环）
+    let deepOpened = 0;
+    const DEEP_GLOBAL_CAP = 8;
+    const DEEP_PER_STEP = 2;
+    for (const step of mission.steps.slice(0, 10)) {
       this.chatLog.push({ role: "assistant", text: `正在查：${step.label}` });
       this.pushSidebarState();
       if (shouldSkipHeavyPage(step.url)) {
@@ -3671,7 +4654,33 @@ export class SparkBrowser {
           });
         }
       }
-      if (!/baidu\.com\/s/.test(landed)) {
+      const isBaiduSerp = /baidu\.com\/s/.test(landed);
+      if (isBaiduSerp) {
+        // 百度结果页 / AI 回答卡片是流式渲染，必须等正文出来再读，否则只拿到「正在搜索」壳
+        await this.waitBaiduReady();
+        // SERP 的广告/热榜/导航不算证据：DOM 只抽自然结果摘要，再点开前 2 篇读正文
+        const items = await this.readBaiduSerp();
+        if (items.length) {
+          const digest = items
+            .map((it) => `${it.title}\n${it.snippet}`)
+            .join("\n")
+            .slice(0, 6000);
+          findings.push({ label: step.label, url: landed, text: digest });
+          if (deepOpened < DEEP_GLOBAL_CAP) {
+            const extras = await this.readBaiduOrganic(
+              step.label,
+              Math.min(DEEP_PER_STEP, DEEP_GLOBAL_CAP - deepOpened),
+              items.map((it) => it.href),
+            );
+            for (const ex of extras) {
+              findings.push(ex);
+              deepOpened += 1;
+            }
+          }
+          continue;
+        }
+        // 自然结果一条都没抽到（反爬/纯广告）→ 落回 pageText 旧路径
+      } else {
         await sleep(800);
         try {
           await this.scrollTravelList();
@@ -3684,7 +4693,7 @@ export class SparkBrowser {
         message: "",
         data: { text: "" },
       });
-      const body = String(page.data?.text || "").trim();
+      const body = cleanSearchPageText(String(page.data?.text || "").trim());
       if (/请登录|登录后|验证码|滑块|captcha|sign in to continue/i.test(body) && body.length < 800) {
         findings.push({
           label: step.label,
@@ -3698,27 +4707,172 @@ export class SparkBrowser {
         url: landed,
         text: body.slice(0, 8000) || "这一页还没出文字，可能要登录。",
       });
+      // 旧路径兜底：百度壳页正文太薄（壳页/反爬）→ 有界深读前两条自然结果
+      if (isBaiduSerp && body.length < 3000 && deepOpened < DEEP_GLOBAL_CAP) {
+        const extras = await this.readBaiduOrganic(
+          step.label,
+          Math.min(DEEP_PER_STEP, DEEP_GLOBAL_CAP - deepOpened),
+        );
+        for (const ex of extras) {
+          findings.push(ex);
+          deepOpened += 1;
+        }
+      }
     }
     if (this.deepseek) {
       const summary = await this.withTimeout(
         this.deepseek.completePlain(missionSynthesizePrompt(userAsk, mission, findings)),
-        20000,
+        90000,
         "",
       );
       if (String(summary).trim()) return String(summary).trim();
     }
-    return findings.map((f) => `【${f.label}】\n${f.url}\n${f.text.slice(0, 800)}`).join("\n\n");
+    // 合成失败也不堆原文：每源一句 + 链接。
+    return findings
+      .map((f) => `【${f.label}】\n${f.url}\n${f.text.slice(0, 200)}`)
+      .join("\n\n");
   }
 
-  private async withTimeout<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
+  /**
+   * 当前页是百度检索结果时，取前 N 条自然结果（丢广告），逐条打开读正文。
+   * 有界：只取 N 条，只在 runMission 的全局预算内调用，绝不递归点进二级页。
+   */
+  /**
+   * 百度结果页 / AI 回答卡片流式渲染：轮询 #content_left 正文长度，滚一次触发懒加载。
+   * 不等待会只读到「正在搜索」壳，研究报告整页变「未知」。
+   */
+  private async waitBaiduReady(maxMs = 7000): Promise<void> {
+    const deadline = Date.now() + maxMs;
+    let len = 0;
+    while (Date.now() < deadline) {
+      try {
+        len = (await this.pageView.webContents.executeJavaScript(
+          `(() => { const n = document.querySelector('#content_left'); return n ? (n.innerText || '').length : 0; })()`,
+        )) as number;
+      } catch {
+        len = 0;
+      }
+      if (len >= 1200) break;
+      await sleep(500);
+    }
+    try {
+      await this.pageView.webContents.executeJavaScript(
+        `window.scrollTo(0, document.body.scrollHeight);`,
+      );
+      await sleep(400);
+      await this.pageView.webContents.executeJavaScript(`window.scrollTo(0, 0);`);
+      await sleep(500);
+    } catch {
+      /* 懒加载滚动失败不阻塞 */
+    }
+  }
+
+  /**
+   * 百度 SERP 的广告/热榜/导航占了正文大半，pageText 长度再长也不算证据。
+   * 直接从 DOM 只抽自然结果：标题 + 摘要 + 跳转链接（丢广告/推广容器）。
+   */
+  private async readBaiduSerp(): Promise<
+    Array<{ title: string; href: string; snippet: string }>
+  > {
+    try {
+      const raw = (await this.pageView.webContents.executeJavaScript(
+        `(() => {
+          const nodes = document.querySelectorAll('#content_left .result, #content_left .c-container, #content_left [tpl]');
+          const items = [];
+          for (const n of nodes) {
+            const blob = (n.innerText || '').replace(/\\s+/g, ' ').slice(0, 600);
+            if (/广告|推广|品牌专区/.test(blob)) continue;
+            const h3 = n.querySelector('h3');
+            const a = h3 && h3.querySelector('a') ? h3.querySelector('a')
+              : (n.querySelector('a[data-click]') || n.querySelector('a[href*="baidu.com/link"]'));
+            if (!a || !a.href) continue;
+            const title = (h3 ? (h3.innerText || '') : '').trim();
+            if (!title || title.length < 4) continue;
+            items.push({ title, href: a.href, snippet: blob.slice(0, 320) });
+          }
+          return JSON.stringify(items.slice(0, 10));
+        })()`,
+      )) as string;
+      return JSON.parse(raw) as Array<{ title: string; href: string; snippet: string }>;
+    } catch {
+      return [];
+    }
+  }
+
+  private async readBaiduOrganic(
+    stepLabel: string,
+    max: number,
+    seedLinks?: string[],
+  ): Promise<Array<{ label: string; url: string; text: string }>> {
+    if (max <= 0) return [];
+    let links: string[] = seedLinks ? [...seedLinks] : [];
+    if (!links.length) {
+      try {
+        links = (await this.pageView.webContents.executeJavaScript(
+          `(() => {
+            const out = [];
+            const nodes = document.querySelectorAll('#content_left .result, #content_left .c-container, #content_left [tpl]');
+            for (const n of nodes) {
+              const blob = (n.innerText || '').slice(0, 300);
+              if (/广告|推广/.test(blob)) continue;
+              const a = n.querySelector('h3 a') || n.querySelector('a[data-click]') || n.querySelector('a[href*="baidu.com/link"]');
+              const href = a && a.href;
+              if (!href) continue;
+              if (/baidu\\.com\\/link\\?url=/.test(href)) {
+                out.push(href);
+              } else if (/^https?:\\/\\//.test(href)) {
+                // 新版结果有的直接出原文直链：收非百度域，丢静态资源/聚合页
+                const host = new URL(href).hostname;
+                if (!/(^|\\.)baidu\\.com$/.test(host) && !/bdstatic|baidubcs|baidubox|iqiyi\\.com|qq\\.com\\/$/.test(host)) out.push(href);
+              }
+            }
+            return Array.from(new Set(out)).slice(0, ${max});
+          })()`,
+        )) as string[];
+      } catch {
+        return [];
+      }
+    }
+    const out: Array<{ label: string; url: string; text: string }> = [];
+    for (const link of links.slice(0, max)) {
+      const nav = await this.withTimeout(
+        this.navigate(link, { asHuman: true }),
+        12000,
+        { ok: false, message: "正文打开超时。" },
+      );
+      if (!nav.ok) continue;
+      const url = this.getUrl() || link;
+      if (shouldSkipHeavyPage(url) || /baidu\.com\/s/.test(url)) continue;
+      await sleep(700);
+      const page = await this.withTimeout(this.pageText(), 8000, {
+        ok: true,
+        message: "",
+        data: { text: "" },
+      });
+      const body = cleanSearchPageText(String(page.data?.text || "").trim());
+      if (body.length >= 300 && !/请登录|验证码|滑块/i.test(body.slice(0, 400))) {
+        out.push({ label: `${stepLabel} · 正文`, url, text: body.slice(0, 5000) });
+      }
+    }
+    return out;
+  }
+
+  private async withTimeout<T>(
+    work: Promise<T>,
+    ms: number,
+    fallback: T,
+    abortPage = true,
+  ): Promise<T> {
     let settled = false;
     const timeout = new Promise<T>((resolve) => {
       setTimeout(() => {
         if (settled) return;
-        try {
-          this.pageView.webContents.stop();
-        } catch {
-          /* 停加载失败仍返回兜底，避免整窗挂死 */
+        if (abortPage) {
+          try {
+            this.pageView.webContents.stop();
+          } catch {
+            /* 停加载失败仍返回兜底，避免整窗挂死 */
+          }
         }
         resolve(fallback);
       }, ms);
@@ -3748,11 +4902,17 @@ export class SparkBrowser {
     const findings: Array<{ label: string; url: string; text: string }> = [];
     const hotels: HotelLink[] = [];
     const flights: FlightLink[] = [];
-    for (const step of steps) {
+    // 美食/路线检索遇到百度壳页时有界深读：每步 1 篇正文，全程最多 4 篇
+    let deepOpened = 0;
+    tripTrace("trip-start", `${steps.length}步 ${plan.origin}→${plan.cities.join("/")} ${plan.startDate}..${plan.endDate}`);
+    for (const [si, step] of steps.entries()) {
+      const t0 = Date.now();
       this.chatLog.push({ role: "assistant", text: `正在查：${step.label}` });
       this.pushSidebarState();
+      tripTrace("step-begin", `${si + 1}/${steps.length} ${step.label}`);
       let note = await this.runTravelSearch(step.query, { raw: true });
       const pageUrl = this.getUrl();
+      tripTrace("step-searched", `${si + 1} ${step.query.kind} ${Date.now() - t0}ms url=${pageUrl.slice(0, 90)} note=${note.length}字`);
       if (step.query.kind === "hotel") {
         const city = step.query.city;
         await this.scrollTravelList();
@@ -3761,6 +4921,25 @@ export class SparkBrowser {
         hotels.push(...links);
         const extra = formatHotelLinks(links);
         if (extra) note = `${note}\n\n${extra}`;
+      } else if (step.query.kind === "train" && /^https?:/i.test(pageUrl)) {
+        // 火车搜索结果：直接读页，note 已有 pageText
+      } else if (step.query.kind === "search" && /^https?:/i.test(pageUrl)) {
+        // 百度搜索结果：SERP 广告/热榜不是证据，DOM 只抽自然结果摘要补进 note
+        if (/baidu\.com\/s/.test(pageUrl)) {
+          const items = await this.readBaiduSerp();
+          if (items.length) {
+            const digest = items.map((it) => `${it.title}\n${it.snippet}`).join("\n").slice(0, 5000);
+            note = `${note}\n\n${digest}`;
+            // 有界补 1 篇正文，用已抽到的自然链接，不重新点广告页
+            if (deepOpened < 4) {
+              const extras = await this.readBaiduOrganic(step.label, 1, items.map((it) => it.href));
+              for (const ex of extras) {
+                findings.push(ex);
+                deepOpened += 1;
+              }
+            }
+          }
+        }
       } else if (step.query.kind === "flight" && /^https?:/i.test(pageUrl)) {
         const title =
           step.query.from && step.query.to
@@ -3775,11 +4954,52 @@ export class SparkBrowser {
         url: pageUrl,
         text: note,
       });
+      // 美食/路线百度壳页：有界补 1 篇正文，让餐厅/路线有真名实据
+      if (
+        step.query.kind === "search" &&
+        /baidu\.com\/s/.test(pageUrl) &&
+        note.length < 3000 &&
+        deepOpened < 4
+      ) {
+        const extras = await this.readBaiduOrganic(step.label, 1);
+        for (const ex of extras) {
+          findings.push(ex);
+          deepOpened += 1;
+        }
+      }
+      tripTrace("step-end", `${si + 1} 累计${Date.now() - t0}ms findings=${findings.length}`);
     }
-    if (this.deepseek) {
-      const summary = await this.deepseek.completePlain(
-        tripSynthesizePrompt(userAsk, plan, findings),
+    tripTrace("steps-done", `extras=${(plan.extras || []).length} findings=${findings.length}`);
+    for (const extra of plan.extras || []) {
+      this.chatLog.push({ role: "assistant", text: `正在查：${extra.label}` });
+      this.pushSidebarState();
+      const nav = await this.withTimeout(
+        this.navigate(extra.url, { asHuman: true }),
+        12000,
+        { ok: false, message: "打开超时，先记下链接。" },
       );
+      let note = nav.ok ? "" : nav.message;
+      if (nav.ok) {
+        const page = await this.withTimeout(this.pageText(), 8000, {
+          ok: true,
+          message: "",
+          data: { text: "" },
+        });
+        note = String(page.data?.text || "").slice(0, 8000) || "这一页还没出文字。";
+      }
+      findings.push({ label: extra.label, url: this.getUrl() || extra.url, text: note });
+    }
+    tripTrace("extras-done", `findings=${findings.length} 总字数=${findings.reduce((a, f) => a + f.text.length, 0)}`);
+    if (this.deepseek) {
+      const prompt = tripSynthesizePrompt(userAsk, plan, findings);
+      tripTrace("synthesize-begin", `prompt=${prompt.length}字`);
+      const ts0 = Date.now();
+      const summary = await this.withTimeout(
+        this.deepseek.completePlain(prompt),
+        120_000,
+        "",
+      );
+      tripTrace("synthesize-done", `${Date.now() - ts0}ms summary=${summary.length}字`);
       if (summary.trim()) return { text: summary.trim(), hotels, flights };
     }
     return {
@@ -3865,7 +5085,9 @@ export class SparkBrowser {
         });
       }
       if (!url) {
-        return "还不知道怎么打开这一页，请换个站点名再试。";
+        return q.kind === "flight"
+          ? "出发地或到达地还不是城，没法打开机票页。"
+          : "还不知道怎么打开这一页，请换个站点名再试。";
       }
       const nav = await this.navigate(url, { asHuman: true });
       if (!nav.ok) {
@@ -3878,6 +5100,9 @@ export class SparkBrowser {
       }
       if (q.kind === "train" && q.site === "12306") {
         await this.fill12306Form(q);
+      }
+      if (q.kind === "search" && /baidu\.com\/s/.test(this.getUrl())) {
+        await this.waitBaiduReady();
       }
       await sleep(opts.raw ? 800 : 1400);
       let text = await this.waitTravelText(q, opts.raw ? 5000 : 7000);
@@ -3959,7 +5184,7 @@ export class SparkBrowser {
     }
   }
 
-  private async runLlmGoal(text: string): Promise<string> {
+  private async runLlmGoal(text: string, images?: string[]): Promise<string> {
     if (!this.deepseek) {
       return this.L("llm.needKey");
     }
@@ -3991,8 +5216,23 @@ export class SparkBrowser {
         profileBrief: profileBriefFor(this.configDir()),
         locale: this.settings.locale,
         pageText: visible,
+        images,
       });
-      this.deepseek.takeMutations();
+      const mutations = this.deepseek.takeMutations();
+      // 大脑自由发挥成功了 → 把这次做法沉淀成新技能，下次直接调用。
+      const skill = await distillSkillFromTrace({
+        configDir: this.configDir(),
+        goal: text,
+        url: this.getUrl(),
+        reply,
+        mutations,
+        complete: (p) => this.deepseek!.completePlain(p),
+      });
+      if (skill) {
+        this.skillsCache = listSkills(this.configDir());
+        this.pushSidebarState();
+        return `${reply}\n\n这次的做法已记成「${skill.title}」，下次直接说就照做。`;
+      }
       return reply;
     } catch (error) {
       return this.L("llm.callFail") + (error instanceof Error ? error.message : String(error));
@@ -5222,28 +6462,177 @@ export class SparkBrowser {
     return "打不开飞书日志输入框。请你点开汇报或会话后说「继续」。";
   }
 
-  async screenshot(label?: string): Promise<ToolResult> {
+  async screenshot(labelOrOpts?: string | ScreenshotOpts): Promise<ToolResult> {
     try {
+      const opts = parseScreenshotInput(labelOrOpts);
+      const format = opts.format === "jpeg" ? "jpeg" : "png";
+      const quality = Math.min(100, Math.max(30, Number(opts.quality) || 80));
       const wc = this.pageView.webContents;
-      const img = await wc.capturePage();
+      let clip = validClip(opts.clip);
+      if (opts.selector && !clip) {
+        const rect = (await wc.executeJavaScript(
+          `(() => {
+            const el = document.querySelector(${JSON.stringify(opts.selector)});
+            if (!el) return null;
+            const r = el.getBoundingClientRect();
+            return { x: r.x, y: r.y, width: r.width, height: r.height };
+          })()`,
+          true,
+        )) as ScreenshotOpts["clip"] | null;
+        clip = validClip(rect || undefined);
+        if (!clip) return { ok: false, message: `找不到元素：${opts.selector}` };
+      }
+      let png: Buffer;
+      let jpeg: Buffer | undefined;
+      if (opts.fullPage) {
+        const grabbed = await this.captureFullPage(format, quality);
+        if (!grabbed || !isUsableCaptureBuffer(grabbed.png || grabbed.jpeg)) {
+          return { ok: false, message: this.L("shot.empty") };
+        }
+        png = grabbed.png;
+        jpeg = grabbed.jpeg;
+      } else {
+        const img = await this.captureVisiblePage(wc, clip);
+        if (!img) return { ok: false, message: this.L("shot.hidden") };
+        png = img.toPNG();
+        jpeg = format === "jpeg" ? img.toJPEG(quality) : undefined;
+      }
+      const buf = format === "jpeg" && jpeg ? jpeg : png;
+      if (!isUsableCaptureBuffer(buf)) {
+        return { ok: false, message: this.L("shot.empty") };
+      }
       const dir = join(this.configDir(), "diag");
       mkdirSync(dir, { recursive: true });
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const safe = String(label || "shot")
+      const safe = String(opts.label || "shot")
         .replace(/[\\/:*?"<>|]/g, "_")
         .slice(0, 40);
-      const file = join(dir, `${safe}-${stamp}.png`);
-      writeFileSync(file, img.toPNG());
-      return {
-        ok: true,
-        message: `screenshot saved`,
-        data: { file, url: this.getUrl(), title: this.getTitle() },
+      const ext = format === "jpeg" ? "jpg" : "png";
+      const file = join(dir, `${safe}-${stamp}.${ext}`);
+      writeFileSync(file, buf);
+      const data: Record<string, unknown> = {
+        file,
+        url: this.getUrl(),
+        title: this.getTitle(),
+        format,
       };
+      if (opts.includeBase64) {
+        data.base64 = buf.toString("base64");
+        data.mime = format === "jpeg" ? "image/jpeg" : "image/png";
+      }
+      return { ok: true, message: `screenshot saved`, data };
     } catch (error) {
       return {
         ok: false,
         message: error instanceof Error ? error.message : String(error),
       };
+    }
+  }
+
+  private ensureWindowVisibleForCapture(): void {
+    if (this.window.isDestroyed()) return;
+    if (this.window.isMinimized()) this.window.restore();
+    this.window.show();
+    this.layout();
+  }
+
+  private async captureVisiblePage(
+    wc: Electron.WebContents,
+    clip?: { x: number; y: number; width: number; height: number } | null,
+  ): Promise<Electron.NativeImage | null> {
+    const grab = () => (clip ? wc.capturePage(clip) : wc.capturePage());
+    const usable = (img: Electron.NativeImage) => {
+      if (!img || img.isEmpty()) return false;
+      const size = img.getSize();
+      return size.width > 1 && size.height > 1 && isUsableCaptureBuffer(img.toPNG());
+    };
+    try {
+      let img = await grab();
+      if (usable(img)) return img;
+      this.ensureWindowVisibleForCapture();
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      img = await grab();
+      return usable(img) ? img : null;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (/display surface|not available for capture/i.test(msg)) {
+        this.ensureWindowVisibleForCapture();
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        try {
+          const retry = await grab();
+          return usable(retry) ? retry : null;
+        } catch {
+          return null;
+        }
+      }
+      throw error;
+    }
+  }
+
+  private async captureFullPage(
+    format: "png" | "jpeg",
+    quality: number,
+  ): Promise<{ png: Buffer; jpeg?: Buffer } | null> {
+    const wc = this.pageView.webContents;
+    try {
+      const dbg = wc.debugger;
+      if (!dbg.isAttached()) await dbg.attach("1.3");
+      const raw = (await dbg.sendCommand("Page.captureScreenshot", {
+        format: format === "jpeg" ? "jpeg" : "png",
+        quality: format === "jpeg" ? quality : undefined,
+        captureBeyondViewport: true,
+      })) as { data?: string };
+      if (!raw?.data) return null;
+      const buf = Buffer.from(raw.data, "base64");
+      return format === "jpeg" ? { png: buf, jpeg: buf } : { png: buf };
+    } catch {
+      try {
+        const img = await wc.capturePage();
+        return { png: img.toPNG(), jpeg: img.toJPEG(quality) };
+      } catch {
+        return null;
+      }
+    }
+  }
+
+  async describePage(question?: string): Promise<ToolResult> {
+    const shot = await this.screenshot({
+      includeBase64: true,
+      format: "jpeg",
+      quality: 70,
+      label: "describe",
+    });
+    const b64 = (shot.data as { base64?: string } | undefined)?.base64;
+    if (!shot.ok || !b64) {
+      return { ok: false, message: shot.message || this.L("shot.empty") };
+    }
+    if (!this.deepseek) return { ok: false, message: this.L("llm.needKey") };
+    const ask =
+      String(question || "").trim() ||
+      "请看这张网页截图，用中文描述主要内容、布局和关键信息。看不见的不要编。";
+    let openedCloud = false;
+    if (this.llmRuntime === "cloud") {
+      const gate = await this.beginCloudTaskIfNeeded({ type: "llm", text: ask }, ask);
+      if (gate === "refused") {
+        return { ok: false, message: this.lastCloudRefuse || this.L("cloud.exhausted") };
+      }
+      openedCloud = gate === "ok";
+    }
+    try {
+      const text = await this.deepseek.chat(ask, {
+        url: this.getUrl(),
+        title: this.getTitle(),
+        locale: this.settings.locale,
+        images: [`data:image/jpeg;base64,${b64}`],
+      });
+      return { ok: true, message: text };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      if (openedCloud) void this.finishCloudTask();
     }
   }
 

@@ -104,9 +104,9 @@ describe("mission pack", () => {
     expect(shouldSkipHeavyPage("https://www.dianping.com/search/keyword/1/10_火锅")).toBe(false);
   });
 
-  it("日本7日拆成东京京都大阪，机票走 Kayak", () => {
+  it("日本7日拆成东京京都大阪，机票走 Kayak，不编出发地", () => {
     const plan = parseTripPlan("帮我规划日本7日自由行 东京京都大阪 要机票和酒店", now);
-    expect(plan?.origin).toBe("北京");
+    expect(plan?.origin || "").toBe("");
     expect(plan?.cities).toEqual(expect.arrayContaining(["东京", "京都", "大阪"]));
     expect(plan?.flightSite).toBe("kayak");
   });

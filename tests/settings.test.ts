@@ -120,6 +120,19 @@ describe("loadSettings", () => {
     expect(view.gateways.length).toBeGreaterThan(8);
   });
 
+  it("applies first-class provider presets", () => {
+    const dir = tmpDir();
+    const s = saveSettings(dir, { provider: "moonshot", apiKey: "sk-kimi", applyPreset: true });
+    expect(s.provider).toBe("moonshot");
+    expect(s.baseUrl).toContain("moonshot");
+    expect(s.model).toContain("moonshot");
+    const qwen = saveSettings(dir, { provider: "dashscope", applyPreset: true });
+    expect(qwen.baseUrl).toContain("dashscope");
+    const view = settingsPublicView(qwen);
+    expect(Object.keys(view.presets)).toContain("anthropic");
+    expect(Object.keys(view.presets)).toContain("gemini");
+  });
+
   it("persists llmMode and defaults to byok", () => {
     const dir = tmpDir();
     expect(loadSettings(dir).llmMode).toBe("byok");
