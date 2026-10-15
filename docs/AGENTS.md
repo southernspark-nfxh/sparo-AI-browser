@@ -86,7 +86,7 @@ Do **not** loop `fill` on multi-field pages.
 **死规则：** 多种信息调研（1688 筛选、比价、选品、对比、研报）最终必须形成报告页并在窗口打开，不能只在侧栏堆文字。  
 10 个基础场景用技能包：`run_skill({ query: "比价" })` 等，见 [SKILL-FORMAT.md](./SKILL-FORMAT.md)。  
 左上角只剩半截导航：网页没铺满页面洞，见 [ARCHITECTURE.md](./ARCHITECTURE.md)。  
-现行任务与 QA：[PRODUCT-TASKBOOK.md](./PRODUCT-TASKBOOK.md) v0.3.5（代码已到 0.1.17）。  
+现行任务与 QA：[PRODUCT-TASKBOOK.md](./PRODUCT-TASKBOOK.md) v0.3.5（代码已到 0.1.18）。  
 云端模型：侧栏设置「自己的 Key / 云端模型」；登录送 10 点（约 7 天）；一句对话一个任务。已登录后点套餐在本窗口付款。见 [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) · [PRICING.md](./PRICING.md)。不要把云端 Key 写进客户端。
 
 ### Customer service · 客服半自动

@@ -11,7 +11,7 @@
 - 口号：*会动手的 AI 浏览器 — 发送前你确认。*
 - 工作区：`D:\download\sparo上架应用商店版`
 - 这是**主线**。原版 `D:\download\Sparo`（3920 / `%APPDATA%\sparo`）只同步侧栏能力，**禁止把云订阅搬过去**。
-- 对外版本 **0.1.17**（`package.json`）。任务书正文仍写 v0.3.5，大脑代码已经超前，以本文和测试为准。
+- 对外版本现为 **0.1.18**（`package.json`）。本文是 2026-09-16 交接稿，之后 Trae 已把「模型编手 / 写下一步」落进代码；`absorb` 仍未做。以 [CHANGELOG.md](../CHANGELOG.md) 0.1.18 和测试为准。
 - 数据：`%APPDATA%\sparo-store`
 - MCP：`http://127.0.0.1:3921`（不是原版 3920）
 - 云端模型走独立代理。**不要把云端 Key 写进客户端。**
@@ -96,8 +96,8 @@ Sparo 本身是 Agent。浏览器是身体。MCP 只是对外再露一双手。�
 ```
 D:\download\sparo上架应用商店版\
 ├── AGENTS.md                      # 30 秒路径、禁区。先读
-├── CHANGELOG.md                   # 对外 0.1.17
-├── package.json                   # name: sparo-store, version 0.1.17
+├── CHANGELOG.md                   # 对外 0.1.18
+├── package.json                   # name: sparo-store, version 0.1.18
 ├── electron.vite.config.ts
 ├── electron-builder.yml
 ├── vitest.config.ts

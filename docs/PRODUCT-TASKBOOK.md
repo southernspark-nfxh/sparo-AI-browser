@@ -1,12 +1,12 @@
 # Sparo 现行产品任务书
 
 > 持续更新。与原版 **同一份正文**，便于两边对照。上一版见 [PRODUCT-TASKBOOK-20260811.md](./PRODUCT-TASKBOOK-20260811.md)。  
-> 版本：**v0.3.5 · 2026-09-10**（对外包 0.1.17）  
-> 状态：**进行中**（云订阅 M1 代码已落地并人测过登录/付款；上架未完；飞书网页已做）  
+> 版本：**v0.3.5 · 2026-10-15**（对外包 **0.1.18**）  
+> 状态：**进行中**（云订阅 M1 代码已落地并人测过登录/付款；上架未完；飞书网页已做；侧栏大脑 0.1.18 已让模型编手）  
 > 产品文案仍以 [PRODUCT.md](./PRODUCT.md) 为准，不要把任务书当商店上架稿。  
-> 先读：[ARCHITECTURE.md](./ARCHITECTURE.md) · [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) · [CHANGELOG.md](../CHANGELOG.md) 0.1.17 · 根目录 [AGENTS.md](../AGENTS.md)
+> 先读：[ARCHITECTURE.md](./ARCHITECTURE.md) · [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) · [CHANGELOG.md](../CHANGELOG.md) 0.1.18 · 根目录 [AGENTS.md](../AGENTS.md)
 >
-> **2026-09-16 大脑交接：** 给 Trae 的完整接手稿（目录、代码结构、进度、下一刀 absorb）见 [TRAE-PROMPT-AGENT-BRAIN.md](./TRAE-PROMPT-AGENT-BRAIN.md)。本文 § 正文未改到那一层。
+> **大脑进度（0.1.18）：** 听整句、站点表换站、模型编 `handbook` / 写下一步已进代码。`absorb`（页上价格对约束）未开工。9 月交接稿见 [TRAE-PROMPT-AGENT-BRAIN.md](./TRAE-PROMPT-AGENT-BRAIN.md)，以 changelog 和测试为准。
 
 两条产品线不要混评：
 
@@ -411,7 +411,7 @@ RAG是什么 打开百度百科和知乎做成笔记
 | 引导不够直观 / 不知道要花钱（P1） | **基本不成立**：欢迎卡已写「赠送 10 点试用」。账号按钮补了「免费」 |
 | 没有新手引导（P1） | **不成立**：欢迎卡三选一 + 配好后总结/天气/回复 |
 | 没有 MCP 配置界面（P1） | **不是缺陷**：产品就是复制一段，禁止让人填端口/Token |
-| 配额显示「6 609140882」（P2） | **误读**：头像取邮箱首字「6」+ QQ 号。已改为「账」+「还能做 n 次」 |
+| 配额显示把邮箱号码整段露出来（P2） | **误读**：头像取邮箱首字母 + 号码。已改为「账」+「还能做 n 次」 |
 | 服务商 13 个 + 自动填模型 | **属实**，是优点 |
 
 ---
@@ -498,7 +498,7 @@ RAG是什么 打开百度百科和知乎做成笔记
 | [INSTALL.md](./INSTALL.md) | 官网直装 / 复制 GitHub 链接给 AI |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | 模块、侧栏闭环、页面洞 |
 | 本文 `PRODUCT-TASKBOOK.md` | 现行任务、日志、QA、待办 |
-| [CHANGELOG.md](../CHANGELOG.md) | 对外变更（现 0.1.17） |
+| [CHANGELOG.md](../CHANGELOG.md) | 对外变更（现 0.1.18） |
 | [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) | 云订阅 M1 交接（计量、目录、验收） |
 | [SKILL-COMMUNITY-M2.md](./SKILL-COMMUNITY-M2.md) | 技能社区 M2（存档，未开工） |
 | [AI-LEARNING.md](./AI-LEARNING.md) | 本机卡住就问 |
