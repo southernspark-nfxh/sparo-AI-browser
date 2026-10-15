@@ -17,7 +17,7 @@ Tagline: *会动手的 AI 浏览器 — 发送前你确认。*
 | [docs/SKILL-COMMUNITY-M2.md](./docs/SKILL-COMMUNITY-M2.md) | 技能社区（**未开工**，M1 人测过完再开） |
 | [docs/SKILL-FORMAT.md](./docs/SKILL-FORMAT.md) | 技能包命名与字段（本机 `run_skill`，以后才分享） |
 | [docs/PRODUCT-TASKBOOK.md](./docs/PRODUCT-TASKBOOK.md) | 现行任务、QA、待办（v0.3.5） |
-| [CHANGELOG.md](./CHANGELOG.md) | 对外变更（现 0.1.17） |
+| [CHANGELOG.md](./CHANGELOG.md) | 对外变更（现 0.1.18） |
 | [docs/PRODUCT.md](./docs/PRODUCT.md) | 商店定位，不是任务书 |
 
 **此后主线就在本目录改。** 原版 `D:\download\Sparo`（3920 / `%APPDATA%\sparo`）只同步侧栏能力，不要把云订阅搬过去。
