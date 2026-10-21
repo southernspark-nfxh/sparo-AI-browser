@@ -236,7 +236,10 @@ export function classifyIngest(
     }
     // 阻塞问城时，回复是同类的完整重述且带了城（「纽约两天住加吃加景点加行程」）→ 用原话整句重开，城和块都不丢
     if (active.state === "blocked" && active.blockedSlot === "destination" && t.length > 12) {
-      const cityHit = findCities(t).map(canonCity).find((c) => isCity(c));
+      const cityHit = findCities(t)
+        .map(canonCity)
+        .filter((c): c is string => Boolean(c))
+        .find((c) => isCity(c));
       if (cityHit && classifyKind(t, goalToBrief(active.goal)) === active.goal.kind) {
         return { kind: "new" };
       }
