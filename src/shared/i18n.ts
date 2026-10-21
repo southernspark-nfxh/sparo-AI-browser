@@ -57,9 +57,9 @@ export function htmlLang(locale: AppLocale): string {
 type Pack = Record<string, string>;
 
 const zh: Pack = {
-  "nav.back": "后退",
-  "nav.forward": "前进",
-  "nav.reload": "刷新",
+  "nav.back": "后退 (Alt+←)",
+  "nav.forward": "前进 (Alt+→)",
+  "nav.reload": "刷新 (Ctrl+R)",
   "nav.go": "前往",
   "url.placeholder": "输入网址，例如 baidu.com",
   "bookmark.star": "收藏此页",
@@ -76,7 +76,7 @@ const zh: Pack = {
   "bookmark.cleared": "已清空书签",
   "bookmark.imported": "已从 {label} 导入 {n} 个（书签栏候选 {bar} 个）",
   "bookmark.importFail": "导入失败：{message}",
-  "tab.new": "新标签页",
+  "tab.new": "新标签页 (Ctrl+T)",
   "brand.title": "Sparo · 会动手的 AI 浏览器",
   "product.tag": "会动手的 AI 浏览器 · 发送前你确认",
   "product.tagTitle": "打开网页，AI 帮你填、帮你回、帮你发",
@@ -341,6 +341,9 @@ const zh: Pack = {
   "toast.cloudOut": "已退出云端登录",
   "work.label": "工作偏好",
   "work.intro": "回复和发布时参考，只留本机。",
+  "work.groupWho": "身份",
+  "work.groupVoice": "表达",
+  "work.groupRules": "红线",
   "work.nick": "称呼",
   "work.homeCity": "常住城市",
   "work.accounts": "账号",
@@ -438,9 +441,9 @@ const zh: Pack = {
 };
 
 const en: Pack = {
-  "nav.back": "Back",
-  "nav.forward": "Forward",
-  "nav.reload": "Reload",
+  "nav.back": "Back (Alt+←)",
+  "nav.forward": "Forward (Alt+→)",
+  "nav.reload": "Reload (Ctrl+R)",
   "nav.go": "Go",
   "url.placeholder": "Enter a URL, e.g. google.com",
   "bookmark.star": "Bookmark this page",
@@ -457,7 +460,7 @@ const en: Pack = {
   "bookmark.cleared": "Bookmarks cleared",
   "bookmark.imported": "Imported {n} from {label} ({bar} for the bar)",
   "bookmark.importFail": "Import failed: {message}",
-  "tab.new": "New tab",
+  "tab.new": "New tab (Ctrl+T)",
   "brand.title": "Sparo · The AI browser that acts",
   "product.tag": "The AI browser that acts · You confirm before send",
   "product.tagTitle": "Open a page. AI fills, replies, and posts. You confirm before send.",
@@ -711,6 +714,9 @@ const en: Pack = {
   "toast.cloudOut": "Signed out of cloud models",
   "work.label": "Work prefs",
   "work.intro": "Used for replies and posts. Stays on this PC.",
+  "work.groupWho": "Identity",
+  "work.groupVoice": "Voice",
+  "work.groupRules": "Guardrails",
   "work.nick": "Name",
   "work.homeCity": "Home city",
   "work.accounts": "Accounts",
