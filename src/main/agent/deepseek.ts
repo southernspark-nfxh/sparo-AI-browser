@@ -66,6 +66,19 @@ type ChatMessage = {
   name?: string;
 };
 
+/** Model content may be a string or a vision parts array. */
+export function contentText(content?: string | ImagePart[] | null): string {
+  if (!content) return "";
+  if (typeof content === "string") return content.trim();
+  return content
+    .filter((p): p is ImagePart & { text: string } =>
+      Boolean(p && p.type === "text" && typeof p.text === "string"),
+    )
+    .map((p) => p.text)
+    .join("\n")
+    .trim();
+}
+
 const TOOLS = [
   {
     type: "function",
@@ -441,7 +454,7 @@ export class DeepSeekAgentProvider {
       [{ role: "user", content: prompt }],
       "none",
     );
-    return (data?.choices?.[0]?.message?.content || "").trim();
+    return contentText(data?.choices?.[0]?.message?.content);
   }
 
   async chat(
@@ -503,7 +516,7 @@ export class DeepSeekAgentProvider {
 
       const calls = choice.tool_calls || [];
       if (!calls.length) {
-        const text = (choice.content || "").trim();
+        const text = contentText(choice.content);
         if (toolNotes.length && !text) {
           return toolNotes.slice(-20).join("\n");
         }
@@ -573,7 +586,7 @@ export class DeepSeekAgentProvider {
           content: tx(ctx.locale, "llm.repeatStop"),
         });
         const final = await this.completion(messages, "none");
-        const text = (final?.choices?.[0]?.message?.content || "").trim();
+        const text = contentText(final?.choices?.[0]?.message?.content);
         return text || toolNotes.slice(-20).join("\n");
       }
     }

@@ -54,6 +54,7 @@ import {
   parseMission,
   shouldSkipHeavyPage,
   type Mission,
+  type MissionKind,
 } from "./agent/mission.js";
 import {
   chromeUserAgent,
@@ -1522,7 +1523,9 @@ export class SparkBrowser {
   reorderTabs(fromId: string, toId: string): ToolResult {
     const from = String(fromId || "");
     const to = String(toId || "");
-    if (!from || !to || from === to) return { ok: true, data: this.listTabs() };
+    if (!from || !to || from === to) {
+      return { ok: true, message: "tabs unchanged", data: this.listTabs() };
+    }
     const ids = [...this.tabs.keys()];
     const fromIndex = ids.indexOf(from);
     const toIndex = ids.indexOf(to);
@@ -1536,7 +1539,7 @@ export class SparkBrowser {
     }
     this.tabs = next;
     this.pushChromeState();
-    return { ok: true, data: this.listTabs() };
+    return { ok: true, message: "tabs reordered", data: this.listTabs() };
   }
 
   showLastDownload(): void {
@@ -4407,10 +4410,11 @@ export class SparkBrowser {
         (f) => f.ok && String(f.text || "").trim().length > 20,
       );
       let synthesized = evidence.map((f) => String(f.text).trim()).join("\n\n");
+      // compare_shop is a Mission kind. AgentGoal.kind is BriefKind and never has it.
+      // Only "research" overlaps; other brief kinds are absent from RESEARCH_MISSION_KINDS.
+      const goalKind = live.kind;
       const reportKind =
-        live.kind === "research" ||
-        live.kind === "compare_shop" ||
-        missionNeedsReport(live.kind);
+        goalKind === "research" || missionNeedsReport(goalKind as MissionKind);
       // 只有一条证据时不必再让模型改写成「检索清单」，原文就是答案
       if (this.deepseek && evidence.length > 0 && (evidence.length > 1 || reportKind)) {
         const sp = synthesizePrompt(live, findings);
@@ -4626,7 +4630,7 @@ export class SparkBrowser {
         const page = await this.withTimeout(this.pageText(), 8000, {
           ok: true,
           message: "",
-          data: { text: "" },
+          data: { text: "", length: 0 },
         });
         const text = String(page.data?.text || "").trim();
         return { step, text, url: this.getUrl() || url, ok: text.length > 40 };
@@ -4644,7 +4648,7 @@ export class SparkBrowser {
         const page = await this.withTimeout(this.pageText(), 8000, {
           ok: true,
           message: "",
-          data: { text: "" },
+          data: { text: "", length: 0 },
         });
         const text = cleanSearchPageText(String(page.data?.text || "").trim());
         return { step, text, url: this.getUrl() || url, ok: text.length > 40 };
@@ -4662,7 +4666,7 @@ export class SparkBrowser {
         const page = await this.withTimeout(this.pageText(), 8000, {
           ok: true,
           message: "",
-          data: { text: "" },
+          data: { text: "", length: 0 },
         });
         const text = String(page.data?.text || "").trim();
         return { step, text, url: this.getUrl() || url, ok: text.length > 40 };
@@ -5554,7 +5558,7 @@ export class SparkBrowser {
       const page = await this.withTimeout(this.pageText(), 8000, {
         ok: true,
         message: "",
-        data: { text: "" },
+        data: { text: "", length: 0 },
       });
       const body = cleanSearchPageText(String(page.data?.text || "").trim());
       if (/请登录|登录后|验证码|滑块|captcha|sign in to continue/i.test(body) && body.length < 800) {
@@ -5710,7 +5714,7 @@ export class SparkBrowser {
       const page = await this.withTimeout(this.pageText(), 8000, {
         ok: true,
         message: "",
-        data: { text: "" },
+        data: { text: "", length: 0 },
       });
       const body = cleanSearchPageText(String(page.data?.text || "").trim());
       if (body.length >= 300 && !/请登录|验证码|滑块/i.test(body.slice(0, 400))) {
@@ -5841,7 +5845,7 @@ export class SparkBrowser {
         const page = await this.withTimeout(this.pageText(), 8000, {
           ok: true,
           message: "",
-          data: { text: "" },
+          data: { text: "", length: 0 },
         });
         note = String(page.data?.text || "").slice(0, 8000) || "这一页还没出文字。";
       }
