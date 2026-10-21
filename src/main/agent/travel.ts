@@ -986,6 +986,12 @@ export function travelReadPrompt(q: TravelQuery): string {
       "只根据正文。若是登录/验证码，如实说。",
     ].join("\n");
   }
+  if (q.kind === "search") {
+    return [
+      `根据下面搜索结果正文，用中文回答：${q.query}`,
+      "只根据正文，不要编造。若是验证码或登录页，如实说。",
+    ].join("\n");
+  }
   return [
     `根据下面地图/路线正文，用中文说明从 ${q.from} 到 ${q.to} 怎么走：耗时、方式、关键换乘。`,
     "只根据正文，不要编造。",

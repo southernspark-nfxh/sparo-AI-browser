@@ -32,7 +32,7 @@ function usedStepIds(findings: StepFinding[]): Set<string> {
 /** 对照缺块挑一手。排除的块不查；用户说先做的优先。启发式兜底用。 */
 export function suggestNextStep(goal: AgentGoal, findings: StepFinding[]): AgentStep | undefined {
   const verdict = verifyContracts(goal, findings);
-  const excluded = new Set(goal.known.exclude || []);
+  const excluded = new Set<string>(goal.known.exclude || []);
   const prefer = goal.known.prefer || [];
   const missing = verdict.missing.filter((id) => id !== "answer" && !excluded.has(id));
   if (!missing.length) return undefined;

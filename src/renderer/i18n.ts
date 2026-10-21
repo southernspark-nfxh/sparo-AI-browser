@@ -1,1 +1,1 @@
-export * from "../shared/i18n.ts";
+export * from "../shared/i18n";

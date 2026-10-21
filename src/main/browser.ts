@@ -642,9 +642,8 @@ export class SparkBrowser {
     this.window.on("unmaximize", () => this.layout());
     this.window.on("enter-full-screen", () => this.layout());
     this.window.on("leave-full-screen", () => this.layout());
-    // Windows 上最小化→恢复不一定补一次有效 resize（事件可能在尺寸还是 0 时触发），
-    // 显式监听并延迟补排，防止页面视图停在 100px 窄条。
-    this.window.on("unminimize", () => this.scheduleLayout(150));
+    // Windows 上最小化→恢复不一定补一次有效 resize（事件可能在尺寸还是 0 时触发）。
+    // Electron 没有 unminimize；restore 就是从最小化还原。延迟补排，防止页面视图停在 100px 窄条。
     this.window.on("restore", () => this.scheduleLayout(150));
     this.window.on("show", () => this.scheduleLayout(150));
     this.window.once("ready-to-show", () => this.presentWindow());
