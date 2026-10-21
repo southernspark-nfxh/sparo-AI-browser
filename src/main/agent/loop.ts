@@ -794,8 +794,6 @@ export function adaptPlan(goal: AgentGoal, missing: DeliverableId[]): AgentStep[
       out.push(step("search_read", `补查 ${city} 景点`, ["sights"], { query: `${city} 景点 必去`, city }));
     } else if (id === "stay" && city) {
       out.push(step("hotel_search", `补查 ${city} 住宿`, ["stay"], { city }));
-    } else if (id === "itinerary" && city) {
-      out.push(step("search_read", `补查 ${city} 行程`, ["itinerary"], { query: `${city} 行程 路线`, city }));
     } else if (id === "report") {
       out.push(step("search_read", "补检索", ["report"], { query: goal.raw.slice(0, 30) }));
     }
