@@ -195,7 +195,7 @@ input, textarea, select, .chat-log, .chat-log .bubble {
   white-space: nowrap;
 }
 .tab-ico { width: 14px; height: 14px; flex: 0 0 14px; border-radius: 3px; object-fit: contain; }
-.tab .x, .new-tab, .nav button, .go, .icon-btn, .sidebar button, .bm-chip, .menu-item {
+.tab .x, .new-tab, .nav button, .go, .icon-btn, .sidebar button, .bm-chip {
   border: 0;
   cursor: pointer;
 }
@@ -741,7 +741,12 @@ body.side-collapsed .dock { display: none; }
   background: transparent;
   color: var(--text);
 }
-.chat-log .bubble.me { color: var(--muted); }
+.chat-log .bubble.me {
+  color: var(--text);
+  background: var(--surface-2);
+  padding: 6px 10px;
+  border-radius: var(--r-10);
+}
 .chat-log .bubble.sparo { color: var(--text); }
 .chat-log .bubble-wrap {
   display: flex;
@@ -1022,6 +1027,14 @@ body.side-collapsed .dock { display: none; }
 }
 .ds-panel { display: block; padding: 0 20px 24px; }
 .ds-panel.hide { display: none; }
+.ds-group {
+  margin: 16px 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: .02em;
+}
+.ds-group:first-of-type { margin-top: 4px; }
 .drawer h2 {
   font-size: var(--fs-16);
   font-weight: var(--fw-sb);
@@ -1702,6 +1715,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
               <h3 data-i18n="work.label">工作偏好</h3>
               
               <p class="hint" data-i18n="work.intro">回复和发布时参考，只留本机。</p>
+              <h4 class="ds-group" data-i18n="work.groupWho">身份</h4>
               <div class="field">
                 <label for="pfNick" data-i18n="work.nick">称呼</label>
                 <input id="pfNick" type="text" data-i18n-placeholder="work.nickPh" placeholder="你想让 Sparo 怎么叫你" autocomplete="off" />
@@ -1714,6 +1728,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
                 <label for="pfAccounts" data-i18n="work.accounts">账号</label>
                 <input id="pfAccounts" type="text" data-i18n-placeholder="work.accountsPh" placeholder="微博:名字, 知乎:名字" autocomplete="off" />
               </div>
+              <h4 class="ds-group" data-i18n="work.groupVoice">表达</h4>
               <div class="field">
                 <label for="pfTopics" data-i18n="work.topics">话题</label>
                 <input id="pfTopics" type="text" data-i18n-placeholder="work.topicsPh" placeholder="客服、内容、表格" autocomplete="off" />
@@ -1722,6 +1737,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
                 <label for="pfStyle" data-i18n="work.style">口吻</label>
                 <input id="pfStyle" type="text" data-i18n-placeholder="work.stylePh" placeholder="口语、短句、不说绝对承诺" autocomplete="off" />
               </div>
+              <h4 class="ds-group" data-i18n="work.groupRules">红线</h4>
               <div class="field">
                 <label for="pfNotes" data-i18n="work.notes">口径</label>
                 <input id="pfNotes" type="text" data-i18n-placeholder="work.notesPh" placeholder="运费、售后、价格怎么说" autocomplete="off" />
