@@ -9,6 +9,7 @@ import {
   rememberMethod,
 } from "./strategy-cache.js";
 import { bestFieldMatch } from "./match.js";
+import { FIELD_VALUE_SCRIPT } from "../page-scripts.js";
 import type {
   AnalyzedField,
   AnalyzedPage,
