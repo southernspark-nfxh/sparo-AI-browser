@@ -717,6 +717,15 @@ function dedupeReportMissions(hands: AgentStep[], coverAll = false): AgentStep[]
 }
 
 function compileHeuristicHands(goal: AgentGoal, ids: DeliverableId[], seed: AgentStep[]): AgentStep[] {
+  const direct = parseLocalIntent(goal.raw);
+  if (
+    direct.type === "reader_mode" ||
+    direct.type === "reader_companion" ||
+    direct.type === "notes_action" ||
+    direct.type === "notes_search"
+  ) {
+    return [step("act", "阅读", ["answer"], { action: direct, query: goal.raw })];
+  }
   if (goal.kind === "control") return seed;
   if (goal.kind === "page" || ids.includes("page")) {
     return [step("read_page", "读当前页", ["page"])];

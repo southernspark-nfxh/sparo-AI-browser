@@ -2777,4 +2777,6 @@ export const EXTRACT_1688_OFFERS_SCRIPT = `() => {
   };
 }`;
 
+export { HIGHLIGHT_OVERLAY_SCRIPT } from "./reader-overlay.js";
+
 

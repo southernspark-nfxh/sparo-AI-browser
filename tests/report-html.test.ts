@@ -6,6 +6,9 @@ import {
   flightHintFromText,
   hotelReason,
   markdownToHtml,
+  readingTitleOf,
+  shouldSealLongRead,
+  stripReadingTitle,
   tripReportHtml,
   writeHtmlReport,
 } from "../src/main/agent/report-html.js";
@@ -50,6 +53,41 @@ describe("markdownToHtml", () => {
     const html = markdownToHtml(text);
     expect(Date.now() - t0).toBeLessThan(2000);
     expect(html).toContain("全季酒店(外滩店)");
+  });
+});
+
+describe("阅读优先：长回答落页", () => {
+  it("seals long prose, structured sections and tables", () => {
+    expect(shouldSealLongRead("短句，直接聊天回复。")).toBe(false);
+    expect(shouldSealLongRead("一".repeat(600))).toBe(true);
+    const dbg = [
+      "# 方案",
+      "## 背景",
+      "项目背景说明".repeat(24),
+      "## 目标",
+      "目标说明".repeat(24),
+    ].join("\n");
+    expect(shouldSealLongRead(dbg)).toBe(true);
+    const table = [
+      "| 城市 | 销量 | 退货率 |",
+      "|---|---|---|",
+      ...Array.from({ length: 12 }, (_, i) => `| 城市${i + 1} | ${100 - i} | 3.${i} |`),
+    ].join("\n");
+    expect(shouldSealLongRead(table)).toBe(true);
+  });
+
+  it("takes title from heading or first sentence and strips it from body", () => {
+    const md = "# 星火计划申报方案\n\n## 背景\n正文";
+    expect(readingTitleOf(md)).toBe("星火计划申报方案");
+    expect(stripReadingTitle(md)).toBe("## 背景\n正文");
+    expect(readingTitleOf("这是一份没有标题的整理稿。后面还有内容", "兜底")).toBe(
+      "这是一份没有标题的整理稿",
+    );
+    expect(readingTitleOf("", "兜底")).toBe("兜底");
+    // 模型把一级标题写成「正文」这类空话时，退回第一句
+    expect(readingTitleOf("# 正文\n\n秋天来了。后面还有内容", "帮我写一篇散文")).toBe(
+      "秋天来了",
+    );
   });
 });
 
