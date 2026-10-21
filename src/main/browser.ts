@@ -12,7 +12,7 @@ import {
   type MenuItemConstructorOptions,
   type WebContents,
 } from "electron";
-import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync, unlinkSync } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomBytes } from "node:crypto";
@@ -43,6 +43,7 @@ import {
   reconsiderMission,
   verifyContracts,
   type ActiveMission,
+  type Thought,
 } from "./agent/kernel/index.js";
 import { writeExperience } from "./agent/experience.js";
 import { canonCity, isCity, plausiblePlace } from "./agent/place.js";
@@ -140,13 +141,35 @@ import {
   formatFlightLinks,
   formatHotelLinks,
   readingReportHtml,
+  readingTitleOf,
   researchReportHtml,
+  shouldSealLongRead,
+  stripReadingTitle,
   tripReportHtml,
   writeHtmlReport,
   type ChatDoc,
   type FlightLink,
   type HotelLink,
 } from "./agent/report-html.js";
+import { cachedReaderResult, extractReadable, openReaderModeTab } from "./agent/reader.js";
+import {
+  getHighlightsForUrl,
+  loadHighlights,
+  upsertHighlightsForUrl,
+  type Highlight,
+} from "./agent/highlight.js";
+import {
+  deleteNote,
+  htmlToMarkdown,
+  listNotes,
+  readNote,
+  writeNote,
+} from "./agent/notes.js";
+import { detectFileTask, type FileTaskPlan } from "./agent/files/intent.js";
+import { readLocalDoc, type LocalDoc } from "./agent/files/read.js";
+import { stemOf } from "./agent/files/path-detect.js";
+import { buildPptx, exportsDir, slidesFromMarkdown, stamp, writeExport } from "./agent/files/docgen.js";
+import { chartSvg, parseRows, pickSeries, type ChartSpec } from "./agent/files/chart.js";
 import {
   filterShopOffers,
   formatShopPicks,
@@ -201,9 +224,11 @@ import {
 import { tx } from "../shared/i18n.js";
 import { storeConfigDir } from "./paths.js";
 import {
+  normalizeReader,
   persistLocaleIfMissing,
   saveSettings,
   settingsPublicView,
+  type ReaderPrefs,
   type SparkSettings,
 } from "./settings/store.js";
 import { chatCompletionsUrl } from "./settings/llm-url.js";
@@ -372,21 +397,8 @@ function noteHang(tag: string, detail: string): void {
   }
 }
 
-// 临时诊断：行程多步任务的落盘 trace（定位卡死点后删除）
-function tripTrace(tag: string, detail = ""): void {
-  try {
-    const dir = join(storeConfigDir(), "diag");
-    mkdirSync(dir, { recursive: true });
-    appendFileSync(
-      join(dir, "trip-trace.log"),
-      `${Date.now()} ${new Date().toISOString()} [${tag}] ${detail}\n`,
-    );
-  } catch {
-    /* 写不进就算了 */
-  }
-}
-const CHROME_H = 104; // tabs 36 + omnibox 40 + bookmarks bar 28
-const SIDEBAR_W = 312;
+const CHROME_H = 76; // tabs 36 + omnibox 40（书签栏已移除）
+const SIDEBAR_W = 340;
 
 type TabInfo = {
   id: string;
@@ -395,6 +407,7 @@ type TabInfo = {
   url: string;
   envId?: string;
   discarded?: boolean;
+  favIcon?: string;
   lastActiveAt: number;
 };
 
@@ -460,6 +473,28 @@ function resolveStepUrl(raw: string): string {
   return `https://www.baidu.com/s?wd=${encodeURIComponent(q.replace(/^https?:\/\//i, ""))}`;
 }
 
+/** 模型偶尔把整段 Markdown 包在 ``` 里，去掉围栏。 */
+function stripCodeFence(raw: string): string {
+  const text = String(raw || "").trim();
+  const m = /^```[a-zA-Z]*\s*\n([\s\S]*?)\n```$/.exec(text);
+  return (m ? m[1] : text).trim();
+}
+
+function titleOfBody(md: string): string {
+  const first = String(md || "").split("\n")[0] || "";
+  const m = /^#\s+(.+)$/.exec(first.trim());
+  return m ? m[1].trim().slice(0, 80) : "";
+}
+
+/** 交付稿里不渲染 mermaid，模型自画的 mermaid 块会变成难看的代码框，去掉。 */
+function stripMermaid(md: string): string {
+  return String(md || "")
+    .replace(/```mermaid[\s\S]*?```/g, "")
+    .replace(/```[a-zA-Z]*\s*\n?```/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export class SparkBrowser {
   readonly window: BrowserWindow;
   /** @deprecated use active tab via pageView getter */
@@ -473,6 +508,7 @@ export class SparkBrowser {
   private approvals = new Map<string, ApprovalRequest>();
   private lastQa: QaReport | null = null;
   private chatLog: ChatTurn[] = [];
+  private lastReaderSender: WebContents | null = null;
   private activeMission: ActiveMission | undefined;
   private lastMission: ActiveMission | undefined;
   private chatRunning = false;
@@ -493,6 +529,7 @@ export class SparkBrowser {
   private lastCloudRefuse = "";
   private memoryTimer: ReturnType<typeof setInterval> | null = null;
   private holeBounds: { x: number; y: number; width: number; height: number } | null = null;
+  private sidebarW = SIDEBAR_W;
   // 最近一次正常的窗口客户区尺寸。最小化→恢复瞬间 getContentSize 会短暂返回 0，
   // 不能拿 0 去算页面 bounds（会把视图夹到 100px 并残留）。
   private lastGoodContent = { width: 0, height: 0 };
@@ -790,7 +827,12 @@ export class SparkBrowser {
       tab.title = title;
       this.pushChromeState();
     });
+    wc.on("page-favicon-updated", (_e, icons: string[]) => {
+      tab.favIcon = (icons && icons[0]) || "";
+      this.pushChromeState();
+    });
     wc.on("did-navigate", (_e, navUrl) => {
+      tab.favIcon = "";
       sync();
       this.noteNavigation(String(navUrl || ""));
     });
@@ -966,7 +1008,7 @@ export class SparkBrowser {
   }
 
   listTabs(): {
-    tabs: Array<{ id: string; title: string; url: string; discarded?: boolean }>;
+    tabs: Array<{ id: string; title: string; url: string; discarded?: boolean; favIcon?: string }>;
     activeId: string;
     url: string;
     canGoBack: boolean;
@@ -984,6 +1026,7 @@ export class SparkBrowser {
           t.url ||
           (t.view && !t.view.webContents.isDestroyed() ? t.view.webContents.getURL() : ""),
         discarded: Boolean(t.discarded || !t.view),
+        favIcon: t.favIcon || "",
       })),
       activeId: this.activeTabId,
       url: wcLive ? wcLive.getURL() : active?.url || "",
@@ -1008,15 +1051,20 @@ export class SparkBrowser {
   }
 
   openReport(filePath: string): ToolResult {
-    const reports = resolvePath(join(this.configDir(), "reports"));
+    const roots = ["reports", "exports"].map((d) => resolvePath(join(this.configDir(), d)));
     const abs = resolvePath(filePath);
-    if (!abs.toLowerCase().startsWith(reports.toLowerCase())) {
+    if (!roots.some((r) => abs.toLowerCase().startsWith(r.toLowerCase()))) {
       return { ok: false, message: "文档路径无效" };
     }
     if (!existsSync(abs)) {
       return { ok: false, message: "文档已经不在了" };
     }
-    return this.newTab(pathToFileURL(abs).href);
+    // 浏览器能直接看的（HTML / PDF / 图片）开新标签；PPT/Office 交给系统默认程序
+    if (/\.(html?|pdf|png|jpe?g|svg)$/i.test(abs)) {
+      return this.newTab(pathToFileURL(abs).href);
+    }
+    void shell.openPath(abs);
+    return { ok: true, message: `已交给系统打开：${abs}` };
   }
 
   newTab(url?: string): ToolResult {
@@ -1325,10 +1373,15 @@ export class SparkBrowser {
     });
   }
 
-  private sendToast(text: string, path?: string): void {
+  private sendToast(text: string, path?: string, duration?: number, undo?: boolean): void {
     if (this.window.isDestroyed() || this.window.webContents.isDestroyed()) return;
     try {
-      this.window.webContents.send("spark:toast", { text, path: path || "" });
+      this.window.webContents.send("spark:toast", {
+        text,
+        path: path || "",
+        duration: duration || 0,
+        undo: Boolean(undo),
+      });
     } catch {
       /* ignore */
     }
@@ -1536,9 +1589,9 @@ export class SparkBrowser {
     const width = !minimized && rawW >= 400 ? rawW : this.lastGoodContent.width;
     const height = !minimized && rawH >= 300 ? rawH : this.lastGoodContent.height;
     if (!width || !height) return null;
-    // 洞的宽/x 由 shell 的固定 grid 唯一决定（1fr + 312px 侧栏），永远以窗口几何为准，
+    // 洞宽由窗口宽减可调侧栏宽决定。侧栏宽度由 spark:set-sidebar-width 下发并夹取，
     // 不采信 shell 在恢复过渡期可能发来的旧洞宽——那正是视图被夹成 100px 的来源。
-    const viewW = Math.max(100, width - SIDEBAR_W);
+    const viewW = Math.max(100, width - this.sidebarW);
     const fallback = {
       x: 0,
       y: CHROME_H,
@@ -1682,6 +1735,16 @@ export class SparkBrowser {
     };
     ipcMain.removeAllListeners("spark:page-hole");
     ipcMain.on("spark:page-hole", (_e, raw) => this.setPageHoleBounds(raw || {}));
+    ipcMain.removeAllListeners("spark:set-sidebar-width");
+    ipcMain.on("spark:set-sidebar-width", (_e, raw) => {
+      const w = Math.round(Number(raw));
+      if (!Number.isFinite(w)) return;
+      // 56 是收起后的工具轨；拖拽宽度仍夹在 300–480。
+      const next = w <= 80 ? 56 : Math.min(480, Math.max(300, w));
+      if (next === this.sidebarW) return;
+      this.sidebarW = next;
+      this.layout();
+    });
     ipcMain.removeAllListeners("spark:focus-shell");
     ipcMain.on("spark:focus-shell", () => this.focusShell());
     handle("spark:navigate", async (_e, url: string) =>
@@ -1748,6 +1811,96 @@ export class SparkBrowser {
     handle("spark:open-report", async (_e, filePath: string) =>
       this.openReport(String(filePath || "")),
     );
+    handle("reader:open", async () => this.openActiveReader());
+    handle("highlight:save", async (e, payload?: { url?: string; highlights?: Highlight[] }) => {
+      if (!this.senderIsReaderPage(e.sender)) return { ok: false, message: "只能从阅读页保存高亮" };
+      return this.savePageHighlights(payload);
+    });
+    handle("highlight:load", async (e, payload?: { url?: string }) => {
+      if (!this.senderIsReaderPage(e.sender) && !this.senderIsShell(e.sender)) {
+        return { ok: false, highlights: [] };
+      }
+      const url = String(payload?.url || "");
+      return { ok: true, highlights: getHighlightsForUrl(loadHighlights(), url) };
+    });
+    handle("reader:summarizeSelection", async (e, payload?: Record<string, unknown>) => {
+      if (!this.senderIsReaderPage(e.sender)) return { ok: false, message: "只能在阅读页总结" };
+      return this.summarizeSelection(e.sender, payload || {});
+    });
+    handle("reader:summarizePage", async (e, payload?: Record<string, unknown>) => {
+      if (!this.senderIsReaderPage(e.sender)) return { ok: false, message: "只能在阅读页总结" };
+      return this.summarizeReaderPage(e.sender, payload || {});
+    });
+    handle("notes:saveHighlight", async (e, payload?: Record<string, unknown>) => {
+      if (!this.senderIsReaderPage(e.sender)) return { ok: false, message: "只能从阅读页存笔记" };
+      return this.saveHighlightNote(payload || {});
+    });
+    handle("notes:saveFullPage", async (e, payload?: Record<string, unknown>) => {
+      if (!this.senderIsReaderPage(e.sender)) return { ok: false, message: "只能从阅读页存笔记" };
+      return this.saveFullPageNote(payload || {});
+    });
+    handle("reader:setCompanion", async (e, payload?: { on?: boolean }) => {
+      if (!this.senderIsReaderPage(e.sender) && !this.senderIsShell(e.sender)) {
+        return { ok: false, message: "不能从网页改阅读偏好" };
+      }
+      return this.patchReaderPrefs({ aiCompanionOn: Boolean(payload?.on) });
+    });
+    handle("reader:prefs", async (e) => {
+      if (!this.senderIsReaderPage(e.sender) && !this.senderIsShell(e.sender)) {
+        return { ok: false, reader: this.settings.reader };
+      }
+      return { ok: true, reader: this.settings.reader };
+    });
+    handle("reader:setPrefs", async (e, patch?: Partial<ReaderPrefs>) => {
+      if (!this.senderIsReaderPage(e.sender) && !this.senderIsShell(e.sender)) {
+        return { ok: false, message: "不能从网页改阅读偏好" };
+      }
+      return this.patchReaderPrefs(patch || {});
+    });
+    handle("reader:toast", async (e, payload?: { text?: string; undo?: boolean }) => {
+      if (!this.senderIsReaderPage(e.sender)) return { ok: false };
+      this.sendToast(String(payload?.text || ""), undefined, payload?.undo ? 2500 : undefined, Boolean(payload?.undo));
+      return { ok: true };
+    });
+    handle("reader:close", async (e) => {
+      if (!this.senderIsReaderPage(e.sender)) return { ok: false, message: "不能关闭这个标签" };
+      return this.closeSenderTab(e.sender);
+    });
+    handle("reader:undo", async () => {
+      this.closeReaderDrawer();
+      return { ok: true };
+    });
+    handle("notes:list", async (e, payload?: { limit?: number; tag?: string; search?: string }) => {
+      if (!this.senderIsShell(e.sender)) return { ok: false, notes: [] };
+      return { ok: true, notes: listNotes(payload?.limit, payload?.tag, payload?.search) };
+    });
+    handle("notes:delete", async (e, payload?: { id?: string }) => {
+      if (!this.senderIsShell(e.sender)) return { ok: false };
+      return { ok: deleteNote(String(payload?.id || "")) };
+    });
+    handle("notes:open", async (e, payload?: { id?: string }) => {
+      if (!this.senderIsShell(e.sender)) return { ok: false, message: "只能从侧栏打开笔记" };
+      return this.openNoteTab(String(payload?.id || ""));
+    });
+    handle("notes:panel", async (e, payload?: { search?: string }) => {
+      if (!this.senderIsShell(e.sender)) return { ok: false };
+      this.openNotesPanel(String(payload?.search || ""));
+      return { ok: true };
+    });
+    handle("spark:pick-file", async () => {
+      const picked = await dialog.showOpenDialog(this.window, {
+        title: "选择本地文件",
+        properties: ["openFile"],
+        filters: [
+          {
+            name: "文档",
+            extensions: ["txt", "md", "csv", "json", "html", "docx", "xlsx", "pptx", "pdf"],
+          },
+          { name: "全部文件", extensions: ["*"] },
+        ],
+      });
+      return picked.canceled ? "" : picked.filePaths[0] || "";
+    });
     handle("spark:cs-scan", async (_e, opts?: { fromHuman?: boolean }) =>
       this.csScan(opts),
     );
@@ -1961,6 +2114,10 @@ export class SparkBrowser {
       this.popupBookmarksMenu(payload?.overflowUrls);
       return { ok: true };
     });
+    handle("spark:nav-menu", async () => {
+      this.openNavMenu();
+      return { ok: true };
+    });
     handle("spark:clear-bookmarks", async () => {
       this.bookmarks = [];
       saveBookmarks(this.configDir(), this.bookmarks);
@@ -2077,6 +2234,32 @@ export class SparkBrowser {
       },
     );
 
+    Menu.buildFromTemplate(template).popup({ window: this.window });
+  }
+
+  /** Native popup. A DOM menu under the omnibox sits under the page WebContentsView. */
+  openNavMenu(): void {
+    const loc = this.settings.locale;
+    const toast = (message: string) => {
+      this.window.webContents
+        .executeJavaScript(
+          `window.__sparkToast && window.__sparkToast(${JSON.stringify(message)})`,
+        )
+        .catch(() => undefined);
+    };
+    const template: MenuItemConstructorOptions[] = [
+      { label: tx(loc, "nav.history"), click: () => this.openHistory() },
+      { label: tx(loc, "bookmark.menu"), click: () => this.popupBookmarksMenu() },
+      { label: tx(loc, "nav.find"), click: () => this.openFind() },
+      { type: "separator" },
+      {
+        label: tx(loc, "mem.optimize"),
+        click: () => {
+          const r = this.discardInactiveTabs();
+          if (r.message) toast(r.message);
+        },
+      },
+    ];
     Menu.buildFromTemplate(template).popup({ window: this.window });
   }
 
@@ -2898,6 +3081,15 @@ export class SparkBrowser {
     return this.settings.llmMode === "cloud" && Boolean(this.cloudQuota?.canStart);
   }
 
+  private senderIsReaderPage(sender?: Electron.WebContents | null): boolean {
+    try {
+      const url = decodeURIComponent(sender?.getURL() || "");
+      return url.startsWith("file:") && /[/\\](reader-\d+|note-n[a-z0-9]+)\.html/i.test(url);
+    } catch {
+      return false;
+    }
+  }
+
   private senderIsShell(sender?: Electron.WebContents | null): boolean {
     try {
       return Boolean(
@@ -2984,10 +3176,270 @@ export class SparkBrowser {
       case "trip_plan":
       case "mission":
       case "feishu":
+      case "notes_action":
         return true;
       default:
         return false;
     }
+  }
+
+  private patchReaderPrefs(patch: Partial<ReaderPrefs>): { ok: true; reader: ReaderPrefs } {
+    const reader = normalizeReader({ ...this.settings.reader, ...patch });
+    this.settings = saveSettings(this.configDir(), { reader });
+    return { ok: true, reader: this.settings.reader };
+  }
+
+  private async openActiveReader(url?: string): Promise<ToolResult> {
+    try {
+      if (url) {
+        const nav = await this.navigate(url, { asHuman: true });
+        if (!nav.ok) return nav;
+      }
+      const result = await extractReadable(this.window);
+      const doc = await openReaderModeTab(this.window, result, {
+        configDir: this.configDir(),
+        prefs: this.settings.reader,
+        openFile: (abs) => {
+          this.newTab(pathToFileURL(abs).href);
+        },
+      });
+      return { ok: true, message: `已打开阅读模式：${result.title}`, data: { files: [doc.path] } };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, message };
+    }
+  }
+
+  private savePageHighlights(payload?: { url?: string; highlights?: Highlight[] }): { ok: boolean; message?: string } {
+    const url = String(payload?.url || "").trim();
+    if (!url) return { ok: false, message: "缺少 URL" };
+    const highlights = Array.isArray(payload?.highlights) ? payload.highlights : [];
+    upsertHighlightsForUrl(url, highlights);
+    return { ok: true };
+  }
+
+  private async readerComplete(prompt: string): Promise<string> {
+    this.rebuildDeepSeek();
+    if (!this.deepseek) throw new Error("还没有可用的模型");
+    const startedHere = !this.cloudTaskId;
+    const gate = await this.beginCloudTaskIfNeeded({ type: "llm", text: "阅读总结" }, prompt);
+    if (gate === "refused") throw new Error(this.lastCloudRefuse || "AI 暂时不可用");
+    try {
+      const text = await this.deepseek.completePlain(prompt);
+      if (!text.trim()) throw new Error("模型没有返回内容");
+      return text.trim();
+    } finally {
+      if (startedHere && this.cloudTaskId) await this.finishCloudTask();
+    }
+  }
+
+  private parsePageSummary(raw: string): { sentences: string[]; points: string[]; recommend: string } {
+    const trimmed = raw.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+    try {
+      const data = JSON.parse(trimmed) as {
+        sentences?: unknown;
+        points?: unknown;
+        recommend?: unknown;
+      };
+      const asList = (value: unknown) =>
+        Array.isArray(value) ? value.map((item) => String(item || "").trim()).filter(Boolean) : [];
+      return {
+        sentences: asList(data.sentences).slice(0, 5),
+        points: asList(data.points).slice(0, 3),
+        recommend: String(data.recommend || "").trim(),
+      };
+    } catch {
+      return { sentences: [], points: [], recommend: "" };
+    }
+  }
+
+  private async summarizeSelection(
+    sender: WebContents,
+    payload: Record<string, unknown>,
+  ): Promise<{ ok: boolean; summary?: string; message?: string }> {
+    this.lastReaderSender = sender;
+    const text = String(payload.text || "").trim();
+    if (!text) return { ok: false, message: "没有选中文字" };
+    const context = String(payload.context || "").slice(0, 800);
+    try {
+      const summary = await this.readerComplete(
+        `用一句话总结这段文字的核心观点：\n\n${text}${context ? `\n\n上下文：\n${context}` : ""}`,
+      );
+      this.sendToast("已生成总结，点预览区决定是否存入", undefined, 2500, true);
+      return { ok: true, summary };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.sendToast("AI 暂时不可用，但高亮已保存", undefined, 2500);
+      return { ok: false, message };
+    }
+  }
+
+  private async summarizeReaderPage(
+    sender: WebContents,
+    payload: Record<string, unknown>,
+  ): Promise<{
+    ok: boolean;
+    summary?: string;
+    structured?: { sentences: string[]; points: string[]; recommend: string };
+    message?: string;
+  }> {
+    this.lastReaderSender = sender;
+    const text = String(payload.text || "").trim().slice(0, 12000);
+    if (!text) return { ok: false, message: "这一页没有正文" };
+    try {
+      const summary = await this.readerComplete(
+        `阅读下面这篇文章，只返回 JSON，不要写其它文字。格式：{"sentences":["五句核心摘要"],"points":["三个关键观点"],"recommend":"一句推荐语"}\n\n文章：\n${text}`,
+      );
+      const structured = this.parsePageSummary(summary);
+      const pretty = [
+        ...structured.sentences,
+        ...structured.points,
+        structured.recommend,
+      ].filter(Boolean).join("\n") || summary;
+      this.sendToast("已生成总结，点预览区决定是否存入", undefined, 2500, true);
+      return { ok: true, summary: pretty, structured };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.sendToast("AI 总结失败，但可以手动存全文", undefined, 2500);
+      return { ok: false, message };
+    }
+  }
+
+  private saveHighlightNote(payload: Record<string, unknown>): { ok: boolean; message: string; id?: string } {
+    const url = String(payload.url || "");
+    const text = String(payload.text || "").trim();
+    const title = String(payload.title || "摘录").slice(0, 120);
+    const summary = String(payload.summary || "").trim();
+    if (!text) return { ok: false, message: "没有可保存的文字" };
+    const cached = cachedReaderResult(url);
+    const markdown = [
+      `# ${title}`,
+      "",
+      `> 来源：${url}`,
+      cached?.siteName || payload.siteName ? `> 站点：${String(payload.siteName || cached?.siteName || "")}` : "",
+      "",
+      "## 摘录",
+      "",
+      text,
+      "",
+      summary ? `## AI 总结\n\n${summary}` : "",
+    ].filter((line) => line !== undefined).join("\n");
+    const meta = writeNote({
+      title,
+      source_url: url,
+      site_name: String(payload.siteName || cached?.siteName || "") || undefined,
+      markdown,
+      summary: summary || undefined,
+      highlights_refs: payload.chunkId ? [String(payload.chunkId)] : undefined,
+      word_count: text.length,
+    });
+    this.sendToast("已存入笔记库");
+    return { ok: true, message: "已存入笔记库", id: meta.id };
+  }
+
+  private saveFullPageNote(payload: Record<string, unknown>): { ok: boolean; message: string; id?: string } {
+    const url = String(payload.url || "");
+    const title = String(payload.title || "全文").slice(0, 180);
+    const summary = String(payload.summary || "").trim();
+    const text = String(payload.text || "");
+    const html = String(payload.html || "");
+    const body = html ? htmlToMarkdown(html) : text;
+    const wordCount = Number(payload.wordCount || text.length || body.length);
+    const markdown = [
+      `# ${title}`,
+      "",
+      `> 来源：${url}`,
+      `> 保存于 ${new Date().toISOString()}`,
+      "",
+      summary ? `## 摘要\n\n${summary}\n` : "",
+      "## 正文",
+      "",
+      body,
+    ].join("\n");
+    const meta = writeNote({
+      title,
+      source_url: url,
+      site_name: String(payload.siteName || "") || undefined,
+      markdown,
+      summary: summary || undefined,
+      word_count: wordCount,
+    });
+    this.sendToast("已存入笔记库");
+    return { ok: true, message: "已存入笔记库", id: meta.id };
+  }
+
+  private closeSenderTab(sender: WebContents): { ok: boolean; message: string } {
+    for (const [id, tab] of this.tabs) {
+      if (tab.view?.webContents === sender) return this.closeTab(id);
+    }
+    return { ok: false, message: "找不到这个标签" };
+  }
+
+  private closeReaderDrawer(): void {
+    const wc = this.lastReaderSender;
+    if (!wc || wc.isDestroyed()) return;
+    void wc.executeJavaScript("window.__sparoCloseDrawer && window.__sparoCloseDrawer()", true).catch(() => undefined);
+  }
+
+  private async runOneShotSave(): Promise<void> {
+    const wc = this.livePage();
+    if (!wc || wc.isDestroyed()) return;
+    if (wc.isLoading()) {
+      await new Promise<void>((resolve) => {
+        const done = () => resolve();
+        wc.once("did-finish-load", done);
+        setTimeout(done, 5000);
+      });
+    }
+    await wc
+      .executeJavaScript(
+        `new Promise((resolve) => {
+          const kick = () => {
+            if (window.__sparoOneShotSave) { window.__sparoOneShotSave(); resolve(true); return; }
+            setTimeout(kick, 40);
+          };
+          kick();
+          setTimeout(() => resolve(false), 2500);
+        })`,
+        true,
+      )
+      .catch(() => undefined);
+  }
+
+  private openNotesPanel(search?: string): void {
+    if (this.window.isDestroyed()) return;
+    this.window.webContents.send("spark:notes", { search: search || "" });
+  }
+
+  private openNoteTab(id: string): ToolResult {
+    const note = readNote(id);
+    if (!note) return { ok: false, message: "找不到这篇笔记" };
+    const html = readingReportHtml({
+      title: note.meta.title,
+      body: note.markdown,
+      eyebrow: note.meta.site_name || "SPARO 笔记",
+    });
+    const doc = writeHtmlReport(this.configDir(), `note-${note.meta.id}`, html, {
+      title: note.meta.title,
+      kind: "read",
+    });
+    return this.newTab(pathToFileURL(doc.path).href);
+  }
+
+  private formatNotesList(limit?: number, search?: string): string {
+    const rows = listNotes(limit, undefined, search);
+    if (!rows.length) return "还没有笔记，去阅读模式里试试吧";
+    return rows
+      .map((row, index) => {
+        let host = row.source_url;
+        try {
+          host = new URL(row.source_url).hostname.replace(/^www\./, "");
+        } catch {
+          /* keep raw */
+        }
+        return `${index + 1}. ${row.title} — ${host} — ${row.saved_at}`;
+      })
+      .join("\n");
   }
 
   private async beginCloudTaskIfNeeded(
@@ -3553,6 +4005,7 @@ export class SparkBrowser {
         origin: m?.goal.known.origin,
         ask: m?.ask,
         approach: m?.goal.approach,
+        files: (r.data as { files?: string[] } | undefined)?.files,
       },
     };
   }
@@ -3565,7 +4018,48 @@ export class SparkBrowser {
   ): Promise<{ reply: string; replyDoc?: ChatTurn["doc"] }> {
     let reply = "";
     let replyDoc: ChatTurn["doc"];
-    if (action.type === "reply") {
+    if (action.type === "reader_mode") {
+      const opened = await this.openActiveReader(action.url);
+      reply = opened.message;
+      const files = (opened.data as { files?: string[] } | undefined)?.files;
+      if (files?.[0]) replyDoc = { title: "阅读模式", path: files[0], kind: "read" };
+    } else if (action.type === "reader_companion") {
+      this.patchReaderPrefs({ aiCompanionOn: true });
+      const current = this.getUrl();
+      if (/[/\\]reader-\d+\.html/i.test(current)) {
+        const wc = this.livePage();
+        if (wc) {
+          await wc.executeJavaScript(
+            `(() => { var b = document.getElementById("btnReaderCompanion"); if (b) b.click(); })()`,
+            true,
+          ).catch(() => undefined);
+        }
+        reply = "AI伴读已打开。划线后会先给你预览，确认才写入笔记。";
+      } else {
+        const opened = await this.openActiveReader();
+        reply = opened.ok
+          ? "AI伴读已打开，并进入阅读模式。划线后先看预览，确认才写入笔记。"
+          : `AI伴读已打开。${opened.message}`;
+      }
+    } else if (action.type === "notes_action") {
+      const current = this.getUrl();
+      const alreadyReader = !action.url && /[/\\]reader-\d+\.html/i.test(current);
+      if (!alreadyReader) {
+        const opened = await this.openActiveReader(action.url);
+        if (!opened.ok) {
+          reply = opened.message;
+        } else {
+          await this.runOneShotSave();
+          reply = "已打开阅读模式，并开始一键盘存。确认后才会写入笔记。";
+        }
+      } else {
+        await this.runOneShotSave();
+        reply = "已开始一键盘存。确认后才会写入笔记。";
+      }
+    } else if (action.type === "notes_search") {
+      reply = this.formatNotesList(action.limit, action.search);
+      if (!action.listOnly) this.openNotesPanel(action.search);
+    } else if (action.type === "reply") {
       reply = action.text;
     } else if (action.type === "print") {
       try {
@@ -3639,7 +4133,6 @@ export class SparkBrowser {
           const chain = action.plan.cities.join(" → ");
           const title = o ? `${o} → ${chain} → ${o}` : chain;
           const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-          tripTrace("render-begin", `summary=${reply.length}字 hotels=${tripOut.hotels.length} flights=${tripOut.flights.length}`);
           const html = tripReportHtml({
             plan: action.plan,
             userAsk,
@@ -3647,23 +4140,19 @@ export class SparkBrowser {
             hotels: tripOut.hotels,
             flights: tripOut.flights,
           });
-          tripTrace("render-html", `${html.length}字`);
           replyDoc = writeHtmlReport(
             this.configDir(),
             `trip-${stamp}`,
             html,
             { title, kind: "trip" },
           );
-          tripTrace("render-written", replyDoc.path);
           reply = tripChatBrief(
             o
               ? `${action.plan.startDate} ${title}，${action.plan.endDate} 返回`
               : `${action.plan.startDate} ${title}，${action.plan.endDate} 返程`,
           );
           this.openReportQuiet(replyDoc.path);
-          tripTrace("render-done");
         } catch (e) {
-          tripTrace("render-error", String(e instanceof Error ? e.message : e));
           /* 写文档失败就仍用侧栏长文 */
         }
       }
@@ -3775,7 +4264,6 @@ export class SparkBrowser {
       const ran: AgentStep[] = [];
       let stall = 0;
       let missionOkRuns = 0;
-      tripTrace("mission-loop-begin", `kind=${goal.kind} hands=${mission.plan?.length ?? 0}`);
       for (let i = 0; i < 8; i++) {
         if (this.helpAsk) {
           current.state = "waiting_human";
@@ -3786,7 +4274,7 @@ export class SparkBrowser {
             data: { loop: "waiting_human", briefKind: current.goal.kind },
           };
         }
-        const thought = await (async () => {
+        const thought = await (async (): Promise<Thought> => {
           // 整合整手（行程手册 / 调研 mission）必须先行：reasoner（模型）不能跳过它
           // 先散查——散手机票酒店出不了逐日手册，散手 search_read 只读百度壳页出不了对照报告。
           const needReport = current.goal.deliverables.some((d) => d.required && d.id === "report");
@@ -3805,7 +4293,7 @@ export class SparkBrowser {
                 forced.cap === "trip_plan"
                   ? "行程整合手册先行：一手里含逐日路线、交通和每城住宿。"
                   : "调研整手先行：多路检索 + 深读 + 对照表一次做完。",
-            } as const;
+            };
           }
           if (this.deepseek) {
             return this.withTimeout(
@@ -3817,16 +4305,15 @@ export class SparkBrowser {
           }
           return thoughtFor(current);
         })();
-        // 调研报告执行层守卫：report mission 整手已【成功】跑过、证据够了，模型再想扫一遍
-        // mission（实测会连扫 5 遍同一目标，每遍 ~100s 直到客户端超时）→ 直接收摊去合成。
-        // 非 mission 的定点补查（search_read 等）不受限，模型仍可补漏。
+        // 调研报告执行层守卫：report mission 整手已【成功】跑过一次，模型再想扫第二遍
+        // mission（实测会连扫 3-5 遍同一目标，每遍 ~100s 直到客户端超时）→ 直接收摊去合成。
+        // 成功的 mission 自己就是出报告的整手，至少带一份证据；非 mission 的定点补查
+        // （search_read 等）不受限，模型仍可补漏。
         if (
           current.goal.deliverables.some((d) => d.required && d.id === "report") &&
           missionOkRuns >= 1 &&
-          (current.findings?.length ?? 0) >= 3 &&
           thought.next?.cap === "mission"
         ) {
-          tripTrace("loop-guard", "report mission 已跑过，跳过重复整手，收摊合成");
           break;
         }
         if (thought.ask) {
@@ -3848,10 +4335,8 @@ export class SparkBrowser {
         });
         this.pushSidebarState();
         ran.push(thought.next);
-        tripTrace("loop-step-begin", `#${i + 1} cap=${thought.next.cap} ${thought.next.label.slice(0, 40)}`);
         const ls0 = Date.now();
         const finding = await this.runLoopStep(thought.next, current.goal);
-        tripTrace("loop-step-done", `#${i + 1} ${Date.now() - ls0}ms ok=${finding.ok}`);
         if (thought.next.cap === "mission" && finding.ok) missionOkRuns += 1;
         current = observe(current, finding);
         // 登录墙 / 人机验证墙：只有人能过。停下问人，不再烧步骤。
@@ -3915,17 +4400,20 @@ export class SparkBrowser {
 
       const live = current.goal;
       const findings = current.findings;
-      tripTrace("loop-end", `findings=${findings.length}`);
       this.chatLog.push({ role: "assistant", text: "对照目标汇总…" });
       this.pushSidebarState();
       const readyDoc = [...findings].reverse().find((f) => f.doc)?.doc;
-      let synthesized = findings
-        .map((f) => f.text)
-        .filter((t) => t && t.length > 20)
-        .join("\n\n");
-      if (this.deepseek && findings.some((f) => !f.doc)) {
+      const evidence = findings.filter(
+        (f) => f.ok && String(f.text || "").trim().length > 20,
+      );
+      let synthesized = evidence.map((f) => String(f.text).trim()).join("\n\n");
+      const reportKind =
+        live.kind === "research" ||
+        live.kind === "compare_shop" ||
+        missionNeedsReport(live.kind);
+      // 只有一条证据时不必再让模型改写成「检索清单」，原文就是答案
+      if (this.deepseek && evidence.length > 0 && (evidence.length > 1 || reportKind)) {
         const sp = synthesizePrompt(live, findings);
-        tripTrace("final-synth-begin", `${sp.length}字`);
         const f0 = Date.now();
         synthesized =
           (
@@ -3935,11 +4423,36 @@ export class SparkBrowser {
               "",
             )
           ).trim() || synthesized;
-        tripTrace("final-synth-done", `${Date.now() - f0}ms ${synthesized.length}字`);
       }
-      tripTrace("verify-begin", "");
+      // 闲聊/写作类任务要的是成文内容，不是「名称/链接/未知」的检索清单：
+      // 直接让模型按用户原话作答，查到的素材只当参考。
+      if (this.deepseek && live.kind === "chat") {
+        const material = findings
+          .filter((f) => f.ok && String(f.text || "").trim().length > 20)
+          .map((f) => String(f.text).trim())
+          .join("\n\n")
+          .slice(0, 6000);
+        const direct = await this.withTimeout(
+          this.deepseek.completePlain(
+            [
+              "直接完成用户的要求，输出成文的中文 Markdown；第一行是「# 标题」，需要时分成小节。",
+              "不要列检索结果、名称链接、步骤说明，也不要写「未知」；素材不足就按常识写，不要编造具体事实与数字。",
+              /总结|摘要|提炼|概括|归纳|原文/.test(live.raw)
+                ? "这是一次归纳：只使用下面的素材，不要补充素材以外的事实。"
+                : "",
+              `用户原话：${live.raw}`,
+              material ? `可用素材：\n${material}` : "",
+            ]
+              .filter(Boolean)
+              .join("\n\n"),
+          ),
+          90_000,
+          "",
+          false,
+        );
+        if (direct.trim()) synthesized = direct.trim();
+      }
       const verify = verifyContracts(live, findings, { synthesized });
-      tripTrace("verify-done", `complete=${verify.complete}`);
       try {
         writeExperience(this.configDir(), reviewLesson(live, verify, ran.length ? ran : compileHands(live)));
       } catch {
@@ -3984,6 +4497,11 @@ export class SparkBrowser {
         reply = `${synthesized}\n\n${verify.notes}`;
       }
 
+      // 阅读优先：成篇汇总不进侧栏，落阅读页在窗口里打开
+      const sealedFinal = this.sealLongRead(reply, replyDoc, live.intent);
+      reply = sealedFinal.text;
+      replyDoc = sealedFinal.doc;
+
       if (cloudGate === "ok") {
         const settle = await this.finishCloudTask();
         if (settle) {
@@ -4008,6 +4526,7 @@ export class SparkBrowser {
           covered: verify.covered,
           missing: verify.missing,
           intent: live.intent,
+          files: replyDoc ? [replyDoc.path] : undefined,
         },
       };
     } finally {
@@ -4244,11 +4763,43 @@ export class SparkBrowser {
       }
       try {
         const hand = await this.executeHand({ type: "llm", text }, text, jobImages, "chat");
-        this.chatLog.push({ role: "assistant", text: hand.reply, doc: hand.replyDoc });
+        const sealed = this.sealLongRead(hand.reply, hand.replyDoc, text);
+        this.chatLog.push({ role: "assistant", text: sealed.text, doc: sealed.doc });
         this.pushSidebarState();
-        return { ok: true, message: hand.reply };
+        return {
+          ok: true,
+          message: sealed.text,
+          data: { files: sealed.doc ? [sealed.doc.path] : undefined },
+        };
       } finally {
         if (this.cloudTaskId) void this.finishCloudTask();
+      }
+    }
+
+    const fileTask = detectFileTask(text);
+    if (fileTask) return this.runFileTask(fileTask);
+
+    const directReader = parseLocalIntent(text);
+    if (
+      directReader.type === "reader_mode" ||
+      directReader.type === "reader_companion" ||
+      directReader.type === "notes_action" ||
+      directReader.type === "notes_search"
+    ) {
+      try {
+        const hand = await this.executeHand(directReader, text, [], "read");
+        this.chatLog.push({ role: "assistant", text: hand.reply, doc: hand.replyDoc });
+        this.pushSidebarState();
+        return {
+          ok: true,
+          message: hand.reply,
+          data: { files: hand.replyDoc ? [hand.replyDoc.path] : undefined },
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.chatLog.push({ role: "assistant", text: message });
+        this.pushSidebarState();
+        return { ok: false, message };
       }
     }
 
@@ -4313,9 +4864,11 @@ export class SparkBrowser {
       this.activeMission = turn.effect === "chat" ? undefined : turn.mission || undefined;
       if (turn.effect === "chat") this.lastMission = turn.mission || this.lastMission;
       const mode = turn.effect === "chat" ? undefined : turn.effect;
+      const sealedSay = turn.effect === "chat" ? this.sealLongRead(turn.say, undefined, text) : { text: turn.say };
       this.chatLog.push({
         role: "assistant",
-        text: turn.say,
+        text: sealedSay.text,
+        doc: sealedSay.doc,
         cortex: mode
           ? { mode, need: turn.mission?.goal.intent, approach: turn.mission?.goal.approach }
           : undefined,
@@ -4323,12 +4876,13 @@ export class SparkBrowser {
       this.pushSidebarState();
       return {
         ok: true,
-        message: turn.say,
+        message: sealedSay.text,
         data: {
           kind: turn.effect,
           briefKind: turn.mission?.goal.kind,
-          ask: turn.effect === "ask" ? turn.say : undefined,
+          ask: turn.effect === "ask" ? sealedSay.text : undefined,
           approach: turn.mission?.goal.approach,
+          files: sealedSay.doc ? [sealedSay.doc.path] : undefined,
         },
       };
     }
@@ -4351,9 +4905,14 @@ export class SparkBrowser {
       return this.executeMission(turn.mission, jobImages);
     }
 
-    this.chatLog.push({ role: "assistant", text: turn.say || "好。" });
+    const sealedTail = this.sealLongRead(turn.say || "好。", undefined, text);
+    this.chatLog.push({ role: "assistant", text: sealedTail.text, doc: sealedTail.doc });
     this.pushSidebarState();
-    return { ok: true, message: turn.say || "好。" };
+    return {
+      ok: true,
+      message: sealedTail.text,
+      data: { files: sealedTail.doc ? [sealedTail.doc.path] : undefined },
+    };
   }
 
   private cloudErrorText(error: unknown): string {
@@ -4532,6 +5091,310 @@ export class SparkBrowser {
       return { reply: researchChatBrief(opts.title), doc };
     } catch {
       return { reply: researchChatBrief(opts.title) };
+    }
+  }
+
+  /**
+   * Sparo 的阅读优先：成篇回答不铺在侧栏，落成阅读页在窗口里打开，侧栏只留一句 + 卡片。
+   * 已有产物（PDF/PPT/手册/报告）的直接放行，避免重复出页。
+   */
+  private sealLongRead(
+    text: string,
+    doc?: ChatTurn["doc"],
+    fallbackTitle?: string,
+  ): { text: string; doc?: ChatTurn["doc"] } {
+    if (doc) {
+      // 已有产物时侧栏只留一句，长文一律进产物页
+      if (shouldSealLongRead(text)) {
+        return { text: `《${doc.title}》已写好，在窗口里打开了。`, doc };
+      }
+      return { text, doc };
+    }
+    if (!shouldSealLongRead(text)) return { text };
+    try {
+      const title = readingTitleOf(text, fallbackTitle || "整理结果");
+      const sealed = writeHtmlReport(
+        this.configDir(),
+        `read-${stamp()}`,
+        readingReportHtml({
+          title,
+          body: stripReadingTitle(text),
+          eyebrow: "SPARO 阅读页",
+        }),
+        { title, kind: "read" },
+      );
+      this.openReportQuiet(sealed.path);
+      return { text: `《${title}》已写成阅读页，在窗口里打开了。`, doc: sealed };
+    } catch {
+      return { text };
+    }
+  }
+
+  /** 本地文件任务：读文件 → 模型提炼/整理 → 落 PDF/PPT/HTML/图表/填表。 */
+  private async runFileTask(plan: FileTaskPlan): Promise<ToolResult> {
+    const doc = readLocalDoc(plan.path);
+    this.chatLog.push({ role: "assistant", text: `正在读《${doc.name}》…` });
+    this.pushSidebarState();
+    if (!doc.ok) {
+      const text = `读不了《${doc.name}》：${doc.message || "没有可提取的文字"}`;
+      this.chatLog.push({ role: "assistant", text });
+      this.pushSidebarState();
+      return { ok: false, message: text };
+    }
+    const gate = await this.beginCloudTaskIfNeeded({ type: "llm", text: plan.ask }, plan.ask);
+    if (gate === "refused") {
+      const text = this.lastCloudRefuse || this.L("cloud.exhausted");
+      this.chatLog.push({ role: "assistant", text });
+      this.pushSidebarState();
+      return { ok: false, message: text };
+    }
+    try {
+      return await this.fileTaskBody(plan, doc);
+    } catch (error) {
+      const text = `文件任务失败：${error instanceof Error ? error.message : String(error)}`;
+      this.chatLog.push({ role: "assistant", text });
+      this.pushSidebarState();
+      return { ok: false, message: text };
+    } finally {
+      if (this.cloudTaskId) void this.finishCloudTask();
+    }
+  }
+
+  private async fileTaskBody(plan: FileTaskPlan, doc: LocalDoc): Promise<ToolResult> {
+    const wantForm = plan.formats.includes("form");
+    const wantChart = plan.formats.includes("chart");
+    const wantPpt = plan.formats.includes("pptx");
+    const wantHtml = plan.formats.includes("html");
+    const wantPdf = plan.formats.includes("pdf");
+    const wantsDoc = wantPdf || wantHtml || wantPpt;
+
+    const body = stripMermaid(await this.composeFileBody(plan.ask, doc, wantsDoc));
+    const title = titleOfBody(body) || stemOf(doc.path);
+    const bodyNoTitle = body.replace(/^#\s+.*\n+/, "").trim();
+    const fileStem = `${stemOf(doc.path)}-${stamp()}`;
+    const artifacts: Array<{ label: string; path: string }> = [];
+
+    let spec: ChartSpec | null = null;
+    if (wantChart) {
+      spec = pickSeries(parseRows(doc.text), title) || pickSeries(parseRows(body), title);
+      if (spec) {
+        if (/折线|趋势|走势/.test(plan.ask)) spec.kind = "line";
+        else if (/饼图|占比/.test(plan.ask)) spec.kind = "pie";
+      }
+    }
+    const svg = spec ? chartSvg(spec) : "";
+    const pageSvg = svg
+      .replace(/width="\d+" height="\d+"/, 'width="100%" height="auto"')
+      .replace("<svg ", '<svg style="max-width:100%;height:auto" ');
+
+    const buildHtml = (): string => {
+      let html = readingReportHtml({
+        title,
+        body: bodyNoTitle,
+        eyebrow: "SPARO 文档整理",
+      });
+      if (pageSvg) {
+        html = html.replace(
+          "</article>",
+          `<section class="body"><h2>图表</h2><div style="overflow:auto">${pageSvg}</div></section></article>`,
+        );
+      }
+      return html;
+    };
+
+    if (wantHtml) {
+      try {
+        const path = writeExport(this.configDir(), fileStem, "html", buildHtml());
+        artifacts.push({ label: "HTML", path });
+      } catch {
+        /* 写盘失败不影响其它产物 */
+      }
+    }
+    if (wantPdf) {
+      try {
+        const path = join(exportsDir(this.configDir()), `${fileStem}.pdf`);
+        if (await this.renderHtmlToPdf(buildHtml(), path)) artifacts.push({ label: "PDF", path });
+      } catch {
+        /* 打印失败就退化为 HTML */
+      }
+    }
+    if (wantPpt) {
+      try {
+        const deck = slidesFromMarkdown(title, bodyNoTitle);
+        const path = writeExport(this.configDir(), fileStem, "pptx", buildPptx(deck));
+        artifacts.push({ label: "PPT", path });
+      } catch {
+        /* 生成失败就只在聊天里给正文 */
+      }
+    }
+    if (wantChart && svg) {
+      try {
+        const path = join(exportsDir(this.configDir()), `${fileStem}.png`);
+        const pngHtml = `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;background:#fff">${svg}</body></html>`;
+        if (await this.renderHtmlToPng(pngHtml, path, 860, 460)) artifacts.push({ label: "图表", path });
+      } catch {
+        /* 图表截图失败就只嵌在 HTML/PDF 里 */
+      }
+    }
+
+    let formReply = "";
+    if (wantForm) {
+      const material = doc.text.slice(0, 8000);
+      formReply = await this.runLlmGoal(
+        [
+          "把下面这份本地资料填进当前网页表单。只填表单，不要提交、不要点发送；没把握的字段留空。",
+          `用户原话：${plan.ask}`,
+          `资料来自《${doc.name}》：`,
+          material,
+        ].join("\n\n"),
+      );
+    }
+
+    const wantsFile = artifacts.length > 0;
+    const lines: string[] = [];
+    let sealedRead: ChatTurn["doc"] | undefined;
+    if (wantForm && formReply) lines.push(formReply);
+    if (wantsFile) {
+      lines.push(`已读《${doc.name}》，产出：`);
+      for (const a of artifacts) lines.push(`- ${a.label}：${a.path}`);
+    } else if (!wantForm) {
+      // 阅读优先：提炼/摘要也进阅读页，侧栏只留一句 + 卡片
+      const sealed = this.sealLongRead(body, undefined, stemOf(doc.path));
+      if (sealed.doc) {
+        sealedRead = sealed.doc;
+        lines.push(sealed.text);
+      } else {
+        lines.push(body);
+      }
+    }
+    if (wantChart && !spec) {
+      lines.push("");
+      lines.push("这份文件里没找到可以画成图的数据列（需要两列以上：名称 + 数字）。");
+    }
+    const reply = lines.join("\n").trim() || "文件读完了，但没有可整理的内容。";
+
+    const primary =
+      artifacts.find((a) => a.label === "PPT") ||
+      artifacts.find((a) => a.label === "PDF") ||
+      artifacts.find((a) => a.label === "HTML") ||
+      artifacts.find((a) => a.label === "图表") ||
+      sealedRead;
+    this.chatLog.push({
+      role: "assistant",
+      text: reply,
+      doc: primary ? { title, path: primary.path, kind: "file" } : undefined,
+    });
+    this.pushSidebarState();
+    if (primary && primary !== sealedRead) {
+      if (/\.(html?|pdf|png)$/i.test(primary.path)) this.openReportQuiet(primary.path);
+      else void shell.openPath(primary.path);
+    }
+    return {
+      ok: true,
+      message: reply,
+      data: {
+        kind: "file",
+        files: [...artifacts.map((a) => a.path), ...(sealedRead ? [sealedRead.path] : [])],
+      },
+    };
+  }
+
+  private async composeFileBody(ask: string, doc: LocalDoc, long: boolean): Promise<string> {
+    const fallback = `# ${stemOf(doc.path)}\n\n${doc.text.trim().slice(0, 6000)}`;
+    if (!this.deepseek) return fallback;
+    const mode = /提取|转成文字|文字版|原文|全文|逐字/.test(ask)
+      ? "完整提取原文结构和内容，不要压缩掉小标题与关键段落。"
+      : long
+        ? "写成一份可以直接交付的整理稿：600–1500 字，分 3–8 个小节，适当用表格。"
+        : "概括成 300–800 字的要点，分 3–6 个小节。";
+    const prompt = [
+      "你是文档整理助手。用户给了一个本地文件，并提出了要求。",
+      `用户原话：${ask}`,
+      `文件：${doc.name}（${doc.kind}）`,
+      "输出要求：",
+      "1. 只输出中文 Markdown，不要寒暄、不要说明你做了什么。",
+      "2. 第一行必须是「# 标题」，标题要具体，禁止用「文档整理」这类空话。",
+      "3. 需要数据时用 Markdown 表格；不要编造原文没有的数字、日期、人名。",
+      "4. 保留关键事实、数字、专有名词；原文没有的结论不要硬加。",
+      "5. 不要输出 mermaid、SVG 或任何图表代码，图表由系统按表格数据自动生成。",
+      `6. ${mode}`,
+      "文件正文：",
+      "-----",
+      doc.text.slice(0, 60000),
+      "-----",
+    ].join("\n");
+    const got = await this.withTimeout(this.deepseek.completePlain(prompt), 90000, "", false);
+    const clean = stripCodeFence(got);
+    return clean.length > 20 ? clean : fallback;
+  }
+
+  /** 隐藏窗把 HTML 打成 PDF（中文字体由系统 Chromium 渲染，无需嵌字体）。 */
+  private async renderHtmlToPdf(html: string, outPath: string): Promise<boolean> {
+    const dir = exportsDir(this.configDir());
+    const tmp = join(dir, `.print-${stamp()}-${randomBytes(3).toString("hex")}.html`);
+    writeFileSync(tmp, html, "utf8");
+    const win = new BrowserWindow({
+      show: false,
+      width: 900,
+      height: 1200,
+      webPreferences: { sandbox: true, contextIsolation: true, javascript: false },
+    });
+    try {
+      await win.loadFile(tmp);
+      await sleep(180);
+      const buf = await win.webContents.printToPDF({
+        printBackground: true,
+        pageSize: "A4",
+        margins: { top: 0.6, bottom: 0.6, left: 0.55, right: 0.55 },
+      });
+      writeFileSync(outPath, buf);
+      return buf.length > 1000;
+    } catch {
+      return false;
+    } finally {
+      try {
+        win.destroy();
+      } catch {
+        /* ignore */
+      }
+      try {
+        unlinkSync(tmp);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  private async renderHtmlToPng(
+    html: string,
+    outPath: string,
+    width: number,
+    height: number,
+  ): Promise<boolean> {
+    const win = new BrowserWindow({
+      show: false,
+      width,
+      height,
+      useContentSize: true,
+      frame: false,
+      webPreferences: { sandbox: true, contextIsolation: true, javascript: false },
+    });
+    try {
+      await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+      await sleep(180);
+      const image = await win.webContents.capturePage({ x: 0, y: 0, width, height });
+      const png = image.toPNG();
+      if (!png.length) return false;
+      writeFileSync(outPath, png);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      try {
+        win.destroy();
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -4904,15 +5767,12 @@ export class SparkBrowser {
     const flights: FlightLink[] = [];
     // 美食/路线检索遇到百度壳页时有界深读：每步 1 篇正文，全程最多 4 篇
     let deepOpened = 0;
-    tripTrace("trip-start", `${steps.length}步 ${plan.origin}→${plan.cities.join("/")} ${plan.startDate}..${plan.endDate}`);
     for (const [si, step] of steps.entries()) {
       const t0 = Date.now();
       this.chatLog.push({ role: "assistant", text: `正在查：${step.label}` });
       this.pushSidebarState();
-      tripTrace("step-begin", `${si + 1}/${steps.length} ${step.label}`);
       let note = await this.runTravelSearch(step.query, { raw: true });
       const pageUrl = this.getUrl();
-      tripTrace("step-searched", `${si + 1} ${step.query.kind} ${Date.now() - t0}ms url=${pageUrl.slice(0, 90)} note=${note.length}字`);
       if (step.query.kind === "hotel") {
         const city = step.query.city;
         await this.scrollTravelList();
@@ -4967,9 +5827,7 @@ export class SparkBrowser {
           deepOpened += 1;
         }
       }
-      tripTrace("step-end", `${si + 1} 累计${Date.now() - t0}ms findings=${findings.length}`);
     }
-    tripTrace("steps-done", `extras=${(plan.extras || []).length} findings=${findings.length}`);
     for (const extra of plan.extras || []) {
       this.chatLog.push({ role: "assistant", text: `正在查：${extra.label}` });
       this.pushSidebarState();
@@ -4989,17 +5847,14 @@ export class SparkBrowser {
       }
       findings.push({ label: extra.label, url: this.getUrl() || extra.url, text: note });
     }
-    tripTrace("extras-done", `findings=${findings.length} 总字数=${findings.reduce((a, f) => a + f.text.length, 0)}`);
     if (this.deepseek) {
       const prompt = tripSynthesizePrompt(userAsk, plan, findings);
-      tripTrace("synthesize-begin", `prompt=${prompt.length}字`);
       const ts0 = Date.now();
       const summary = await this.withTimeout(
         this.deepseek.completePlain(prompt),
         120_000,
         "",
       );
-      tripTrace("synthesize-done", `${Date.now() - ts0}ms summary=${summary.length}字`);
       if (summary.trim()) return { text: summary.trim(), hotels, flights };
     }
     return {
