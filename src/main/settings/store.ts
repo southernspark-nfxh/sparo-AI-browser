@@ -134,6 +134,15 @@ export const PROVIDER_ORDER: LlmProvider[] = [
   "custom",
 ];
 
+export type ReaderTheme = "green" | "paper" | "night";
+export type ReaderFontSize = 14 | 16 | 18 | 20;
+
+export type ReaderPrefs = {
+  aiCompanionOn: boolean;
+  theme: ReaderTheme;
+  fontSize: ReaderFontSize;
+};
+
 export type SparoSettings = {
   /** @deprecated use apiKey — kept for migration */
   deepseekApiKey?: string;
@@ -154,6 +163,8 @@ export type SparoSettings = {
   memorySaver: boolean;
   /** Minutes a background tab may stay alive before discard. */
   memorySaverIdleMinutes: number;
+  /** 阅读模式：主题、字号、AI伴读开关。 */
+  reader: ReaderPrefs;
 };
 
 export type CompatGateway = {
@@ -169,6 +180,27 @@ export const COMPAT_GATEWAYS: CompatGateway[] = PROVIDER_ORDER.filter(
   const p = PROVIDER_PRESETS[id];
   return { id, label: p.label, baseUrl: p.baseUrl, model: p.model };
 });
+
+export const DEFAULT_READER: ReaderPrefs = {
+  aiCompanionOn: false,
+  theme: "paper",
+  fontSize: 16,
+};
+
+export function normalizeReader(raw: unknown): ReaderPrefs {
+  const r = raw && typeof raw === "object" ? (raw as Partial<ReaderPrefs>) : {};
+  const theme: ReaderTheme =
+    r.theme === "green" || r.theme === "night" || r.theme === "paper" ? r.theme : "paper";
+  const fontSize: ReaderFontSize =
+    r.fontSize === 14 || r.fontSize === 16 || r.fontSize === 18 || r.fontSize === 20
+      ? r.fontSize
+      : 16;
+  return {
+    aiCompanionOn: Boolean(r.aiCompanionOn),
+    theme,
+    fontSize,
+  };
+}
 
 function clampIdleMinutes(n: unknown): number {
   const v = Number(n);
@@ -187,6 +219,7 @@ const DEFAULTS: SparoSettings = {
   firstJobHintDismissed: false,
   memorySaver: true,
   memorySaverIdleMinutes: 2,
+  reader: { ...DEFAULT_READER },
 };
 
 function settingsPath(configDir: string): string {
@@ -256,6 +289,7 @@ export function loadSettings(configDir: string, fallbackLocale?: string): SparoS
     firstJobHintDismissed: Boolean(file.firstJobHintDismissed),
     memorySaver: file.memorySaver !== false,
     memorySaverIdleMinutes: clampIdleMinutes(file.memorySaverIdleMinutes),
+    reader: normalizeReader(file.reader),
   };
 }
 
@@ -336,6 +370,7 @@ export function saveSettings(
         ? patch.memorySaverIdleMinutes
         : file.memorySaverIdleMinutes,
     ),
+    reader: normalizeReader(patch.reader !== undefined ? { ...normalizeReader(file.reader), ...patch.reader } : file.reader),
   };
   writeFileSync(settingsPath(configDir), JSON.stringify(next, null, 2), "utf8");
   return loadSettings(configDir, fallbackLocale);

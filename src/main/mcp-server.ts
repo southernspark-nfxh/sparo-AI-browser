@@ -4,6 +4,7 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { ToolHandlers } from "./tools/index.js";
+import { listNotes } from "./agent/notes.js";
 import {
   applyCors,
   checkRateLimit,
@@ -663,6 +664,17 @@ function registerTools(server: McpServer, handlers: ToolHandlers): void {
       id: z.string().min(1).describe("Workflow id"),
     },
     async ({ id }) => textResult(await handlers.run_workflow(id)),
+  );
+
+  server.tool(
+    "notes_list",
+    "List local reading notes saved on this machine. Read-only. Filter by tag or title/url search.",
+    {
+      limit: z.number().int().positive().optional(),
+      tag: z.string().optional(),
+      search: z.string().optional(),
+    },
+    async ({ limit, tag, search }) => textResult(listNotes(limit, tag, search)),
   );
 }
 

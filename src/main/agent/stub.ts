@@ -36,7 +36,11 @@ export type ChatAction =
   | ({ type: "travel_search" } & TravelQuery)
   | { type: "trip_plan"; plan: TripPlan }
   | { type: "mission"; mission: Mission }
-  | { type: "feishu"; task: FeishuTask };
+  | { type: "feishu"; task: FeishuTask }
+  | { type: "reader_mode"; url?: string }
+  | { type: "reader_companion" }
+  | { type: "notes_action"; url?: string }
+  | { type: "notes_search"; search?: string; limit?: number; listOnly?: boolean };
 
 const DXM_ENABLED = dxmEnabled();
 

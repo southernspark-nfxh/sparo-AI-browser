@@ -17,7 +17,11 @@ export type RoutedAction =
   | ({ type: "travel_search" } & TravelQuery)
   | { type: "trip_plan"; plan: TripPlan }
   | { type: "mission"; mission: Mission }
-  | { type: "feishu"; task: FeishuTask };
+  | { type: "feishu"; task: FeishuTask }
+  | { type: "reader_mode"; url?: string }
+  | { type: "reader_companion" }
+  | { type: "notes_action"; url?: string }
+  | { type: "notes_search"; search?: string; limit?: number; listOnly?: boolean };
 
 export type SiteCap = {
   id: string;
@@ -283,6 +287,43 @@ export function skillConflictsWithQuery(
   return !skillSites.some((s) => mentioned.some((m) => m.id === s.id));
 }
 
+const READER_MODE_RE = /阅读模式|护眼|reader/i;
+const NOTES_ACTION_RE = /保存.*笔记|存这页|加笔记|一键盘存/;
+const NOTES_SEARCH_RE = /笔记.*搜|我的笔记|列出.*笔记|笔记列表|列出最近|最近保存的\s*\d+\s*篇/;
+const READER_COMPANION_RE = /打开\s*AI\s*伴读|开启\s*AI\s*伴读/;
+
+function textOutsideUrls(input: string): string {
+  return input.replace(/https?:\/\/\S+/gi, " ");
+}
+
+/** 阅读模式 / 笔记口令。放在 page、read、llm 之前，避免被读页截走。 */
+export function matchReaderIntent(input: string): RoutedAction | null {
+  const t = input.trim();
+  if (!t) return null;
+  const spoken = textOutsideUrls(t);
+  if (READER_COMPANION_RE.test(spoken)) return { type: "reader_companion" };
+  if (READER_MODE_RE.test(spoken)) {
+    return { type: "reader_mode", url: extractFirstHttpUrl(t) || undefined };
+  }
+  if (NOTES_ACTION_RE.test(spoken)) {
+    return { type: "notes_action", url: extractFirstHttpUrl(t) || undefined };
+  }
+  if (NOTES_SEARCH_RE.test(spoken)) {
+    const limitMatch = t.match(/(\d+)\s*篇/);
+    const searchMatch = t.match(/(?:搜|搜索)\s*[「"'“]?(.+?)[」"'”]?\s*$/);
+    const listOnly = /列出/.test(t) && !/搜/.test(t);
+    let search = searchMatch ? searchMatch[1].trim() : "";
+    if (/^(我的笔记|笔记|笔记里)$/.test(search)) search = "";
+    return {
+      type: "notes_search",
+      search: search || undefined,
+      limit: limitMatch ? Number(limitMatch[1]) : listOnly ? 10 : undefined,
+      listOnly,
+    };
+  }
+  return null;
+}
+
 /**
  * Route a chat line to a browser action before the LLM sees it.
  * Returns null when the line should go to the model with a strict agent prompt.
@@ -306,6 +347,9 @@ export function routeUserGoal(input: string): RoutedAction | null {
 
   const feishu = parseFeishuTask(t);
   if (feishu) return { type: "feishu", task: feishu };
+
+  const reader = matchReaderIntent(t);
+  if (reader) return reader;
 
   const leftover = leftoverAfterOpen(t);
   const extracted = extractFirstHttpUrl(t);

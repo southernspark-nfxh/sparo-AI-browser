@@ -5,11 +5,12 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { addDays } from "./travel.js";
 import { daysBetween, type TripPlan } from "./trip-plan.js";
+import { HIGHLIGHT_OVERLAY_SCRIPT } from "../reader-overlay.js";
 
 export type ChatDoc = {
   title: string;
   path: string;
-  kind: "trip" | "read" | "research";
+  kind: "trip" | "read" | "research" | "file";
 };
 
 export function escapeHtml(s: string): string {
@@ -137,27 +138,30 @@ export function markdownToHtml(md: string): string {
 function reportCss(): string {
   return `
 :root {
-  --ink: #1a1f27;
-  --paper: #f7f4ee;
+  --ink: #1c1a18;
+  --ink-2: #3f3a33;
+  --paper: #fbfaf8;
   --card: #fff;
-  --line: #e6e0d4;
-  --red: #b42318;
-  --mute: #6b645a;
-  --chip: #f1ebe0;
+  --line: #ddd8d2;
+  --accent: #a34a1e;
+  --accent-soft: #f6ece5;
+  --mute: #6e6a66;
+  --chip: #efeae4;
+  --bg: #eeeae6;
 }
 * { box-sizing: border-box; }
 html, body {
   margin: 0;
-  background: #ece7dc;
+  background: var(--bg);
   color: var(--ink);
-  font-family: "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-family: -apple-system, "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", sans-serif;
 }
 body { padding: 24px 12px 72px; }
 .page {
-  max-width: 720px;
+  max-width: 760px;
   margin: 0 auto;
   background: var(--paper);
-  border: 1px solid #ddd6c8;
+  border: 1px solid var(--line);
   border-radius: 16px;
   overflow: hidden;
 }
@@ -169,21 +173,21 @@ body { padding: 24px 12px 72px; }
 .eyebrow {
   margin: 0 0 8px;
   letter-spacing: .16em;
-  font-size: 11px;
-  color: var(--red);
+  font-size: 12px;
+  color: var(--accent);
   font-weight: 600;
 }
 h1 {
   margin: 0 0 12px;
   font-size: 26px;
-  font-weight: 650;
+  font-weight: 600;
   line-height: 1.35;
   letter-spacing: -0.02em;
 }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .chips li {
   background: var(--chip);
-  color: #3d3830;
+  color: var(--ink-2);
   border-radius: 999px;
   padding: 4px 10px;
   font-size: 13px;
@@ -191,13 +195,13 @@ h1 {
 .dates, .mute { margin: 12px 0 0; color: var(--mute); font-size: 14px; }
 .mute { margin: 0; }
 .body { padding: 8px 20px 28px; }
-.body h2 { font-size: 15px; margin: 22px 8px 10px; color: var(--mute); font-weight: 650; }
+.body h2 { font-size: 15px; margin: 22px 8px 10px; color: var(--mute); font-weight: 600; }
 .body h3 { font-size: 16px; margin: 18px 0 8px; }
 .body p, .body li { line-height: 1.7; font-size: 15px; }
 .body table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13.5px;
+  font-size: 14px;
   margin: 10px 0 16px;
 }
 .body th, .body td {
@@ -207,12 +211,12 @@ h1 {
   vertical-align: top;
 }
 .body th { color: var(--mute); font-weight: 600; }
-.body a { color: var(--red); }
+.body a { color: var(--accent); }
 .days { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
 .day {
   background: var(--card);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 10px;
   padding: 16px 16px 14px;
 }
 .day-top {
@@ -224,39 +228,39 @@ h1 {
 }
 .day-top time { font-size: 20px; font-weight: 700; letter-spacing: -0.03em; }
 .day-top .wk { color: var(--mute); font-size: 13px; margin-left: 6px; font-weight: 500; }
-.day-top .where { color: var(--ink); font-size: 15px; font-weight: 650; }
+.day-top .where { color: var(--ink); font-size: 15px; font-weight: 600; }
 .row { display: grid; grid-template-columns: 48px 1fr; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
 .k { color: var(--mute); font-size: 12px; padding-top: 6px; }
 .btn {
   display: inline-block;
-  background: #fff5f3;
-  color: var(--red);
+  background: var(--accent-soft);
+  color: var(--accent);
   text-decoration: none;
-  border: 1px solid #f0c9c4;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
   border-radius: 10px;
   padding: 8px 12px;
-  font-weight: 650;
+  font-weight: 600;
   font-size: 14px;
 }
-.btn:hover { background: #ffe8e4; }
+.btn:hover { background: color-mix(in srgb, var(--accent) 14%, #fff); }
 .picks { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .picks a {
   display: block;
   text-decoration: none;
   color: var(--ink);
-  background: #faf8f3;
+  background: var(--paper);
   border-radius: 10px;
   padding: 9px 12px;
   font-weight: 600;
 }
-.picks a:hover { background: #fff5f3; color: var(--red); }
+.picks a:hover { background: var(--accent-soft); color: var(--accent); }
 .picks .meta { display: block; color: var(--mute); font-weight: 500; font-size: 13px; margin-top: 4px; line-height: 1.55; }
-.hint { margin: 8px 0 0; color: #3f3a33; font-size: 13.5px; line-height: 1.6; }
-.pitch { margin: 0 0 10px; color: #3f3a33; font-size: 14px; line-height: 1.65; }
+.hint { margin: 8px 0 0; color: var(--ink-2); font-size: 14px; line-height: 1.6; }
+.pitch { margin: 0 0 10px; color: var(--ink-2); font-size: 14px; line-height: 1.65; }
 .more { margin: 20px 8px 0; border-top: 1px solid var(--line); padding-top: 12px; }
 .more summary { cursor: pointer; color: var(--mute); font-size: 14px; }
 .more-body { margin-top: 12px; }
-.hotels a.hotel-link, .flights a.hotel-link, .body a.hotel-link { color: var(--red); }
+.hotels a.hotel-link, .flights a.hotel-link, .body a.hotel-link { color: var(--accent); }
 .foot { padding: 0 28px 22px; color: var(--mute); font-size: 12px; }
 @media (max-width: 640px) {
   .ticket, .body { padding-left: 16px; padding-right: 16px; }
@@ -561,8 +565,87 @@ export function researchReportHtml(opts: {
 </html>`;
 }
 
-export function readingReportHtml(opts: { title: string; body: string; eyebrow?: string }): string {
-  return `<!doctype html>
+export type ReaderPageOptions = {
+  sourceUrl: string;
+  siteName?: string;
+  textContent?: string;
+  companionOn: boolean;
+  theme: "green" | "paper" | "night";
+  fontSize: 14 | 16 | 18 | 20;
+};
+
+function stripUnsafeHtml(html: string): string {
+  return String(html || "")
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "")
+    .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "");
+}
+
+function readerChromeCss(): string {
+  return `
+.reader-toolbar {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  padding: 10px 14px; background: #fff; border-bottom: 1px solid var(--line);
+}
+.reader-toolbar button {
+  border: 1px solid var(--line); background: #fff; border-radius: 999px;
+  padding: 6px 12px; cursor: pointer; font-size: 13px;
+}
+.reader-toolbar button.on { background: var(--accent); color: #fffaf6; border-color: var(--accent); }
+.reader-toolbar .save-page { background: var(--accent); color: #fffaf6; border-color: var(--accent); font-weight: 600; }
+body[data-theme="green"] { background: #c7edcc; }
+body[data-theme="green"] .page, body[data-theme="green"] .ticket, body[data-theme="green"] .reader-toolbar { background: #e7f6e4; }
+body[data-theme="night"] { background: #121418; color: #e8e6e3; }
+body[data-theme="night"] .page, body[data-theme="night"] .ticket, body[data-theme="night"] .reader-toolbar { background: #1c1f26; color: #e8e6e3; }
+body[data-theme="night"] .reader-toolbar button { background: #2a3140; color: #e8e6e3; border-color: #3a4254; }
+body[data-font="14"] .reader-body { font-size: 14px; }
+body[data-font="16"] .reader-body { font-size: 16px; }
+body[data-font="18"] .reader-body { font-size: 18px; }
+body[data-font="20"] .reader-body { font-size: 20px; }
+.reader-body { line-height: 1.75; }
+.reader-body img { max-width: 100%; height: auto; }
+.mark-toolbar {
+  position: fixed; z-index: 9999; display: none; gap: 6px;
+  padding: 6px; background: #fff; border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.12);
+}
+.mark-toolbar button { border: 0; background: var(--chip); border-radius: 8px; padding: 6px 8px; cursor: pointer; }
+.reader-drawer {
+  position: fixed; right: 16px; bottom: 16px; z-index: 9998;
+  width: min(420px, calc(100vw - 32px)); height: 200px;
+  display: none; flex-direction: column;
+  background: #fff; border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.16); overflow: hidden;
+}
+.reader-drawer.show { display: flex; }
+.reader-drawer .drawer-scroll { flex: 1; overflow: auto; padding: 12px 14px 0; font-size: 13px; }
+.drawer-quote { background: #f3f1ec; border-radius: 8px; padding: 8px; margin-bottom: 8px; }
+.drawer-hint { color: var(--mute); }
+.reader-drawer .drawer-actions { display: flex; gap: 8px; padding: 8px 12px 12px; }
+.reader-drawer .drawer-actions button { border: 0; background: var(--chip); border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+#readerToast {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+  background: var(--accent); color: #fffaf6; border-radius: 999px; padding: 8px 14px;
+  display: none; z-index: 10000; font-size: 13px;
+}
+#readerToast.show { display: block; }
+`;
+}
+
+function themeLabel(theme: ReaderPageOptions["theme"]): string {
+  if (theme === "green") return "豆沙绿";
+  if (theme === "night") return "夜间";
+  return "米白";
+}
+
+export function readingReportHtml(opts: {
+  title: string;
+  body: string;
+  eyebrow?: string;
+  reader?: ReaderPageOptions;
+}): string {
+  if (!opts.reader) {
+    return `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
@@ -580,7 +663,96 @@ export function readingReportHtml(opts: { title: string; body: string; eyebrow?:
   </article>
 </body>
 </html>`;
+  }
+
+  const reader = opts.reader;
+  const payload = JSON.stringify({
+    url: reader.sourceUrl,
+    title: opts.title,
+    siteName: reader.siteName || "",
+    companionOn: reader.companionOn,
+    wordCount: (reader.textContent || "").length,
+  }).replace(/</g, "\\u003c");
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="sparo-reader" content="1" />
+<meta name="sparo-source" content="${escapeHtml(reader.sourceUrl)}" />
+<title>${escapeHtml(opts.title)}</title>
+<style>${reportCss()}${readerChromeCss()}</style>
+</head>
+<body data-theme="${escapeHtml(reader.theme)}" data-font="${reader.fontSize}">
+  <div class="reader-toolbar">
+    <button type="button" id="btnReaderTheme">${themeLabel(reader.theme)}</button>
+    <button type="button" id="btnReaderFont">${reader.fontSize}px</button>
+    <button type="button" id="btnReaderCompanion"${reader.companionOn ? ' class="on"' : ""}>${reader.companionOn ? "AI伴读 开" : "AI伴读 关"}</button>
+    <button type="button" class="save-page" id="btnReaderSave">📚 一键盘存</button>
+    <button type="button" id="btnReaderClose">关闭</button>
+  </div>
+  <article class="page">
+    <header class="ticket">
+      <p class="eyebrow">${escapeHtml(opts.eyebrow || "SPARO 阅读模式")}</p>
+      <h1>${escapeHtml(opts.title)}</h1>
+    </header>
+    <div class="body reader-body" id="readerBody">${stripUnsafeHtml(opts.body)}</div>
+  </article>
+  <div class="reader-drawer" id="sparoDrawer">
+    <div class="drawer-scroll" id="sparoDrawerBody"></div>
+    <div class="drawer-actions" id="sparoDrawerActions"></div>
+  </div>
+  <div id="readerToast"></div>
+  <script type="application/json" id="sparo-reader-payload">${payload}</script>
+  <script>${HIGHLIGHT_OVERLAY_SCRIPT}</script>
+</body>
+</html>`;
 }
+
+/** 侧栏只放短回答；成篇内容（长文/多小节/表格）应落成阅读页。 */
+export function shouldSealLongRead(text: string): boolean {
+  const t = String(text || "");
+  if (t.length < 180) return false;
+  if (t.length >= 600) return true;
+  const headings = (t.match(/^\s*#{1,3}\s+\S/gm) || []).length;
+  const tableRows = (t.match(/^\s*\|.+\|\s*$/gm) || []).length;
+  const bullets = (t.match(/^\s*[-*]\s+\S/gm) || []).length;
+  return headings >= 2 || tableRows >= 3 || (bullets >= 5 && t.length >= 300);
+}
+
+/** 阅读页标题：优先 Markdown 一级标题，否则取第一句正文。 */
+export function readingTitleOf(md: string, fallback = "整理结果"): string {
+  const src = String(md || "").replace(/\r\n/g, "\n");
+  const lines = src
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const heading = (lines.find((l) => /^#\s+\S/.test(l)) || "").replace(/^#\s+/, "");
+  const first = lines.find((l) => !/^[-*|#>]/.test(l)) || "";
+  const clean = (s: string) =>
+    s
+      .replace(/\*\*|`|^#+\s*/g, "")
+      .replace(/[。；;：:].*$/, "")
+      .trim();
+  // 「正文 / 文章 / 摘要」这类空标题不算标题，退回第一句
+  const generic = /^(正文|文章|内容|摘要|概述|全文|文档|整理|整理结果|方案|报告|说明)$/;
+  for (const cand of [heading, first]) {
+    const t = clean(cand);
+    if (t && !generic.test(t)) return t.slice(0, 52);
+  }
+  const fb = clean(String(fallback || ""))
+    .replace(/^(用户要|用户想|用户希望|请|帮我|给我|麻烦|我想|我要)\s*/, "")
+    .trim();
+  return (fb && !generic.test(fb) ? fb : "整理结果").slice(0, 52);
+}
+
+/** 标题已经在页头展示，正文里去掉重复的一级标题。 */
+export function stripReadingTitle(md: string): string {
+  return String(md || "")
+    .replace(/^\s*#\s+.+\n+/, "")
+    .trim();
+}
+
 
 export function writeHtmlReport(
   configDir: string,

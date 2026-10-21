@@ -1,12 +1,13 @@
 /**
  * Preload for chrome toolbar and sidebar shell UIs.
  */
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 contextBridge.exposeInMainWorld("sparkShell", {
   // chrome → main
   pageHoleBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
     ipcRenderer.send("spark:page-hole", bounds),
+  setSidebarWidth: (w: number) => ipcRenderer.send("spark:set-sidebar-width", w),
   focusShell: () => ipcRenderer.send("spark:focus-shell"),
   navigate: (url: string) => ipcRenderer.invoke("spark:navigate", url),
   goBack: () => ipcRenderer.invoke("spark:go-back"),
@@ -41,7 +42,23 @@ contextBridge.exposeInMainWorld("sparkShell", {
     ipcRenderer.invoke("spark:resolve-approval", id, approved),
   runQa: () => ipcRenderer.invoke("spark:qa-check"),
   chat: (text: string, images?: string[]) => ipcRenderer.invoke("spark:chat", text, images),
+  /** 拖进侧栏的本地文件 → 真实磁盘路径（Electron webUtils） */
+  filePath: (file: File) => {
+    try {
+      return webUtils.getPathForFile(file);
+    } catch {
+      return "";
+    }
+  },
+  pickFile: () => ipcRenderer.invoke("spark:pick-file"),
   openReport: (filePath: string) => ipcRenderer.invoke("spark:open-report", filePath),
+  openReaderMode: () => ipcRenderer.invoke("reader:open"),
+  listNotes: (query?: { limit?: number; tag?: string; search?: string }) =>
+    ipcRenderer.invoke("notes:list", query || {}),
+  deleteNote: (id: string) => ipcRenderer.invoke("notes:delete", { id }),
+  openNote: (id: string) => ipcRenderer.invoke("notes:open", { id }),
+  openNotesPanel: (search?: string) => ipcRenderer.invoke("notes:panel", { search: search || "" }),
+  readerUndo: () => ipcRenderer.invoke("reader:undo"),
   csScan: (opts?: { fromHuman?: boolean }) => ipcRenderer.invoke("spark:cs-scan", opts),
   csDraft: (opts?: { draft?: string; fill?: boolean; preferLlm?: boolean; fromHuman?: boolean }) =>
     ipcRenderer.invoke("spark:cs-draft", opts),
@@ -103,6 +120,7 @@ contextBridge.exposeInMainWorld("sparkShell", {
   toggleBookmark: () => ipcRenderer.invoke("spark:toggle-bookmark"),
   openBookmarksMenu: (payload?: { overflowUrls?: string[] }) =>
     ipcRenderer.invoke("spark:bookmarks-menu", payload),
+  openNavMenu: () => ipcRenderer.invoke("spark:nav-menu"),
 
   // main → renderer push
   onChromeState: (cb: (state: unknown) => void) => {
@@ -115,11 +133,18 @@ contextBridge.exposeInMainWorld("sparkShell", {
     ipcRenderer.on("spark:sidebar-state", handler);
     return () => ipcRenderer.removeListener("spark:sidebar-state", handler);
   },
-  onToast: (cb: (payload: { text?: string; path?: string }) => void) => {
-    const handler = (_: Electron.IpcRendererEvent, payload: { text?: string; path?: string }) =>
-      cb(payload || {});
+  onToast: (cb: (payload: { text?: string; path?: string; duration?: number; undo?: boolean }) => void) => {
+    const handler = (
+      _: Electron.IpcRendererEvent,
+      payload: { text?: string; path?: string; duration?: number; undo?: boolean },
+    ) => cb(payload || {});
     ipcRenderer.on("spark:toast", handler);
     return () => ipcRenderer.removeListener("spark:toast", handler);
+  },
+  onNotes: (cb: (payload: { search?: string }) => void) => {
+    const handler = (_: Electron.IpcRendererEvent, payload: { search?: string }) => cb(payload || {});
+    ipcRenderer.on("spark:notes", handler);
+    return () => ipcRenderer.removeListener("spark:notes", handler);
   },
   onOpenFind: (cb: () => void) => {
     const handler = () => cb();
@@ -153,4 +178,12 @@ contextBridge.exposeInMainWorld("sparkShell", {
     ipcRenderer.on("spark:request-hole", handler);
     return () => ipcRenderer.removeListener("spark:request-hole", handler);
   },
+});
+
+contextBridge.exposeInMainWorld("SparoAPI", {
+  openReaderMode: () => ipcRenderer.invoke("reader:open"),
+  listNotes: (query?: { limit?: number; tag?: string; search?: string }) =>
+    ipcRenderer.invoke("notes:list", query || {}),
+  deleteNote: (id: string) => ipcRenderer.invoke("notes:delete", { id }),
+  openNote: (id: string) => ipcRenderer.invoke("notes:open", { id }),
 });
