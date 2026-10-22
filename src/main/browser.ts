@@ -17,6 +17,7 @@ import { join, resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { pageViewCoversChrome } from "./page-bounds.js";
 import { laneForText, type TaskLane } from "./agent/task-class.js";
 import { shouldSuspend as poolShouldSuspend, TaskPool, type PoolTask } from "./agent/task-pool.js";
 import type {
@@ -48,6 +49,7 @@ import {
   reviseActivePlan,
   gateSiteDelivery,
   loginRedirectNote,
+  openSiteIsTheJob,
   parseSiteLanding,
   siteLandingPrompt,
   thoughtFor,
@@ -1065,6 +1067,7 @@ export class SparkBrowser {
     wc.on("dom-ready", () => {
       if (this.activeTabId === id) this.scheduleLayout(60);
     });
+    view.on("bounds-changed", () => this.onPageViewBoundsChanged(view));
     wc.setWindowOpenHandler((details) => {
       if (shouldAllowOauthPopup(details)) {
         return {
@@ -1102,6 +1105,8 @@ export class SparkBrowser {
     wc.on("did-navigate-in-page", sync);
     wc.on("did-finish-load", () => {
       sync();
+      // 阅读页这类本地文件会在首屏绘制时再被拉成整窗，加载完成后再守一轮。
+      if (this.activeTabId === id) this.armChromeGuard();
       if (this.recording && this.activeTabId === id) {
         void wc
           .executeJavaScript(
@@ -2115,16 +2120,61 @@ export class SparkBrowser {
         /* 视图已销毁 */
       }
     }
-    // addChildView 之后，Chromium 会把新子视图拉成整窗，同一次调用里的 setBounds 会被盖掉，
-    // 顶栏和侧栏就只剩系统按钮。窗口 resize 能恢复，是因为那次 setBounds 发生在父布局之后。
-    // 这里在父布局之后再排一次。
-    if (followUp) {
-      if (this.boundsKick) clearTimeout(this.boundsKick);
-      this.boundsKick = setTimeout(() => {
-        this.boundsKick = null;
-        if (!this.window.isDestroyed()) this.applyViewBounds(false);
-      }, 100);
+    // addChildView 之后，以及阅读页首屏绘制时，Chromium 会把子视图拉成整窗，
+    // 同一次调用里的 setBounds 会被盖掉。顶栏和侧栏就只剩系统按钮，直到用户缩放窗口。
+    // 一次 100ms 补排经常发生在这次拉伸之前，所以加载后再守几拍。
+    if (followUp) this.armChromeGuard();
+  }
+
+  /**
+   * 活动页或被拉回屏幕的后台页盖住顶栏/侧栏时，立刻按页面洞重排。
+   * 自己这次 setBounds 触发的 bounds-changed 用 boundsGuard 挡掉，避免来回拉。
+   */
+  private onPageViewBoundsChanged(view: WebContentsView): void {
+    if (this.boundsGuard || this.overlay !== "none") return;
+    const hole = this.pageBounds();
+    if (!hole) return;
+    let actual: { x: number; y: number; width: number; height: number };
+    try {
+      actual = view.getBounds();
+    } catch {
+      return;
     }
+    if (!pageViewCoversChrome(actual, hole)) return;
+    const now = Date.now();
+    if (now - this.chromeCoverWindow > 3000) {
+      this.chromeCoverWindow = now;
+      this.chromeCoverFixes = 0;
+    }
+    this.chromeCoverFixes += 1;
+    if (this.chromeCoverFixes > 8) return;
+    if (this.chromeCoverFixes === 1) {
+      console.warn("[layout] page view covered chrome, restoring page hole");
+    }
+    this.boundsGuard = true;
+    try {
+      this.applyViewBounds(false);
+    } catch {
+      /* 视图已销毁 */
+    } finally {
+      this.boundsGuard = false;
+    }
+  }
+
+  /** 父布局之后再排几次。拉伸若落在首屏绘制，单次 100ms 补排会错过。 */
+  private armChromeGuard(): void {
+    for (const timer of this.chromeGuardTimers) clearTimeout(timer);
+    this.chromeGuardTimers = [100, 450, 1200, 2500].map((delay) =>
+      setTimeout(() => {
+        if (this.window.isDestroyed()) return;
+        this.boundsGuard = true;
+        try {
+          this.applyViewBounds(false);
+        } finally {
+          this.boundsGuard = false;
+        }
+      }, delay),
+    );
   }
 
   /** 挂上之前先写成页面洞，避免新视图以整窗大小出现。 */
@@ -2174,7 +2224,10 @@ export class SparkBrowser {
   }
 
   private layoutTimer: ReturnType<typeof setTimeout> | null = null;
-  private boundsKick: ReturnType<typeof setTimeout> | null = null;
+  private chromeGuardTimers: ReturnType<typeof setTimeout>[] = [];
+  private boundsGuard = false;
+  private chromeCoverFixes = 0;
+  private chromeCoverWindow = 0;
   /** 向 shell 要一次最新的 page-hole 测量（恢复过渡的回调可能丢过）。 */
   private requestHoleReport(): void {
     try {
@@ -4847,6 +4900,14 @@ export class SparkBrowser {
     return revised;
   }
 
+  /** 原话只是打开这个站，而且当前页已经在这个站上。登录墙不算打开完成。 */
+  private namedSiteIsOpen(goal: AgentGoal, tabId?: string): boolean {
+    if (!openSiteIsTheJob(goal) || !goal.site) return false;
+    const here = pageFinger(this.getUrl(tabId), this.getTitle(tabId));
+    const siteUrl = goal.siteUrl || `https://${goal.site}/`;
+    return Boolean(here.url) && sameSite(here.url, siteUrl) && !isLoginWall(here) && !isCaptchaWall(here);
+  }
+
   private async executeMission(mission: ActiveMission, jobImages: string[], tabId?: string): Promise<ToolResult> {
     tabId = tabId || this.agentTabId || this.activeTabId;
     this.activeMission = mission;
@@ -4896,6 +4957,7 @@ export class SparkBrowser {
       let missionOkRuns = 0;
       for (let i = 0; i < 8; i++) {
         current = await this.absorbQueuedPlanEdit(current);
+        if (this.namedSiteIsOpen(current.goal, tabId)) break;
         const planned = nudgeFromPlan(current.brainPlan, current.plan || []);
         if (planned) {
           const fresh = current.nudge && !current.findings.some((f) => f.step.id === current.nudge!.id);
@@ -5017,6 +5079,7 @@ export class SparkBrowser {
         const finding = await this.runLoopStep(thought.next, current.goal, tabId);
         if (thought.next.cap === "mission" && finding.ok) missionOkRuns += 1;
         current = observe(current, finding);
+        if (this.namedSiteIsOpen(current.goal, tabId)) break;
         // 登录墙 / 人机验证墙：只有人能过。停下问人，不再烧步骤。
         // 但只对「本来就要在墙内操作」的步骤生效（fill_form/act/read_page 等）；
         // search_read / navigate 是要离开墙去别的域的，导航失败按普通失败走自纠，不误报卡墙。
@@ -5106,6 +5169,21 @@ export class SparkBrowser {
       }
 
       current = await this.absorbQueuedPlanEdit(current);
+      if (this.namedSiteIsOpen(current.goal, tabId)) {
+        const reply = `已打开 ${current.goal.site}。`;
+        if (current.brainPlan) current.brainPlan = closePlan(current.brainPlan, true);
+        current.state = "done";
+        journalMissionClose(current.id, "done");
+        this.lastMission = current;
+        this.activeMission = undefined;
+        this.chatLog.push({ role: "assistant", text: reply });
+        this.pushSidebarState();
+        return {
+          ok: true,
+          message: reply,
+          data: { loop: "done", briefKind: current.goal.kind, intent: current.goal.intent },
+        };
+      }
       const live = current.goal;
       let findings = current.findings;
       const finalGate = gateSiteDelivery({
