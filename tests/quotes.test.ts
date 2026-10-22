@@ -4,6 +4,7 @@ import {
   QUOTE_TEXT_LIMIT,
   composeQuotedPrompt,
   normalizeQuotes,
+  QUOTE_PAGE_CONTRACT,
   quotedUserTurn,
 } from "../src/main/agent/quotes.js";
 
@@ -17,7 +18,9 @@ describe("composeQuotedPrompt", () => {
         kind: "page",
       },
     ]);
-    expect(prompt.startsWith("[引用 1]（来源：气候新闻 https://news.example/a）")).toBe(true);
+    expect(prompt.startsWith(QUOTE_PAGE_CONTRACT)).toBe(true);
+    expect(prompt.indexOf(QUOTE_PAGE_CONTRACT)).toBeLessThan(prompt.indexOf("[引用 1]"));
+    expect(prompt).toContain("[引用 1]（来源：气候新闻 https://news.example/a）");
     expect(prompt).toContain("海平面在上升。");
     expect(prompt.endsWith("[用户指令] 用三句话解释给小学生听")).toBe(true);
     expect(prompt.indexOf("[引用 1]")).toBeLessThan(prompt.indexOf("[用户指令]"));

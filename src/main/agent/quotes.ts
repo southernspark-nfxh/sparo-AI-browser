@@ -52,9 +52,14 @@ function sourceLabel(quote: SparoQuote): string {
   return [title, url].filter(Boolean).join(" ") || "手动摘录";
 }
 
+/** 有引用时放在引用块之前。不解析用户原句。 */
+export const QUOTE_PAGE_CONTRACT =
+  "这一问只解释本条引用。作者、身份、风格只能源自本条引用的正文和来源标题。聊天里更早的帖子、昵称、职业不得写进回答。";
+
 /**
  * 引用在前、用户指令在后。没有引用时原句原样返回。
  * 格式：
+ * 契约
  * [引用 1]（来源：标题 URL）
  * ……
  * [用户指令] 原句
@@ -66,7 +71,7 @@ export function composeQuotedPrompt(instruction: string, quotes: unknown): strin
   const blocks = clean.map(
     (quote, index) => `[引用 ${index + 1}]（来源：${sourceLabel(quote)}）\n${quote.text}`,
   );
-  return `${blocks.join("\n\n")}\n[用户指令] ${text}`;
+  return `${QUOTE_PAGE_CONTRACT}\n\n${blocks.join("\n\n")}\n[用户指令] ${text}`;
 }
 
 /** 用户消息进 chatLog：原文不变，引用挂在 quotes 上。 */

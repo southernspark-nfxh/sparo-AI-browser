@@ -6,6 +6,8 @@ import {
   flightHintFromText,
   hotelReason,
   markdownToHtml,
+  isPendingRewrite,
+  readingReportHtml,
   readingTitleOf,
   shouldSealLongRead,
   stripReadingTitle,
@@ -88,6 +90,32 @@ describe("阅读优先：长回答落页", () => {
     expect(readingTitleOf("# 正文\n\n秋天来了。后面还有内容", "帮我写一篇散文")).toBe(
       "秋天来了",
     );
+  });
+
+  it("第一句升成标题后不再当正文第一段", () => {
+    const md = "这段话是说明，后面是正文";
+    const title = readingTitleOf(md);
+    const html = readingReportHtml({ title, body: stripReadingTitle(md) });
+    expect(html).toContain(`<h1>${title}</h1>`);
+    const body = html.slice(html.indexOf('<div class="body">'));
+    expect(body).not.toContain(title);
+  });
+
+  it("页头用来源 URL，域名不拆开", () => {
+    const html = readingReportHtml({
+      title: "收盘怎么看",
+      body: "这是正文，不是标题。",
+      source: { url: "https://weibo.com/u/1216826604", title: "wu2198", siteName: "微博" },
+    });
+    expect(html).toContain('<a href="https://weibo.com/u/1216826604">');
+    expect(html).toContain("weibo.com");
+    expect(html).not.toContain("wei bo.com");
+  });
+
+  it("只答应重新生成时不算已经改完", () => {
+    expect(isPendingRewrite("阅读页里那句一并删掉，重新生成一版。")).toBe(true);
+    expect(isPendingRewrite("# 收盘\n\n正文已经改过。")).toBe(false);
+    expect(isPendingRewrite("")).toBe(true);
   });
 });
 
