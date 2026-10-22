@@ -164,6 +164,7 @@ input, textarea, select, .chat-log, .chat-log .bubble {
   -webkit-app-region: drag;
   position: relative;
   z-index: 3;
+  overflow: hidden;
 }
 .tabs {
   display: flex;
@@ -178,6 +179,12 @@ input, textarea, select, .chat-log, .chat-log .bubble {
   min-width: 0;
   -webkit-app-region: no-drag;
 }
+.tabs::-webkit-scrollbar { height: 4px; }
+.tabs::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 2px;
+}
+.tabs::-webkit-scrollbar-track { background: transparent; }
 .title-drag {
   flex: 1 1 64px;
   min-width: 48px;
@@ -189,8 +196,9 @@ input, textarea, select, .chat-log, .chat-log .bubble {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex: 0 1 160px;
+  min-width: 36px;
   max-width: 180px;
-  min-width: 80px;
   padding: 0 8px 0 10px;
   background: var(--tab);
   color: var(--muted);
