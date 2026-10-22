@@ -8,6 +8,7 @@ import { parseLocalIntent } from "./stub.js";
 import { parseTripPlan, type TripPlan } from "./trip-plan.js";
 import type { Brief, Ingest, IngestKind, MissionState, SlotId } from "./types.js";
 import { slotAsk } from "./types.js";
+import { journalTurn } from "./mission-journal.js";
 import {
   analyzeSlots,
   classifyKind,
@@ -450,7 +451,9 @@ export async function reviseActivePlan(
 }
 
 export function applyTurn(text: string, ctx: TurnCtx = {}): TurnResult {
-  return sealHeuristic(applyTurnCore(text, ctx));
+  const result = sealHeuristic(applyTurnCore(text, ctx));
+  journalTurn(ctx.active, result.mission);
+  return result;
 }
 
 function applyTurnCore(text: string, ctx: TurnCtx = {}): TurnResult {
@@ -585,7 +588,7 @@ function applyTurnCore(text: string, ctx: TurnCtx = {}): TurnResult {
   return { effect: effectOf(opened), mission: opened, last: ctx.last, say: sayOf(opened), ingest: ingest.kind };
 }
 
-export async function applyTurnAsync(
+async function applyTurnAsyncBody(
   text: string,
   ctx: TurnCtx,
   complete?: (prompt: string) => Promise<string>,
@@ -636,6 +639,17 @@ export async function applyTurnAsync(
     { effect: effectOf(opened), mission: opened, last: ctx.last, say: sayOf(opened), ingest: ingest.kind },
     complete,
   );
+}
+
+export async function applyTurnAsync(
+  text: string,
+  ctx: TurnCtx = {},
+  complete?: (prompt: string) => Promise<string>,
+  configDir?: string,
+): Promise<TurnResult> {
+  const result = await applyTurnAsyncBody(text, ctx, complete, configDir);
+  journalTurn(ctx.active, result.mission);
+  return result;
 }
 
 export function missionBriefKind(m: ActiveMission | null | undefined): string | undefined {
