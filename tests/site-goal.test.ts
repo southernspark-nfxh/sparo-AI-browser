@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { legalSiteTarget, understandPrompt } from "../src/main/agent/brain/understand.js";
 import { analyzeGoal, type StepFinding } from "../src/main/agent/loop.js";
-import { loginRedirectNote, mismatchWrap, parseSiteLanding, reasonerPromptV2 } from "../src/main/agent/kernel/reasoner.js";
+import {
+  loginRedirectNote,
+  mismatchWrap,
+  openSiteIsTheJob,
+  parseSiteLanding,
+  reasonerPromptV2,
+} from "../src/main/agent/kernel/reasoner.js";
 import { thoughtForAsync } from "../src/main/agent/kernel/index.js";
 import { applyTurn, classifyIngest, type ActiveMission } from "../src/main/agent/runtime.js";
 
@@ -183,5 +189,15 @@ describe("目标站点：错页先打开，说明文不能当完成", () => {
     expect(note).toMatch(/没有停在登录墙/);
     expect(note).toMatch(/跳回/);
     expect(note).not.toMatch(/继续/);
+  });
+
+  it("只说打开某站时，不把首页正文当成要总结的题", () => {
+    expect(openSiteIsTheJob({ raw: "打开微信读书", site: "weread.qq.com" })).toBe(true);
+    expect(openSiteIsTheJob({ raw: "帮我打开微信读书", site: "weread.qq.com" })).toBe(true);
+    expect(openSiteIsTheJob({ raw: "打开 https://weread.qq.com", site: "weread.qq.com" })).toBe(true);
+    expect(openSiteIsTheJob({ raw: "打开微信读书看看热搜", site: "weread.qq.com" })).toBe(false);
+    expect(openSiteIsTheJob({ raw: "去携程查酒店", site: "ctrip.com" })).toBe(false);
+    expect(openSiteIsTheJob({ raw: "登陆微博", site: "weibo.com" })).toBe(false);
+    expect(openSiteIsTheJob({ raw: "打开微信读书", site: "" })).toBe(false);
   });
 });
