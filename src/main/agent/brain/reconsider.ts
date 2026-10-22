@@ -25,6 +25,7 @@ import {
   siteLabel,
   triedSites,
 } from "./sites.js";
+import { appendPlanAlternative, notePlanStep } from "../kernel/plan.js";
 import type { ActiveMission } from "../runtime.js";
 
 const LEGAL_CAPS = new Set(CAP_REGISTRY.map((c) => c.id));
@@ -304,17 +305,39 @@ export async function reconsider(
   return local;
 }
 
+function withPlanAfterReconsider(
+  mission: ActiveMission,
+  nudge: AgentStep | undefined,
+  why: string,
+): ActiveMission {
+  if (!mission.brainPlan) return mission;
+  const last = mission.findings[mission.findings.length - 1];
+  let brainPlan = mission.brainPlan;
+  if (last) brainPlan = notePlanStep(brainPlan, last);
+  if (last && !last.ok && nudge) {
+    brainPlan = appendPlanAlternative(
+      brainPlan,
+      { label: nudge.label, cap: nudge.cap, covers: nudge.covers },
+      why || nudge.label || "换个查法",
+    );
+  }
+  if (brainPlan === mission.brainPlan) return mission;
+  return { ...mission, brainPlan };
+}
+
 export async function reconsiderMission(
   mission: ActiveMission,
   complete?: (prompt: string) => Promise<string>,
 ): Promise<ActiveMission> {
   const patch = await reconsider(mission.goal, mission.findings, complete);
   const nudge = patch.retry ? composeStep(mission.goal, mission.findings, patch.retry) : undefined;
-  if (patch.same && !patch.add.length && !patch.drop.length && !patch.heard && !nudge) return mission;
-  const goal = applyReconsider(mission.goal, mission.findings, patch);
-  const sameDels =
-    goal.deliverables.map((d) => d.id).join() === mission.goal.deliverables.map((d) => d.id).join() &&
-    goal.intent === mission.goal.intent;
-  if (sameDels) return { ...mission, goal, nudge };
-  return { ...mission, goal, plan: compileHands(goal), nudge };
+  let next = mission;
+  if (!(patch.same && !patch.add.length && !patch.drop.length && !patch.heard && !nudge)) {
+    const goal = applyReconsider(mission.goal, mission.findings, patch);
+    const sameDels =
+      goal.deliverables.map((d) => d.id).join() === mission.goal.deliverables.map((d) => d.id).join() &&
+      goal.intent === mission.goal.intent;
+    next = sameDels ? { ...mission, goal, nudge } : { ...mission, goal, plan: compileHands(goal), nudge };
+  }
+  return withPlanAfterReconsider(next, nudge, patch.why);
 }

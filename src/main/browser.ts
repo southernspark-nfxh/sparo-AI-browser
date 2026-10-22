@@ -37,10 +37,14 @@ import {
 import {
   applyTurn,
   applyTurnAsync,
+  closePlan,
+  focusPlanOnStep,
+  nudgeFromPlan,
   observe,
+  reconsiderMission,
+  reviseActivePlan,
   thoughtFor,
   thoughtForAsync,
-  reconsiderMission,
   verifyContracts,
   type ActiveMission,
   type Thought,
@@ -514,6 +518,8 @@ export class SparkBrowser {
   private lastMission: ActiveMission | undefined;
   private chatRunning = false;
   private chatQueue: Array<{ text: string; images?: string[] }> = [];
+  /** 同一句排队话只问一次模型是不是在改计划。 */
+  private planEditSeen = new Set<string>();
   private ipcReady = false;
   private bookmarks: BookmarkItem[] = [];
   private recording = false;
@@ -2432,7 +2438,19 @@ export class SparkBrowser {
           }
         : null,
       lessons: loadLessons(this.configDir()).slice(0, 40).map(lessonPublic),
+      plan: this.sidebarPlan(),
     };
+  }
+
+  /** 进行中的单优先；做完后留下最后一张计划卡。 */
+  private sidebarPlan() {
+    if (this.activeMission) {
+      return this.activeMission.brainPlan?.steps.length ? this.activeMission.brainPlan : null;
+    }
+    if (this.lastMission && this.lastMission.state !== "cancelled" && this.lastMission.brainPlan?.steps.length) {
+      return this.lastMission.brainPlan;
+    }
+    return null;
   }
 
   copyAgentConnect(): { ok: boolean; message: string } {
@@ -4233,8 +4251,46 @@ export class SparkBrowser {
     return { reply, replyDoc };
   }
 
+  /**
+   * 执行过程中用户插了一句。模型判断是改计划才吃掉这条排队消息。
+   */
+  private async absorbQueuedPlanEdit(current: ActiveMission): Promise<ActiveMission> {
+    const next = this.chatQueue[0];
+    if (!next?.text || !current.brainPlan?.steps.length || !this.deepseek) return current;
+    const key = `${current.id}:${next.text}`;
+    if (this.planEditSeen.has(key)) return current;
+    this.planEditSeen.add(key);
+    const revised = await this.withTimeout(
+      reviseActivePlan(next.text, current, (p) => this.deepseek!.completePlain(p)),
+      12000,
+      null,
+      false,
+    );
+    if (!revised?.brainPlan) return current;
+    this.chatQueue.shift();
+    this.planEditSeen.delete(key);
+    const hint = next.text.slice(0, 28);
+    const last = this.chatLog[this.chatLog.length - 1];
+    if (last?.role === "assistant" && last.text.includes("已排队") && last.text.includes(hint)) {
+      this.chatLog.pop();
+    }
+    this.chatLog.push({
+      role: "user",
+      text: next.text,
+      ...(next.images?.length ? { images: next.images } : {}),
+    });
+    this.chatLog.push({
+      role: "assistant",
+      text: revised.brainPlan.revisedFrom ? `计划已改：${revised.brainPlan.revisedFrom}` : "计划已按你的话改过。",
+    });
+    this.activeMission = revised;
+    this.pushSidebarState();
+    return revised;
+  }
+
   private async executeMission(mission: ActiveMission, jobImages: string[]): Promise<ToolResult> {
     this.activeMission = mission;
+    this.pushSidebarState();
     const goal = mission.goal;
     const cloudGate = await this.beginCloudTaskIfNeeded({ type: "llm", text: goal.raw }, goal.raw);
     if (cloudGate === "refused") {
@@ -4260,6 +4316,12 @@ export class SparkBrowser {
         text: goalProgress(goal),
         cortex: { mode: "loop", need: goal.intent, approach: goal.approach },
       });
+      if (mission.brainPlan?.steps.length) {
+        this.chatLog.push({
+          role: "assistant",
+          text: `计划：${mission.brainPlan.steps.map((s) => s.label).join(" → ")}`,
+        });
+      }
       this.pushSidebarState();
 
       let current = mission;
@@ -4267,6 +4329,16 @@ export class SparkBrowser {
       let stall = 0;
       let missionOkRuns = 0;
       for (let i = 0; i < 8; i++) {
+        current = await this.absorbQueuedPlanEdit(current);
+        const planned = nudgeFromPlan(current.brainPlan, current.plan || []);
+        if (planned) {
+          const fresh = current.nudge && !current.findings.some((f) => f.step.id === current.nudge!.id);
+          const aligned =
+            fresh &&
+            current.nudge!.cap === planned.cap &&
+            current.nudge!.covers.some((c) => planned.covers.includes(c));
+          if (!aligned) current = { ...current, nudge: planned };
+        }
         if (this.helpAsk) {
           current.state = "waiting_human";
           this.activeMission = current;
@@ -4330,7 +4402,17 @@ export class SparkBrowser {
           this.pushSidebarState();
           return { ok: true, message: thought.ask, data: { loop: "ask", briefKind: current.goal.kind } };
         }
-        if (thought.synthesize || !thought.next) break;
+        if (thought.synthesize || !thought.next) {
+          const before = current.brainPlan;
+          current = await this.absorbQueuedPlanEdit(current);
+          const pending = current.brainPlan?.steps.some((s) => s.status === "pending" || s.status === "running");
+          if (current.brainPlan !== before && pending && i < 7) continue;
+          break;
+        }
+        if (thought.next && current.brainPlan) {
+          current = { ...current, brainPlan: focusPlanOnStep(current.brainPlan, thought.next) };
+          this.activeMission = current;
+        }
         this.chatLog.push({
           role: "assistant",
           text: `正在做 ${i + 1}/… ${thought.next.label}。${thought.why}`,
@@ -4398,8 +4480,10 @@ export class SparkBrowser {
         }
         current = revised;
         this.activeMission = current;
+        this.pushSidebarState();
       }
 
+      current = await this.absorbQueuedPlanEdit(current);
       const live = current.goal;
       const findings = current.findings;
       this.chatLog.push({ role: "assistant", text: "对照目标汇总…" });
@@ -4515,6 +4599,7 @@ export class SparkBrowser {
         }
       }
       current.findings = findings;
+      if (current.brainPlan) current.brainPlan = closePlan(current.brainPlan, verify.complete);
       current.state = "done";
       this.lastMission = current;
       this.activeMission = undefined;
