@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { laneFor, laneForText } from "../src/main/agent/task-class.js";
-import { TaskPool } from "../src/main/agent/task-pool.js";
+import { shouldSuspend, TaskPool } from "../src/main/agent/task-pool.js";
 
 vi.mock("electron", () => ({
   BrowserWindow: class BrowserWindow {},
@@ -123,6 +123,37 @@ describe("TaskPool", () => {
     expect(next?.id).toBe("d");
     expect(pool.runningBackground()).toBe(3);
     expect(pool.tasks.find((task) => task.id === "e")?.step).toBe("排队中（第 1 位）");
+    expect(pool.tasks.some((task) => task.id === "b")).toBe(false);
+  });
+
+  it("visible 只留进行中、排队和等人，完成失败马上拿走", () => {
+    const pool = new TaskPool();
+    pool.start({ id: "run", tabId: "1", title: "跑", lane: "foreground" });
+    pool.enqueue({ id: "q", tabId: "", title: "排", lane: "background" });
+    pool.start({ id: "w", tabId: "2", title: "等", lane: "foreground" });
+    pool.suspend("w");
+    pool.start({ id: "old", tabId: "3", title: "完", lane: "foreground" });
+    const done = pool.finish("old");
+    expect(done?.state).toBe("done");
+    expect(done?.step).toBe("完成");
+    pool.start({ id: "bad", tabId: "4", title: "败", lane: "background" });
+    const failed = pool.finish("bad", "failed");
+    expect(failed?.state).toBe("failed");
+    expect(pool.visible().map((task) => task.id)).toEqual(["run", "q", "w"]);
+    expect(pool.visible().some((task) => task.state === "done" || task.state === "failed")).toBe(false);
+    pool.dismiss("w");
+    expect(pool.visible().map((task) => task.id)).toEqual(["run", "q"]);
+    expect(pool.tasks.some((task) => task.id === "w")).toBe(false);
+  });
+});
+
+describe("shouldSuspend", () => {
+  it("只认本轮 loop，上一张单还在等人也不挂起", () => {
+    expect(shouldSuspend({ data: { loop: "waiting_human" } })).toBe(true);
+    expect(shouldSuspend({ data: { loop: "waiting_human" } }, { state: "done" })).toBe(true);
+    expect(shouldSuspend({ data: { loop: "done" } }, { state: "waiting_human" })).toBe(false);
+    expect(shouldSuspend({ data: {} }, { state: "waiting_human" })).toBe(false);
+    expect(shouldSuspend(undefined, { state: "waiting_human" })).toBe(false);
   });
 });
 
