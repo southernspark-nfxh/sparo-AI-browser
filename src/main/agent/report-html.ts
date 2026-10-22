@@ -138,16 +138,28 @@ export function markdownToHtml(md: string): string {
 function reportCss(): string {
   return `
 :root {
-  --ink: #f3ece3;
-  --ink-2: #b8a99a;
-  --paper: #2d2824;
-  --card: #2a2521;
-  --line: #3a342e;
-  --accent: #e84a1c;
-  --accent-soft: #3d2c26;
-  --mute: #9c9489;
-  --chip: #332d28;
-  --bg: #1a1715;
+  --ink: #12141a;
+  --ink-2: #3d4451;
+  --paper: #ffffff;
+  --card: #ffffff;
+  --line: #e2e5ec;
+  --accent: #2563eb;
+  --accent-soft: #e7eefe;
+  --mute: #6b7280;
+  --chip: #eceef4;
+  --bg: #f4f5f8;
+}
+html[data-theme="dark"] {
+  --ink: #e8f1f8;
+  --ink-2: #8ba0b3;
+  --paper: #182028;
+  --card: #161b22;
+  --line: #26313c;
+  --accent: #38bdf8;
+  --accent-soft: #14262f;
+  --mute: #8ba0b3;
+  --chip: #202a34;
+  --bg: #0d1117;
 }
 * { box-sizing: border-box; }
 html, body {
@@ -517,6 +529,7 @@ export function tripReportHtml(opts: {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${escapeHtml(title)} · Sparo 行程手册</title>
 <style>${reportCss()}</style>
+<script>try{if(localStorage.getItem("sparo.theme")==="dark")document.documentElement.setAttribute("data-theme","dark")}catch(err){}</script>
 </head>
 <body>
   <article class="page">
@@ -551,6 +564,7 @@ export function researchReportHtml(opts: {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${escapeHtml(opts.title)} · Sparo 筛选报告</title>
 <style>${reportCss()}</style>
+<script>try{if(localStorage.getItem("sparo.theme")==="dark")document.documentElement.setAttribute("data-theme","dark")}catch(err){}</script>
 </head>
 <body>
   <article class="page">
@@ -597,9 +611,25 @@ function readerChromeCss(): string {
 .reader-toolbar .save-page { background: var(--accent); color: #fff8f0; border-color: var(--accent); font-weight: 600; }
 body[data-theme="green"] { background: #c7edcc; }
 body[data-theme="green"] .page, body[data-theme="green"] .ticket, body[data-theme="green"] .reader-toolbar { background: #e7f6e4; }
-body[data-theme="night"] { background: #121418; color: #e8e6e3; }
-body[data-theme="night"] .page, body[data-theme="night"] .ticket, body[data-theme="night"] .reader-toolbar { background: #1c1f26; color: #e8e6e3; }
-body[data-theme="night"] .reader-toolbar button { background: #2a3140; color: #e8e6e3; border-color: #3a4254; }
+body[data-theme="night"] { background: #0d1117; color: #e8f1f8; }
+body[data-theme="night"] .page, body[data-theme="night"] .ticket, body[data-theme="night"] .reader-toolbar { background: #182028; color: #e8f1f8; }
+body[data-theme="night"] .reader-toolbar button { background: #202a34; color: #e8f1f8; border-color: #35434f; }
+body[data-theme="night"] h1,
+body[data-theme="night"] .eyebrow { color: #38bdf8; }
+body[data-theme="paper"],
+body[data-theme="green"] {
+  --ink: #12141a;
+  --ink-2: #3d4451;
+  --paper: #ffffff;
+  --card: #ffffff;
+  --line: #e2e5ec;
+  --accent: #2563eb;
+  --accent-soft: #e7eefe;
+  --mute: #6b7280;
+  --chip: #eceef4;
+  color: #12141a;
+}
+body[data-theme="paper"] { background: #f4f5f8; }
 body[data-font="14"] .reader-body { font-size: 14px; }
 body[data-font="16"] .reader-body { font-size: 16px; }
 body[data-font="18"] .reader-body { font-size: 18px; }
@@ -654,6 +684,7 @@ export function readingReportHtml(opts: {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${escapeHtml(opts.title)}</title>
 <style>${reportCss()}</style>
+<script>try{if(localStorage.getItem("sparo.theme")==="dark")document.documentElement.setAttribute("data-theme","dark")}catch(err){}</script>
 </head>
 <body>
   <article class="page">
@@ -684,6 +715,7 @@ export function readingReportHtml(opts: {
 <meta name="sparo-source" content="${escapeHtml(reader.sourceUrl)}" />
 <title>${escapeHtml(opts.title)}</title>
 <style>${reportCss()}${readerChromeCss()}</style>
+<script>try{if(localStorage.getItem("sparo.theme")==="dark")document.documentElement.setAttribute("data-theme","dark")}catch(err){}</script>
 </head>
 <body data-theme="${escapeHtml(reader.theme)}" data-font="${reader.fontSize}">
   <div class="reader-toolbar">

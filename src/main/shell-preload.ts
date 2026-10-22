@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("sparkShell", {
   pageHoleBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
     ipcRenderer.send("spark:page-hole", bounds),
   setSidebarWidth: (w: number) => ipcRenderer.send("spark:set-sidebar-width", w),
+  setTheme: (theme: "light" | "dark") => ipcRenderer.send("spark:set-theme", theme),
   focusShell: () => ipcRenderer.send("spark:focus-shell"),
   navigate: (url: string) => ipcRenderer.invoke("spark:navigate", url),
   goBack: () => ipcRenderer.invoke("spark:go-back"),
