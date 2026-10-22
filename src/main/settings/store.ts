@@ -204,7 +204,8 @@ export function normalizeReader(raw: unknown): ReaderPrefs {
 
 function clampIdleMinutes(n: unknown): number {
   const v = Number(n);
-  if (!Number.isFinite(v) || v < 1) return 2;
+  // 缺省 5 分钟。文件里已经写了的数字保持原值，不改写老用户的 settings.json。
+  if (!Number.isFinite(v) || v < 1) return 5;
   return Math.min(60, Math.round(v));
 }
 
@@ -218,7 +219,7 @@ const DEFAULTS: SparoSettings = {
   onboardingDismissed: false,
   firstJobHintDismissed: false,
   memorySaver: true,
-  memorySaverIdleMinutes: 2,
+  memorySaverIdleMinutes: 5,
   reader: { ...DEFAULT_READER },
 };
 
