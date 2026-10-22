@@ -71,7 +71,13 @@ import {
   copyForAgent,
   type AgentTarget,
 } from "./agent-connect.js";
-import { detectSite, isContinueHint, readPageInstruction, sameSite } from "./agent/intent-router.js";
+import {
+  detectSite,
+  extractFirstHttpUrl,
+  isContinueHint,
+  readPageInstruction,
+  sameSite,
+} from "./agent/intent-router.js";
 import {
   alreadyOnFeishuTask,
   FEISHU_MESSENGER_URL,
@@ -527,6 +533,8 @@ export class SparkBrowser {
   private activeMission: ActiveMission | undefined;
   private lastMission: ActiveMission | undefined;
   private chatRunning = false;
+  /** 模型工具回调没有 tab 参数。任务入口写入，缺省仍是激活标签。T06 并行时按任务取，不要再加一条队列。 */
+  private agentTabId = "";
   private chatQueue: Array<{ text: string; images?: string[]; quotes?: SparoQuote[] }> = [];
   /** 同一句排队话只问一次模型是不是在改计划。 */
   private planEditSeen = new Set<string>();
@@ -564,12 +572,38 @@ export class SparkBrowser {
     return this.tabs.get(this.activeTabId) ?? null;
   }
 
-  private get pageView(): WebContentsView {
-    const tab = this.getActiveTab();
-    if (!tab) throw new Error("No active tab");
+  /**
+   * 取指定标签的页面视图。已休眠则先唤醒。标签不存在则抛错。
+   * 后台任务用自己的 tabId，不再跟用户正看着的那一页。
+   */
+  viewForTab(tabId: string): WebContentsView {
+    const tab = this.tabs.get(tabId);
+    if (!tab) throw new Error(`Tab not found: ${tabId}`);
     if (!tab.view || tab.discarded) this.wakeTab(tab.id);
-    if (!tab.view) throw new Error("No active tab view");
+    if (!tab.view) throw new Error(`Tab view missing: ${tabId}`);
     return tab.view;
+  }
+
+  /** 开一个不抢焦点的后台标签。activeTabId 保持不变。 */
+  createAgentTab(url?: string): string {
+    const target = url && url.trim() ? url : DEFAULT_URL;
+    return this.createTab(target, false);
+  }
+
+  /**
+   * 任务结束：保留标签记录，不关闭、不休眠、不切换。
+   * 休眠由 T08 接入。
+   */
+  releaseAgentTab(tabId: string): void {
+    if (!this.tabs.has(tabId)) return;
+  }
+
+  /**
+   * @deprecated 此后 Agent 路径一律显式传 tabId，不要再调用 this.pageView。
+   * getter 本体只把当前激活标签交给 viewForTab。
+   */
+  private get pageView(): WebContentsView {
+    return this.viewForTab(this.activeTabId);
   }
 
   /** Config + cookie + strategy cache root (%APPDATA%/sparo-store). */
@@ -591,7 +625,7 @@ export class SparkBrowser {
       minWidth: 800,
       minHeight: 560,
       title: "Sparo",
-      backgroundColor: "#f3f0ec",
+      backgroundColor: "#1a1715",
       show: false,
       autoHideMenuBar: true,
       titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
@@ -599,8 +633,8 @@ export class SparkBrowser {
         ? {}
         : {
             titleBarOverlay: {
-              color: "#eeeae6",
-              symbolColor: "#1c1a18",
+              color: "#1a1715",
+              symbolColor: "#f3ece3",
               height: 36,
             },
           }),
@@ -1357,20 +1391,20 @@ export class SparkBrowser {
   }
 
   private adjustZoom(delta: number): void {
-    const wc = this.pageView?.webContents;
+    const wc = this.viewForTab(this.activeTabId)?.webContents;
     if (!wc || wc.isDestroyed()) return;
     const next = Math.min(3, Math.max(0.3, wc.getZoomFactor() + delta));
     wc.setZoomFactor(next);
   }
 
   private setZoomFactor(factor: number): void {
-    const wc = this.pageView?.webContents;
+    const wc = this.viewForTab(this.activeTabId)?.webContents;
     if (!wc || wc.isDestroyed()) return;
     wc.setZoomFactor(factor);
   }
 
   private togglePageDevTools(): void {
-    const wc = this.pageView?.webContents;
+    const wc = this.viewForTab(this.activeTabId)?.webContents;
     if (!wc || wc.isDestroyed()) return;
     if (wc.isDevToolsOpened()) wc.closeDevTools();
     else wc.openDevTools({ mode: "detach" });
@@ -1415,8 +1449,8 @@ export class SparkBrowser {
     }
   }
 
-  private livePage(): WebContents | null {
-    const tab = this.getActiveTab();
+  private livePage(tabId?: string): WebContents | null {
+    const tab = tabId ? (this.tabs.get(tabId) ?? null) : this.getActiveTab();
     const wc = tab?.view?.webContents;
     if (!wc || wc.isDestroyed()) return null;
     return wc;
@@ -2374,7 +2408,7 @@ export class SparkBrowser {
     if (!site) return;
     const selector = ACCOUNT_USERNAME_SELECTOR[site];
     if (!selector) return;
-    const wc = this.pageView.webContents;
+    const wc = this.viewForTab(this.activeTabId).webContents;
     try {
       const username = (await wc.executeJavaScript(
         `(() => { const el = document.querySelector(${JSON.stringify(selector)}); return el ? (el.textContent || el.value || "").trim() : ""; })()`,
@@ -2564,7 +2598,7 @@ export class SparkBrowser {
    */
   async saveSessions(siteIds?: string[]): Promise<ToolResult> {
     try {
-      const ses = this.pageView.webContents.session;
+      const ses = this.viewForTab(this.activeTabId).webContents.session;
       await ses.cookies.flushStore();
       const all = await ses.cookies.get({});
       const want = new Set(
@@ -2641,9 +2675,9 @@ export class SparkBrowser {
    * Universal page analyzer — classify fields/buttons + required markers (红星).
    * Stamps data-spark-ref for subsequent execute_primitives.
    */
-  async analyzePage(): Promise<ToolResult & { data?: AnalyzedPage }> {
+  async analyzePage(tabId?: string): Promise<ToolResult & { data?: AnalyzedPage }> {
     try {
-      const data = (await this.pageView.webContents.executeJavaScript(
+      const data = (await this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(
         ANALYZE_PAGE_SCRIPT,
         true,
       )) as AnalyzedPage;
@@ -2688,11 +2722,12 @@ export class SparkBrowser {
    * Semi-auto CS: scan any page for chat-like UI + recent messages.
    * Does not send.
    */
-  async csScan(opts?: { fromHuman?: boolean }): Promise<ToolResult & { data?: CsScanData }> {
+  async csScan(opts?: { fromHuman?: boolean; tabId?: string }): Promise<ToolResult & { data?: CsScanData }> {
+    const tabId = opts?.tabId;
     const res = await runCsScan({
-      pageView: this.pageView,
+      pageView: this.viewForTab(tabId || this.activeTabId),
       assertNotPaused: () => this.assertNotPaused(),
-      fill: (t, v) => this.fill(t, v),
+      fill: (t, v) => this.fill(t, v, tabId),
       getSettings: () => this.settings,
     }, opts);
     if (res.data) this.lastCs = res.data;
@@ -2709,12 +2744,14 @@ export class SparkBrowser {
     fill?: boolean;
     preferLlm?: boolean;
     fromHuman?: boolean;
+    tabId?: string;
   }): Promise<ToolResult & { data?: CsDraftData }> {
+    const tabId = input?.tabId;
     const res = await runCsDraft(
       {
-        pageView: this.pageView,
+        pageView: this.viewForTab(tabId || this.activeTabId),
         assertNotPaused: () => this.assertNotPaused(),
-        fill: (t, v) => this.fill(t, v),
+        fill: (t, v) => this.fill(t, v, tabId),
         getSettings: () => this.settings,
       },
       input || {},
@@ -2744,7 +2781,7 @@ export class SparkBrowser {
   }
 
   getWebContents(): WebContents {
-    return this.pageView.webContents;
+    return this.viewForTab(this.activeTabId).webContents;
   }
 
   isPaused(): boolean {
@@ -2771,15 +2808,16 @@ export class SparkBrowser {
     name: string,
     args: Record<string, unknown>,
     run: () => Promise<ToolResult>,
+    tabId?: string,
   ): Promise<ToolResult> {
     if (this.helpAsk) {
       // 多站任务不能因为上一站登录墙就冻死。记下「先不管」，问题仍留在侧栏给人改。
       this.skipLearning();
     }
-    const before = pageFinger(this.getUrl(), this.getTitle());
+    const before = pageFinger(this.getUrl(tabId), this.getTitle(tabId));
     const result = await run();
     try {
-      this.observePageAction(name, args, before);
+      this.observePageAction(name, args, before, tabId);
     } catch (error) {
       console.error("[learn] observe failed", error);
     }
@@ -2790,11 +2828,12 @@ export class SparkBrowser {
     name: string,
     args: Record<string, unknown>,
     before: ReturnType<typeof pageFinger>,
+    tabId?: string,
   ): void {
     if (this.helpAsk) return;
     const key = actionKey(name, args);
     if (!key) return;
-    const after = pageFinger(this.getUrl(), this.getTitle());
+    const after = pageFinger(this.getUrl(tabId), this.getTitle(tabId));
     this.recentLearned.push({ key, before, after });
     if (this.recentLearned.length > 12) this.recentLearned = this.recentLearned.slice(-12);
     const hit = detectFailure(this.recentLearned);
@@ -2810,15 +2849,16 @@ export class SparkBrowser {
     this.pushSidebarState();
   }
 
-  private async applyHostLessons(): Promise<boolean> {
-    const lessons = findLessonsForHost(this.configDir(), this.getUrl());
+  private async applyHostLessons(tabId?: string): Promise<boolean> {
+    tabId = tabId || this.agentTabId || this.activeTabId;
+    const lessons = findLessonsForHost(this.configDir(), this.getUrl(tabId));
     if (!lessons.length) return false;
     const plan = planFromLessons(lessons);
     const zh = this.settings.locale.startsWith("zh");
     if (plan.dismiss) {
-      await this.dismissOverlays().catch(() => undefined);
+      await this.dismissOverlays(tabId).catch(() => undefined);
     }
-    const here = pageFinger(this.getUrl(), this.getTitle());
+    const here = pageFinger(this.getUrl(tabId), this.getTitle(tabId));
     const wall = isLoginWall(here) || isCaptchaWall(here);
     const host = here.host;
     if (!this.learnedTold.has(host)) {
@@ -2954,12 +2994,14 @@ export class SparkBrowser {
     ref?: string;
     timeoutMs?: number;
     all?: boolean;
+    tabId?: string;
   }): Promise<ToolResult> {
+    const tabId = input.tabId;
     const blocked = this.assertNotPaused();
     if (blocked) return blocked;
     const timeoutMs = input.timeoutMs ?? 15_000;
     const started = Date.now();
-    const wc = this.pageView.webContents;
+    const wc = this.viewForTab(tabId || this.activeTabId).webContents;
     while (Date.now() - started < timeoutMs) {
       const hit = (await wc.executeJavaScript(
         `(() => {
@@ -3075,15 +3117,15 @@ export class SparkBrowser {
     };
   }
 
-  async qaCheck(): Promise<ToolResult> {
+  async qaCheck(tabId?: string): Promise<ToolResult> {
     try {
-      const probe = (await this.pageView.webContents.executeJavaScript(
+      const probe = (await this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(
         QA_PROBE_SCRIPT,
         true,
       )) as Record<string, unknown>;
       const report = buildSmtQaReport({
-        url: String(probe.url || this.getUrl()),
-        title: String(probe.title || this.getTitle()),
+        url: String(probe.url || this.getUrl(tabId)),
+        title: String(probe.title || this.getTitle(tabId)),
         ...probe,
       });
       this.lastQa = report;
@@ -3625,21 +3667,22 @@ export class SparkBrowser {
     name: AgentToolName,
     args: Record<string, unknown>,
   ): Promise<ToolResult> {
+    const tabId = this.agentTabId || this.activeTabId;
     switch (name) {
       case "navigate":
-        return this.watchPageTool("navigate", args, () =>
-          this.navigate(String(args.url || ""), { asHuman: true }),
-        );
+        return this.watchPageTool("navigate", { ...args, tabId }, () =>
+          this.navigate(String(args.url || ""), { asHuman: true, tabId }),
+        tabId);
       case "get_url":
-        return { ok: true, message: this.getUrl(), data: { url: this.getUrl() } };
+        return { ok: true, message: this.getUrl(tabId), data: { url: this.getUrl(tabId) } };
       case "get_title":
         return {
           ok: true,
-          message: this.getTitle(),
-          data: { title: this.getTitle() },
+          message: this.getTitle(tabId),
+          data: { title: this.getTitle(tabId) },
         };
       case "page_text": {
-        const page = await this.pageText();
+        const page = await this.pageText(tabId);
         const raw = page.data?.text || "";
         const clipped = raw.slice(0, 8000);
         return {
@@ -3651,31 +3694,33 @@ export class SparkBrowser {
       case "snapshot":
         return this.snapshot(
           args.selector ? String(args.selector) : undefined,
+          tabId,
         );
       case "click":
-        return this.watchPageTool("click", args, () =>
+        return this.watchPageTool("click", { ...args, tabId }, () =>
           this.click({
             selector: args.selector ? String(args.selector) : undefined,
             ref: args.ref ? String(args.ref) : undefined,
-          }),
-        );
+          }, tabId),
+        tabId);
       case "fill":
-        return this.watchPageTool("fill", args, () =>
+        return this.watchPageTool("fill", { ...args, tabId }, () =>
           this.fill(
             {
               selector: args.selector ? String(args.selector) : undefined,
               ref: args.ref ? String(args.ref) : undefined,
             },
             String(args.value ?? ""),
+            tabId,
           ),
-        );
+        tabId);
       case "fill_suggest":
         return this.fillSuggest(String(args.value ?? args.query ?? ""), {
           selector: args.selector ? String(args.selector) : undefined,
           ref: args.ref ? String(args.ref) : undefined,
-        });
+        }, tabId);
       case "press":
-        return this.pressKey(String(args.key || "Enter"));
+        return this.pressKey(String(args.key || "Enter"), tabId);
       case "pick_calendar":
         return this.pickCalendar({
           triggerRef: args.triggerRef ? String(args.triggerRef) : undefined,
@@ -3685,20 +3730,22 @@ export class SparkBrowser {
           date: args.date ? String(args.date) : undefined,
           hours: args.hours as string | number | undefined,
           minutes: args.minutes as string | number | undefined,
+          tabId,
         });
       case "qa_check":
-        return this.qaCheck();
+        return this.qaCheck(tabId);
       case "click_text":
-        return this.watchPageTool("click_text", args, () =>
+        return this.watchPageTool("click_text", { ...args, tabId }, () =>
           this.clickText(String(args.text || ""), {
             withinPortal: Boolean(args.withinPortal),
             caret: Boolean(args.caret),
+            tabId,
           }),
-        );
+        tabId);
       case "menu_click":
-        return this.menuClick(String(args.trigger || ""), String(args.item || ""));
+        return this.menuClick(String(args.trigger || ""), String(args.item || ""), tabId);
       case "dismiss_overlays":
-        return this.dismissOverlays();
+        return this.dismissOverlays(tabId);
       case "list_workflows":
         return {
           ok: true,
@@ -4057,7 +4104,9 @@ export class SparkBrowser {
     userAsk: string,
     jobImages: string[],
     kind?: string,
+  tabId?: string,
   ): Promise<{ reply: string; replyDoc?: ChatTurn["doc"] }> {
+    tabId = tabId || this.agentTabId || this.activeTabId;
     let reply = "";
     let replyDoc: ChatTurn["doc"];
     if (action.type === "reader_mode") {
@@ -4067,9 +4116,9 @@ export class SparkBrowser {
       if (files?.[0]) replyDoc = { title: "阅读模式", path: files[0], kind: "read" };
     } else if (action.type === "reader_companion") {
       this.patchReaderPrefs({ aiCompanionOn: true });
-      const current = this.getUrl();
+      const current = this.getUrl(tabId);
       if (/[/\\]reader-\d+\.html/i.test(current)) {
-        const wc = this.livePage();
+        const wc = this.livePage(tabId);
         if (wc) {
           await wc.executeJavaScript(
             `(() => { var b = document.getElementById("btnReaderCompanion"); if (b) b.click(); })()`,
@@ -4084,7 +4133,7 @@ export class SparkBrowser {
           : `AI伴读已打开。${opened.message}`;
       }
     } else if (action.type === "notes_action") {
-      const current = this.getUrl();
+      const current = this.getUrl(tabId);
       const alreadyReader = !action.url && /[/\\]reader-\d+\.html/i.test(current);
       if (!alreadyReader) {
         const opened = await this.openActiveReader(action.url);
@@ -4105,7 +4154,7 @@ export class SparkBrowser {
       reply = action.text;
     } else if (action.type === "print") {
       try {
-        this.pageView.webContents.print();
+        this.viewForTab(tabId || this.activeTabId).webContents.print();
         reply = this.settings.locale.startsWith("zh")
           ? "已打开系统打印。选打印机或另存为 PDF。"
           : "Print dialog opened. Choose a printer or Save as PDF.";
@@ -4119,7 +4168,7 @@ export class SparkBrowser {
       this.setPaused(action.paused);
       reply = action.paused ? "已暂停，人可接管。" : "已恢复 Agent 操控。";
     } else if (action.type === "navigate") {
-      const nav = await this.navigate(action.url, { asHuman: true });
+      const nav = await this.navigate(action.url, { asHuman: true, tabId });
       if (!nav.ok) reply = nav.message;
       else if (action.after === "dxm_arrived") {
         reply = "已打开店小蜜。若未登录请先登录；然后点开商品编辑页，说「处理好这个商品」。";
@@ -4127,13 +4176,13 @@ export class SparkBrowser {
         reply = "已打开采集箱。点进商品编辑页后说「处理好」或「继续」。";
       } else reply = action.note || nav.message;
     } else if (action.type === "dxm_guide") {
-      reply = dxmGuideMessage(this.getUrl(), action.mode);
+      reply = dxmGuideMessage(this.getUrl(tabId), action.mode);
     } else if (action.type === "set_title") {
       reply = (await this.setDxmProductTitle(action.title)).message;
     } else if (action.type === "translate_title") {
       reply = (await this.translateDxmTitle(action.lang)).message;
     } else if (action.type === "qa") {
-      reply = (await this.qaCheck()).message;
+      reply = (await this.qaCheck(tabId)).message;
     } else if (action.type === "workflow") {
       const label = action.id === "dxm_autopilot" ? "Autopilot（全自动，完成后暂停等你审）" : action.id;
       this.chatLog.push({ role: "assistant", text: `正在执行「${label}」…` });
@@ -4158,11 +4207,11 @@ export class SparkBrowser {
     } else if (action.type === "summarize") {
       this.chatLog.push({ role: "assistant", text: this.L("chat.readingPage") });
       this.pushSidebarState();
-      reply = await this.summarizeActivePage(userAsk);
+      reply = await this.summarizeActivePage(userAsk, tabId);
     } else if (action.type === "trip_plan") {
       this.chatLog.push({ role: "assistant", text: tripPlanProgress(action.plan) });
       this.pushSidebarState();
-      const tripOut = await this.runTripPlan(action.plan, userAsk);
+      const tripOut = await this.runTripPlan(action.plan, userAsk, tabId);
       reply = tripOut.text;
       // 只要有非空目的地就出手册；开口行程（「杭州进上海出」、高铁环游）可以没有出发地，
       // expandTripPlan 会自行只排火车/酒店，不能因 origin 空就把整本手册毙掉。
@@ -4201,7 +4250,7 @@ export class SparkBrowser {
     } else if (action.type === "mission") {
       this.chatLog.push({ role: "assistant", text: missionProgress(action.mission) });
       this.pushSidebarState();
-      const out = await this.runMission(action.mission, userAsk);
+      const out = await this.runMission(action.mission, userAsk, tabId);
       const eatplay = kind === "eatplay" || /吃喝玩/.test(action.mission.title);
       if (eatplay) {
         const sealed = this.sealResearchReport({
@@ -4227,7 +4276,7 @@ export class SparkBrowser {
     } else if (action.type === "travel_search") {
       this.chatLog.push({ role: "assistant", text: lifeProgress(action) });
       this.pushSidebarState();
-      reply = await this.runTravelSearch(action);
+      reply = await this.runTravelSearch(action, { tabId });
     } else if (action.type === "feishu") {
       this.lastFeishuTask = action.task;
       this.chatLog.push({ role: "assistant", text: "正在打开飞书网页版…" });
@@ -4236,7 +4285,7 @@ export class SparkBrowser {
     } else if (action.type === "fill_form") {
       this.chatLog.push({ role: "assistant", text: this.L("chat.detectingFields") });
       this.pushSidebarState();
-      reply = await this.previewFormFill(userAsk);
+      reply = await this.previewFormFill(userAsk, tabId);
     } else if (action.type === "run_skill") {
       const label = action.id || action.query;
       this.chatLog.push({ role: "assistant", text: `正在按妙招「${label}」执行…` });
@@ -4252,21 +4301,21 @@ export class SparkBrowser {
             : "";
       reply = map ? (await runWorkflow(this, map)).message : `未知脚本 ${action.script}`;
     } else if (action.type === "act") {
-      if (action.url && !sameSite(this.getUrl(), action.url)) {
-        const nav = await this.navigate(action.url, { asHuman: true });
+      if (action.url && !sameSite(this.getUrl(tabId), action.url)) {
+        const nav = await this.navigate(action.url, { asHuman: true, tabId });
         if (!nav.ok) reply = nav.message;
         else {
           this.chatLog.push({ role: "assistant", text: this.L("chat.openedSite") });
           this.pushSidebarState();
-          reply = await this.runLlmGoal(action.text, jobImages);
+          reply = await this.runLlmGoal(action.text, jobImages, tabId);
         }
       } else {
         this.chatLog.push({ role: "assistant", text: this.L("chat.actingHere") });
         this.pushSidebarState();
-        reply = await this.runLlmGoal(action.text, jobImages);
+        reply = await this.runLlmGoal(action.text, jobImages, tabId);
       }
     } else if (action.type === "llm") {
-      reply = await this.runLlmGoal(action.text, jobImages);
+      reply = await this.runLlmGoal(action.text, jobImages, tabId);
     } else {
       reply = this.L("chat.unknown");
     }
@@ -4310,7 +4359,8 @@ export class SparkBrowser {
     return revised;
   }
 
-  private async executeMission(mission: ActiveMission, jobImages: string[]): Promise<ToolResult> {
+  private async executeMission(mission: ActiveMission, jobImages: string[], tabId?: string): Promise<ToolResult> {
+    tabId = tabId || this.agentTabId || this.activeTabId;
     this.activeMission = mission;
     this.pushSidebarState();
     const goal = mission.goal;
@@ -4322,7 +4372,7 @@ export class SparkBrowser {
       return { ok: false, message: reply };
     }
     try {
-      if (await this.applyHostLessons()) {
+      if (await this.applyHostLessons(tabId)) {
         mission.state = "waiting_human";
         this.activeMission = mission;
         const msg = this.settings.locale.startsWith("zh")
@@ -4442,13 +4492,13 @@ export class SparkBrowser {
         this.pushSidebarState();
         ran.push(thought.next);
         const ls0 = Date.now();
-        const finding = await this.runLoopStep(thought.next, current.goal);
+        const finding = await this.runLoopStep(thought.next, current.goal, tabId);
         if (thought.next.cap === "mission" && finding.ok) missionOkRuns += 1;
         current = observe(current, finding);
         // 登录墙 / 人机验证墙：只有人能过。停下问人，不再烧步骤。
         // 但只对「本来就要在墙内操作」的步骤生效（fill_form/act/read_page 等）；
         // search_read / navigate 是要离开墙去别的域的，导航失败按普通失败走自纠，不误报卡墙。
-        const wallFinger = pageFinger(this.getUrl(), this.getTitle());
+        const wallFinger = pageFinger(this.getUrl(tabId), this.getTitle(tabId));
         const onWall = isLoginWall(wallFinger) || isCaptchaWall(wallFinger);
         const ns = thought.next;
         const stepHost = (() => {
@@ -4645,14 +4695,15 @@ export class SparkBrowser {
     }
   }
 
-  private async runLoopStep(step: AgentStep, goal: AgentGoal): Promise<StepFinding> {
+  private async runLoopStep(step: AgentStep, goal: AgentGoal, tabId?: string): Promise<StepFinding> {
+    tabId = tabId || this.agentTabId || this.activeTabId;
     const city = step.city || goal.known.cities?.[0] || "";
     const start = step.checkin || goal.known.start || addDays(ymd(new Date()), 1);
     const end = step.checkout || goal.known.end || addDays(start, 2);
     const fail = (text: string): StepFinding => ({
       step,
       text,
-      url: this.getUrl(),
+      url: this.getUrl(tabId),
       ok: false,
     });
     try {
@@ -4669,9 +4720,9 @@ export class SparkBrowser {
             priceMax: goal.known.hotelPriceMax,
             area: [goal.known.audience, goal.known.cheaper ? "便宜" : ""].filter(Boolean).join(" ") || undefined,
           },
-          { raw: true },
+          { raw: true, tabId },
         );
-        return { step, text, url: this.getUrl(), ok: text.length > 40 };
+        return { step, text, url: this.getUrl(tabId), ok: text.length > 40 };
       }
       const scatteredLeg = (
         s: AgentStep,
@@ -4708,9 +4759,9 @@ export class SparkBrowser {
             to: flightLeg.to,
             date: flightLeg.date,
           },
-          { raw: true },
+          { raw: true, tabId },
         );
-        return { step, text, url: this.getUrl(), ok: text.length > 40 };
+        return { step, text, url: this.getUrl(tabId), ok: text.length > 40 };
       }
       const trainLeg = step.cap === "train_search" ? scatteredLeg(step) : null;
       if (step.cap === "train_search" && trainLeg) {
@@ -4722,69 +4773,69 @@ export class SparkBrowser {
             to: trainLeg.to,
             date: trainLeg.date,
           },
-          { raw: true },
+          { raw: true, tabId },
         );
-        return { step, text, url: this.getUrl(), ok: text.length > 40 };
+        return { step, text, url: this.getUrl(tabId), ok: text.length > 40 };
       }
       if (step.cap === "navigate" && step.query) {
         // query 可能是 URL、英文域名或中文站名；中文站名映射真实域名，不直接当域名导航
         const url = resolveStepUrl(step.query);
-        const nav = await this.withTimeout(this.navigate(url, { asHuman: true }), 12000, {
+        const nav = await this.withTimeout(this.navigate(url, { asHuman: true, tabId }), 12000, {
           ok: false,
           message: "打开超时",
         });
         if (!nav.ok) return fail(nav.message);
-        const page = await this.withTimeout(this.pageText(), 8000, {
+        const page = await this.withTimeout(this.pageText(tabId), 8000, {
           ok: true,
           message: "",
           data: { text: "", length: 0 },
         });
         const text = String(page.data?.text || "").trim();
-        return { step, text, url: this.getUrl() || url, ok: text.length > 40 };
+        return { step, text, url: this.getUrl(tabId) || url, ok: text.length > 40 };
       }
       if (step.cap === "search_read" && step.query) {
         const site = step.site && isLegalSite("search", step.site) ? step.site : "baidu";
         const url =
           searchResultUrl(site, step.query) ||
           `https://www.baidu.com/s?wd=${encodeURIComponent(step.query)}`;
-        const nav = await this.withTimeout(this.navigate(url, { asHuman: true }), 12000, {
+        const nav = await this.withTimeout(this.navigate(url, { asHuman: true, tabId }), 12000, {
           ok: false,
           message: "打开超时",
         });
         if (!nav.ok) return fail(nav.message);
-        const page = await this.withTimeout(this.pageText(), 8000, {
+        const page = await this.withTimeout(this.pageText(tabId), 8000, {
           ok: true,
           message: "",
           data: { text: "", length: 0 },
         });
         const text = cleanSearchPageText(String(page.data?.text || "").trim());
-        return { step, text, url: this.getUrl() || url, ok: text.length > 40 };
+        return { step, text, url: this.getUrl(tabId) || url, ok: text.length > 40 };
       }
       if (step.cap === "video_search" && step.query) {
         const zh = /[一-鿿]/.test(step.query);
         const url = zh
           ? `https://search.bilibili.com/all?keyword=${encodeURIComponent(step.query)}`
           : `https://www.youtube.com/results?search_query=${encodeURIComponent(step.query)}`;
-        const nav = await this.withTimeout(this.navigate(url, { asHuman: true }), 12000, {
+        const nav = await this.withTimeout(this.navigate(url, { asHuman: true, tabId }), 12000, {
           ok: false,
           message: "打开超时",
         });
         if (!nav.ok) return fail(nav.message);
-        const page = await this.withTimeout(this.pageText(), 8000, {
+        const page = await this.withTimeout(this.pageText(tabId), 8000, {
           ok: true,
           message: "",
           data: { text: "", length: 0 },
         });
         const text = String(page.data?.text || "").trim();
-        return { step, text, url: this.getUrl() || url, ok: text.length > 40 };
+        return { step, text, url: this.getUrl(tabId) || url, ok: text.length > 40 };
       }
       if (step.cap === "read_page") {
-        const text = await this.summarizeActivePage(goal.raw);
-        return { step, text, url: this.getUrl(), ok: text.length > 20 };
+        const text = await this.summarizeActivePage(goal.raw, tabId);
+        return { step, text, url: this.getUrl(tabId), ok: text.length > 20 };
       }
       if (step.cap === "fill_form") {
-        const text = await this.previewFormFill(goal.raw);
-        return { step, text, url: this.getUrl(), ok: Boolean(text) };
+        const text = await this.previewFormFill(goal.raw, tabId);
+        return { step, text, url: this.getUrl(tabId), ok: Boolean(text) };
       }
       if (step.cap === "act" && (step.query || step.action)) {
         const hand = await this.executeHand(
@@ -4792,24 +4843,25 @@ export class SparkBrowser {
           goal.raw,
           [],
           goal.kind,
+          tabId,
         );
-        return { step, text: hand.reply, url: this.getUrl(), ok: hand.reply.length > 8, doc: hand.replyDoc };
+        return { step, text: hand.reply, url: this.getUrl(tabId), ok: hand.reply.length > 8, doc: hand.replyDoc };
       }
       if (step.cap === "trip_plan" && step.trip) {
-        const hand = await this.executeHand({ type: "trip_plan", plan: step.trip }, goal.raw, [], goal.kind);
-        return { step, text: hand.reply, url: this.getUrl(), ok: Boolean(hand.reply), doc: hand.replyDoc };
+        const hand = await this.executeHand({ type: "trip_plan", plan: step.trip }, goal.raw, [], goal.kind, tabId);
+        return { step, text: hand.reply, url: this.getUrl(tabId), ok: Boolean(hand.reply), doc: hand.replyDoc };
       }
       if (step.cap === "mission") {
         // 模型编 mission 步可能不带 mission 载荷：用本地 parseMission 按原话兜底解析，
         // 拿不到整手就如实失败，不能静默掉成 0ms 失败还占一步。
         const mission = step.mission || parseMission(goal.raw);
         if (!mission) return fail("这一步没有对应的手。");
-        const hand = await this.executeHand({ type: "mission", mission }, goal.raw, [], goal.kind);
-        return { step, text: hand.reply, url: this.getUrl(), ok: Boolean(hand.reply), doc: hand.replyDoc };
+        const hand = await this.executeHand({ type: "mission", mission }, goal.raw, [], goal.kind, tabId);
+        return { step, text: hand.reply, url: this.getUrl(tabId), ok: Boolean(hand.reply), doc: hand.replyDoc };
       }
       if (step.action) {
-        const hand = await this.executeHand(step.action, goal.raw, [], goal.kind);
-        return { step, text: hand.reply, url: this.getUrl(), ok: Boolean(hand.reply), doc: hand.replyDoc };
+        const hand = await this.executeHand(step.action, goal.raw, [], goal.kind, tabId);
+        return { step, text: hand.reply, url: this.getUrl(tabId), ok: Boolean(hand.reply), doc: hand.replyDoc };
       }
       return fail("这一步没有对应的手。");
     } catch (err) {
@@ -4869,7 +4921,7 @@ export class SparkBrowser {
     }
     this.chatRunning = true;
     try {
-      return await this.handleChatJob(text, pics, cleanQuotes);
+      return await this.handleChatJob(text, pics, cleanQuotes, this.activeTabId);
     } finally {
       this.chatRunning = false;
       const next = this.chatQueue.shift();
@@ -4877,7 +4929,19 @@ export class SparkBrowser {
     }
   }
 
-  private async handleChatJob(text: string, images?: string[], quotes?: SparoQuote[]): Promise<ToolResult> {
+  private async handleChatJob(text: string, images?: string[], quotes?: SparoQuote[], tabId?: string): Promise<ToolResult> {
+    const boundTab = tabId || this.activeTabId;
+    const prevAgentTab = this.agentTabId;
+    this.agentTabId = boundTab;
+    try {
+      return await this.dispatchChatJob(text, images, quotes, boundTab);
+    } finally {
+      this.agentTabId = prevAgentTab;
+    }
+  }
+
+  private async dispatchChatJob(text: string, images?: string[], quotes?: SparoQuote[], tabId?: string): Promise<ToolResult> {
+    tabId = tabId || this.agentTabId || this.activeTabId;
     const cleanQuotes = normalizeQuotes(quotes);
     let jobImages = sanitizeImageDataUrls(images);
     this.chatLog.push(quotedUserTurn(text, cleanQuotes, jobImages));
@@ -4894,7 +4958,7 @@ export class SparkBrowser {
       if (looksAnswer) {
         const learned = this.answerLearning(t);
         if (this.activeMission && (this.activeMission.state === "waiting_human" || this.activeMission.state === "running")) {
-          return this.executeMission(this.activeMission, jobImages);
+          return this.executeMission(this.activeMission, jobImages, tabId);
         }
         return learned;
       }
@@ -4912,7 +4976,7 @@ export class SparkBrowser {
         return { ok: false, message: reply };
       }
       try {
-        const hand = await this.executeHand({ type: "llm", text: prompt }, prompt, jobImages, "chat");
+        const hand = await this.executeHand({ type: "llm", text: prompt }, prompt, jobImages, "chat", tabId);
         const sealed = this.sealLongRead(hand.reply, hand.replyDoc, prompt);
         this.chatLog.push({ role: "assistant", text: sealed.text, doc: sealed.doc });
         this.pushSidebarState();
@@ -4935,7 +4999,7 @@ export class SparkBrowser {
         return { ok: false, message: reply };
       }
       try {
-        const hand = await this.executeHand({ type: "llm", text }, text, jobImages, "chat");
+        const hand = await this.executeHand({ type: "llm", text }, text, jobImages, "chat", tabId);
         const sealed = this.sealLongRead(hand.reply, hand.replyDoc, text);
         this.chatLog.push({ role: "assistant", text: sealed.text, doc: sealed.doc });
         this.pushSidebarState();
@@ -4960,7 +5024,7 @@ export class SparkBrowser {
       directReader.type === "notes_search"
     ) {
       try {
-        const hand = await this.executeHand(directReader, text, [], "read");
+        const hand = await this.executeHand(directReader, text, [], "read", tabId);
         this.chatLog.push({ role: "assistant", text: hand.reply, doc: hand.replyDoc });
         this.pushSidebarState();
         return {
@@ -4987,7 +5051,7 @@ export class SparkBrowser {
               last: this.lastMission,
               homeCity: homeCity || undefined,
               now: new Date(),
-              page: { url: this.getUrl(), title: this.getTitle() },
+              page: { url: this.getUrl(tabId), title: this.getTitle(tabId) },
               paused: this.paused,
             },
             complete,
@@ -5022,7 +5086,7 @@ export class SparkBrowser {
       this.chatLog.push({ role: "assistant", text: turn.say });
       this.pushSidebarState();
       if (this.activeMission && (this.activeMission.state === "waiting_human" || this.activeMission.state === "running")) {
-        return this.executeMission(this.activeMission, jobImages);
+        return this.executeMission(this.activeMission, jobImages, tabId);
       }
       return { ok: true, message: turn.say, data: { kind: "resume" } };
     }
@@ -5063,7 +5127,7 @@ export class SparkBrowser {
     if (turn.side) {
       const parked = turn.mission;
       const sideMission = turn.side;
-      const sideOut = await this.executeMission(sideMission, jobImages);
+      const sideOut = await this.executeMission(sideMission, jobImages, tabId);
       // side 跑完如果还卡着（waiting_human/blocked/running），留在前台；只有 side 完成才恢复 parked
       if (sideMission.state === "done" || sideMission.state === "cancelled") {
         this.activeMission = parked || undefined;
@@ -5075,7 +5139,7 @@ export class SparkBrowser {
 
     if (turn.mission) {
       this.activeMission = turn.mission;
-      return this.executeMission(turn.mission, jobImages);
+      return this.executeMission(turn.mission, jobImages, tabId);
     }
 
     const sealedTail = this.sealLongRead(turn.say || "好。", undefined, text);
@@ -5100,8 +5164,15 @@ export class SparkBrowser {
     return tx(this.settings.locale, key, vars);
   }
 
-  private async summarizeActivePage(userAsk?: string): Promise<string> {
-    const page = await this.pageText();
+  private async summarizeActivePage(userAsk?: string, tabId?: string): Promise<string> {
+    tabId = tabId || this.agentTabId || this.activeTabId;
+    const ask = (userAsk || "").trim();
+    const openUrl = extractFirstHttpUrl(ask);
+    if (openUrl) {
+      const opened = await this.navigate(openUrl, { asHuman: true, tabId });
+      if (!opened.ok) return opened.message;
+    }
+    const page = await this.pageText(tabId);
     const text = (page.data?.text || "").trim();
     if (!text) {
       return this.L("llm.summarizeEmpty");
@@ -5110,12 +5181,11 @@ export class SparkBrowser {
       return this.L("llm.needKeySummarize") + "\n\n" + text.slice(0, 1200);
     }
     try {
-      const ask = (userAsk || "").trim();
       const summary = await this.deepseek.completePlain(
         [
           readPageInstruction(ask),
-          `${this.L("llm.pageTitle")}${this.getTitle()}`,
-          `${this.L("llm.pageUrl")}${this.getUrl()}`,
+          `${this.L("llm.pageTitle")}${this.getTitle(tabId)}`,
+          `${this.L("llm.pageUrl")}${this.getUrl(tabId)}`,
           this.L("llm.pageBody"),
           text.slice(0, this.llmRuntime === "cloud" ? 3500 : 8000),
         ].join("\n"),
@@ -5126,8 +5196,9 @@ export class SparkBrowser {
     }
   }
 
-  private async previewFormFill(userText: string): Promise<string> {
-    const analyzed = await this.analyzePage();
+  private async previewFormFill(userText: string, tabId?: string): Promise<string> {
+    tabId = tabId || this.agentTabId || this.activeTabId;
+    const analyzed = await this.analyzePage(tabId);
     if (!analyzed.ok || !analyzed.data) {
       return analyzed.message || this.L("llm.formNone");
     }
@@ -5158,18 +5229,22 @@ export class SparkBrowser {
     this.pushSidebarState();
     return this.runLlmGoal(
       `${userText}\n\n${this.L("llm.knownFields")}\n${lines.join("\n")}\n${this.L("llm.formGoalTail")}`,
+      undefined,
+      tabId,
     );
   }
 
   async fillSuggest(
     value: string,
     target: { ref?: string; selector?: string } = {},
+  tabId?: string,
   ): Promise<ToolResult> {
+    tabId = tabId || this.agentTabId || this.activeTabId;
     const blocked = this.assertNotPaused();
     if (blocked) return blocked;
     const query = value.trim();
     if (!query) return { ok: false, message: "fill_suggest 需要目的地或关键词" };
-    const wc = this.pageView.webContents;
+    const wc = this.viewForTab(tabId || this.activeTabId).webContents;
     let ref = target.ref;
     let selector = target.selector;
     if (!ref && !selector) {
@@ -5182,7 +5257,7 @@ export class SparkBrowser {
     if (!ref && !selector) {
       return { ok: false, message: "找不到目的地输入框" };
     }
-    const filled = await this.fill({ ref, selector }, query);
+    const filled = await this.fill({ ref, selector }, query, tabId);
     if (!filled.ok) return filled;
     await sleep(800);
     const sug = (await wc.executeJavaScript(
@@ -5190,7 +5265,7 @@ export class SparkBrowser {
       true,
     )) as { ok?: boolean; ref?: string; text?: string; message?: string };
     if (sug?.ok && sug.ref) {
-      const clicked = await this.click({ ref: sug.ref });
+      const clicked = await this.click({ ref: sug.ref }, tabId);
       return {
         ok: clicked.ok,
         message: clicked.ok
@@ -5198,18 +5273,19 @@ export class SparkBrowser {
           : clicked.message,
       };
     }
-    const enter = await this.pressKey("Enter");
+    const enter = await this.pressKey("Enter", tabId);
     return {
       ok: enter.ok,
       message: `没有匹配联想，已回车。${sug?.message || ""}`.trim(),
     };
   }
 
-  private async extractHotelLinks(city: string): Promise<HotelLink[]> {
-    const pageUrl = this.getUrl();
+  private async extractHotelLinks(city: string, tabId?: string): Promise<HotelLink[]> {
+    tabId = tabId || this.agentTabId || this.activeTabId;
+    const pageUrl = this.getUrl(tabId);
     if (!/hotel/i.test(pageUrl) || /\/flights?\//i.test(pageUrl)) return [];
     try {
-      const raw = (await this.pageView.webContents.executeJavaScript(
+      const raw = (await this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(
         `(${EXTRACT_HOTEL_LINKS_SCRIPT})()`,
         true,
       )) as {
@@ -5593,9 +5669,10 @@ export class SparkBrowser {
     return String(polished).trim() || text;
   }
 
-  private async extract1688Offers(): Promise<ShopOffer[]> {
+  private async extract1688Offers(tabId?: string): Promise<ShopOffer[]> {
+    tabId = tabId || this.agentTabId || this.activeTabId;
     try {
-      const raw = (await this.pageView.webContents.executeJavaScript(
+      const raw = (await this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(
         `(${EXTRACT_1688_OFFERS_SCRIPT})()`,
         true,
       )) as { offers?: ShopOffer[] };
@@ -5605,7 +5682,8 @@ export class SparkBrowser {
     }
   }
 
-  private async runShopPick(mission: Mission, userAsk: string): Promise<string> {
+  private async runShopPick(mission: Mission, userAsk: string, tabId?: string): Promise<string> {
+    tabId = tabId || this.agentTabId || this.activeTabId;
     const want = Number(mission.slots.count) || 10;
     const budget = Number(mission.slots.budget) || 0;
     const collected: ShopOffer[] = [];
@@ -5615,19 +5693,19 @@ export class SparkBrowser {
       this.pushSidebarState();
       searchUrls.push(step.url);
       const nav = await this.withTimeout(
-        this.navigate(step.url, { asHuman: true }),
+        this.navigate(step.url, { asHuman: true, tabId }),
         15000,
         { ok: false, message: "打开超时" },
       );
       if (!nav.ok) continue;
       await sleep(1800);
       try {
-        await this.scrollTravelList();
+        await this.scrollTravelList(tabId);
       } catch {
         /* 继续抽当前卡片 */
       }
       await sleep(600);
-      collected.push(...(await this.extract1688Offers()));
+      collected.push(...(await this.extract1688Offers(tabId)));
       const enough = filterShopOffers(collected, { budget, want: want + 4 });
       if (enough.length >= want) break;
     }
@@ -5639,9 +5717,10 @@ export class SparkBrowser {
     });
   }
 
-  private async runMission(mission: Mission, userAsk: string): Promise<string> {
+  private async runMission(mission: Mission, userAsk: string, tabId?: string): Promise<string> {
+    tabId = tabId || this.agentTabId || this.activeTabId;
     if (mission.kind === "sourcing" && mission.slots.intent === "buy") {
-      return this.runShopPick(mission, userAsk);
+      return this.runShopPick(mission, userAsk, tabId);
     }
     const findings: Array<{ label: string; url: string; text: string }> = [];
     // 检索页是壳时，有界地打开前两条自然结果读正文（全程最多 8 个正文页，每步最多 2 个，不点进详情循环）
@@ -5660,7 +5739,7 @@ export class SparkBrowser {
         continue;
       }
       const nav = await this.withTimeout(
-        this.navigate(step.url, { asHuman: true }),
+        this.navigate(step.url, { asHuman: true, tabId }),
         12000,
         { ok: false, message: "打开超时，先记下链接。" },
       );
@@ -5668,7 +5747,7 @@ export class SparkBrowser {
         findings.push({ label: step.label, url: step.url, text: nav.message });
         continue;
       }
-      const landed = this.getUrl() || step.url;
+      const landed = this.getUrl(tabId) || step.url;
       if (shouldSkipHeavyPage(landed)) {
         findings.push({
           label: step.label,
@@ -5687,15 +5766,15 @@ export class SparkBrowser {
             from: pair[1].replace(/出差/g, ""),
             to: pair[2].replace(/出差/g, ""),
             date,
-          });
+          }, tabId);
         }
       }
       const isBaiduSerp = /baidu\.com\/s/.test(landed);
       if (isBaiduSerp) {
         // 百度结果页 / AI 回答卡片是流式渲染，必须等正文出来再读，否则只拿到「正在搜索」壳
-        await this.waitBaiduReady();
+        await this.waitBaiduReady(7000, tabId);
         // SERP 的广告/热榜/导航不算证据：DOM 只抽自然结果摘要，再点开前 2 篇读正文
-        const items = await this.readBaiduSerp();
+        const items = await this.readBaiduSerp(tabId);
         if (items.length) {
           const digest = items
             .map((it) => `${it.title}\n${it.snippet}`)
@@ -5719,12 +5798,12 @@ export class SparkBrowser {
       } else {
         await sleep(800);
         try {
-          await this.scrollTravelList();
+          await this.scrollTravelList(tabId);
         } catch {
           /* 滚动失败仍读当前正文 */
         }
       }
-      const page = await this.withTimeout(this.pageText(), 8000, {
+      const page = await this.withTimeout(this.pageText(tabId), 8000, {
         ok: true,
         message: "",
         data: { text: "", length: 0 },
@@ -5777,12 +5856,13 @@ export class SparkBrowser {
    * 百度结果页 / AI 回答卡片流式渲染：轮询 #content_left 正文长度，滚一次触发懒加载。
    * 不等待会只读到「正在搜索」壳，研究报告整页变「未知」。
    */
-  private async waitBaiduReady(maxMs = 7000): Promise<void> {
+  private async waitBaiduReady(maxMs = 7000, tabId?: string): Promise<void> {
+    tabId = tabId || this.agentTabId || this.activeTabId;
     const deadline = Date.now() + maxMs;
     let len = 0;
     while (Date.now() < deadline) {
       try {
-        len = (await this.pageView.webContents.executeJavaScript(
+        len = (await this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(
           `(() => { const n = document.querySelector('#content_left'); return n ? (n.innerText || '').length : 0; })()`,
         )) as number;
       } catch {
@@ -5792,11 +5872,11 @@ export class SparkBrowser {
       await sleep(500);
     }
     try {
-      await this.pageView.webContents.executeJavaScript(
+      await this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(
         `window.scrollTo(0, document.body.scrollHeight);`,
       );
       await sleep(400);
-      await this.pageView.webContents.executeJavaScript(`window.scrollTo(0, 0);`);
+      await this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(`window.scrollTo(0, 0);`);
       await sleep(500);
     } catch {
       /* 懒加载滚动失败不阻塞 */
@@ -5807,11 +5887,12 @@ export class SparkBrowser {
    * 百度 SERP 的广告/热榜/导航占了正文大半，pageText 长度再长也不算证据。
    * 直接从 DOM 只抽自然结果：标题 + 摘要 + 跳转链接（丢广告/推广容器）。
    */
-  private async readBaiduSerp(): Promise<
+  private async readBaiduSerp(tabId?: string): Promise<
     Array<{ title: string; href: string; snippet: string }>
   > {
+    tabId = tabId || this.agentTabId || this.activeTabId;
     try {
-      const raw = (await this.pageView.webContents.executeJavaScript(
+      const raw = (await this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(
         `(() => {
           const nodes = document.querySelectorAll('#content_left .result, #content_left .c-container, #content_left [tpl]');
           const items = [];
@@ -5839,12 +5920,14 @@ export class SparkBrowser {
     stepLabel: string,
     max: number,
     seedLinks?: string[],
+  tabId?: string,
   ): Promise<Array<{ label: string; url: string; text: string }>> {
+    tabId = tabId || this.agentTabId || this.activeTabId;
     if (max <= 0) return [];
     let links: string[] = seedLinks ? [...seedLinks] : [];
     if (!links.length) {
       try {
-        links = (await this.pageView.webContents.executeJavaScript(
+        links = (await this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(
           `(() => {
             const out = [];
             const nodes = document.querySelectorAll('#content_left .result, #content_left .c-container, #content_left [tpl]');
@@ -5872,15 +5955,15 @@ export class SparkBrowser {
     const out: Array<{ label: string; url: string; text: string }> = [];
     for (const link of links.slice(0, max)) {
       const nav = await this.withTimeout(
-        this.navigate(link, { asHuman: true }),
+        this.navigate(link, { asHuman: true, tabId }),
         12000,
         { ok: false, message: "正文打开超时。" },
       );
       if (!nav.ok) continue;
-      const url = this.getUrl() || link;
+      const url = this.getUrl(tabId) || link;
       if (shouldSkipHeavyPage(url) || /baidu\.com\/s/.test(url)) continue;
       await sleep(700);
-      const page = await this.withTimeout(this.pageText(), 8000, {
+      const page = await this.withTimeout(this.pageText(tabId), 8000, {
         ok: true,
         message: "",
         data: { text: "", length: 0 },
@@ -5905,7 +5988,7 @@ export class SparkBrowser {
         if (settled) return;
         if (abortPage) {
           try {
-            this.pageView.webContents.stop();
+            this.viewForTab(this.agentTabId || this.activeTabId).webContents.stop();
           } catch {
             /* 停加载失败仍返回兜底，避免整窗挂死 */
           }
@@ -5926,7 +6009,9 @@ export class SparkBrowser {
   private async runTripPlan(
     plan: TripPlan,
     userAsk: string,
+  tabId?: string,
   ): Promise<{ text: string; hotels: HotelLink[]; flights: FlightLink[] }> {
+    tabId = tabId || this.agentTabId || this.activeTabId;
     const steps = expandTripPlan(plan);
     if (!steps.length) {
       return {
@@ -5944,13 +6029,13 @@ export class SparkBrowser {
       const t0 = Date.now();
       this.chatLog.push({ role: "assistant", text: `正在查：${step.label}` });
       this.pushSidebarState();
-      let note = await this.runTravelSearch(step.query, { raw: true });
-      const pageUrl = this.getUrl();
+      let note = await this.runTravelSearch(step.query, { raw: true, tabId });
+      const pageUrl = this.getUrl(tabId);
       if (step.query.kind === "hotel") {
         const city = step.query.city;
-        await this.scrollTravelList();
+        await this.scrollTravelList(tabId);
         await sleep(400);
-        const links = await this.extractHotelLinks(city);
+        const links = await this.extractHotelLinks(city, tabId);
         hotels.push(...links);
         const extra = formatHotelLinks(links);
         if (extra) note = `${note}\n\n${extra}`;
@@ -5959,7 +6044,7 @@ export class SparkBrowser {
       } else if (step.query.kind === "search" && /^https?:/i.test(pageUrl)) {
         // 百度搜索结果：SERP 广告/热榜不是证据，DOM 只抽自然结果摘要补进 note
         if (/baidu\.com\/s/.test(pageUrl)) {
-          const items = await this.readBaiduSerp();
+          const items = await this.readBaiduSerp(tabId);
           if (items.length) {
             const digest = items.map((it) => `${it.title}\n${it.snippet}`).join("\n").slice(0, 5000);
             note = `${note}\n\n${digest}`;
@@ -6005,20 +6090,20 @@ export class SparkBrowser {
       this.chatLog.push({ role: "assistant", text: `正在查：${extra.label}` });
       this.pushSidebarState();
       const nav = await this.withTimeout(
-        this.navigate(extra.url, { asHuman: true }),
+        this.navigate(extra.url, { asHuman: true, tabId }),
         12000,
         { ok: false, message: "打开超时，先记下链接。" },
       );
       let note = nav.ok ? "" : nav.message;
       if (nav.ok) {
-        const page = await this.withTimeout(this.pageText(), 8000, {
+        const page = await this.withTimeout(this.pageText(tabId), 8000, {
           ok: true,
           message: "",
           data: { text: "", length: 0 },
         });
         note = String(page.data?.text || "").slice(0, 8000) || "这一页还没出文字。";
       }
-      findings.push({ label: extra.label, url: this.getUrl() || extra.url, text: note });
+      findings.push({ label: extra.label, url: this.getUrl(tabId) || extra.url, text: note });
     }
     if (this.deepseek) {
       const prompt = tripSynthesizePrompt(userAsk, plan, findings);
@@ -6037,9 +6122,10 @@ export class SparkBrowser {
     };
   }
 
-  private async scrollTravelList(): Promise<void> {
+  private async scrollTravelList(tabId?: string): Promise<void> {
+    tabId = tabId || this.agentTabId || this.activeTabId;
     try {
-      await this.pageView.webContents.executeJavaScript(
+      await this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(
         `(() => {
           const roots = [document.scrollingElement, document.getElementById('app')];
           document.querySelectorAll('[class*="list"],[class*="result"],[class*="scroll"]').forEach((el) => roots.push(el));
@@ -6057,14 +6143,15 @@ export class SparkBrowser {
     }
   }
 
-  private async fill12306Form(q: Extract<TravelQuery, { kind: "train" }>): Promise<void> {
+  private async fill12306Form(q: Extract<TravelQuery, { kind: "train" }>, tabId?: string): Promise<void> {
+    tabId = tabId || this.agentTabId || this.activeTabId;
     const fromCode = trainStationCode(q.from);
     const toCode = trainStationCode(q.to);
     if (!fromCode || !toCode) return;
     const fromName = q.from.replace(/出差.*$/, "").slice(0, 8);
     const toName = q.to.replace(/出差.*$/, "").slice(0, 8);
     try {
-      await this.pageView.webContents.executeJavaScript(
+      await this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(
         `(${FILL_12306_SCRIPT})(${JSON.stringify(fromName)},${JSON.stringify(fromCode)},${JSON.stringify(toName)},${JSON.stringify(toCode)},${JSON.stringify(q.date)})`,
         true,
       );
@@ -6074,15 +6161,16 @@ export class SparkBrowser {
     }
   }
 
-  private async waitTravelText(q: TravelQuery, ms = 6000): Promise<string> {
+  private async waitTravelText(q: TravelQuery, ms = 6000, tabId?: string): Promise<string> {
+    tabId = tabId || this.agentTabId || this.activeTabId;
     const started = Date.now();
     let last = "";
     while (Date.now() - started < ms) {
-      await this.scrollTravelList();
+      await this.scrollTravelList(tabId);
       await sleep(450);
-      const page = await this.pageText();
+      const page = await this.pageText(tabId);
       last = (page.data?.text || "").trim();
-      const here = this.getUrl();
+      const here = this.getUrl(tabId);
       if (q.kind === "hotel" && (!/hotel/i.test(here) || /\/flights?\//i.test(here))) {
         continue;
       }
@@ -6097,8 +6185,9 @@ export class SparkBrowser {
 
   private async runTravelSearch(
     q: TravelQuery,
-    opts: { raw?: boolean } = {},
+    opts: { raw?: boolean; tabId?: string } = {},
   ): Promise<string> {
+    const tabId = opts.tabId || this.agentTabId || this.activeTabId;
     try {
       let url = travelResultUrl(q);
       if (q.kind === "hotel" && q.site === "ctrip") {
@@ -6117,25 +6206,25 @@ export class SparkBrowser {
           ? "出发地或到达地还不是城，没法打开机票页。"
           : "还不知道怎么打开这一页，请换个站点名再试。";
       }
-      const nav = await this.navigate(url, { asHuman: true });
+      const nav = await this.navigate(url, { asHuman: true, tabId });
       if (!nav.ok) {
         if (q.kind === "hotel") {
-          const retry = await this.navigate(url, { asHuman: true });
+          const retry = await this.navigate(url, { asHuman: true, tabId });
           if (!retry.ok) return retry.message;
         } else {
           return nav.message;
         }
       }
       if (q.kind === "train" && q.site === "12306") {
-        await this.fill12306Form(q);
+        await this.fill12306Form(q, tabId);
       }
-      if (q.kind === "search" && /baidu\.com\/s/.test(this.getUrl())) {
-        await this.waitBaiduReady();
+      if (q.kind === "search" && /baidu\.com\/s/.test(this.getUrl(tabId))) {
+        await this.waitBaiduReady(7000, tabId);
       }
       await sleep(opts.raw ? 800 : 1400);
-      let text = await this.waitTravelText(q, opts.raw ? 5000 : 7000);
+      let text = await this.waitTravelText(q, opts.raw ? 5000 : 7000, tabId);
       let promptQ = q;
-      const here = this.getUrl();
+      const here = this.getUrl(tabId);
       const alreadyList = q.kind === "flight" && isFlightResultUrl(here);
       if (
         q.kind === "flight" &&
@@ -6148,10 +6237,10 @@ export class SparkBrowser {
           text: "机票列表没读全，改去 Kayak 再查…",
         });
         this.pushSidebarState();
-        const nav2 = await this.navigate(fbUrl, { asHuman: true });
+        const nav2 = await this.navigate(fbUrl, { asHuman: true, tabId });
         if (nav2.ok) {
           await sleep(1000);
-          const alt = await this.waitTravelText(q, 7000);
+          const alt = await this.waitTravelText(q, 7000, tabId);
           const altState = travelListState("flight", alt);
           if (altState === "ready" || alt.length > text.length + 200) {
             text = alt;
@@ -6170,10 +6259,10 @@ export class SparkBrowser {
           text: "火车列表没读全，改去 12306 再查…",
         });
         this.pushSidebarState();
-        const nav2 = await this.navigate(fbUrl, { asHuman: true });
+        const nav2 = await this.navigate(fbUrl, { asHuman: true, tabId });
         if (nav2.ok) {
           await sleep(1000);
-          const alt = await this.waitTravelText(q, 7000);
+          const alt = await this.waitTravelText(q, 7000, tabId);
           if (travelListState("train", alt) === "ready" || alt.length > text.length + 200) {
             text = alt;
             promptQ = { ...q, site: "12306" };
@@ -6181,17 +6270,17 @@ export class SparkBrowser {
         }
       }
       if (/验证码|滑块|captcha|人机验证|请登录|sign in to continue/i.test(text) && text.length < 400) {
-        return `已打开目标页，但被登录或验证码挡住了。请你在窗口里过后说「继续」。\n${this.getUrl()}`;
+        return `已打开目标页，但被登录或验证码挡住了。请你在窗口里过后说「继续」。\n${this.getUrl(tabId)}`;
       }
       const body = text.slice(0, 12000);
       if (!body) {
-        return `已打开 ${this.getUrl()}，页面还没出文字。可能要登录或过一下验证。`;
+        return `已打开 ${this.getUrl(tabId)}，页面还没出文字。可能要登录或过一下验证。`;
       }
       let extra = "";
       if (q.kind === "hotel") {
         try {
-          await this.scrollTravelList();
-          const links = await this.extractHotelLinks(q.city);
+          await this.scrollTravelList(tabId);
+          const links = await this.extractHotelLinks(q.city, tabId);
           extra = formatHotelLinks(links);
         } catch {
           /* 没有详情链就只用正文 */
@@ -6202,22 +6291,23 @@ export class SparkBrowser {
       }
       if (this.deepseek) {
         const summary = await this.deepseek.completePlain(
-          [travelReadPrompt(promptQ), `当前网址：${this.getUrl()}`, extra, body].join("\n"),
+          [travelReadPrompt(promptQ), `当前网址：${this.getUrl(tabId)}`, extra, body].join("\n"),
         );
         if (summary.trim()) return extra ? `${summary.trim()}\n\n${extra}` : summary.trim();
       }
-      return `已打开结果页：${this.getUrl()}\n\n${body.slice(0, 900)}${extra ? `\n\n${extra}` : ""}`;
+      return `已打开结果页：${this.getUrl(tabId)}\n\n${body.slice(0, 900)}${extra ? `\n\n${extra}` : ""}`;
     } catch (error) {
       return "查询失败：" + (error instanceof Error ? error.message : String(error));
     }
   }
 
-  private async runLlmGoal(text: string, images?: string[]): Promise<string> {
+  private async runLlmGoal(text: string, images?: string[], tabId?: string): Promise<string> {
+    tabId = tabId || this.agentTabId || this.activeTabId;
     if (!this.deepseek) {
       return this.L("llm.needKey");
     }
     try {
-      const url = this.getUrl();
+      const url = this.getUrl(tabId);
       this.skillsCache = listSkills(this.configDir());
       const catalog = skillCatalog(this.configDir())
         .slice(0, 8)
@@ -6234,11 +6324,11 @@ export class SparkBrowser {
       if (history.at(-1)?.role === "user" && history.at(-1)?.text === text) {
         history.pop();
       }
-      const page = await this.pageText();
+      const page = await this.pageText(tabId);
       const visible = (page.data?.text || "").trim().slice(0, this.llmRuntime === "cloud" ? 3000 : 6000);
       const reply = await this.deepseek.chat(text, {
         url,
-        title: this.getTitle(),
+        title: this.getTitle(tabId),
         skills: catalog,
         history,
         profileBrief: profileBriefFor(this.configDir()),
@@ -6251,7 +6341,7 @@ export class SparkBrowser {
       const skill = await distillSkillFromTrace({
         configDir: this.configDir(),
         goal: text,
-        url: this.getUrl(),
+        url: this.getUrl(tabId),
         reply,
         mutations,
         complete: (p) => this.deepseek!.completePlain(p),
@@ -6267,8 +6357,8 @@ export class SparkBrowser {
     }
   }
 
-  private async probe(): Promise<{ url: string; title: string; bodyLen: number }> {
-    const wc = this.pageView.webContents;
+  private async probe(tabId?: string): Promise<{ url: string; title: string; bodyLen: number }> {
+    const wc = this.viewForTab(tabId || this.activeTabId).webContents;
     try {
       const fromPage = (await wc.executeJavaScript(PAGE_PROBE_SCRIPT, true)) as {
         url: string;
@@ -6286,9 +6376,9 @@ export class SparkBrowser {
   }
 
   /** Read visible page text for hard verification (e.g. Weibo timeline). */
-  async pageText(): Promise<ToolResult & { data?: { text: string; length: number } }> {
+  async pageText(tabId?: string): Promise<ToolResult & { data?: { text: string; length: number } }> {
     try {
-      const wc = this.pageView.webContents;
+      const wc = this.viewForTab(tabId || this.activeTabId).webContents;
       const data = (await wc.executeJavaScript(
         PAGE_TEXT_SCRIPT,
         true,
@@ -6338,8 +6428,9 @@ export class SparkBrowser {
    */
   async execute(
     script: string,
-    opts?: { frame?: number | string },
+    opts?: { frame?: number | string; tabId?: string },
   ): Promise<ToolResult & { data?: { result: unknown; error?: string } }> {
+    const tabId = opts?.tabId;
     const blocked = this.assertNotPaused();
     if (blocked) {
       return blocked as ToolResult & {
@@ -6352,7 +6443,7 @@ export class SparkBrowser {
 
     try {
       if (opts?.frame !== undefined && opts.frame !== null && opts.frame !== "") {
-        const wc = this.pageView.webContents;
+        const wc = this.viewForTab(tabId || this.activeTabId).webContents;
         const result = await withDebugger(wc, async (send) => {
           let frameId: string | undefined;
           if (typeof opts.frame === "number") {
@@ -6424,7 +6515,7 @@ export class SparkBrowser {
           };
         }
       })()`;
-      const data = (await this.pageView.webContents.executeJavaScript(
+      const data = (await this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(
         wrapped,
         true,
       )) as { ok: boolean; result: unknown; error?: string };
@@ -6449,6 +6540,7 @@ export class SparkBrowser {
   async select(
     target: { ref?: string; selector?: string },
     value: string,
+  tabId?: string,
   ): Promise<ToolResult> {
     const blocked = this.assertNotPaused();
     if (blocked) return blocked;
@@ -6460,7 +6552,7 @@ export class SparkBrowser {
     }
 
     try {
-      const wc = this.pageView.webContents;
+      const wc = this.viewForTab(tabId || this.activeTabId).webContents;
       const opened = (await wc.executeJavaScript(
         `(() => {
           const __v = ${cdpUtf8Expr(value)};
@@ -6496,7 +6588,7 @@ export class SparkBrowser {
 
       // Combobox: trusted click to open, then find + click option
       if (opened.openPoint) {
-        await this.trustedClickAt(opened.openPoint.x, opened.openPoint.y);
+        await this.trustedClickAt(opened.openPoint.x, opened.openPoint.y, { tabId });
         await sleep(350);
       }
 
@@ -6523,7 +6615,7 @@ export class SparkBrowser {
         };
       }
 
-      await this.trustedClickAt(opt.x, opt.y);
+      await this.trustedClickAt(opt.x, opt.y, { tabId });
       await sleep(200);
       this.lastSnapshot = null;
       this.pushStatus();
@@ -6546,6 +6638,7 @@ export class SparkBrowser {
   async upload(
     target: { ref?: string; selector?: string },
     files: string[],
+  tabId?: string,
   ): Promise<ToolResult> {
     const blocked = this.assertNotPaused();
     if (blocked) return blocked;
@@ -6560,7 +6653,7 @@ export class SparkBrowser {
       }
     }
 
-    const wc = this.pageView.webContents;
+    const wc = this.viewForTab(tabId || this.activeTabId).webContents;
     try {
       const found = (await wc.executeJavaScript(
         `(${FIND_FILE_INPUT_SCRIPT})(${JSON.stringify(target.ref ?? null)}, ${JSON.stringify(target.selector ?? null)})`,
@@ -6635,9 +6728,11 @@ export class SparkBrowser {
       doubleClick?: boolean;
       button?: "left" | "right" | "middle";
       downDelayMs?: number;
+    tabId?: string;
     },
   ): Promise<void> {
-    const wc = this.pageView.webContents;
+    const tabId = opts?.tabId;
+    const wc = this.viewForTab(tabId || this.activeTabId).webContents;
     this.window.focus();
     wc.focus();
     const cx = Math.round(x);
@@ -6667,12 +6762,13 @@ export class SparkBrowser {
   /** Click by visible text — trusted mouse. Use withinPortal for menu items. */
   async clickText(
     text: string,
-    opts?: { exact?: boolean; withinPortal?: boolean; caret?: boolean },
+    opts?: { exact?: boolean; withinPortal?: boolean; caret?: boolean; tabId?: string },
   ): Promise<ToolResult> {
+    const tabId = opts?.tabId;
     const blocked = this.assertNotPaused();
     if (blocked) return blocked;
     try {
-      const wc = this.pageView.webContents;
+      const wc = this.viewForTab(tabId || this.activeTabId).webContents;
       const found = (await wc.executeJavaScript(
         `(${FIND_TEXT_SCRIPT})(${JSON.stringify(text)}, ${JSON.stringify(Boolean(opts?.exact))}, ${JSON.stringify(Boolean(opts?.withinPortal))})`,
         true,
@@ -6764,9 +6860,9 @@ export class SparkBrowser {
       if (opts?.caret && hit.w && hit.w > 24) {
         x = Math.round(hit.x + hit.w / 2 - 8);
       }
-      await this.trustedClickAt(x, y, { hoverOnly: true });
+      await this.trustedClickAt(x, y, { hoverOnly: true, tabId });
       await sleep(60);
-      await this.trustedClickAt(x, y);
+      await this.trustedClickAt(x, y, { tabId });
       await sleep(350);
       const portals = await wc.executeJavaScript(LIST_PORTALS_SCRIPT, true);
       this.lastSnapshot = null;
@@ -6784,10 +6880,10 @@ export class SparkBrowser {
   }
 
   /** Open dropdown by trigger text, then click portal menu item. */
-  async menuClick(trigger: string, item: string): Promise<ToolResult> {
+  async menuClick(trigger: string, item: string, tabId?: string): Promise<ToolResult> {
     const blocked = this.assertNotPaused();
     if (blocked) return blocked;
-    const open = await this.clickText(trigger, { exact: false });
+    const open = await this.clickText(trigger, { exact: false, tabId });
     if (!open.ok) {
       return {
         ok: false,
@@ -6796,7 +6892,7 @@ export class SparkBrowser {
       };
     }
 
-    const wc = this.pageView.webContents;
+    const wc = this.viewForTab(tabId || this.activeTabId).webContents;
     let portals = (open.data as { portals?: { count?: number } })?.portals;
     const deadline = Date.now() + 2_000;
     while (
@@ -6826,9 +6922,9 @@ export class SparkBrowser {
     };
   }
 
-  async dismissOverlays(): Promise<ToolResult> {
+  async dismissOverlays(tabId?: string): Promise<ToolResult> {
     try {
-      const data = await this.pageView.webContents.executeJavaScript(
+      const data = await this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(
         DISMISS_OVERLAYS_SCRIPT,
         true,
       );
@@ -6842,9 +6938,9 @@ export class SparkBrowser {
     }
   }
 
-  async listPortals(): Promise<ToolResult> {
+  async listPortals(tabId?: string): Promise<ToolResult> {
     try {
-      const data = await this.pageView.webContents.executeJavaScript(
+      const data = await this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(
         LIST_PORTALS_SCRIPT,
         true,
       );
@@ -6871,7 +6967,9 @@ export class SparkBrowser {
     hours?: string | number;
     minutes?: string | number;
     dismiss?: "outside" | "escape";
+    tabId?: string;
   }): Promise<ToolResult> {
+    const tabId = input.tabId;
     const blocked = this.assertNotPaused();
     if (blocked) return blocked;
     const dt = parseDatetimeValue(input.value ?? input.date ?? "") || parseDatetimeValue({
@@ -6884,7 +6982,7 @@ export class SparkBrowser {
     }
     if (input.hours != null) dt.hours = Number(input.hours);
     if (input.minutes != null) dt.minutes = Number(input.minutes);
-    const wc = this.pageView.webContents;
+    const wc = this.viewForTab(tabId || this.activeTabId).webContents;
     const inspect = async () =>
       (await wc.executeJavaScript(
         `(${CALENDAR_INSPECT_SCRIPT})(${JSON.stringify({
@@ -6913,15 +7011,15 @@ export class SparkBrowser {
       };
 
     if (input.triggerRef) {
-      const clk = await this.click({ ref: input.triggerRef });
+      const clk = await this.click({ ref: input.triggerRef }, tabId);
       if (!clk.ok) {
         return { ok: false, message: `could not open date picker: ${clk.message}` };
       }
     } else {
       const label = input.triggerText || input.triggerLabel || "Run indefinitely";
-      let clk = await this.clickText(label, { exact: false });
+      let clk = await this.clickText(label, { exact: false, tabId });
       if (!clk.ok && label !== "Run indefinitely") {
-        clk = await this.clickText("Run indefinitely", { exact: false });
+        clk = await this.clickText("Run indefinitely", { exact: false, tabId });
       }
       if (!clk.ok) {
         return { ok: false, message: `could not open date picker: ${clk.message}` };
@@ -6949,9 +7047,9 @@ export class SparkBrowser {
           data: state,
         };
       }
-      await this.trustedClickAt(Math.round(nav.x), Math.round(nav.y), { hoverOnly: true });
+      await this.trustedClickAt(Math.round(nav.x), Math.round(nav.y), { hoverOnly: true, tabId });
       await sleep(40);
-      await this.trustedClickAt(Math.round(nav.x), Math.round(nav.y));
+      await this.trustedClickAt(Math.round(nav.x), Math.round(nav.y), { tabId });
       await sleep(280);
       state = await inspect();
       guard += 1;
@@ -6966,9 +7064,9 @@ export class SparkBrowser {
         data: state,
       };
     }
-    await this.trustedClickAt(Math.round(state.day.x), Math.round(state.day.y), { hoverOnly: true });
+    await this.trustedClickAt(Math.round(state.day.x), Math.round(state.day.y), { hoverOnly: true, tabId });
     await sleep(40);
-    await this.trustedClickAt(Math.round(state.day.x), Math.round(state.day.y));
+    await this.trustedClickAt(Math.round(state.day.x), Math.round(state.day.y), { tabId });
     await sleep(200);
     state = await inspect();
     const hourRef = state.hours?.ref;
@@ -6990,7 +7088,7 @@ export class SparkBrowser {
       wc.sendInputEvent({ type: "keyDown", keyCode: "Escape" } as Electron.KeyboardInputEvent);
       wc.sendInputEvent({ type: "keyUp", keyCode: "Escape" } as Electron.KeyboardInputEvent);
     } else if (state.outside) {
-      await this.trustedClickAt(Math.round(state.outside.x), Math.round(state.outside.y));
+      await this.trustedClickAt(Math.round(state.outside.x), Math.round(state.outside.y), { tabId });
     }
     await sleep(280);
     let committed = "";
@@ -7016,9 +7114,9 @@ export class SparkBrowser {
   }
 
   /** Scroll long-form editor so 下一步 is on-screen. */
-  async xhsScrollBottom(): Promise<ToolResult> {
+  async xhsScrollBottom(tabId?: string): Promise<ToolResult> {
     try {
-      const data = await this.pageView.webContents.executeJavaScript(
+      const data = await this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(
         XHS_SCROLL_BOTTOM_SCRIPT,
         true,
       );
@@ -7032,9 +7130,9 @@ export class SparkBrowser {
   }
 
   /** Xiaohongshu topic chips via overlay suggestions. */
-  async xhsAddTopics(topics: string[]): Promise<ToolResult> {
+  async xhsAddTopics(topics: string[], tabId?: string): Promise<ToolResult> {
     try {
-      const run = this.pageView.webContents.executeJavaScript(
+      const run = this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(
         `(${XHS_ADD_TOPICS_SCRIPT})(${JSON.stringify(topics)})`,
         true,
       );
@@ -7058,9 +7156,9 @@ export class SparkBrowser {
   }
 
   /** AI: detect stage only — chooser | compose | publish. */
-  async xhsPageStage(): Promise<ToolResult> {
+  async xhsPageStage(tabId?: string): Promise<ToolResult> {
     try {
-      const data = await this.pageView.webContents.executeJavaScript(
+      const data = await this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(
         XHS_PAGE_STAGE_SCRIPT,
         true,
       );
@@ -7085,14 +7183,14 @@ export class SparkBrowser {
     title?: string;
     body?: string;
     force?: boolean;
-  }): Promise<ToolResult> {
+  }, tabId?: string): Promise<ToolResult> {
     try {
       let title = input.title || "";
       let body = input.body || "";
       if ((!title || !body) && input) {
         /* keep empty — skill runner fills from params/md */
       }
-      const run = this.pageView.webContents.executeJavaScript(
+      const run = this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(
         `(${XHS_INJECT_COMPOSE_SCRIPT})(${JSON.stringify({
           title,
           body,
@@ -7139,9 +7237,9 @@ export class SparkBrowser {
   async xhsInjectPublish(input: {
     summary?: string;
     topics?: string[];
-  }): Promise<ToolResult> {
+  }, tabId?: string): Promise<ToolResult> {
     try {
-      const run = this.pageView.webContents.executeJavaScript(
+      const run = this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(
         `(${XHS_INJECT_PUBLISH_SCRIPT})(${JSON.stringify({
           summary: input.summary || "",
           topics: input.topics || [],
@@ -7174,9 +7272,9 @@ export class SparkBrowser {
   async xhsLayoutNext(input?: {
     template?: string;
     timeoutMs?: number;
-  }): Promise<ToolResult> {
+  }, tabId?: string): Promise<ToolResult> {
     try {
-      const data = (await this.pageView.webContents.executeJavaScript(
+      const data = (await this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(
         `(${XHS_LAYOUT_NEXT_SCRIPT})(${JSON.stringify({
           template: input?.template || "简约基础",
           timeoutMs: input?.timeoutMs || 32000,
@@ -7196,9 +7294,9 @@ export class SparkBrowser {
     }
   }
 
-  async xhsPickCover(): Promise<ToolResult> {
+  async xhsPickCover(tabId?: string): Promise<ToolResult> {
     try {
-      const data = (await this.pageView.webContents.executeJavaScript(
+      const data = (await this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(
         XHS_PICK_COVER_SCRIPT,
         true,
       )) as { ok?: boolean; message?: string; count?: number };
@@ -7218,9 +7316,9 @@ export class SparkBrowser {
   }
 
   /** Click content-area 发布, not sidebar 发布笔记. */
-  async xhsClickPublish(): Promise<ToolResult> {
+  async xhsClickPublish(tabId?: string): Promise<ToolResult> {
     try {
-      const data = (await this.pageView.webContents.executeJavaScript(
+      const data = (await this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(
         XHS_CLICK_PUBLISH_SCRIPT,
         true,
       )) as { ok?: boolean; message?: string };
@@ -7238,9 +7336,9 @@ export class SparkBrowser {
   }
 
   /** 写长文 → 新的创作 → 空白创作 until editors visible. */
-  async xhsEnsureEditor(): Promise<ToolResult> {
+  async xhsEnsureEditor(tabId?: string): Promise<ToolResult> {
     try {
-      const data = (await this.pageView.webContents.executeJavaScript(
+      const data = (await this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(
         XHS_ENSURE_EDITOR_SCRIPT,
         true,
       )) as { ok?: boolean; already?: boolean; log?: string[]; sample?: string; url?: string };
@@ -7265,9 +7363,9 @@ export class SparkBrowser {
     }
   }
 
-  async feishuPageStage(): Promise<ToolResult> {
+  async feishuPageStage(tabId?: string): Promise<ToolResult> {
     try {
-      const data = await this.pageView.webContents.executeJavaScript(
+      const data = await this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(
         FEISHU_STAGE_SCRIPT,
         true,
       );
@@ -7313,12 +7411,12 @@ export class SparkBrowser {
     return { ok: true, message: "已打开飞书网页消息", data: { url: this.getUrl() } };
   }
 
-  async feishuOpenChat(input: { to?: string }): Promise<ToolResult> {
+  async feishuOpenChat(input: { to?: string }, tabId?: string): Promise<ToolResult> {
     const to = String(input.to || "").trim();
     if (!to) return { ok: false, message: "缺少联系人" };
     try {
       const data = (await Promise.race([
-        this.pageView.webContents.executeJavaScript(
+        this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(
           `(${FEISHU_OPEN_CHAT_SCRIPT})(${JSON.stringify({ to })})`,
           true,
         ),
@@ -7356,13 +7454,13 @@ export class SparkBrowser {
   private async feishuInjectText(input: {
     title?: string;
     body?: string;
-  }): Promise<ToolResult> {
+  }, tabId?: string): Promise<ToolResult> {
     const title = String(input.title || "");
     const body = String(input.body || "");
     if (!title && !body) return { ok: false, message: "没有可写入的正文" };
     try {
       const data = (await Promise.race([
-        this.pageView.webContents.executeJavaScript(
+        this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(
           `(${FEISHU_INJECT_TEXT_SCRIPT})(${JSON.stringify({ title, body })})`,
           true,
         ),
@@ -7495,7 +7593,7 @@ export class SparkBrowser {
       const opts = parseScreenshotInput(labelOrOpts);
       const format = opts.format === "jpeg" ? "jpeg" : "png";
       const quality = Math.min(100, Math.max(30, Number(opts.quality) || 80));
-      const wc = this.pageView.webContents;
+      const wc = this.viewForTab(this.activeTabId).webContents;
       let clip = validClip(opts.clip);
       if (opts.selector && !clip) {
         const rect = (await wc.executeJavaScript(
@@ -7601,7 +7699,7 @@ export class SparkBrowser {
     format: "png" | "jpeg",
     quality: number,
   ): Promise<{ png: Buffer; jpeg?: Buffer } | null> {
-    const wc = this.pageView.webContents;
+    const wc = this.viewForTab(this.activeTabId).webContents;
     try {
       const dbg = wc.debugger;
       if (!dbg.isAttached()) await dbg.attach("1.3");
@@ -7690,7 +7788,7 @@ export class SparkBrowser {
     task?: string;
   }): Promise<ToolResult> {
     try {
-      const data = await this.pageView.webContents.executeJavaScript(
+      const data = await this.viewForTab(this.activeTabId).webContents.executeJavaScript(
         `(${RECORD_START_SCRIPT})(${JSON.stringify(meta || {})})`,
         true,
       );
@@ -7721,7 +7819,7 @@ export class SparkBrowser {
         message?: string;
       };
       try {
-        data = (await this.pageView.webContents.executeJavaScript(
+        data = (await this.viewForTab(this.activeTabId).webContents.executeJavaScript(
           RECORD_STOP_SCRIPT,
           true,
         )) as typeof data;
@@ -7815,8 +7913,9 @@ export class SparkBrowser {
    */
   async navigate(
     url: string,
-    opts?: { asHuman?: boolean },
+    opts?: { asHuman?: boolean; tabId?: string },
   ): Promise<NavigateConfirm | ToolResult> {
+    const tabId = opts?.tabId;
     if (!opts?.asHuman) {
       const blocked = this.assertNotPaused();
       if (blocked) return blocked;
@@ -7828,7 +7927,7 @@ export class SparkBrowser {
     }
 
     const started = Date.now();
-    const wc = this.pageView.webContents;
+    const wc = this.viewForTab(tabId || this.activeTabId).webContents;
 
     try {
       const loadPromise = new Promise<"ok" | "fail">((resolve) => {
@@ -7882,7 +7981,7 @@ export class SparkBrowser {
       }
       await sleep(200);
 
-      const probe = await this.probe();
+      const probe = await this.probe(tabId);
       this.lastSnapshot = null;
       this.pushStatus();
 
@@ -7926,7 +8025,7 @@ export class SparkBrowser {
         },
       };
     } catch (error) {
-      const probe = await this.probe().catch(() => ({
+      const probe = await this.probe(tabId).catch(() => ({
         url: wc.getURL(),
         title: wc.getTitle(),
         bodyLen: 0,
@@ -7945,9 +8044,9 @@ export class SparkBrowser {
     }
   }
 
-  async snapshot(selector?: string): Promise<ToolResult & { data?: PageSnapshot }> {
+  async snapshot(selector?: string, tabId?: string): Promise<ToolResult & { data?: PageSnapshot }> {
     try {
-      const wc = this.pageView.webContents;
+      const wc = this.viewForTab(tabId || this.activeTabId).webContents;
       const raw = (await wc.executeJavaScript(SNAPSHOT_SCRIPT, true)) as PageSnapshot & {
         iframeMeta?: IframeMeta[];
       };
@@ -8026,7 +8125,7 @@ export class SparkBrowser {
     selector?: string;
     /** Prefer caret (right edge) click for split dropdown buttons */
     caret?: boolean;
-  }): Promise<ClickConfirm | ToolResult> {
+  }, tabId?: string): Promise<ClickConfirm | ToolResult> {
     const blocked = this.assertNotPaused();
     if (blocked) return blocked;
     if (!target.ref && !target.selector) {
@@ -8034,8 +8133,8 @@ export class SparkBrowser {
     }
 
     try {
-      const before = await this.probe();
-      const wc = this.pageView.webContents;
+      const before = await this.probe(tabId);
+      const wc = this.viewForTab(tabId || this.activeTabId).webContents;
 
       let hit = (await wc.executeJavaScript(
         `(${CLICK_HITTEST_SCRIPT})(${JSON.stringify(target.ref ?? null)}, ${JSON.stringify(target.selector ?? null)})`,
@@ -8150,9 +8249,9 @@ export class SparkBrowser {
       if (target.caret && hit.width && hit.width > 24) {
         x = Math.round(hit.x + hit.width / 2 - 8);
       }
-      await this.trustedClickAt(x, y, { hoverOnly: true });
+      await this.trustedClickAt(x, y, { hoverOnly: true, tabId });
       await sleep(80);
-      await this.trustedClickAt(x, y);
+      await this.trustedClickAt(x, y, { tabId });
 
       let portals: unknown = null;
       if (hit.isDropdownTrigger || target.caret) {
@@ -8179,7 +8278,7 @@ export class SparkBrowser {
       let after = before;
       while (Date.now() < deadline) {
         await sleep(150);
-        after = await this.probe();
+        after = await this.probe(tabId);
         if (
           after.url !== before.url ||
           after.title !== before.title ||
@@ -8195,7 +8294,7 @@ export class SparkBrowser {
           break;
         }
       }
-      after = await this.probe();
+      after = await this.probe(tabId);
 
       const urlChanged = after.url !== before.url;
       const titleChanged = after.title !== before.title;
@@ -8245,6 +8344,7 @@ export class SparkBrowser {
   async fill(
     target: { ref?: string; selector?: string },
     value: string,
+  tabId?: string,
   ): Promise<FillConfirm | ToolResult> {
     const blocked = this.assertNotPaused();
     if (blocked) return blocked;
@@ -8255,7 +8355,7 @@ export class SparkBrowser {
     const FIX = "fill-unicode-v2";
 
     try {
-      const wc = this.pageView.webContents;
+      const wc = this.viewForTab(tabId || this.activeTabId).webContents;
 
       const cross = parseCrossFrameRef(target.ref);
       if (cross) {
@@ -8279,6 +8379,7 @@ export class SparkBrowser {
             await this.trustedClickAt(
               local.x + frame.offsetX,
               local.y + frame.offsetY,
+              { tabId },
             );
             await sleep(80);
           }
@@ -8352,7 +8453,7 @@ export class SparkBrowser {
 
       // Fallback: CDP Input.insertText (true Unicode), not per-char sendInputEvent
       if (!result.matched) {
-        await this.insertTextUnicode(value);
+        await this.insertTextUnicode(value, tabId);
         await sleep(200);
         let actual = (await wc.executeJavaScript(
           `(${FILL_SCRIPT_READ})(${JSON.stringify(target.ref ?? null)}, ${JSON.stringify(target.selector ?? null)})`,
@@ -8457,8 +8558,8 @@ export class SparkBrowser {
   }
 
   /** Insert Unicode text via CDP Input.insertText (avoids char-event Mojibake). */
-  private async insertTextUnicode(text: string): Promise<void> {
-    const wc = this.pageView.webContents;
+  private async insertTextUnicode(text: string, tabId?: string): Promise<void> {
+    const wc = this.viewForTab(tabId || this.activeTabId).webContents;
     this.window.focus();
     wc.focus();
     await withDebugger(wc, async (send) => {
@@ -8467,11 +8568,11 @@ export class SparkBrowser {
   }
 
   /** Send a single key (Enter/Escape/…) via trusted keyboard events. */
-  async pressKey(key: string): Promise<ToolResult> {
+  async pressKey(key: string, tabId?: string): Promise<ToolResult> {
     const blocked = this.assertNotPaused();
     if (blocked) return blocked;
     try {
-      const wc = this.pageView.webContents;
+      const wc = this.viewForTab(tabId || this.activeTabId).webContents;
       this.window.focus();
       wc.focus();
       const keyCode = key === "Enter" || key === "Return" ? "Return" : key === "Escape" ? "Escape" : key;
@@ -8489,14 +8590,14 @@ export class SparkBrowser {
   }
 
   /** Type text as real key events into the focused element. */
-  private async typeWithKeyboard(value: string): Promise<void> {
+  private async typeWithKeyboard(value: string, tabId?: string): Promise<void> {
     // Prefer CDP Input.insertText for Unicode (Chinese). Per-char sendInputEvent
     // has caused Mojibake on some Windows/Electron paths.
     if (/[^\u0000-\u007f]/.test(value)) {
-      await this.insertTextUnicode(value);
+      await this.insertTextUnicode(value, tabId);
       return;
     }
-    const wc = this.pageView.webContents;
+    const wc = this.viewForTab(tabId || this.activeTabId).webContents;
     this.window.focus();
     wc.focus();
 
@@ -8521,16 +8622,17 @@ export class SparkBrowser {
     }
   }
 
-  async reload(opts?: { asHuman?: boolean; ignoreCache?: boolean }): Promise<ToolResult> {
+  async reload(opts?: { asHuman?: boolean; ignoreCache?: boolean; tabId?: string }): Promise<ToolResult> {
+    const tabId = opts?.tabId;
     if (!opts?.asHuman) {
       const blocked = this.assertNotPaused();
       if (blocked) return blocked;
     }
-    if (opts?.ignoreCache) this.pageView.webContents.reloadIgnoringCache();
-    else this.pageView.webContents.reload();
+    if (opts?.ignoreCache) this.viewForTab(tabId || this.activeTabId).webContents.reloadIgnoringCache();
+    else this.viewForTab(tabId || this.activeTabId).webContents.reload();
     this.lastSnapshot = null;
     if (!opts?.asHuman) await sleep(800);
-    const probe = await this.probe();
+    const probe = await this.probe(tabId);
     this.pushStatus();
     this.pushChromeState();
     return {
@@ -8540,19 +8642,20 @@ export class SparkBrowser {
     };
   }
 
-  async goBack(opts?: { asHuman?: boolean }): Promise<ToolResult> {
+  async goBack(opts?: { asHuman?: boolean; tabId?: string }): Promise<ToolResult> {
+    const tabId = opts?.tabId;
     if (!opts?.asHuman) {
       const blocked = this.assertNotPaused();
       if (blocked) return blocked;
     }
-    if (!this.navCanGoBack(this.pageView.webContents)) {
+    if (!this.navCanGoBack(this.viewForTab(tabId || this.activeTabId).webContents)) {
       return { ok: false, message: "Cannot go back" };
     }
-    const before = await this.probe();
-    this.pageView.webContents.goBack();
+    const before = await this.probe(tabId);
+    this.viewForTab(tabId || this.activeTabId).webContents.goBack();
     this.lastSnapshot = null;
     if (!opts?.asHuman) await sleep(800);
-    const after = await this.probe();
+    const after = await this.probe(tabId);
     this.pushStatus();
     this.pushChromeState();
     return {
@@ -8562,19 +8665,20 @@ export class SparkBrowser {
     };
   }
 
-  async goForward(opts?: { asHuman?: boolean }): Promise<ToolResult> {
+  async goForward(opts?: { asHuman?: boolean; tabId?: string }): Promise<ToolResult> {
+    const tabId = opts?.tabId;
     if (!opts?.asHuman) {
       const blocked = this.assertNotPaused();
       if (blocked) return blocked;
     }
-    if (!this.navCanGoForward(this.pageView.webContents)) {
+    if (!this.navCanGoForward(this.viewForTab(tabId || this.activeTabId).webContents)) {
       return { ok: false, message: "Cannot go forward" };
     }
-    const before = await this.probe();
-    this.pageView.webContents.goForward();
+    const before = await this.probe(tabId);
+    this.viewForTab(tabId || this.activeTabId).webContents.goForward();
     this.lastSnapshot = null;
     if (!opts?.asHuman) await sleep(800);
-    const after = await this.probe();
+    const after = await this.probe(tabId);
     this.pushStatus();
     this.pushChromeState();
     return {
@@ -8584,8 +8688,8 @@ export class SparkBrowser {
     };
   }
 
-  getUrl(): string {
-    const tab = this.getActiveTab();
+  getUrl(tabId?: string): string {
+    const tab = tabId ? (this.tabs.get(tabId) ?? null) : this.getActiveTab();
     if (!tab) return "";
     try {
       if (tab.view && !tab.view.webContents.isDestroyed()) {
@@ -8597,8 +8701,8 @@ export class SparkBrowser {
     }
   }
 
-  getTitle(): string {
-    const tab = this.getActiveTab();
+  getTitle(tabId?: string): string {
+    const tab = tabId ? (this.tabs.get(tabId) ?? null) : this.getActiveTab();
     if (!tab) return "";
     try {
       if (tab.view && !tab.view.webContents.isDestroyed()) {
