@@ -33,7 +33,14 @@ export {
   parseReasonerJson,
   applyModelPick,
   reasonerPromptV2,
+  gateSiteDelivery,
+  mismatchWrap,
+  forcedSiteNavigate,
+  loginRedirectNote,
+  parseSiteLanding,
+  siteLandingPrompt,
   type Thought,
+  type SiteGate,
 } from "./reasoner.js";
 export { verifyContracts, observationCovers, extractEntities, summaryFindings } from "./verify.js";
 export { CAP_REGISTRY, capsFor } from "./caps.js";
@@ -57,7 +64,7 @@ import { notePlanStep } from "./plan.js";
 import { journalMissionTurn } from "../mission-journal.js";
 import { verifyContracts } from "./verify.js";
 
-function thoughtInput(mission: ActiveMission, synthesized?: string) {
+function thoughtInput(mission: ActiveMission, synthesized?: string, pageUrl?: string) {
   return {
     intent: mission.goal.intent,
     goal: mission.goal,
@@ -66,19 +73,21 @@ function thoughtInput(mission: ActiveMission, synthesized?: string) {
     ask: mission.ask,
     synthesized,
     nudge: mission.nudge,
+    pageUrl,
   };
 }
 
-export function thoughtFor(mission: ActiveMission, synthesized?: string): Thought {
-  return nextThought(thoughtInput(mission, synthesized));
+export function thoughtFor(mission: ActiveMission, synthesized?: string, pageUrl?: string): Thought {
+  return nextThought(thoughtInput(mission, synthesized, pageUrl));
 }
 
 export async function thoughtForAsync(
   mission: ActiveMission,
   complete?: (prompt: string) => Promise<string>,
   synthesized?: string,
+  pageUrl?: string,
 ): Promise<Thought> {
-  return nextThoughtAsync(thoughtInput(mission, synthesized), complete);
+  return nextThoughtAsync(thoughtInput(mission, synthesized, pageUrl), complete);
 }
 
 export function observe(mission: ActiveMission, finding: StepFinding): ActiveMission {

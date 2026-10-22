@@ -53,6 +53,8 @@ export type ActiveMission = {
   ask?: string;
   /** 观察后组合出的下一步，只用现有的手。 */
   nudge?: AgentStep;
+  /** 挂起原因。只有登录墙/验证墙时，「登录」才算对这张单的回答。 */
+  waitReason?: "login_wall" | "captcha" | "help";
   /**
    * 用户可见的分步计划。`plan` 仍是可执行手册（带着 trip/mission），
    * 卡片和修订走这份，避免把执行载荷盖掉。
@@ -181,6 +183,14 @@ function effectOf(m: ActiveMission): TurnEffect {
   return "run";
 }
 
+/** 挂起单的卡点是不是登录墙/验证墙。看的是这张单自己的原因，不扫用户新句子。 */
+export function missionWaitsOnLogin(mission: ActiveMission): boolean {
+  if (mission.state !== "waiting_human") return false;
+  if (mission.waitReason === "login_wall" || mission.waitReason === "captcha") return true;
+  const ask = mission.ask || "";
+  return /卡在登录页|登录或验证|人机验证|登录后说/.test(ask);
+}
+
 function sayOf(m: ActiveMission): string {
   if (m.state === "blocked") return m.ask || m.goal.ask || "还缺一项才能动手。";
   if (m.state === "propose") return `打算这样做：${m.goal.approach}`;
@@ -222,11 +232,14 @@ export function classifyIngest(
     /把当前页打印|打印这一页|^打印$/.test(t);
   if (open && side) return { kind: "side" };
 
-  // 等人（登录墙/验证/点不动）时，只有对卡点的回答、继续、取消还算这件事
+  // 等人时，只有对卡点的回答、继续、取消还算这件事。
+  // 「登录/登陆」仅在卡点确实是登录墙时才算回答，避免「登陆微博」被吃进旧单。
   if (open && active.state === "waiting_human") {
+    const onLoginWall = missionWaitsOnLogin(active);
+    const loginReply = onLoginWall && /登录|登陆|sign\s?in|login/i.test(t);
+    if (loginReply) return { kind: "continue" };
     const helpAnswer =
       /^(有弹窗|弹层|换入口|换个入口|先登录|要登录|先不管|跳过|不管|是|对|要|需要|否|不是|不用|没有)[。.!！,，]?/.test(t) ||
-      /登录|登陆|sign\s?in|login/i.test(t) ||
       isConfirmText(t);
     if (!helpAnswer && !isCancelText(t) && !/^继续/.test(t)) {
       // 同域长句（如给发布任务补内容）仍归这单按 amend 吸收；跨域才是新题

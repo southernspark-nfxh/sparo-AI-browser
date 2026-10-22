@@ -12,8 +12,8 @@ import { analyzeSlots, extractOrigin, wantsOrigin } from "./slots.js";
 import { recallExperience } from "./experience.js";
 import { extractFacts, isConstraintTurn, type ExtractedFacts } from "./extract.js";
 import type { KnownBlock } from "./types.js";
-import { understand, understandLocal } from "./brain/understand.js";
-import type { PlanStep } from "./brain/understand.js";
+import { legalSiteTarget, understand, understandLocal } from "./brain/understand.js";
+import type { PlanStep, Understanding } from "./brain/understand.js";
 import { understandPrompt } from "./brain/understand.js";
 
 export const DELIVERABLE_IDS = [
@@ -55,6 +55,10 @@ export type AgentGoal = {
   plan?: TripPlan;
   /** 模型在 understand 阶段编的手（mergePlan 把 PlanStep[] 转成 AgentStep[] 后填入）。 */
   handbook?: AgentStep[];
+  /** 模型点名的目标站点主域，如 weibo.com。本地只收合法域名。 */
+  site?: string;
+  /** 要打开的 URL。登录任务优先用模型给的登录页。 */
+  siteUrl?: string;
 };
 
 export type LoopCap =
@@ -415,6 +419,27 @@ export function mergeAnalyze(heuristic: AgentGoal, model: Partial<AgentGoal>): A
   });
 }
 
+function hostsMatch(a: string, b: string): boolean {
+  return a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`);
+}
+
+/** 把模型听出的目标站点挂到工作单上。非法域名丢掉；登录页 URL 优先于裸主域。 */
+function applyHeardSite(goal: AgentGoal, heard: Understanding): AgentGoal {
+  const top = legalSiteTarget(heard.siteUrl || heard.site || "");
+  let host = top?.host;
+  let url = top?.url;
+  for (const step of heard.plan || []) {
+    if (step.cap !== "navigate" || !step.query) continue;
+    const legal = legalSiteTarget(step.query);
+    if (!legal) continue;
+    if (host && !hostsMatch(legal.host, host)) continue;
+    host = host || legal.host;
+    url = legal.url;
+  }
+  if (!host || !url) return goal;
+  return { ...goal, site: host, siteUrl: url };
+}
+
 export function analyzePrompt(
   text: string,
   ctx?: { homeCity?: string; now?: Date; last?: Brief; page?: { url?: string; title?: string } },
@@ -436,14 +461,17 @@ export async function analyzeGoal(
   if (!complete) return heuristic;
   try {
     const heard = await understand(text, ctx, complete);
-    const merged = mergeAnalyze(heuristic, {
+    const merged = applyHeardSite(
+      mergeAnalyze(heuristic, {
       intent: heard.heard,
       deliverables: heard.deliverables
         .filter((id): id is DeliverableId => DELIVERABLE_IDS.includes(id as DeliverableId))
         .map((id) => ({ id, label: LABEL[id], required: true })),
       known: heard.known,
       approach: heard.clauses.map((c) => c.purpose).filter(Boolean).join("；"),
-    });
+    }),
+      heard,
+    );
     // 模型在 understand 阶段编了 plan：转成 AgentStep[] 写入 handbook，
     // compileHands 会优先用 handbook，否则走本地启发式 fallback。
     if (heard.plan && heard.plan.length > 0) {
