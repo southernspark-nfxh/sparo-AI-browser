@@ -58,7 +58,33 @@ export type Understanding = {
   plan?: PlanStep[];
   /** 模型判断的入句分类；本地只校验枚举合法。 */
   ingest?: string;
+  /** 模型点名的目标站点主域，如 weibo.com。只保留通过 URL 校验的值。 */
+  site?: string;
+  /** 要打开的地址。模型给了登录页路径就保留路径。 */
+  siteUrl?: string;
 };
+
+/**
+ * 只校验是不是合法的 http(s) 站点。
+ * 中文站名、没有点的标签、非 http 协议一律丢掉。这里不认站点词典。
+ */
+export function legalSiteTarget(raw: string): { host: string; url: string } | null {
+  const t = String(raw || "").trim();
+  if (!t || /[\s\u4e00-\u9fff]/.test(t)) return null;
+  const withProto = /^https?:\/\//i.test(t) ? t : `https://${t}`;
+  let u: URL;
+  try {
+    u = new URL(withProto);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+  const host = u.hostname.replace(/^www\./i, "").toLowerCase();
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(host)) {
+    return null;
+  }
+  return { host, url: u.toString() };
+}
 
 const CLAUSE_SPLIT = /[,，。；;]|顺便|还有呢?|以及|和附近|然后再/;
 
@@ -205,6 +231,8 @@ export function understandPrompt(
     "规则：",
     "- 「顺便 / 还有 / 以及」是另一件事，不能丢掉。",
     "- 「打开某站，搜…」是打开 + 后半句，不是闲聊。",
+    "- 用户点名了要去的网站时，site 填要打开的完整 https URL，不要写中文站名。没点名就不要编。登录用该站登录页：「登陆微博」→ \"https://weibo.com/login.php\"。办事用该站首页或结果页：「去携程查酒店」→ \"https://www.ctrip.com\"。",
+    "- plan 的第一步必须是 {\"cap\":\"navigate\",\"covers\":[\"answer\"],\"query\":\"与 site 相同的 URL\",\"label\":\"打开该站\"}。不要在别的网页上解释为什么做不了。",
     "- 「值不值得 / 适不适合」是判断调研，要 report。",
     "- 玩几天、日游、自由行：要 itinerary；超过三天且没说别查酒店，加上 stay。",
     "- 展览 / 展会算 sights。能住的 / 附近住算 stay。",
@@ -218,7 +246,7 @@ export function understandPrompt(
     "- plan 可选；要编就列 [{\"cap\":\"...\",\"covers\":[\"stay\"],\"query\":\"...\",\"city\":\"...\",\"site\":\"...\",\"label\":\"...\"}]。cap 只能用：trip_plan / hotel_search / flight_search / train_search / search_read / video_search / read_page / fill_form / mission / feishu / run_skill / reply_draft / print / navigate / act / synthesize。covers 用交付物 id。site 只能用：酒店 ctrip/tuniu/booking/airbnb，机票 ctrip/qunar/kayak/gflights，检索 baidu/bing，火车 12306/ctrip。用户点名的站不要换。",
     "- cap=navigate 时 query 放目标 URL（用户原话点名的 https://... 原样放进去）；cap=search_read 时 query 放搜索词。",
     "交付物 id 只能用：stay food sights itinerary flights trains report page form video answer",
-    '只输出 JSON：{"heard":"一句话听懂了什么","ingest":"new","clauses":[{"text":"原句片段","purpose":"","deliverables":["stay"]}],"deliverables":["stay"],"known":{"cities":[]},"plan":[{"cap":"hotel_search","covers":["stay"],"query":"...","city":"...","site":"ctrip"}]}',
+    '只输出 JSON：{"heard":"一句话听懂了什么","ingest":"new","site":"","clauses":[{"text":"原句片段","purpose":"","deliverables":["stay"]}],"deliverables":["stay"],"known":{"cities":[]},"plan":[{"cap":"hotel_search","covers":["stay"],"query":"...","city":"...","site":"ctrip"}]}',
     `用户原话：${text}`,
   ]
     .filter(Boolean)
@@ -283,6 +311,7 @@ export function parseUnderstandJson(raw: string): Partial<Understanding> | null 
       .filter((s) => s.cap && s.covers.length > 0);
     const ingestRaw = j.ingest ? String(j.ingest) : "";
     const ingest = INGEST_KINDS.has(ingestRaw) ? (ingestRaw as IngestKind) : undefined;
+    const siteLegal = j.site ? legalSiteTarget(String(j.site)) : null;
     return {
       heard: j.heard ? String(j.heard).slice(0, 80) : undefined,
       clauses,
@@ -290,6 +319,8 @@ export function parseUnderstandJson(raw: string): Partial<Understanding> | null 
       known: { ...knownRaw, cities: cities.length ? cities : undefined },
       plan: plan.length ? plan : undefined,
       ingest,
+      site: siteLegal?.host,
+      siteUrl: siteLegal?.url,
     };
   } catch {
     return null;
@@ -329,6 +360,7 @@ export function mergeUnderstanding(
     }
     return out;
   };
+  const pickedSite = legalSiteTarget(model.siteUrl || model.site || "");
   return {
     heard: model.heard || local.heard,
     clauses: model.clauses?.length ? model.clauses : local.clauses,
@@ -336,6 +368,8 @@ export function mergeUnderstanding(
     leftover: local.leftover,
     plan: model.plan?.length ? model.plan : local.plan,
     ingest: model.ingest || local.ingest,
+    site: pickedSite?.host || local.site,
+    siteUrl: pickedSite?.url || local.siteUrl,
     known: {
       ...local.known,
       ...model.known,
