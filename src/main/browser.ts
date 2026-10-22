@@ -46,6 +46,10 @@ import {
   observe,
   reconsiderMission,
   reviseActivePlan,
+  gateSiteDelivery,
+  loginRedirectNote,
+  parseSiteLanding,
+  siteLandingPrompt,
   thoughtFor,
   thoughtForAsync,
   verifyContracts,
@@ -4852,10 +4856,12 @@ export class SparkBrowser {
     try {
       if (await this.applyHostLessons(tabId)) {
         mission.state = "waiting_human";
+        mission.waitReason = "login_wall";
         this.activeMission = mission;
         const msg = this.settings.locale.startsWith("zh")
           ? "这站要你先处理登录或验证，处理好后说「继续」。"
           : "This site needs you first. Finish login or the check, then say continue.";
+        mission.ask = msg;
         this.chatLog.push({ role: "assistant", text: msg });
         this.pushSidebarState();
         return { ok: true, message: msg, data: { loop: "waiting_human", briefKind: goal.kind } };
@@ -4898,7 +4904,7 @@ export class SparkBrowser {
             data: { loop: "waiting_human", briefKind: current.goal.kind },
           };
         }
-        const thought = await (async (): Promise<Thought> => {
+        let thought = await (async (): Promise<Thought> => {
           // 整合整手（行程手册 / 调研 mission）必须先行：reasoner（模型）不能跳过它
           // 先散查——散手机票酒店出不了逐日手册，散手 search_read 只读百度壳页出不了对照报告。
           const needReport = current.goal.deliverables.some((d) => d.required && d.id === "report");
@@ -4919,16 +4925,43 @@ export class SparkBrowser {
                   : "调研整手先行：多路检索 + 深读 + 对照表一次做完。",
             };
           }
+          const pageUrl = this.getUrl(tabId);
           if (this.deepseek) {
             return this.withTimeout(
-              thoughtForAsync(current, (p) => this.deepseek!.completePlain(p)),
+              thoughtForAsync(current, (p) => this.deepseek!.completePlain(p), undefined, pageUrl),
               15000,
-              thoughtFor(current),
+              thoughtFor(current, undefined, pageUrl),
               false,
             );
           }
-          return thoughtFor(current);
+          return thoughtFor(current, undefined, pageUrl);
         })();
+        const siteGate = gateSiteDelivery({
+          goal: current.goal,
+          pageUrl: this.getUrl(tabId),
+          findings: current.findings,
+        });
+        if (siteGate.action === "ask") {
+          current.state = "waiting_human";
+          current.waitReason = "help";
+          current.ask = siteGate.ask;
+          this.activeMission = current;
+          this.chatLog.push({ role: "assistant", text: siteGate.ask });
+          this.pushSidebarState();
+          return {
+            ok: true,
+            message: siteGate.ask,
+            data: { loop: "waiting_human", briefKind: current.goal.kind },
+          };
+        }
+        if (siteGate.action === "navigate" && thought.next?.cap !== "navigate") {
+          thought = {
+            intent: current.goal.intent,
+            deliverables: current.goal.deliverables.map((d) => d.id),
+            next: siteGate.step,
+            why: "目标站点与当前页不符，先打开该站。",
+          };
+        }
         // 调研报告执行层守卫：report mission 整手已【成功】跑过一次，模型再想扫第二遍
         // mission（实测会连扫 3-5 遍同一目标，每遍 ~100s 直到客户端超时）→ 直接收摊去合成。
         // 成功的 mission 自己就是出报告的整手，至少带一份证据；非 mission 的定点补查
@@ -4987,15 +5020,21 @@ export class SparkBrowser {
             return "";
           }
         })();
+        const goalUrl = current.goal.siteUrl || (current.goal.site ? `https://${current.goal.site}/` : "");
+        const onGoalSite =
+          Boolean(goalUrl) && Boolean(wallFinger.host) && sameSite(`https://${wallFinger.host}/`, goalUrl);
         const wallAppliesToStep =
           !["search_read", "navigate", "video_search"].includes(ns.cap) ||
-          (Boolean(stepHost) && Boolean(wallFinger.host) && stepHost === wallFinger.host);
+          (Boolean(stepHost) && Boolean(wallFinger.host) && stepHost === wallFinger.host) ||
+          onGoalSite;
         if (onWall && wallAppliesToStep) {
           current.state = "waiting_human";
+          current.waitReason = isCaptchaWall(wallFinger) ? "captcha" : "login_wall";
           this.activeMission = current;
           const wallQ = isCaptchaWall(wallFinger)
             ? "页面在等人机验证。请你在网页上完成（验证码不要发给我），完成后说「继续」。"
             : `这一步卡在登录页（${wallFinger.host}）。你在窗口里登录后说「继续」，我接着做。`;
+          current.ask = wallQ;
           this.chatLog.push({ role: "assistant", text: wallQ });
           this.pushSidebarState();
           return {
@@ -5007,6 +5046,28 @@ export class SparkBrowser {
         // 连续三步没进展：提前收摊，把已查到的如实汇总，不空烧剩余步骤。
         stall = finding.ok ? 0 : stall + 1;
         if (stall >= 3) {
+          const stalled = gateSiteDelivery({
+            goal: current.goal,
+            pageUrl: this.getUrl(tabId),
+            findings: current.findings,
+          });
+          if (stalled.action === "ask") {
+            current.state = "waiting_human";
+            current.waitReason = "help";
+            current.ask = stalled.ask;
+            this.activeMission = current;
+            this.chatLog.push({ role: "assistant", text: stalled.ask });
+            this.pushSidebarState();
+            return {
+              ok: true,
+              message: stalled.ask,
+              data: { loop: "waiting_human", briefKind: current.goal.kind },
+            };
+          }
+          if (stalled.action === "navigate") {
+            stall = 0;
+            continue;
+          }
           this.chatLog.push({
             role: "assistant",
             text: `连着 ${stall} 步都没进展，我先汇总已查到的。`,
@@ -5036,7 +5097,130 @@ export class SparkBrowser {
 
       current = await this.absorbQueuedPlanEdit(current);
       const live = current.goal;
-      const findings = current.findings;
+      let findings = current.findings;
+      const finalGate = gateSiteDelivery({
+        goal: live,
+        pageUrl: this.getUrl(tabId),
+        findings,
+      });
+      if (finalGate.action === "navigate") {
+        const finding = await this.runLoopStep(finalGate.step, live, tabId);
+        current = observe(current, finding);
+        findings = current.findings;
+        const wallFinger = pageFinger(this.getUrl(tabId), this.getTitle(tabId));
+        const onWall = isLoginWall(wallFinger) || isCaptchaWall(wallFinger);
+        if (onWall) {
+          const wallQ = isCaptchaWall(wallFinger)
+            ? "页面在等人机验证。请你在网页上完成（验证码不要发给我），完成后说「继续」。"
+            : `这一步卡在登录页（${wallFinger.host}）。你在窗口里登录后说「继续」，我接着做。`;
+          current.state = "waiting_human";
+          current.waitReason = isCaptchaWall(wallFinger) ? "captcha" : "login_wall";
+          current.ask = wallQ;
+          this.activeMission = current;
+          this.chatLog.push({ role: "assistant", text: wallQ });
+          this.pushSidebarState();
+          return {
+            ok: true,
+            message: wallQ,
+            data: { loop: "waiting_human", briefKind: live.kind },
+          };
+        }
+      }
+      const afterGate = gateSiteDelivery({
+        goal: live,
+        pageUrl: this.getUrl(tabId),
+        findings,
+      });
+      if (afterGate.action === "ask" || afterGate.action === "navigate") {
+        const ask = afterGate.action === "ask" ? afterGate.ask : `要我先打开 ${live.site} 吗？`;
+        current.state = "waiting_human";
+        current.waitReason = "help";
+        current.ask = ask;
+        this.activeMission = current;
+        this.chatLog.push({ role: "assistant", text: ask });
+        this.pushSidebarState();
+        return {
+          ok: true,
+          message: ask,
+          data: { loop: "waiting_human", briefKind: live.kind },
+        };
+      }
+      if (live.site && this.deepseek) {
+        const here = pageFinger(this.getUrl(tabId), this.getTitle(tabId));
+        const siteUrl = live.siteUrl || `https://${live.site}/`;
+        const onSite = Boolean(here.url) && sameSite(here.url, siteUrl);
+        if (onSite && !isLoginWall(here) && !isCaptchaWall(here)) {
+          const landingRaw = await this.withTimeout(
+            this.deepseek.completePlain(siteLandingPrompt(live, here.url)),
+            15000,
+            "",
+            false,
+          );
+          const landing = parseSiteLanding(landingRaw, live, here.url);
+          if (landing && "navigate" in landing) {
+            const step: AgentStep = {
+              id: `navigate-site-land-${live.site}`,
+              cap: "navigate",
+              label: `打开 ${live.site}`,
+              covers: ["answer"],
+              query: landing.navigate,
+            };
+            const finding = await this.runLoopStep(step, live, tabId);
+            current = observe(current, finding);
+            findings = current.findings;
+            const landed = pageFinger(this.getUrl(tabId), this.getTitle(tabId));
+            if (isLoginWall(landed) || isCaptchaWall(landed)) {
+              const wallQ = isCaptchaWall(landed)
+                ? "页面在等人机验证。请你在网页上完成（验证码不要发给我），完成后说「继续」。"
+                : `这一步卡在登录页（${landed.host}）。你在窗口里登录后说「继续」，我接着做。`;
+              current.state = "waiting_human";
+              current.waitReason = isCaptchaWall(landed) ? "captcha" : "login_wall";
+              current.ask = wallQ;
+              this.activeMission = current;
+              this.chatLog.push({ role: "assistant", text: wallQ });
+              this.pushSidebarState();
+              return {
+                ok: true,
+                message: wallQ,
+                data: { loop: "waiting_human", briefKind: live.kind },
+              };
+            }
+          }
+          const afterLand = pageFinger(this.getUrl(tabId), this.getTitle(tabId));
+          if (!isLoginWall(afterLand) && !isCaptchaWall(afterLand) && !(landing && "done" in landing)) {
+            const redirected = loginRedirectNote(live, findings);
+            const ask = redirected || `要我先打开 ${live.site} 登录页吗？`;
+            current.state = "waiting_human";
+            current.waitReason = redirected ? "login_wall" : "help";
+            current.ask = ask;
+            this.activeMission = current;
+            this.chatLog.push({ role: "assistant", text: ask });
+            this.pushSidebarState();
+            return {
+              ok: true,
+              message: ask,
+              data: { loop: "waiting_human", briefKind: live.kind },
+            };
+          }
+        }
+        const parked = pageFinger(this.getUrl(tabId), this.getTitle(tabId));
+        if ((isLoginWall(parked) || isCaptchaWall(parked)) && sameSite(parked.url || siteUrl, siteUrl)) {
+          const wallQ = isCaptchaWall(parked)
+            ? "页面在等人机验证。请你在网页上完成（验证码不要发给我），完成后说「继续」。"
+            : `这一步卡在登录页（${parked.host}）。你在窗口里登录后说「继续」，我接着做。`;
+          current.state = "waiting_human";
+          current.waitReason = isCaptchaWall(parked) ? "captcha" : "login_wall";
+          current.ask = wallQ;
+          this.activeMission = current;
+          this.chatLog.push({ role: "assistant", text: wallQ });
+          this.pushSidebarState();
+          return {
+            ok: true,
+            message: wallQ,
+            data: { loop: "waiting_human", briefKind: live.kind },
+          };
+        }
+      }
       this.chatLog.push({ role: "assistant", text: "对照目标汇总…" });
       this.pushSidebarState();
       const readyDoc = [...findings].reverse().find((f) => f.doc)?.doc;
@@ -5062,9 +5246,10 @@ export class SparkBrowser {
             )
           ).trim() || synthesized;
       }
+      // 点名了站点的任务，交付是打开那个站（登录则停在登录墙），不是按常识写一篇说明。
       // 闲聊/写作类任务要的是成文内容，不是「名称/链接/未知」的检索清单：
       // 直接让模型按用户原话作答，查到的素材只当参考。
-      if (this.deepseek && live.kind === "chat") {
+      if (this.deepseek && live.kind === "chat" && !live.site) {
         const material = findings
           .filter((f) => f.ok && String(f.text || "").trim().length > 20)
           .map((f) => String(f.text).trim())
