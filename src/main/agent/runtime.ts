@@ -31,6 +31,15 @@ import {
   type AgentStep,
   type StepFinding,
 } from "./loop.js";
+import {
+  applyParsedRevision,
+  parsePlanJson,
+  parsePlanRevision,
+  planFromHeuristic,
+  planPrompt,
+  planRevisionPrompt,
+  type Plan,
+} from "./kernel/plan.js";
 
 export type ActiveMission = {
   id: string;
@@ -43,6 +52,11 @@ export type ActiveMission = {
   ask?: string;
   /** 观察后组合出的下一步，只用现有的手。 */
   nudge?: AgentStep;
+  /**
+   * 用户可见的分步计划。`plan` 仍是可执行手册（带着 trip/mission），
+   * 卡片和修订走这份，避免把执行载荷盖掉。
+   */
+  brainPlan?: Plan;
 };
 
 export type TurnEffect = "ask" | "propose" | "run" | "chat" | "cancel" | "pause" | "resume";
@@ -354,7 +368,92 @@ function acceptProposal(active: ActiveMission, homeCity?: string, now: Date = ne
   };
 }
 
+function withHeuristicPlan<T extends ActiveMission | null | undefined>(mission: T): T {
+  if (!mission || mission.state !== "running" || mission.brainPlan?.steps.length) return mission;
+  return { ...mission, brainPlan: planFromHeuristic(mission.goal) };
+}
+
+function sealHeuristic(result: TurnResult): TurnResult {
+  return {
+    ...result,
+    mission: withHeuristicPlan(result.mission),
+    side: result.side ? withHeuristicPlan(result.side) : result.side,
+  };
+}
+
+async function withModelPlan<T extends ActiveMission | null | undefined>(
+  mission: T,
+  complete?: (prompt: string) => Promise<string>,
+): Promise<T> {
+  if (!mission || mission.state !== "running" || mission.brainPlan?.steps.length) return mission;
+  if (complete) {
+    try {
+      const parsed = parsePlanJson(await complete(planPrompt(mission.goal)));
+      if (parsed?.steps.length) return { ...mission, brainPlan: parsed };
+    } catch {
+      /* 断网或超时：下面用本地兜底，任务不卡死 */
+    }
+  }
+  return withHeuristicPlan(mission);
+}
+
+async function attachPlan(
+  result: TurnResult,
+  complete?: (prompt: string) => Promise<string>,
+): Promise<TurnResult> {
+  return {
+    ...result,
+    mission: await withModelPlan(result.mission, complete),
+    side: result.side ? await withModelPlan(result.side, complete) : result.side,
+  };
+}
+
+function wantsPlanRevisionAsk(text: string, ingest: Ingest["kind"]): boolean {
+  if (
+    ingest === "protocol_pause" ||
+    ingest === "protocol_resume" ||
+    ingest === "cancel" ||
+    ingest === "confirm" ||
+    ingest === "slot_fill" ||
+    ingest === "side"
+  ) {
+    return false;
+  }
+  const t = text.trim();
+  if (/^继续[吧啊]?$/.test(t) || isConfusionText(t) || isConfirmText(t)) return false;
+  return true;
+}
+
+/** 模型判断这句话是不是在改计划。不是、或模型失败，就返回 null，调用方照旧走。 */
+export async function reviseActivePlan(
+  text: string,
+  mission: ActiveMission,
+  complete: (prompt: string) => Promise<string>,
+): Promise<ActiveMission | null> {
+  if (!mission.brainPlan?.steps.length) return null;
+  try {
+    const parsed = parsePlanRevision(await complete(planRevisionPrompt(mission.goal, mission.brainPlan, text)));
+    if (!parsed || !parsed.revise) return null;
+    const brainPlan = applyParsedRevision(mission.brainPlan, parsed);
+    if (brainPlan === mission.brainPlan) return null;
+    const waiting = mission.state === "waiting_human";
+    return {
+      ...mission,
+      brainPlan,
+      state: waiting ? "waiting_human" : "running",
+      ask: waiting ? mission.ask : undefined,
+      blockedSlot: waiting ? mission.blockedSlot : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function applyTurn(text: string, ctx: TurnCtx = {}): TurnResult {
+  return sealHeuristic(applyTurnCore(text, ctx));
+}
+
+function applyTurnCore(text: string, ctx: TurnCtx = {}): TurnResult {
   const ingest = classifyIngest(text, ctx.active, ctx.last, { paused: ctx.paused });
 
   if (ingest.kind === "protocol_pause") {
@@ -493,8 +592,27 @@ export async function applyTurnAsync(
   configDir?: string,
 ): Promise<TurnResult> {
   const ingest = classifyIngest(text, ctx.active, ctx.last, { paused: ctx.paused });
+  const host =
+    ctx.active &&
+    ctx.active.brainPlan?.steps.length &&
+    (ctx.active.state === "running" || ctx.active.state === "waiting_human")
+      ? ctx.active
+      : null;
+  if (complete && host && wantsPlanRevisionAsk(text, ingest.kind)) {
+    const revised = await reviseActivePlan(text, host, complete);
+    if (revised) {
+      const why = revised.brainPlan?.revisedFrom || "按你的话改了计划";
+      return {
+        effect: revised.state === "waiting_human" ? "ask" : "run",
+        mission: revised,
+        last: ctx.last,
+        say: `计划已改：${why}。接着按新计划做。`,
+        ingest: "amend",
+      };
+    }
+  }
   const needModel = ingest.kind === "new" || ingest.kind === "amend";
-  if (!complete || !needModel) return applyTurn(text, ctx);
+  if (!complete || !needModel) return attachPlan(applyTurnCore(text, ctx), complete);
 
   const inherit = ingest.kind === "amend"
     ? ctx.active && ctx.active.state !== "done"
@@ -514,7 +632,10 @@ export async function applyTurnAsync(
   );
   const opened = openFromGoal(goal, ctx.homeCity);
   if (inherit && opened.state === "running") opened.id = inherit.id;
-  return { effect: effectOf(opened), mission: opened, last: ctx.last, say: sayOf(opened), ingest: ingest.kind };
+  return attachPlan(
+    { effect: effectOf(opened), mission: opened, last: ctx.last, say: sayOf(opened), ingest: ingest.kind },
+    complete,
+  );
 }
 
 export function missionBriefKind(m: ActiveMission | null | undefined): string | undefined {

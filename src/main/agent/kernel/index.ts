@@ -2,7 +2,30 @@
  * Sparo Agent 内核：入句 → 工作单 → 下一步 → 观察 → 契约验收。
  * 浏览器只执行手，不在这里做决策。
  */
-export { applyTurn, applyTurnAsync, classifyIngest, type ActiveMission, type TurnCtx, type TurnResult } from "../runtime.js";
+export {
+  applyTurn,
+  applyTurnAsync,
+  classifyIngest,
+  reviseActivePlan,
+  type ActiveMission,
+  type TurnCtx,
+  type TurnResult,
+} from "../runtime.js";
+export {
+  appendPlanAlternative,
+  applyParsedRevision,
+  closePlan,
+  focusPlanOnStep,
+  notePlanStep,
+  nudgeFromPlan,
+  parsePlanJson,
+  parsePlanRevision,
+  planFromHeuristic,
+  planPrompt,
+  planRevisionPrompt,
+  type Plan,
+  type PlanStep,
+} from "./plan.js";
 export {
   nextThought,
   nextThoughtAsync,
@@ -30,6 +53,7 @@ export {
 import type { ActiveMission } from "../runtime.js";
 import type { StepFinding } from "../loop.js";
 import { nextThought, nextThoughtAsync, type Thought } from "./reasoner.js";
+import { notePlanStep } from "./plan.js";
 import { verifyContracts } from "./verify.js";
 
 function thoughtInput(mission: ActiveMission, synthesized?: string) {
@@ -60,6 +84,7 @@ export function observe(mission: ActiveMission, finding: StepFinding): ActiveMis
   return {
     ...mission,
     findings: [...mission.findings, finding],
+    brainPlan: mission.brainPlan ? notePlanStep(mission.brainPlan, finding) : mission.brainPlan,
     state: mission.state === "waiting_human" ? "running" : mission.state,
   };
 }
