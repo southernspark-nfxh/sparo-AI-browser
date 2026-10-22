@@ -42,11 +42,11 @@
 
 开发：`npx electron-vite dev -- --remote-debugging-port=9333`。主进程不热更，改 `browser.ts` / `mission.ts` 后要重启。桌面安装包不会自动吃到源码，测布局用开发窗。
 
-## 网页必须铺满「页面洞」
+## 网页必须铺满「页面洞」，也不能盖住顶栏
 
-左上角只剩汉堡菜单 / 「Micros」半截，是 `WebContentsView` 没铺满 `#pageHole`（Windows 标题栏叠层 + 先 load 后排版）。  
-`shell.html` 用 `ResizeObserver` 上报洞的位置 → `spark:page-hole` → `setPageHoleBounds`。  
-新建/唤醒标签：先 `layout()` 再 `loadURL`。后台标签移到 `x: -20000`，不要叠在左上角。最大化也要重排。
+页面视图是盖在壳层上面的 `WebContentsView`。洞太窄时，左上角会露出半截导航；洞被拉成整窗时，标签栏、地址栏和侧栏会被盖住，只剩系统按钮。
+
+`shell.html` 用 `ResizeObserver` 上报 `#pageHole` → `spark:page-hole` → `setPageHoleBounds`。视图的 y 不低于顶栏（76px），宽度是窗口宽减去侧栏。新建标签先写成页面洞再挂上。加载之后，以及视图尺寸变化时，若发现它盖住顶栏或侧栏，按页面洞拉回（`page-bounds.ts`）。后台标签移到 `x: -20000`。最大化也要重排。
 
 ## 侧栏一句话怎么走
 

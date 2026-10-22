@@ -37,6 +37,7 @@ export {
   mismatchWrap,
   forcedSiteNavigate,
   loginRedirectNote,
+  openSiteIsTheJob,
   parseSiteLanding,
   siteLandingPrompt,
   type Thought,

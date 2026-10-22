@@ -1,12 +1,21 @@
 # Sparo 现行产品任务书
 
 > 持续更新。与原版 **同一份正文**，便于两边对照。上一版见 [PRODUCT-TASKBOOK-20260811.md](./PRODUCT-TASKBOOK-20260811.md)。  
-> 版本：**v0.3.5 · 2026-10-15**（对外包 **0.1.18**）  
-> 状态：**进行中**（云订阅 M1 代码已落地并人测过登录/付款；上架未完；飞书网页已做；侧栏大脑 0.1.18 已让模型编手）  
+> 版本：**v0.3.6 · 2026-10-22**（对外包仍 **0.1.18**，本轮未改版本号）  
+> 状态：**进行中**（云订阅 M1 代码已落地并人测过登录/付款；上架未完；飞书网页已做；侧栏大脑 0.1.18 已让模型编手；10-22 能力升级与界面升级已进代码）  
 > 产品文案仍以 [PRODUCT.md](./PRODUCT.md) 为准，不要把任务书当商店上架稿。  
 > 先读：[ARCHITECTURE.md](./ARCHITECTURE.md) · [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) · [CHANGELOG.md](../CHANGELOG.md) 0.1.18 · 根目录 [AGENTS.md](../AGENTS.md)
 >
 > **大脑进度（0.1.18）：** 听整句、站点表换站、模型编 `handbook` / 写下一步已进代码。`absorb`（页上价格对约束）未开工。9 月交接稿见 [TRAE-PROMPT-AGENT-BRAIN.md](./TRAE-PROMPT-AGENT-BRAIN.md)，以 changelog 和测试为准。
+
+## 2026-10-22 已落地
+
+能力升级任务书：[sparo-agent-upgrade/PLAN.md](../sparo-agent-upgrade/PLAN.md)。界面升级任务书：[sparo-uiux-qa/tasks/00-修改总计划.md](../sparo-uiux-qa/tasks/00-修改总计划.md)。对外变更见 [CHANGELOG.md](../CHANGELOG.md) 未发布各节。
+
+- 工作单可断点续跑；任务绑标签；前后台任务池；最小化仍跑；做完休眠并复用报告标签；任务条只留未完成的事
+- 浅色 Studio 为默认，月亮图标切夜间 Glacier；标签多开时顶栏高度不变
+- 连续加标签或打开阅读页时，网页视图不再盖住顶栏和侧栏
+- 只说打开某个站、没有总结或搜索后半句时，站点打开即收工，不把首页正文写成阅读页
 
 两条产品线不要混评：
 
@@ -456,6 +465,8 @@ RAG是什么 打开百度百科和知乎做成笔记
 - [x] 侧栏连发多条时不要黏住上一句回复（`chatQueue`，2026-09-02）
 - [ ] 比价手册里尽量带淘宝/京东商品链接（不打开商城页）
 - [x] 网页视图铺满页面洞，左上角不再露半截导航（2026-09-03）
+- [x] 连续加标签 / 阅读页不再把网页视图拉成整窗盖住顶栏和侧栏（2026-10-22）
+- [x] 只说打开某站时，站点打开即完成，不把首页正文写成阅读页（2026-10-22）
 - [x] 飞书网页：打开消息、写聊天/日志草稿，不代点发送（2026-09-04）
 - [x] 云订阅 M1 代码：sparo-pay + 商店版双模式 / 配额 / 文案（2026-09-05）
 - [x] 第一次打开侧栏用法引导：试用 / 自己的 Key / 用尽去官网（2026-09-06）
@@ -484,7 +495,7 @@ RAG是什么 打开百度百科和知乎做成笔记
 2. 本仓库是公开产品：3921 / `%APPDATA%\sparo-store`。不要把云订阅移植到其它产品线，也不要弹登录。  
 3. 出行/任务可与内部原版对齐。**云订阅只改本仓库 + 独立 sparo-pay。** 不要改 `listings/`。  
 4. 侧栏路径：`#chatInput` + 发送。出行改 `travel.ts` URL，不要让模型点热门城市。  
-5. 页面空白/左上角残导航：先查 `setPageHoleBounds` / `#pageHole`，不要当站点 404 就结束。  
+5. 页面空白、左上角残导航，或整窗只剩网页和系统按钮：先查 `setPageHoleBounds` / `#pageHole` / `page-bounds.ts`，不要当站点 404 就结束。  
 6. 改完：`npx vitest run`。代理服务另跑它自己的测试。重启开发窗。测功能不要用旧安装包。  
 7. **每次做完：改日期、§5 日志、§6 QA、§8 勾选，并同步 CHANGELOG / ARCHITECTURE。**
 
@@ -497,6 +508,8 @@ RAG是什么 打开百度百科和知乎做成笔记
 | 根目录 [AGENTS.md](../AGENTS.md) | 30 秒上手、两条线、禁区 |
 | [INSTALL.md](./INSTALL.md) | 官网直装 / 复制 GitHub 链接给 AI |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | 模块、侧栏闭环、页面洞 |
+| [sparo-agent-upgrade/PLAN.md](../sparo-agent-upgrade/PLAN.md) | 2026-10-22 能力升级任务书 |
+| [sparo-uiux-qa/tasks/00-修改总计划.md](../sparo-uiux-qa/tasks/00-修改总计划.md) | 界面升级任务书 |
 | 本文 `PRODUCT-TASKBOOK.md` | 现行任务、日志、QA、待办 |
 | [CHANGELOG.md](../CHANGELOG.md) | 对外变更（现 0.1.18） |
 | [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) | 云订阅 M1 交接（计量、目录、验收） |

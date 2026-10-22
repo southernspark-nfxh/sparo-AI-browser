@@ -145,6 +145,27 @@ export function gateSiteDelivery(opts: {
   return { action: "ask", ask };
 }
 
+/**
+ * 原话只是打开一个点名的站，没有总结、搜索、对比这类后半句。
+ * 这种单子的交付是站点本身，不是把首页正文写成阅读页。
+ */
+export function openSiteIsTheJob(goal: { raw: string; site?: string }): boolean {
+  if (!goal.site) return false;
+  const raw = String(goal.raw || "").trim();
+  if (!raw) return false;
+  if (!/(?:打开|前往|进入)/.test(raw) && !/(?:^|[\s，,])去/.test(raw)) return false;
+  const rest = raw
+    .replace(/https?:\/\/\S+/gi, "")
+    .replace(/(?:请)?(?:帮我)?(?:打开|前往|进入)/g, "")
+    .replace(/(?:^|[\s，,])去/g, "")
+    .replace(/[\s，,。.!！？?、]/g, "");
+  if (!rest) return true;
+  if (/总结|摘要|提炼|概括|归纳|对比|比价|调研|评测|搜索|搜|查|看|推荐|热搜|填|发|登录|登陆|订|买|下载|注册/.test(rest)) {
+    return false;
+  }
+  return true;
+}
+
 /** 登录地址已经打开过、站点却跳进站内时，交这一句并收工。换账号是下一句新任务。 */
 export function loginRedirectNote(goal: AgentGoal, findings: StepFinding[]): string | undefined {
   const tried = findings.some(

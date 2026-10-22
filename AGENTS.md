@@ -16,7 +16,7 @@ Tagline: *会动手的 AI 浏览器 — 发送前你确认。*
 | [docs/AI-LEARNING.md](./docs/AI-LEARNING.md) | 卡住就问、经验只留本机 |
 | [docs/SKILL-COMMUNITY-M2.md](./docs/SKILL-COMMUNITY-M2.md) | 技能社区（**未开工**，M1 人测过完再开） |
 | [docs/SKILL-FORMAT.md](./docs/SKILL-FORMAT.md) | 技能包命名与字段（本机 `run_skill`，以后才分享） |
-| [docs/PRODUCT-TASKBOOK.md](./docs/PRODUCT-TASKBOOK.md) | 现行任务、QA、待办（v0.3.5） |
+| [docs/PRODUCT-TASKBOOK.md](./docs/PRODUCT-TASKBOOK.md) | 现行任务、QA、待办（v0.3.6） |
 | [CHANGELOG.md](./CHANGELOG.md) | 对外变更（现 0.1.18） |
 | [docs/PRODUCT.md](./docs/PRODUCT.md) | 商店定位，不是任务书 |
 
