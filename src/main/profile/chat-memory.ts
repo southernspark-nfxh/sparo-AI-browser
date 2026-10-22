@@ -5,6 +5,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { normalizeQuotes, type SparoQuote } from "../agent/quotes.js";
 
 export type ChatDoc = { title: string; path: string; kind?: string };
 
@@ -13,6 +14,7 @@ export type ChatTurn = {
   text: string;
   doc?: ChatDoc;
   images?: string[];
+  quotes?: SparoQuote[];
   /** Cortex 停问 / 出思路，侧栏出按钮。 */
   cortex?: { mode: "ask" | "propose" | "loop"; need?: string; approach?: string };
 };
@@ -40,15 +42,16 @@ export function loadChatMemory(configDir: string): ChatTurn[] {
       .map((t) => {
         const { images: _imgs, ...base } = t as ChatTurn;
         const doc = base.doc;
-        if (
-          doc &&
-          typeof doc.title === "string" &&
-          typeof doc.path === "string"
-        ) {
-          return base;
+        const kept =
+          doc && typeof doc.title === "string" && typeof doc.path === "string"
+            ? base
+            : (({ doc: _drop, ...rest }) => rest)(base);
+        const quotes = normalizeQuotes(kept.quotes);
+        if (!quotes.length) {
+          const { quotes: _dropQuotes, ...rest } = kept;
+          return rest;
         }
-        const { doc: _drop, ...rest } = base;
-        return rest;
+        return { ...kept, quotes };
       })
       .slice(-CAP);
   } catch {
