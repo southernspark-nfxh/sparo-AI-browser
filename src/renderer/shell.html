@@ -1169,7 +1169,46 @@ body.side-collapsed .dock { display: none; }
   padding: 0;
   flex: none;
 }
-.go-row { display: flex; justify-content: flex-end; gap: 8px; align-items: center; }
+.go-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 6px;
+}
+.go-row .icon-btn.ghost {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+}
+.go-row #chatSend.send {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--grad);
+  border: 0;
+  color: var(--accent-ink);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--glow);
+  transition: transform .12s ease, box-shadow .12s ease, filter .12s ease;
+}
+.go-row #chatSend.send:hover {
+  filter: brightness(1.08);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 34%, transparent);
+}
+.go-row #chatSend.send:active { transform: translateY(1px); }
+.go-row #chatSend.send:disabled {
+  background: var(--line);
+  color: var(--muted);
+  box-shadow: none;
+  cursor: not-allowed;
+  opacity: .55;
+  filter: none;
+}
 .note, #chatHint {
   margin-top: 8px;
   font-size: var(--fs-12);
@@ -1541,18 +1580,18 @@ body.side-collapsed .dock { display: none; }
 }
 .ic.fill, .icon-btn.fill .ic { fill: currentColor; stroke: none; }
 
-.primary, .save, .ok, #chatSend, .go, .reply-one {
+.primary, .save, .ok, .go, .reply-one {
   background: var(--grad);
   border: 1px solid transparent;
   color: var(--accent-ink);
   font-weight: var(--fw-sb);
   box-shadow: var(--glow);
 }
-.primary:hover, .save:hover, .ok:hover, #chatSend:hover, .go:hover, .reply-one:hover:not(:disabled) {
+.primary:hover, .save:hover, .ok:hover, .go:hover, .reply-one:hover:not(:disabled) {
   filter: brightness(1.06);
   box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 34%, transparent);
 }
-.primary:active, .save:active, .ok:active, #chatSend:active, .go:active {
+.primary:active, .save:active, .ok:active, .go:active {
   transform: translateY(1px);
 }
 .save, .ok, .primary, .go, .reply-one, .gear, .done,
@@ -1873,7 +1912,14 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
             <div id="imagePreviews" class="img-previews" style="display:none"></div>
             <div id="quoteStrip" class="quote-strip" style="display:none"></div>
             <textarea id="chatInput" data-i18n-placeholder="chat.placeholder" placeholder="说要做什么，也可粘贴截图、拖入文件或直接给文件路径"></textarea>
-            <div class="go-row"><button type="button" class="ghost" id="chatFile" data-i18n="chat.file" title="选一个本地文件，或直接把文件拖进来">文件</button><button type="button" id="chatSend" data-i18n="chat.send">让它动手</button></div>
+            <div class="go-row">
+              <button type="button" class="icon-btn ghost" id="chatFile" data-i18n-title="chat.file" title="选一个本地文件，或直接把文件拖进来" aria-label="文件">
+                <svg class="ic"><use href="#i-clip"/></svg>
+              </button>
+              <button type="button" class="send" id="chatSend" data-i18n-title="chat.send" title="发送 (Ctrl+Enter)" aria-label="发送" disabled>
+                <svg class="ic"><use href="#i-send"/></svg>
+              </button>
+            </div>
           </div>
           <div class="note" id="chatHint" data-i18n="chat.hintDefault">网页上的发送和提交，始终由你确认</div>
           <div class="quick-status" id="csStatus" style="display:none"></div>
@@ -3261,6 +3307,19 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           setMoreOpen(false);
         }
       });
+      let syncSendButton = () => {
+        const send = document.getElementById("chatSend");
+        const input = document.getElementById("chatInput");
+        if (!send) return;
+        if (send.dataset.sending === "1") {
+          send.disabled = true;
+          return;
+        }
+        const locked = Boolean(input && input.disabled);
+        const text = input ? input.value.trim() : "";
+        send.disabled = locked || !text;
+      };
+
       function renderUserChip(ds, cloud, profile) {
         const loggedIn = Boolean(cloud && cloud.loggedIn);
         const email = (cloud && (cloud.email || cloud.userEmail)) || "";
@@ -3303,14 +3362,13 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         }
         const lock = document.getElementById("composerLock");
         const input = document.getElementById("chatInput");
-        const send = document.getElementById("chatSend");
         const composer = document.querySelector(".composer");
         if (lock) lock.classList.toggle("hide", ready);
         if (composer) composer.classList.toggle("is-locked", !ready);
         const side = document.querySelector(".sidebar");
         if (side) side.classList.toggle("need-setup", !ready);
         if (input) input.disabled = !ready;
-        if (send) send.disabled = !ready;
+        syncSendButton();
         const coach = document.getElementById("setupCoach");
         if (coach) coach.classList.toggle("hide", ready || welcomeStep === "byok" || welcomeStep === "cloud");
       }
@@ -3894,6 +3952,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         let pendingImages = [];
         function renderPendingImages() {
           const box = document.getElementById("imagePreviews");
+          syncSendButton();
           if (!box) return;
           box.innerHTML = "";
           if (!pendingImages.length) {
@@ -3934,8 +3993,22 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         const QUOTE_TEXT_LIMIT = 4000;
         const QUOTE_COUNT_LIMIT = 5;
         let pendingQuotes = [];
+        syncSendButton = () => {
+          const send = document.getElementById("chatSend");
+          const input = document.getElementById("chatInput");
+          if (!send) return;
+          if (send.dataset.sending === "1") {
+            send.disabled = true;
+            return;
+          }
+          const locked = Boolean(input && input.disabled);
+          const text = input ? input.value.trim() : "";
+          send.disabled = locked || !(text || pendingImages.length || pendingQuotes.length);
+        };
+        syncSendButton();
         function renderQuoteStrip() {
           const strip = document.getElementById("quoteStrip");
+          syncSendButton();
           if (!strip) return;
           strip.innerHTML = "";
           if (!pendingQuotes.length) {
@@ -4034,8 +4107,8 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           renderPendingImages();
           renderQuoteStrip();
           const sendBtn = document.getElementById("chatSend");
+          sendBtn.dataset.sending = "1";
           sendBtn.disabled = true;
-          sendBtn.textContent = "…";
           const outgoing = text || (images.length ? "请看附图，用中文说明。" : "");
           try {
             await window.sparkShell.chat(outgoing, images, quotes);
@@ -4045,8 +4118,8 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
             renderQuoteStrip();
             toast(t("toast.fail"));
           } finally {
-            sendBtn.disabled = false;
-            sendBtn.textContent = t("chat.send");
+            delete sendBtn.dataset.sending;
+            syncSendButton();
             input.focus();
             scrollChatToEnd();
             scrollDockIntoView();
@@ -4055,6 +4128,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         const composer = document.querySelector(".composer");
         const chatBox = document.getElementById("chatInput");
         if (chatBox) {
+          chatBox.addEventListener("input", syncSendButton);
           chatBox.addEventListener("paste", (e) => {
             const items = e.clipboardData && e.clipboardData.items;
             if (!items) return;
