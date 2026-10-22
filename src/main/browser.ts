@@ -16,6 +16,9 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync, unl
 import { join, resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomBytes } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { laneForText, type TaskLane } from "./agent/task-class.js";
+import { TaskPool, type PoolTask } from "./agent/task-pool.js";
 import type {
   ClickConfirm,
   FillConfirm,
@@ -530,6 +533,24 @@ export function formatTabMemoryBoard(
   });
 }
 
+type TaskScope = {
+  tabId: string;
+  lane: TaskLane;
+  mission: ActiveMission | undefined;
+  lastMission: ActiveMission | undefined;
+  helpAsk: HelpAsk | null;
+  cloudTaskId: string | undefined;
+};
+
+type BackgroundJob = {
+  id: string;
+  text: string;
+  images?: string[];
+  quotes?: SparoQuote[];
+  title: string;
+  mission?: ActiveMission;
+};
+
 export class SparkBrowser {
   readonly window: BrowserWindow;
   /** @deprecated use active tab via pageView getter */
@@ -546,12 +567,18 @@ export class SparkBrowser {
   /** 启动时回放出来的未完成单。只问一次，不挡后面的新句子。 */
   private pendingRecovery: RestoredMission | null = null;
   private lastReaderSender: WebContents | null = null;
-  private activeMission: ActiveMission | undefined;
-  private lastMission: ActiveMission | undefined;
-  private chatRunning = false;
-  /** 模型工具回调没有 tab 参数。任务入口写入，缺省仍是激活标签。T06 并行时按任务取，不要再加一条队列。 */
-  private agentTabId = "";
+  /** activeMission / lastMission 按任务放进 AsyncLocalStorage。 */
   private chatQueue: Array<{ text: string; images?: string[]; quotes?: SparoQuote[] }> = [];
+  private backgroundQueue: BackgroundJob[] = [];
+  private waitingMissions = new Map<string, ActiveMission>();
+  /** 后台并发上限 3，写死在 TASK_POOL_LIMIT。 */
+  private taskPool = new TaskPool();
+  private taskScope = new AsyncLocalStorage<TaskScope>();
+  private fallbackAgentTabId = "";
+  private fallbackMission: ActiveMission | undefined;
+  private fallbackLastMission: ActiveMission | undefined;
+  private fallbackHelpAsk: HelpAsk | null = null;
+  private fallbackCloudTaskId: string | undefined;
   /** 同一句排队话只问一次模型是不是在改计划。 */
   private planEditSeen = new Set<string>();
   private ipcReady = false;
@@ -564,7 +591,6 @@ export class SparkBrowser {
   private settings!: SparkSettings;
   private deepseek: DeepSeekAgentProvider | null = null;
   private llmRuntime: "byok" | "cloud" = "byok";
-  private cloudTaskId: string | undefined;
   private cloudQuota: QuotaSnap | null = null;
   private cloudPlans: CloudPlanPublic[] = [];
   private lastCloudRefuse = "";
@@ -581,9 +607,117 @@ export class SparkBrowser {
   private lastClosed: { url: string; envId?: string } | null = null;
   private lastDownloadPath = "";
   private downloadSessions = new WeakSet<Electron.Session>();
-  private helpAsk: HelpAsk | null = null;
   private recentLearned: ObservedAction[] = [];
   private learnedTold = new Set<string>();
+
+  /**
+   * 模型工具回调没有 tab 参数。写在当前异步任务上，没有任务时仍是激活标签。
+   * chatRunning 留成计算属性，任务池忙时为 true。
+   */
+  private get agentTabId(): string {
+    const scope = this.taskStore();
+    if (scope) return scope.tabId;
+    return this.fallbackAgentTabId || "";
+  }
+
+  private set agentTabId(id: string) {
+    const scope = this.taskStore();
+    if (scope) scope.tabId = id;
+    else this.fallbackAgentTabId = id;
+  }
+
+  private get activeMission(): ActiveMission | undefined {
+    const scope = this.taskStore();
+    if (scope) return scope.mission;
+    return this.fallbackMission;
+  }
+
+  private set activeMission(mission: ActiveMission | undefined) {
+    const scope = this.taskStore();
+    if (scope) scope.mission = mission;
+    else this.fallbackMission = mission;
+  }
+
+  private get lastMission(): ActiveMission | undefined {
+    const scope = this.taskStore();
+    if (scope) return scope.lastMission;
+    return this.fallbackLastMission;
+  }
+
+  private set lastMission(mission: ActiveMission | undefined) {
+    const scope = this.taskStore();
+    if (scope) scope.lastMission = mission;
+    else this.fallbackLastMission = mission;
+  }
+
+  private get helpAsk(): HelpAsk | null {
+    const scope = this.taskStore();
+    if (scope) return scope.helpAsk;
+    return this.fallbackHelpAsk;
+  }
+
+  private set helpAsk(ask: HelpAsk | null) {
+    const scope = this.taskStore();
+    if (scope) scope.helpAsk = ask;
+    else this.fallbackHelpAsk = ask;
+  }
+
+  private get cloudTaskId(): string | undefined {
+    const scope = this.taskStore();
+    if (scope) return scope.cloudTaskId;
+    return this.fallbackCloudTaskId;
+  }
+
+  private set cloudTaskId(id: string | undefined) {
+    const scope = this.taskStore();
+    if (scope) scope.cloudTaskId = id;
+    else this.fallbackCloudTaskId = id;
+  }
+
+  private chatRunningFlag = false;
+
+  private get chatRunning(): boolean {
+    const pool = this.taskPool;
+    if (pool && (pool.foregroundBusy || pool.size > 0)) return true;
+    return this.chatRunningFlag;
+  }
+
+  private set chatRunning(running: boolean) {
+    this.chatRunningFlag = running;
+  }
+
+  private taskStore(): TaskScope | undefined {
+    const als = this.taskScope;
+    if (!als || typeof als.getStore !== "function") return undefined;
+    return als.getStore();
+  }
+
+  private foregroundMission(): ActiveMission | undefined {
+    const scope = this.taskStore();
+    if (scope?.lane === "background") return this.fallbackMission;
+    return this.activeMission;
+  }
+
+  private foregroundLastMission(): ActiveMission | undefined {
+    const scope = this.taskStore();
+    if (scope?.lane === "background") return this.fallbackLastMission;
+    return this.lastMission;
+  }
+
+  private sidebarHelpAsk(): HelpAsk | null {
+    const scope = this.taskStore();
+    if (scope?.lane === "background") return this.fallbackHelpAsk;
+    return this.helpAsk;
+  }
+
+  private noteTaskStep(step: string): void {
+    const scope = this.taskStore();
+    const pool = this.taskPool;
+    if (!scope || !pool) return;
+    const task = pool.tasks.find((item) => item.tabId === scope.tabId && item.state === "running");
+    if (!task) return;
+    pool.setStep(task.id, step);
+  }
 
   /** Active page view — keeps existing tool code working. */
   private getActiveTab(): TabInfo | null {
@@ -1131,7 +1265,14 @@ export class SparkBrowser {
   }
 
   listTabs(): {
-    tabs: Array<{ id: string; title: string; url: string; discarded?: boolean; favIcon?: string }>;
+    tabs: Array<{
+      id: string;
+      title: string;
+      url: string;
+      discarded?: boolean;
+      favIcon?: string;
+      agentStatus?: "done";
+    }>;
     activeId: string;
     url: string;
     canGoBack: boolean;
@@ -1149,8 +1290,8 @@ export class SparkBrowser {
           t.url ||
           (t.view && !t.view.webContents.isDestroyed() ? t.view.webContents.getURL() : ""),
         discarded: Boolean(t.discarded || !t.view),
-        agentStatus: t.agentStatus === "done" ? "done" : undefined,
         favIcon: t.favIcon || "",
+        agentStatus: t.agentStatus === "done" ? "done" : undefined,
       })),
       activeId: this.activeTabId,
       url: wcLive ? wcLive.getURL() : active?.url || "",
@@ -1183,6 +1324,8 @@ export class SparkBrowser {
     if (!existsSync(abs)) {
       return { ok: false, message: "文档已经不在了" };
     }
+    // 后台任务出报告时才允许切到报告标签（openInReaderTab / newTab 会 switchTab）。这是唯一例外。
+    // 其余后台步骤留在 createAgentTab 的标签上，不准切走用户当前页。
     // 浏览器能直接看的（HTML / PDF / 图片）复用阅读器标签；PPT/Office 交给系统默认程序
     if (/\.(html?|pdf|png|jpe?g|svg)$/i.test(abs)) {
       return this.openInReaderTab(pathToFileURL(abs).href);
@@ -2590,26 +2733,25 @@ export class SparkBrowser {
         workflow: "",
       },
       locale: this.settings.locale,
-      help: this.helpAsk
+      help: this.sidebarHelpAsk()
         ? {
-            question: this.helpAsk.question,
-            kind: this.helpAsk.kind,
-            options: this.helpAsk.options || [],
+            question: this.sidebarHelpAsk()!.question,
+            kind: this.sidebarHelpAsk()!.kind,
+            options: this.sidebarHelpAsk()!.options || [],
           }
         : null,
       lessons: loadLessons(this.configDir()).slice(0, 40).map(lessonPublic),
       plan: this.sidebarPlan(),
+      tasks: this.taskPool.visible(),
     };
   }
 
-  /** 进行中的单优先；做完后留下最后一张计划卡。 */
+  /** 进行中的单优先；做完后留下最后一张计划卡。后台任务不盖掉用户眼前这张。 */
   private sidebarPlan() {
-    if (this.activeMission) {
-      return this.activeMission.brainPlan?.steps.length ? this.activeMission.brainPlan : null;
-    }
-    if (this.lastMission && this.lastMission.state !== "cancelled" && this.lastMission.brainPlan?.steps.length) {
-      return this.lastMission.brainPlan;
-    }
+    const mission = this.foregroundMission();
+    if (mission?.brainPlan?.steps.length) return mission.brainPlan;
+    const last = this.foregroundLastMission();
+    if (last && last.state !== "cancelled" && last.brainPlan?.steps.length) return last.brainPlan;
     return null;
   }
 
@@ -2893,6 +3035,8 @@ export class SparkBrowser {
   }
 
   setPaused(paused: boolean): void {
+    // 后台任务不能把整个窗口暂停，否则前台回复会被锁死。登录墙走 waiting_human。
+    if (this.taskStore()?.lane === "background") return;
     this.paused = paused;
     this.pushSidebarState();
     this.pushChromeState();
@@ -4430,6 +4574,7 @@ export class SparkBrowser {
    * 执行过程中用户插了一句。模型判断是改计划才吃掉这条排队消息。
    */
   private async absorbQueuedPlanEdit(current: ActiveMission): Promise<ActiveMission> {
+    if (this.taskStore()?.lane === "background") return current;
     const next = this.chatQueue[0];
     if (!next?.text || !current.brainPlan?.steps.length || !this.deepseek) return current;
     const key = `${current.id}:${next.text}`;
@@ -4593,6 +4738,7 @@ export class SparkBrowser {
           role: "assistant",
           text: `正在做 ${i + 1}/… ${thought.next.label}。${thought.why}`,
         });
+        this.noteTaskStep(`正在做 ${thought.next.label}`);
         this.pushSidebarState();
         ran.push(thought.next);
         const ls0 = Date.now();
@@ -5014,22 +5160,191 @@ export class SparkBrowser {
   async handleChat(text: string, images?: string[], quotes?: unknown): Promise<ToolResult> {
     const pics = sanitizeImageDataUrls(images);
     const cleanQuotes = normalizeQuotes(quotes);
-    if (this.chatRunning) {
-      this.chatQueue.push({ text, images: pics, quotes: cleanQuotes });
+    const waiting = this.matchWaitingResume(text);
+    if (waiting) return this.resumeWaiting(waiting, text, pics, cleanQuotes);
+    if (laneForText(text) === "background") return this.enqueueBackground(text, pics, cleanQuotes);
+    return this.enqueueForeground(text, pics, cleanQuotes);
+  }
+
+  /** 后台标签。createAgentTab 不激活；若底层改了当前标签，立刻切回去。 */
+  private openBackgroundTab(): string {
+    const before = this.activeTabId;
+    const tabId = this.createAgentTab();
+    if (before && this.activeTabId !== before) this.switchTab(before);
+    return tabId;
+  }
+
+  private async runScoped<T>(
+    lane: TaskLane,
+    tabId: string,
+    work: () => Promise<T>,
+    mission?: ActiveMission,
+  ): Promise<T> {
+    const scope: TaskScope = {
+      tabId,
+      lane,
+      mission: lane === "foreground" ? (mission ?? this.fallbackMission) : mission,
+      lastMission: lane === "foreground" ? this.fallbackLastMission : undefined,
+      helpAsk: lane === "foreground" ? this.fallbackHelpAsk : null,
+      cloudTaskId: undefined,
+    };
+    try {
+      return await this.taskScope.run(scope, work);
+    } finally {
+      if (lane === "foreground") {
+        this.fallbackMission = scope.mission;
+        this.fallbackLastMission = scope.lastMission;
+        this.fallbackHelpAsk = scope.helpAsk;
+      }
+    }
+  }
+
+  private shouldSuspend(result: ToolResult): boolean {
+    const loop = (result.data as { loop?: string } | undefined)?.loop;
+    if (loop === "waiting_human") return true;
+    return this.activeMission?.state === "waiting_human";
+  }
+
+  private matchWaitingResume(text: string): PoolTask | undefined {
+    if (!isContinueHint(text)) return undefined;
+    const waiting = this.taskPool.tasks.filter((task) => task.state === "waiting_human");
+    if (!waiting.length) return undefined;
+    const onActive = waiting.find((task) => task.tabId && task.tabId === this.activeTabId);
+    if (onActive) return onActive;
+    const fgWaiting =
+      this.fallbackMission?.state === "waiting_human" || this.fallbackMission?.state === "running";
+    if (fgWaiting) return undefined;
+    if (waiting.length === 1) return waiting[0];
+    return undefined;
+  }
+
+  private taskTitle(text: string): string {
+    return text.trim().replace(/\s+/g, " ").slice(0, 28) || "任务";
+  }
+
+  private enqueueForeground(text: string, images?: string[], quotes?: SparoQuote[]): Promise<ToolResult> {
+    if (!this.taskPool.tryStartForeground()) {
+      this.chatQueue.push({ text, images, quotes });
       this.chatLog.push({
         role: "assistant",
         text: `「${text.slice(0, 28)}」已排队，等当前任务写出手册再做。`,
       });
       this.pushSidebarState();
-      return { ok: true, message: "queued" };
+      return Promise.resolve({ ok: true, message: "queued" });
     }
-    this.chatRunning = true;
+    const id = randomBytes(4).toString("hex");
+    const title = this.taskTitle(text);
+    const card = this.taskPool.start({ id, tabId: this.activeTabId, title, lane: "foreground" });
+    this.pushSidebarState();
+    return this.runJob(card, { id, text, images, quotes, title });
+  }
+
+  private enqueueBackground(text: string, images?: string[], quotes?: SparoQuote[]): Promise<ToolResult> {
+    const id = randomBytes(4).toString("hex");
+    const title = this.taskTitle(text);
+    const job: BackgroundJob = { id, text, images, quotes, title };
+    if (!this.taskPool.canStartBackground()) {
+      const card = this.taskPool.enqueue({ id, tabId: "", title, lane: "background" });
+      this.backgroundQueue.push(job);
+      this.chatLog.push({ role: "assistant", text: `「${title}」${card.step}` });
+      this.pushSidebarState();
+      return Promise.resolve({ ok: true, message: card.step });
+    }
+    const card = this.taskPool.start({ id, tabId: "", title, lane: "background" });
+    return this.launchBackground(card, job);
+  }
+
+  private resumeWaiting(
+    task: PoolTask,
+    text: string,
+    images?: string[],
+    quotes?: SparoQuote[],
+  ): Promise<ToolResult> {
+    const mission = this.waitingMissions.get(task.id);
+    const job: BackgroundJob = { id: task.id, text, images, quotes, title: task.title, mission };
+    if (task.lane === "foreground") {
+      if (!this.taskPool.tryStartForeground()) {
+        this.chatQueue.unshift({ text, images, quotes });
+        this.chatLog.push({
+          role: "assistant",
+          text: `「${text.slice(0, 28)}」已排队，等当前任务写出手册再做。`,
+        });
+        this.pushSidebarState();
+        return Promise.resolve({ ok: true, message: "queued" });
+      }
+      this.taskPool.markRunning(task.id);
+      if (!task.tabId) task.tabId = this.activeTabId;
+      this.pushSidebarState();
+      return this.runJob(task, job);
+    }
+    if (!this.taskPool.canStartBackground()) {
+      this.taskPool.requeueFront(task.id);
+      this.backgroundQueue.unshift(job);
+      const step = this.taskPool.tasks.find((item) => item.id === task.id)?.step || "排队中（第 1 位）";
+      this.chatLog.push({ role: "assistant", text: `「${task.title}」${step}` });
+      this.pushSidebarState();
+      return Promise.resolve({ ok: true, message: step });
+    }
+    this.taskPool.markRunning(task.id);
+    return this.launchBackground(task, job);
+  }
+
+  private launchBackground(task: PoolTask, job: BackgroundJob): Promise<ToolResult> {
+    if (!task.tabId) task.tabId = this.openBackgroundTab();
+    this.pushSidebarState();
+    return this.runJob(task, job);
+  }
+
+  private async runJob(card: PoolTask, job: BackgroundJob): Promise<ToolResult> {
+    let result: ToolResult;
     try {
-      return await this.handleChatJob(text, pics, cleanQuotes, this.activeTabId);
-    } finally {
-      this.chatRunning = false;
-      const next = this.chatQueue.shift();
-      if (next) void this.handleChat(next.text, next.images, next.quotes);
+      result = await this.runScoped(
+        card.lane,
+        card.tabId,
+        async () => {
+          const out = await this.handleChatJob(job.text, job.images, job.quotes, card.tabId);
+          if (this.shouldSuspend(out)) {
+            if (this.activeMission) this.waitingMissions.set(card.id, this.activeMission);
+            this.taskPool.suspend(card.id);
+          }
+          return out;
+        },
+        job.mission,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.chatLog.push({ role: "assistant", text: message });
+      result = { ok: false, message };
+    }
+    const suspended = this.taskPool.tasks.find((task) => task.id === card.id)?.state === "waiting_human";
+    if (!suspended) {
+      this.waitingMissions.delete(card.id);
+      this.taskPool.finish(card.id, result.ok ? "done" : "failed");
+      if (card.lane === "background" && card.tabId) this.releaseAgentTab(card.tabId);
+    }
+    if (card.lane === "foreground") this.taskPool.releaseForeground();
+    this.pushSidebarState();
+    if (card.lane === "background") this.pumpBackground();
+    else this.pumpForeground();
+    return result;
+  }
+
+  private pumpForeground(): void {
+    const next = this.chatQueue.shift();
+    if (next) void this.handleChat(next.text, next.images, next.quotes);
+  }
+
+  private pumpBackground(): void {
+    while (this.taskPool.canStartBackground()) {
+      const next = this.taskPool.promoteNext();
+      if (!next) return;
+      const idx = this.backgroundQueue.findIndex((job) => job.id === next.id);
+      if (idx < 0) {
+        this.taskPool.finish(next.id, "failed");
+        continue;
+      }
+      const [job] = this.backgroundQueue.splice(idx, 1);
+      void this.launchBackground(next, job);
     }
   }
 
@@ -5050,7 +5365,8 @@ export class SparkBrowser {
     let jobImages = sanitizeImageDataUrls(images);
     this.chatLog.push(quotedUserTurn(text, cleanQuotes, jobImages));
     this.pushSidebarState();
-    const recovered = await this.takeRecoveryAnswer(text, jobImages);
+    const recovered =
+      this.taskStore()?.lane === "background" ? null : await this.takeRecoveryAnswer(text, jobImages);
     if (recovered) return recovered;
     if (this.helpAsk) {
       const t = text.trim();
@@ -8678,7 +8994,7 @@ export class SparkBrowser {
     try {
       const wc = this.viewForTab(tabId || this.activeTabId).webContents;
       this.window.focus();
-      wc.focus();
+    wc.focus();
       const keyCode = key === "Enter" || key === "Return" ? "Return" : key === "Escape" ? "Escape" : key;
       wc.sendInputEvent({ type: "keyDown", keyCode } as Electron.KeyboardInputEvent);
       wc.sendInputEvent({ type: "char", keyCode: key === "Enter" ? "\r" : key } as Electron.KeyboardInputEvent);
