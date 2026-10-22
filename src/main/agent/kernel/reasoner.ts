@@ -145,13 +145,13 @@ export function gateSiteDelivery(opts: {
   return { action: "ask", ask };
 }
 
-/** 登录地址已经打开过、站点却跳进站内时，不再重复问「要不要打开」。 */
+/** 登录地址已经打开过、站点却跳进站内时，交这一句并收工。换账号是下一句新任务。 */
 export function loginRedirectNote(goal: AgentGoal, findings: StepFinding[]): string | undefined {
   const tried = findings.some(
     (f) => f.step.cap === "navigate" && /\/(login|signin|sign-in)|passport\./i.test(String(f.step.query || "")),
   );
   if (!tried || !goal.site) return undefined;
-  return `已打开 ${goal.site} 的登录地址，站点把它跳到了现在这个页面，没有停在登录墙。你要换账号的话，在页面上退出后再说「继续」。`;
+  return `已打开 ${goal.site} 的登录地址，站点把它跳回了现在这个页面，没有停在登录墙。`;
 }
 
 /** 已经站在目标站上时，问模型要不要再打开登录页。只收同站合法 URL。 */

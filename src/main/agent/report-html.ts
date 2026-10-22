@@ -197,6 +197,8 @@ h1 {
   letter-spacing: -0.02em;
   color: var(--accent);
 }
+.source { margin: -4px 0 0; font-size: 13px; }
+.source a { color: var(--muted); word-break: break-all; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .chips li {
   background: var(--chip);
@@ -670,12 +672,30 @@ function themeLabel(theme: ReaderPageOptions["theme"]): string {
   return "米白";
 }
 
+export type ReadingSource = { title?: string; url?: string; siteName?: string };
+
+/** 页头来源链接。域名用 URL 解析写上，不让模型拼。 */
+export function readingSourceLine(source?: ReadingSource): string {
+  const url = (source?.url || "").trim();
+  if (!/^https?:\/\//i.test(url)) return "";
+  let host = "";
+  try {
+    host = new URL(url).hostname.replace(/^www\./i, "");
+  } catch {
+    host = "";
+  }
+  const label = host || url;
+  return `<p class="source"><a href="${escapeHtml(url)}">${escapeHtml(label)}</a></p>`;
+}
+
 export function readingReportHtml(opts: {
   title: string;
   body: string;
   eyebrow?: string;
   reader?: ReaderPageOptions;
+  source?: ReadingSource;
 }): string {
+  const source = readingSourceLine(opts.source);
   if (!opts.reader) {
     return `<!doctype html>
 <html lang="zh-CN">
@@ -691,6 +711,7 @@ export function readingReportHtml(opts: {
     <header class="ticket">
       <p class="eyebrow">${escapeHtml(opts.eyebrow || "SPARO 阅读页")}</p>
       <h1>${escapeHtml(opts.title)}</h1>
+      ${source}
     </header>
     <div class="body">${markdownToHtml(opts.body)}</div>
   </article>
@@ -729,6 +750,7 @@ export function readingReportHtml(opts: {
     <header class="ticket">
       <p class="eyebrow">${escapeHtml(opts.eyebrow || "SPARO 阅读模式")}</p>
       <h1>${escapeHtml(opts.title)}</h1>
+      ${source}
     </header>
     <div class="body reader-body" id="readerBody">${stripUnsafeHtml(opts.body)}</div>
   </article>
@@ -780,11 +802,41 @@ export function readingTitleOf(md: string, fallback = "整理结果"): string {
   return (fb && !generic.test(fb) ? fb : "整理结果").slice(0, 52);
 }
 
-/** 标题已经在页头展示，正文里去掉重复的一级标题。 */
-export function stripReadingTitle(md: string): string {
-  return String(md || "")
-    .replace(/^\s*#\s+.+\n+/, "")
+const GENERIC_READING_TITLE = /^(正文|文章|内容|摘要|概述|全文|文档|整理|整理结果|方案|报告|说明)$/;
+
+function cleanTitleSentence(s: string): string {
+  return s
+    .replace(/\*\*|`|^#+\s*/g, "")
+    .replace(/[。；;：:].*$/, "")
     .trim();
+}
+
+/** 标题已经在页头展示。有真实一级标题就删那一行；标题来自第一句时，正文里删掉同一句。 */
+export function stripReadingTitle(md: string): string {
+  let src = String(md || "").replace(/\r\n/g, "\n");
+  const lines = src
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const heading = (lines.find((line) => /^#\s+\S/.test(line)) || "").replace(/^#\s+/, "");
+  const headingClean = cleanTitleSentence(heading);
+  const headingIsReal = Boolean(headingClean) && !GENERIC_READING_TITLE.test(headingClean);
+  if (/^\s*#\s+\S/.test(src) && headingIsReal) {
+    return src.replace(/^\s*#\s+.+\n*/, "").trim();
+  }
+  if (/^\s*#\s+/.test(src)) src = src.replace(/^\s*#\s+.+\n*/, "").trim();
+  const title = readingTitleOf(String(md || ""), "");
+  if (!title || title === "整理结果") return src.trim();
+  const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return src.replace(new RegExp(`^\\s*${escaped}(?:[。；;：:])?\\s*`), "").trim();
+}
+
+/** 模型只答应改、还没交出正文。这种回复不能单独当成阅读页。 */
+export function isPendingRewrite(text: string): boolean {
+  const t = String(text || "").trim();
+  if (!t) return true;
+  if (/^\s*#\s+\S/m.test(t)) return false;
+  return t.includes("重新生成一版");
 }
 
 

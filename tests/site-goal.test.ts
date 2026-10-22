@@ -181,6 +181,7 @@ describe("目标站点：错页先打开，说明文不能当完成", () => {
       },
     ]);
     expect(note).toMatch(/没有停在登录墙/);
-    expect(note).toMatch(/继续/);
+    expect(note).toMatch(/跳回/);
+    expect(note).not.toMatch(/继续/);
   });
 });

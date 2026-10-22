@@ -18,7 +18,7 @@ import { pathToFileURL } from "node:url";
 import { randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { laneForText, type TaskLane } from "./agent/task-class.js";
-import { TaskPool, type PoolTask } from "./agent/task-pool.js";
+import { shouldSuspend as poolShouldSuspend, TaskPool, type PoolTask } from "./agent/task-pool.js";
 import type {
   ClickConfirm,
   FillConfirm,
@@ -83,11 +83,13 @@ import {
   extractFirstHttpUrl,
   isContinueHint,
   readPageInstruction,
+  routeUserGoal,
   sameSite,
   wantsFillForm,
   wantsPublish,
   wantsReply,
 } from "./agent/intent-router.js";
+import { isPauseText, isResumeText } from "./agent/slots.js";
 import {
   alreadyOnFeishuTask,
   FEISHU_MESSENGER_URL,
@@ -146,7 +148,13 @@ import {
   replayMissions,
   type RestoredMission,
 } from "./agent/mission-journal.js";
-import { composeQuotedPrompt, normalizeQuotes, quotedUserTurn, type SparoQuote } from "./agent/quotes.js";
+import {
+  composeQuotedPrompt,
+  normalizeQuotes,
+  QUOTE_PAGE_CONTRACT,
+  quotedUserTurn,
+  type SparoQuote,
+} from "./agent/quotes.js";
 import {
   actionKey,
   detectFailure,
@@ -169,6 +177,7 @@ import {
   flightHintFromText,
   formatFlightLinks,
   formatHotelLinks,
+  isPendingRewrite,
   readingReportHtml,
   readingTitleOf,
   researchReportHtml,
@@ -177,6 +186,7 @@ import {
   tripReportHtml,
   writeHtmlReport,
   type ChatDoc,
+  type ReadingSource,
   type FlightLink,
   type HotelLink,
 } from "./agent/report-html.js";
@@ -5189,18 +5199,21 @@ export class SparkBrowser {
           const afterLand = pageFinger(this.getUrl(tabId), this.getTitle(tabId));
           if (!isLoginWall(afterLand) && !isCaptchaWall(afterLand) && !(landing && "done" in landing)) {
             const redirected = loginRedirectNote(live, findings);
-            const ask = redirected || `要我先打开 ${live.site} 登录页吗？`;
-            current.state = "waiting_human";
-            current.waitReason = redirected ? "login_wall" : "help";
-            current.ask = ask;
-            this.activeMission = current;
-            this.chatLog.push({ role: "assistant", text: ask });
-            this.pushSidebarState();
-            return {
-              ok: true,
-              message: ask,
-              data: { loop: "waiting_human", briefKind: live.kind },
-            };
+            if (redirected) {
+              current.findings = findings;
+              if (current.brainPlan) current.brainPlan = closePlan(current.brainPlan, true);
+              current.state = "done";
+              journalMissionClose(current.id, "done");
+              this.lastMission = current;
+              this.activeMission = undefined;
+              this.chatLog.push({ role: "assistant", text: redirected });
+              this.pushSidebarState();
+              return {
+                ok: true,
+                message: redirected,
+                data: { loop: "done", briefKind: live.kind, intent: live.intent },
+              };
+            }
           }
         }
         const parked = pageFinger(this.getUrl(tabId), this.getTitle(tabId));
@@ -5576,8 +5589,28 @@ export class SparkBrowser {
     const cleanQuotes = normalizeQuotes(quotes);
     const waiting = this.matchWaitingResume(text);
     if (waiting) return this.resumeWaiting(waiting, text, pics, cleanQuotes);
+    this.dismissAbandonedForegroundWaits();
     if (laneForText(text) === "background") return this.enqueueBackground(text, pics, cleanQuotes);
     return this.enqueueForeground(text, pics, cleanQuotes);
+  }
+
+  /** 下一句对不上「继续」时，收掉被扔下的前台等待。后台登录墙留着。 */
+  private dismissAbandonedForegroundWaits(): void {
+    const abandoned = this.taskPool.tasks.filter(
+      (task) => task.lane === "foreground" && task.state === "waiting_human",
+    );
+    if (!abandoned.length) return;
+    const missionIds = new Set<string>();
+    for (const task of [...abandoned]) {
+      const mission = this.waitingMissions.get(task.id);
+      if (mission) missionIds.add(mission.id);
+      this.waitingMissions.delete(task.id);
+      this.taskPool.dismiss(task.id);
+    }
+    const current = this.activeMission;
+    if (current && (missionIds.has(current.id) || current.state === "waiting_human")) {
+      this.activeMission = undefined;
+    }
   }
 
   /** 后台标签。createAgentTab 不激活；若底层改了当前标签，立刻切回去。 */
@@ -5614,9 +5647,7 @@ export class SparkBrowser {
   }
 
   private shouldSuspend(result: ToolResult): boolean {
-    const loop = (result.data as { loop?: string } | undefined)?.loop;
-    if (loop === "waiting_human") return true;
-    return this.activeMission?.state === "waiting_human";
+    return poolShouldSuspend(result, this.activeMission);
   }
 
   private matchWaitingResume(text: string): PoolTask | undefined {
@@ -5811,7 +5842,14 @@ export class SparkBrowser {
       }
       try {
         const hand = await this.executeHand({ type: "llm", text: prompt }, prompt, jobImages, "chat", tabId);
-        const sealed = this.sealLongRead(hand.reply, hand.replyDoc, prompt);
+        const quote = cleanQuotes[0];
+        const source: ReadingSource | undefined = quote?.url
+          ? { title: quote.title, url: quote.url, siteName: quote.siteName }
+          : undefined;
+        const sealed = this.sealLongRead(hand.reply, hand.replyDoc, quote?.title || text, {
+          source,
+          force: !hand.replyDoc && hand.reply.trim().length >= 60,
+        });
         this.chatLog.push({ role: "assistant", text: sealed.text, doc: sealed.doc });
         this.pushSidebarState();
         return {
@@ -5872,6 +5910,11 @@ export class SparkBrowser {
         this.pushSidebarState();
         return { ok: false, message };
       }
+    }
+
+    const priorRead = this.priorReadPage(cleanQuotes);
+    if (priorRead && !routeUserGoal(text) && !isPauseText(text) && !isResumeText(text)) {
+      return this.reviseReadPage(text, priorRead);
     }
 
     const homeCity = loadProfile(this.configDir()).identity.homeCity;
@@ -6179,23 +6222,127 @@ export class SparkBrowser {
     }
   }
 
+  /** 上一则助手消息是阅读页，且这一轮没有新引用。 */
+  private priorReadPage(quotes?: SparoQuote[]): ChatTurn["doc"] | undefined {
+    if (quotes?.length) return undefined;
+    let skippedUser = false;
+    for (let i = this.chatLog.length - 1; i >= 0; i -= 1) {
+      const turn = this.chatLog[i];
+      if (!skippedUser) {
+        if (turn.role === "user") {
+          skippedUser = true;
+          continue;
+        }
+        return undefined;
+      }
+      if (turn.role === "assistant") return turn.doc?.kind === "read" ? turn.doc : undefined;
+    }
+    return undefined;
+  }
+
+  private readReportBody(filePath: string): string {
+    if (!filePath) return "";
+    try {
+      const html = readFileSync(filePath, "utf8");
+      const matched = html.match(/<div class="body"[^>]*>([\s\S]*?)<\/div>/);
+      if (!matched) return "";
+      return matched[1]
+        .replace(/<script[\s\S]*?<\/script>/gi, " ")
+        .replace(/<style[\s\S]*?<\/style>/gi, " ")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/\s+/g, " ")
+        .trim();
+    } catch {
+      return "";
+    }
+  }
+
+  /** 上一份阅读页按这一句改写，落成新文件换到窗口里。没有新文件就失败。 */
+  private async reviseReadPage(text: string, prior: NonNullable<ChatTurn["doc"]>): Promise<ToolResult> {
+    const previous = [prior.title, this.readReportBody(prior.path)].filter(Boolean).join("\n\n");
+    const prompt = [
+      "你在改写上一份阅读页。按用户这句改完，输出完整中文 Markdown。",
+      "第一行是「# 标题」。直接给出改写后的全文。",
+      "不要写还没做的下一步，不要出现「重新生成一版」。",
+      "用户认为没有依据的句子不要留在正文里。",
+      previous ? `上一份正文：\n${previous.slice(0, 8000)}` : "",
+      `用户这句：\n${text}`,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    const cloudGate = await this.beginCloudTaskIfNeeded({ type: "llm", text: prompt }, text);
+    if (cloudGate === "refused") {
+      const reply = this.lastCloudRefuse || this.L("cloud.exhausted");
+      this.chatLog.push({ role: "assistant", text: reply });
+      this.pushSidebarState();
+      return { ok: false, message: reply };
+    }
+    try {
+      let reply = "";
+      if (this.deepseek) {
+        reply = (await this.withTimeout(this.deepseek.completePlain(prompt), 90_000, "", false)).trim();
+        if (isPendingRewrite(reply)) {
+          reply = (
+            await this.withTimeout(
+              this.deepseek.completePlain(
+                `${prompt}\n\n直接输出改写后的全文。第一行必须是 # 标题。不要描述你将要做什么。`,
+              ),
+              90_000,
+              "",
+              false,
+            )
+          ).trim();
+        }
+      }
+      reply = reply.replace(/\n*重新生成一版[。.]?\s*$/g, "").trim();
+      if (!reply || isPendingRewrite(reply)) {
+        const message = "上一份阅读页没有改写成新页。";
+        this.chatLog.push({ role: "assistant", text: message });
+        this.pushSidebarState();
+        return { ok: false, message };
+      }
+      const sealed = this.sealLongRead(reply, undefined, prior.title, { force: true });
+      if (!sealed.doc || sealed.doc.path === prior.path) {
+        const message = "上一份阅读页没有写成新文件。";
+        this.chatLog.push({ role: "assistant", text: message });
+        this.pushSidebarState();
+        return { ok: false, message };
+      }
+      this.chatLog.push({ role: "assistant", text: sealed.text, doc: sealed.doc });
+      this.pushSidebarState();
+      return {
+        ok: true,
+        message: sealed.text,
+        data: { loop: "done", files: [sealed.doc.path] },
+      };
+    } finally {
+      if (this.cloudTaskId) void this.finishCloudTask();
+    }
+  }
+
   /**
    * Sparo 的阅读优先：成篇回答不铺在侧栏，落成阅读页在窗口里打开，侧栏只留一句 + 卡片。
-   * 已有产物（PDF/PPT/手册/报告）的直接放行，避免重复出页。
+   * 已有产物直接放行。纠正上一份阅读页时 force 无视长短，另写新文件。
    */
   private sealLongRead(
     text: string,
     doc?: ChatTurn["doc"],
     fallbackTitle?: string,
+    opts?: { force?: boolean; source?: ReadingSource },
   ): { text: string; doc?: ChatTurn["doc"] } {
-    if (doc) {
+    if (doc && !opts?.force) {
       // 已有产物时侧栏只留一句，长文一律进产物页
       if (shouldSealLongRead(text)) {
         return { text: `《${doc.title}》已写好，在窗口里打开了。`, doc };
       }
       return { text, doc };
     }
-    if (!shouldSealLongRead(text)) return { text };
+    if (!opts?.force && !shouldSealLongRead(text)) return { text };
     try {
       const title = readingTitleOf(text, fallbackTitle || "整理结果");
       const sealed = writeHtmlReport(
@@ -6205,6 +6352,7 @@ export class SparkBrowser {
           title,
           body: stripReadingTitle(text),
           eyebrow: "SPARO 阅读页",
+          source: opts?.source,
         }),
         { title, kind: "read" },
       );
@@ -7149,22 +7297,28 @@ export class SparkBrowser {
         .slice(0, 8)
         .map((s) => `- ${s.id}: ${s.title}`)
         .join("\n");
-      const history = this.chatLog
-        .filter(
-          (turn) =>
-            !/^(已打开目标站|开始在当前页操作|Opened the site|Acting on this page)/.test(
-              turn.text,
-            ),
-        )
-        .slice(-12);
+      const quoteOnly = text.startsWith(QUOTE_PAGE_CONTRACT);
+      const history = quoteOnly
+        ? []
+        : this.chatLog
+            .filter(
+              (turn) =>
+                !/^(已打开目标站|开始在当前页操作|Opened the site|Acting on this page)/.test(
+                  turn.text,
+                ),
+            )
+            .slice(-12);
       if (history.at(-1)?.role === "user" && history.at(-1)?.text === text) {
         history.pop();
       }
-      const page = await this.pageText(tabId);
-      const visible = (page.data?.text || "").trim().slice(0, this.llmRuntime === "cloud" ? 3000 : 6000);
+      let visible = "";
+      if (!quoteOnly) {
+        const page = await this.pageText(tabId);
+        visible = (page.data?.text || "").trim().slice(0, this.llmRuntime === "cloud" ? 3000 : 6000);
+      }
       const reply = await this.deepseek.chat(text, {
         url,
-        title: this.getTitle(tabId),
+        title: quoteOnly ? "" : this.getTitle(tabId),
         skills: catalog,
         history,
         profileBrief: profileBriefFor(this.configDir()),

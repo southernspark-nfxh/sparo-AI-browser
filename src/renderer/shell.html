@@ -2713,9 +2713,6 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           mark.className = "task-mark";
           mark.textContent =
             task.state === "done" ? "✓" : task.state === "failed" ? "!" : task.state === "waiting_human" ? "!" : "·";
-          var lane = document.createElement("span");
-          lane.className = "task-lane";
-          lane.textContent = task.lane === "background" ? "后台" : "前台";
           var body = document.createElement("span");
           body.className = "task-body";
           var title = document.createElement("span");
@@ -2727,7 +2724,12 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           body.appendChild(title);
           body.appendChild(step);
           btn.appendChild(mark);
-          btn.appendChild(lane);
+          if (task.lane === "background") {
+            var lane = document.createElement("span");
+            lane.className = "task-lane";
+            lane.textContent = "后台";
+            btn.appendChild(lane);
+          }
           btn.appendChild(body);
           root.appendChild(btn);
         });

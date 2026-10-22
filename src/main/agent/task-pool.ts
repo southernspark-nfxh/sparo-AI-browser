@@ -112,10 +112,21 @@ export class TaskPool {
   }
 
   finish(id: string, state: "done" | "failed" = "done"): PoolTask | undefined {
-    const task = this.tasks.find((item) => item.id === id);
-    if (!task) return undefined;
+    const index = this.tasks.findIndex((item) => item.id === id);
+    if (index < 0) return undefined;
+    const [task] = this.tasks.splice(index, 1);
     task.state = state;
     task.step = state === "done" ? "完成" : "失败";
+    this.renumberQueue();
+    return task;
+  }
+
+  /** 收掉被扔下的卡。不改状态，条子上不再出现。 */
+  dismiss(id: string): PoolTask | undefined {
+    const index = this.tasks.findIndex((item) => item.id === id);
+    if (index < 0) return undefined;
+    const [task] = this.tasks.splice(index, 1);
+    this.renumberQueue();
     return task;
   }
 
@@ -139,19 +150,28 @@ export class TaskPool {
   }
 
   visible(): TaskCardView[] {
-    const active = this.tasks.filter(
-      (task) => task.state === "running" || task.state === "queued" || task.state === "waiting_human",
-    );
-    const finished = this.tasks
-      .filter((task) => task.state === "done" || task.state === "failed")
-      .slice(-3);
-    return [...active, ...finished].map((task) => ({
-      id: task.id,
-      tabId: task.tabId,
-      title: task.title,
-      lane: task.lane,
-      state: task.state,
-      step: task.step,
-    }));
+    return this.tasks
+      .filter((task) => task.state === "running" || task.state === "queued" || task.state === "waiting_human")
+      .map((task) => ({
+        id: task.id,
+        tabId: task.tabId,
+        title: task.title,
+        lane: task.lane,
+        state: task.state,
+        step: task.step,
+      }));
   }
+}
+
+/**
+ * 只有本轮结果自己挂起才挂起。
+ * 上一张单还在等人时，不能把这一轮已经写出的答案涂成等你处理。
+ */
+export function shouldSuspend(
+  result: { data?: unknown } | undefined,
+  _activeMission?: { state?: string },
+): boolean {
+  const data = result?.data;
+  if (!data || typeof data !== "object") return false;
+  return (data as { loop?: string }).loop === "waiting_human";
 }
