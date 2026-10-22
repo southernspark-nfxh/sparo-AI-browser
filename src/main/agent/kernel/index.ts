@@ -54,6 +54,7 @@ import type { ActiveMission } from "../runtime.js";
 import type { StepFinding } from "../loop.js";
 import { nextThought, nextThoughtAsync, type Thought } from "./reasoner.js";
 import { notePlanStep } from "./plan.js";
+import { journalMissionTurn } from "../mission-journal.js";
 import { verifyContracts } from "./verify.js";
 
 function thoughtInput(mission: ActiveMission, synthesized?: string) {
@@ -81,12 +82,14 @@ export async function thoughtForAsync(
 }
 
 export function observe(mission: ActiveMission, finding: StepFinding): ActiveMission {
-  return {
+  const next: ActiveMission = {
     ...mission,
     findings: [...mission.findings, finding],
     brainPlan: mission.brainPlan ? notePlanStep(mission.brainPlan, finding) : mission.brainPlan,
     state: mission.state === "waiting_human" ? "running" : mission.state,
   };
+  journalMissionTurn(next);
+  return next;
 }
 
 export function kernelTick(mission: ActiveMission, synthesized?: string): {
