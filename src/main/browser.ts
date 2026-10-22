@@ -1162,6 +1162,7 @@ export class SparkBrowser {
     try {
       const view = this.makePageView(tab.envId, { agentOwned: tab.agentOwned === true });
       tab.view = view;
+      this.pinViewBeforeMount(view);
       this.window.contentView.addChildView(view);
       this.bindPageWebContents(tab);
       tab.discarded = false;
@@ -1247,6 +1248,7 @@ export class SparkBrowser {
     };
     this.tabs.set(id, tab);
     if (activate) this.activeTabId = id;
+    this.pinViewBeforeMount(view);
     this.window.contentView.addChildView(view);
     this.bindPageWebContents(tab);
     this.layout();
@@ -1275,6 +1277,7 @@ export class SparkBrowser {
       lastActiveAt: Date.now(),
     };
     this.tabs.set(id, tab);
+    this.pinViewBeforeMount(view);
     this.window.contentView.addChildView(view);
     this.bindPageWebContents(tab);
     this.layout();
@@ -2070,15 +2073,16 @@ export class SparkBrowser {
       const b = { ...this.holeBounds };
       b.x = 0;
       b.width = viewW;
-      // y/高度只在合理区间采信（书签栏/查找栏等顶部行变化），异常就回退常量。
-      if (b.y < 40 || b.y > 200) b.y = CHROME_H;
-      if (b.height < 200 || b.height > height) b.height = fallback.height;
+      // y 不能进顶栏（标签 36 + 地址栏 40）。低于顶栏或离谱就回退常量。
+      if (b.y < CHROME_H || b.y > 200) b.y = CHROME_H;
+      const maxH = Math.max(100, height - b.y);
+      if (b.height < 200 || b.height > maxH) b.height = maxH;
       return b;
     }
     return fallback;
   }
 
-  private applyViewBounds(): void {
+  private applyViewBounds(followUp = true): void {
     if (this.window.isDestroyed()) return;
     const bounds = this.pageBounds();
     // 窗口尺寸此刻无效（最小化/恢复/隐藏过渡）：不动任何视图，稍后尺寸回来再排。
@@ -2091,26 +2095,72 @@ export class SparkBrowser {
       if (!tab.view) continue;
       const active = id === this.activeTabId && !hidePage;
       try {
-        if (active) {
-          tab.view.setBounds(bounds);
-          tab.view.setVisible(true);
-          tab.view.setBounds(bounds);
-        } else {
-          tab.view.setVisible(false);
-          tab.view.setBounds({
-            x: -20000,
-            y: 0,
-            width: Math.max(bounds.width, 100),
-            height: Math.max(bounds.height, 100),
-          });
-        }
+        if (active) this.mountPageView(tab.view, bounds, !followUp);
+        else this.parkPageView(tab.view, bounds, !followUp);
       } catch {
         /* 视图已销毁 */
       }
     }
+    // addChildView 之后，Chromium 会把新子视图拉成整窗，同一次调用里的 setBounds 会被盖掉，
+    // 顶栏和侧栏就只剩系统按钮。窗口 resize 能恢复，是因为那次 setBounds 发生在父布局之后。
+    // 这里在父布局之后再排一次。
+    if (followUp) {
+      if (this.boundsKick) clearTimeout(this.boundsKick);
+      this.boundsKick = setTimeout(() => {
+        this.boundsKick = null;
+        if (!this.window.isDestroyed()) this.applyViewBounds(false);
+      }, 100);
+    }
+  }
+
+  /** 挂上之前先写成页面洞，避免新视图以整窗大小出现。 */
+  private pinViewBeforeMount(view: WebContentsView): void {
+    const bounds = this.pageBounds();
+    if (!bounds) return;
+    try {
+      view.setBounds(bounds);
+    } catch {
+      /* 视图已销毁 */
+    }
+  }
+
+  private mountPageView(
+    view: WebContentsView,
+    bounds: { x: number; y: number; width: number; height: number },
+    nudge: boolean,
+  ): void {
+    const parent = this.window.contentView;
+    if (!parent.children.includes(view)) {
+      view.setBounds(bounds);
+      parent.addChildView(view);
+      nudge = true;
+    }
+    view.setVisible(true);
+    // 父布局可能已经把视图拉成整窗，而 Electron 会把“和上次相同的 setBounds”当成无操作。
+    // 先写一个差 1px 的矩形，再写回目标，强制原生层更新。
+    if (nudge) view.setBounds({ ...bounds, width: Math.max(100, bounds.width - 1) });
+    view.setBounds(bounds);
+  }
+
+  /** 后台标签留在视图树里（后台任务还要跑），但必须移出窗口。 */
+  private parkPageView(
+    view: WebContentsView,
+    bounds: { x: number; y: number; width: number; height: number },
+    nudge: boolean,
+  ): void {
+    view.setVisible(false);
+    const parked = {
+      x: -20000,
+      y: 0,
+      width: Math.max(bounds.width, 100),
+      height: Math.max(bounds.height, 100),
+    };
+    if (nudge) view.setBounds({ ...parked, width: parked.width - 1 });
+    view.setBounds(parked);
   }
 
   private layoutTimer: ReturnType<typeof setTimeout> | null = null;
+  private boundsKick: ReturnType<typeof setTimeout> | null = null;
   /** 向 shell 要一次最新的 page-hole 测量（恢复过渡的回调可能丢过）。 */
   private requestHoleReport(): void {
     try {
