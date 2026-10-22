@@ -80,6 +80,9 @@ import {
   isContinueHint,
   readPageInstruction,
   sameSite,
+  wantsFillForm,
+  wantsPublish,
+  wantsReply,
 } from "./agent/intent-router.js";
 import {
   alreadyOnFeishuTask,
@@ -435,6 +438,8 @@ type TabInfo = {
   /** 这张标签正卡在 waiting_human。release 时不休眠。 */
   holdHuman?: boolean;
   lastActiveAt: number;
+  /** Agent 后台标签：不可见时不节流定时器。用户自己的标签保持节流。 */
+  agentOwned?: boolean;
 };
 
 type ApprovalRequest = {
@@ -568,6 +573,11 @@ export class SparkBrowser {
   private pendingRecovery: RestoredMission | null = null;
   private lastReaderSender: WebContents | null = null;
   /** activeMission / lastMission 按任务放进 AsyncLocalStorage。 */
+  /** 前台任务（填表/回复/发帖确认）本轮是否已经拉回过窗口。只允许一次。 */
+  private coPresenceRestored = false;
+  /** 已对侧栏播报过的 chatLog 长度。-1 表示还没建立基线，避免启动时乱闪。 */
+  private lastNotifiedChat = -1;
+  private taskbarFlashing = false;
   private chatQueue: Array<{ text: string; images?: string[]; quotes?: SparoQuote[] }> = [];
   private backgroundQueue: BackgroundJob[] = [];
   private waitingMissions = new Map<string, ActiveMission>();
@@ -612,7 +622,7 @@ export class SparkBrowser {
 
   /**
    * 模型工具回调没有 tab 参数。写在当前异步任务上，没有任务时仍是激活标签。
-   * chatRunning 留成计算属性，任务池忙时为 true。
+   * chatRunning 留成计算属性，保活逻辑还在读它。
    */
   private get agentTabId(): string {
     const scope = this.taskStore();
@@ -736,10 +746,10 @@ export class SparkBrowser {
     return tab.view;
   }
 
-  /** 开一个不抢焦点的后台标签。activeTabId 保持不变。 */
+  /** 开一个不抢焦点的后台标签。activeTabId 保持不变。关闭渲染节流，最小化时定时器照跑。 */
   createAgentTab(url?: string): string {
     const target = url && url.trim() ? url : DEFAULT_URL;
-    return this.createTab(target, false);
+    return this.createTab(target, false, { agentOwned: true });
   }
 
   /**
@@ -865,7 +875,13 @@ export class SparkBrowser {
     this.window.on("leave-full-screen", () => this.layout());
     // Windows 上最小化→恢复不一定补一次有效 resize（事件可能在尺寸还是 0 时触发）。
     // Electron 没有 unminimize；restore 就是从最小化还原。延迟补排，防止页面视图停在 100px 窄条。
-    this.window.on("restore", () => this.scheduleLayout(150));
+    this.window.on("restore", () => {
+      this.scheduleLayout(150);
+      // 壳层回到前台就恢复节流。Agent 标签是独立 webContents，不受这条影响。
+      this.setShellBackgroundThrottling(true);
+    });
+    this.window.on("minimize", () => this.syncShellKeepalive());
+    this.window.on("focus", () => this.clearTaskbarFlash());
     this.window.on("show", () => this.scheduleLayout(150));
     this.window.once("ready-to-show", () => this.presentWindow());
     this.window.webContents.once("did-finish-load", () => this.presentWindow());
@@ -928,12 +944,13 @@ export class SparkBrowser {
     return hist ? hist.canGoForward() : wc.canGoForward();
   }
 
-  private makePageView(envId?: string): WebContentsView {
+  private makePageView(envId?: string, opts?: { agentOwned?: boolean }): WebContentsView {
     const prefs = {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      backgroundThrottling: true,
+      // Agent 持有的后台标签关掉节流，最小化时定时器照跑。用户标签和 env 标签保持 true。
+      backgroundThrottling: opts?.agentOwned === true ? false : true,
       preload: this.pagePreload(),
     };
     if (!envId) {
@@ -972,7 +989,7 @@ export class SparkBrowser {
     const wc = view.webContents;
     const id = tab.id;
     try {
-      wc.setBackgroundThrottling(true);
+      wc.setBackgroundThrottling(tab.agentOwned !== true);
     } catch {
       /* older Electron */
     }
@@ -1143,7 +1160,7 @@ export class SparkBrowser {
       return;
     }
     try {
-      const view = this.makePageView(tab.envId);
+      const view = this.makePageView(tab.envId, { agentOwned: tab.agentOwned === true });
       tab.view = view;
       this.window.contentView.addChildView(view);
       this.bindPageWebContents(tab);
@@ -1216,15 +1233,17 @@ export class SparkBrowser {
     return formatTabMemoryBoard(this.settings?.locale, processes, mb);
   }
 
-  private createTab(url = DEFAULT_URL, activate = true): string {
+  private createTab(url = DEFAULT_URL, activate = true, opts?: { agentOwned?: boolean }): string {
     const id = randomBytes(4).toString("hex");
-    const view = this.makePageView();
+    const agentOwned = opts?.agentOwned === true;
+    const view = this.makePageView(undefined, { agentOwned });
     const tab: TabInfo = {
       id,
       view,
       title: tx(this.settings.locale, "tab.new"),
       url,
       lastActiveAt: Date.now(),
+      agentOwned,
     };
     this.tabs.set(id, tab);
     if (activate) this.activeTabId = id;
@@ -1411,16 +1430,24 @@ export class SparkBrowser {
       const iconPath = resolveAppIconPath();
       if (iconPath) this.window.setIcon(iconPath);
       this.layout();
-      const first = !this.didPlaceWindow;
-      this.ensureWindowVisible(first);
+      // 只有第一次摆上屏幕才拉窗口。之后（含任务入口）不再 restore。
+      if (this.didPlaceWindow) return;
+      this.ensureWindowVisible(true);
       this.didPlaceWindow = true;
-      if (first) setTimeout(() => this.ensureWindowVisible(false), 1600);
+      setTimeout(() => {
+        if (this.window.isDestroyed() || this.window.isMinimized()) return;
+        this.ensureWindowVisible(false);
+      }, 1600);
     } catch (error) {
       console.error("[shell] presentWindow failed:", error);
     }
   }
 
-  /** 最小化 / 甩到屏幕外时拉回工作区，避免任务栏只剩「未响应」。 */
+  /**
+   * 最小化 / 甩到屏幕外时拉回工作区。只留给三处：
+   * 壳层渲染进程 unresponsive、首次 presentWindow、前台任务的一次人机同窗。
+   * 后台任务路径禁止调用。
+   */
   private ensureWindowVisible(recenter = false): void {
     if (this.window.isDestroyed()) return;
     try {
@@ -1454,9 +1481,150 @@ export class SparkBrowser {
     }
   }
 
+  /**
+   * 填表、回复评论、发帖确认（含支付前核对）是人机同窗：
+   * 窗口已经最小化时只拉回一次，方便看着草稿和付款。
+   * 后台调研、比价、行程不走这里。
+   */
+  private restoreForCoPresence(): void {
+    if (this.coPresenceRestored) return;
+    this.coPresenceRestored = true;
+    if (this.window.isDestroyed()) return;
+    let minimized = false;
+    try {
+      minimized = this.window.isMinimized();
+    } catch {
+      return;
+    }
+    if (!minimized) return;
+    this.ensureWindowVisible(false);
+  }
+
+  /** 用已有的前台分类（填表 / 回复 / 发帖），不新写句子正则。 */
+  private maybeRestoreForCoPresence(actionType?: string, userAsk?: string): void {
+    const ask = String(userAsk || "");
+    const kind = this.activeMission?.goal.kind;
+    const foreground =
+      actionType === "fill_form" ||
+      actionType === "one_click_reply" ||
+      kind === "form" ||
+      kind === "publish" ||
+      wantsFillForm(ask) ||
+      wantsReply(ask) ||
+      wantsPublish(ask);
+    if (!foreground) return;
+    this.restoreForCoPresence();
+  }
+
+  /** T06 的 taskPool 还没合并时，用正在跑的工作单和 chatRunning。 */
+  private agentTasksRunning(): boolean {
+    const pool = (this as unknown as { taskPool?: unknown }).taskPool;
+    if (Array.isArray(pool)) return pool.length > 0;
+    if (pool && typeof pool === "object" && "size" in pool && typeof (pool as { size: unknown }).size === "number") {
+      return (pool as { size: number }).size > 0;
+    }
+    if (this.chatRunning) return true;
+    const state = this.activeMission?.state;
+    return state === "running" || state === "waiting_human";
+  }
+
+  private setShellBackgroundThrottling(throttle: boolean): void {
+    try {
+      if (this.window.isDestroyed() || this.window.webContents.isDestroyed()) return;
+      this.window.webContents.setBackgroundThrottling(throttle);
+    } catch {
+      /* older Electron */
+    }
+  }
+
+  /** 最小化且还有 Agent 任务时，壳层定时器不节流；任务结束或窗口恢复后回到节流。 */
+  private syncShellKeepalive(): void {
+    if (this.window.isDestroyed()) return;
+    let minimized = false;
+    try {
+      minimized = this.window.isMinimized();
+    } catch {
+      return;
+    }
+    const running = this.agentTasksRunning();
+    if (!running) this.coPresenceRestored = false;
+    if (!minimized) {
+      this.setShellBackgroundThrottling(true);
+      return;
+    }
+    this.setShellBackgroundThrottling(!running);
+  }
+
+  /** 侧栏新消息在窗口最小化或未聚焦时只闪任务栏，不把窗口弹回来。 */
+  private noteSidebarMessages(): void {
+    const n = this.chatLog.length;
+    if (this.lastNotifiedChat < 0 || !this.didPlaceWindow) {
+      this.lastNotifiedChat = n;
+      return;
+    }
+    if (n <= this.lastNotifiedChat) {
+      this.lastNotifiedChat = n;
+      return;
+    }
+    const added = this.chatLog.slice(this.lastNotifiedChat);
+    this.lastNotifiedChat = n;
+    if (!added.some((m) => m.role === "assistant")) return;
+    this.flashTaskbarIfHidden();
+  }
+
+  private flashTaskbarIfHidden(): void {
+    if (this.window.isDestroyed()) return;
+    let minimized = false;
+    let focused = true;
+    try {
+      minimized = this.window.isMinimized();
+      focused = this.window.isFocused();
+    } catch {
+      return;
+    }
+    if (!minimized && focused) return;
+    try {
+      this.window.flashFrame(true);
+      this.taskbarFlashing = true;
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private clearTaskbarFlash(): void {
+    if (!this.taskbarFlashing || this.window.isDestroyed()) return;
+    this.taskbarFlashing = false;
+    try {
+      this.window.flashFrame(false);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /**
+   * BrowserWindow.focus() / webContents.focus() 在 Windows 上会把最小化窗口 restore。
+   * 后台点击和填写不再抢焦点。前台任务已在入口拉回一次，窗口在前台时才补焦点。
+   */
+  private focusPageForInput(wc: WebContents): void {
+    if (this.window.isDestroyed()) return;
+    let hidden = true;
+    try {
+      hidden = this.window.isMinimized() || !this.window.isFocused();
+    } catch {
+      return;
+    }
+    if (hidden) return;
+    this.window.focus();
+    try {
+      wc.focus();
+    } catch {
+      /* ignore */
+    }
+  }
+
   private recoverHungPage(tab: TabInfo): void {
     noteHang("page-hung", tab.url || "");
-    this.ensureWindowVisible(false);
+    this.flashTaskbarIfHidden();
     const wc = tab.view?.webContents;
     if (!wc || wc.isDestroyed()) return;
     try {
@@ -1977,6 +2145,7 @@ export class SparkBrowser {
 
   private focusActivePage(): void {
     try {
+      if (this.window.isMinimized()) return;
       const tab = this.getActiveTab();
       if (!tab || !tab.view || tab.view.webContents.isDestroyed()) return;
       tab.view.webContents.focus();
@@ -2607,6 +2776,9 @@ export class SparkBrowser {
     try {
       this.window.webContents.send("spark:sidebar-state", this.getSidebarPayload());
       saveChatMemory(this.configDir(), this.chatLog);
+      this.noteSidebarMessages();
+      // handleChat 的 finally 才把 chatRunning 清掉。微任务里再看一眼，任务结束就恢复壳层节流。
+      queueMicrotask(() => this.syncShellKeepalive());
     } catch (error) {
       console.error("[shell] pushSidebarState failed:", error);
     }
@@ -3009,6 +3181,8 @@ export class SparkBrowser {
 
   /** Address-bar / sidebar 一键回复：扫当前页 → 模型起草 → 填入。不点发送。 */
   async csOneClickReply(): Promise<ToolResult & { data?: CsDraftData }> {
+    // 回复评论是前台任务：窗口最小化时拉回一次，人看着草稿再自己点发送。
+    this.restoreForCoPresence();
     const hasKey = this.modelReady();
     const res = await this.csDraftReply({
       fill: true,
@@ -4283,12 +4457,12 @@ export class SparkBrowser {
     };
   }
 
-  /** 侧栏原话走工作单运行时。QA / Agent 用：窗口先弹出来。 */
+  /** 侧栏原话走工作单。后台任务不在入口抢屏；前台任务最小化时只拉回一次。 */
   async sidebarChatTool(
     text: string,
     opts?: { hands?: boolean },
   ): Promise<ToolResult> {
-    this.presentWindow();
+    this.maybeRestoreForCoPresence(undefined, text);
     const ask = String(text || "").trim();
     const beforeUrl = this.getUrl();
     const homeCity = loadProfile(this.configDir()).identity.homeCity;
@@ -4355,6 +4529,7 @@ export class SparkBrowser {
   tabId?: string,
   ): Promise<{ reply: string; replyDoc?: ChatTurn["doc"] }> {
     tabId = tabId || this.agentTabId || this.activeTabId;
+    this.maybeRestoreForCoPresence(action.type, userAsk);
     let reply = "";
     let replyDoc: ChatTurn["doc"];
     if (action.type === "reader_mode") {
@@ -4613,6 +4788,10 @@ export class SparkBrowser {
     this.activeMission = mission;
     this.pushSidebarState();
     const goal = mission.goal;
+    if (goal.kind === "form" || goal.kind === "publish") {
+      // 填表 / 发帖确认（含支付前核对）人机同窗：最小化时拉回一次。调研和行程不进这个分支。
+      this.restoreForCoPresence();
+    }
     const cloudGate = await this.beginCloudTaskIfNeeded({ type: "llm", text: goal.raw }, goal.raw);
     if (cloudGate === "refused") {
       const reply = this.lastCloudRefuse || this.L("cloud.exhausted");
@@ -5617,6 +5796,8 @@ export class SparkBrowser {
   }
 
   private async previewFormFill(userText: string, tabId?: string): Promise<string> {
+    // 填表是前台任务：最小化时拉回一次，人看着字段和之后的付款确认。
+    this.restoreForCoPresence();
     tabId = tabId || this.agentTabId || this.activeTabId;
     const analyzed = await this.analyzePage(tabId);
     if (!analyzed.ok || !analyzed.data) {
@@ -7153,8 +7334,7 @@ export class SparkBrowser {
   ): Promise<void> {
     const tabId = opts?.tabId;
     const wc = this.viewForTab(tabId || this.activeTabId).webContents;
-    this.window.focus();
-    wc.focus();
+    this.focusPageForInput(wc);
     const cx = Math.round(x);
     const cy = Math.round(y);
     const button = opts?.button || "left";
@@ -8077,8 +8257,8 @@ export class SparkBrowser {
 
   private ensureWindowVisibleForCapture(): void {
     if (this.window.isDestroyed()) return;
-    if (this.window.isMinimized()) this.window.restore();
-    this.window.show();
+    // 任务截图不再 restore / show。最小化时抢焦点会把窗口弹回用户面前。
+    if (this.window.isMinimized()) return;
     this.layout();
   }
 
@@ -8980,8 +9160,7 @@ export class SparkBrowser {
   /** Insert Unicode text via CDP Input.insertText (avoids char-event Mojibake). */
   private async insertTextUnicode(text: string, tabId?: string): Promise<void> {
     const wc = this.viewForTab(tabId || this.activeTabId).webContents;
-    this.window.focus();
-    wc.focus();
+    this.focusPageForInput(wc);
     await withDebugger(wc, async (send) => {
       await send("Input.insertText", { text });
     });
@@ -8993,8 +9172,7 @@ export class SparkBrowser {
     if (blocked) return blocked;
     try {
       const wc = this.viewForTab(tabId || this.activeTabId).webContents;
-      this.window.focus();
-    wc.focus();
+      this.focusPageForInput(wc);
       const keyCode = key === "Enter" || key === "Return" ? "Return" : key === "Escape" ? "Escape" : key;
       wc.sendInputEvent({ type: "keyDown", keyCode } as Electron.KeyboardInputEvent);
       wc.sendInputEvent({ type: "char", keyCode: key === "Enter" ? "\r" : key } as Electron.KeyboardInputEvent);
@@ -9018,8 +9196,7 @@ export class SparkBrowser {
       return;
     }
     const wc = this.viewForTab(tabId || this.activeTabId).webContents;
-    this.window.focus();
-    wc.focus();
+    this.focusPageForInput(wc);
 
     wc.sendInputEvent({
       type: "keyDown",
