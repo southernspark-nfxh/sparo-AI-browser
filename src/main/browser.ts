@@ -123,6 +123,7 @@ import {
 } from "./history.js";
 import { uniqueDownloadPath } from "./downloads.js";
 import { loadChatMemory, saveChatMemory, clearChatMemory, type ChatTurn } from "./profile/chat-memory.js";
+import { composeQuotedPrompt, normalizeQuotes, quotedUserTurn, type SparoQuote } from "./agent/quotes.js";
 import {
   actionKey,
   detectFailure,
@@ -517,7 +518,7 @@ export class SparkBrowser {
   private activeMission: ActiveMission | undefined;
   private lastMission: ActiveMission | undefined;
   private chatRunning = false;
-  private chatQueue: Array<{ text: string; images?: string[] }> = [];
+  private chatQueue: Array<{ text: string; images?: string[]; quotes?: SparoQuote[] }> = [];
   /** 同一句排队话只问一次模型是不是在改计划。 */
   private planEditSeen = new Set<string>();
   private ipcReady = false;
@@ -774,6 +775,17 @@ export class SparkBrowser {
       reload: () => void this.reload({ asHuman: true }),
       print: () => this.printPage(),
       find: () => this.openFind(),
+      onQuote: (payload) => {
+        if (this.window.isDestroyed() || this.window.webContents.isDestroyed()) return;
+        this.window.webContents.send("spark:quote-from-page", {
+          text: payload.text,
+          url: payload.url,
+          title: payload.title,
+          siteName: payload.siteName,
+          favicon: tab.favIcon || "",
+          kind: "page",
+        });
+      },
     });
     this.attachChromeShortcuts(wc);
     wc.setUserAgent(chromeUserAgent());
@@ -1813,8 +1825,8 @@ export class SparkBrowser {
       this.resolveApproval(String(id), Boolean(approved)),
     );
     handle("spark:qa-check", async () => this.qaCheck());
-    handle("spark:chat", async (_e, text: string, images?: unknown) =>
-      this.handleChat(String(text || ""), sanitizeImageDataUrls(images)),
+    handle("spark:chat", async (_e, text: string, images?: unknown, quotes?: unknown) =>
+      this.handleChat(String(text || ""), sanitizeImageDataUrls(images), quotes),
     );
     handle("spark:open-report", async (_e, filePath: string) =>
       this.openReport(String(filePath || "")),
@@ -4794,10 +4806,11 @@ export class SparkBrowser {
     }
   }
 
-  async handleChat(text: string, images?: string[]): Promise<ToolResult> {
+  async handleChat(text: string, images?: string[], quotes?: unknown): Promise<ToolResult> {
     const pics = sanitizeImageDataUrls(images);
+    const cleanQuotes = normalizeQuotes(quotes);
     if (this.chatRunning) {
-      this.chatQueue.push({ text, images: pics });
+      this.chatQueue.push({ text, images: pics, quotes: cleanQuotes });
       this.chatLog.push({
         role: "assistant",
         text: `「${text.slice(0, 28)}」已排队，等当前任务写出手册再做。`,
@@ -4807,21 +4820,18 @@ export class SparkBrowser {
     }
     this.chatRunning = true;
     try {
-      return await this.handleChatJob(text, pics);
+      return await this.handleChatJob(text, pics, cleanQuotes);
     } finally {
       this.chatRunning = false;
       const next = this.chatQueue.shift();
-      if (next) void this.handleChat(next.text, next.images);
+      if (next) void this.handleChat(next.text, next.images, next.quotes);
     }
   }
 
-  private async handleChatJob(text: string, images?: string[]): Promise<ToolResult> {
+  private async handleChatJob(text: string, images?: string[], quotes?: SparoQuote[]): Promise<ToolResult> {
+    const cleanQuotes = normalizeQuotes(quotes);
     let jobImages = sanitizeImageDataUrls(images);
-    this.chatLog.push({
-      role: "user",
-      text: text || (jobImages.length ? "（附图）" : ""),
-      images: jobImages.length ? jobImages : undefined,
-    });
+    this.chatLog.push(quotedUserTurn(text, cleanQuotes, jobImages));
     this.pushSidebarState();
     if (this.helpAsk) {
       const t = text.trim();
@@ -4840,6 +4850,30 @@ export class SparkBrowser {
       this.answerLearning("先不管");
     }
     this.recentLearned = [];
+
+    if (cleanQuotes.length) {
+      const prompt = composeQuotedPrompt(text, cleanQuotes);
+      const cloudGate = await this.beginCloudTaskIfNeeded({ type: "llm", text: prompt }, prompt);
+      if (cloudGate === "refused") {
+        const reply = this.lastCloudRefuse || this.L("cloud.exhausted");
+        this.chatLog.push({ role: "assistant", text: reply });
+        this.pushSidebarState();
+        return { ok: false, message: reply };
+      }
+      try {
+        const hand = await this.executeHand({ type: "llm", text: prompt }, prompt, jobImages, "chat");
+        const sealed = this.sealLongRead(hand.reply, hand.replyDoc, prompt);
+        this.chatLog.push({ role: "assistant", text: sealed.text, doc: sealed.doc });
+        this.pushSidebarState();
+        return {
+          ok: true,
+          message: sealed.text,
+          data: { files: sealed.doc ? [sealed.doc.path] : undefined },
+        };
+      } finally {
+        if (this.cloudTaskId) void this.finishCloudTask();
+      }
+    }
 
     if (jobImages.length && /附图|这张图|看看图|识图/.test(text)) {
       const cloudGate = await this.beginCloudTaskIfNeeded({ type: "llm", text }, text);

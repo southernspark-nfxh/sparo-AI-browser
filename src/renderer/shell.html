@@ -951,7 +951,8 @@ body.side-collapsed .dock { display: none; }
 }
 .composer.is-locked textarea,
 .composer.is-locked .go-row,
-.composer.is-locked .img-previews { display: none !important; }
+.composer.is-locked .img-previews,
+.composer.is-locked .quote-strip { display: none !important; }
 .composer-lock p { margin: 0 0 4px; font-size: var(--fs-13); line-height: 1.5; }
 .composer-lock .save { margin-top: 4px; }
 .composer-lock button { pointer-events: auto; cursor: pointer; }
@@ -1009,6 +1010,85 @@ body.side-collapsed .dock { display: none; }
   border: 1px solid var(--line);
 }
 .composer.dragon { outline: 1px dashed var(--accent); }
+.quote-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+.quote-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-8);
+  background: var(--paper);
+  font-size: var(--fs-12);
+  line-height: 1.35;
+}
+.quote-chip .mark {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  flex: none;
+}
+.quote-chip img.mark { object-fit: cover; }
+.quote-chip .mark.letter {
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+}
+.quote-chip .body { min-width: 0; flex: 1; }
+.quote-chip .src,
+.quote-chip .excerpt {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.quote-chip .src { color: var(--muted); }
+.quote-chip .x {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.quote-fold {
+  margin: 0 0 6px;
+  font-size: var(--fs-12);
+  line-height: 1.4;
+  color: var(--muted);
+}
+.quote-fold .line {
+  display: flex;
+  gap: 0;
+  align-items: baseline;
+  cursor: pointer;
+  min-width: 0;
+}
+.quote-fold .excerpt {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+.quote-fold.open .excerpt { white-space: pre-wrap; overflow: visible; }
+.quote-fold .srcbtn {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  flex: none;
+}
 .go-row { display: flex; justify-content: flex-end; gap: 8px; align-items: center; }
 .note, #chatHint {
   margin-top: 8px;
@@ -1698,6 +1778,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
               </div>
             </div>
             <div id="imagePreviews" class="img-previews" style="display:none"></div>
+            <div id="quoteStrip" class="quote-strip" style="display:none"></div>
             <textarea id="chatInput" data-i18n-placeholder="chat.placeholder" placeholder="说要做什么，也可粘贴截图、拖入文件或直接给文件路径"></textarea>
             <div class="go-row"><button type="button" class="ghost" id="chatFile" data-i18n="chat.file" title="选一个本地文件，或直接把文件拖进来">文件</button><button type="button" id="chatSend" data-i18n="chat.send">让它动手</button></div>
           </div>
@@ -2478,6 +2559,44 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         }
       }
 
+      function quoteSourceLabel(q) {
+        const title = String((q && (q.title || q.siteName)) || "").trim();
+        return title || t("quote.manual");
+      }
+
+      function renderQuoteFold(q) {
+        const fold = document.createElement("div");
+        fold.className = "quote-fold";
+        const line = document.createElement("div");
+        line.className = "line";
+        if (q.url) {
+          const src = document.createElement("button");
+          src.type = "button";
+          src.className = "srcbtn";
+          src.textContent = quoteSourceLabel(q);
+          src.onclick = (ev) => {
+            ev.stopPropagation();
+            window.sparkShell.newTab(q.url);
+          };
+          line.appendChild(src);
+        } else {
+          const label = document.createElement("span");
+          label.textContent = quoteSourceLabel(q);
+          line.appendChild(label);
+        }
+        line.appendChild(document.createTextNode(" · "));
+        const excerpt = document.createElement("span");
+        excerpt.className = "excerpt";
+        excerpt.textContent = String(q.text || "").replace(/\s+/g, " ");
+        line.appendChild(excerpt);
+        line.onclick = (ev) => {
+          if (ev.target && ev.target.classList && ev.target.classList.contains("srcbtn")) return;
+          fold.classList.toggle("open");
+        };
+        fold.appendChild(line);
+        return fold;
+      }
+
       function renderChat(log) {
         const root = document.getElementById("chat");
         root.innerHTML = "";
@@ -2502,6 +2621,9 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
               shots.appendChild(img);
             }
             wrap.appendChild(shots);
+          }
+          if (m.quotes && m.quotes.length) {
+            for (const q of m.quotes) wrap.appendChild(renderQuoteFold(q));
           }
           bub.textContent = m.text;
           wrap.appendChild(bub);
@@ -3606,26 +3728,119 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           reader.onload = () => addPendingImage(String(reader.result || ""));
           reader.readAsDataURL(file);
         }
+        const QUOTE_TEXT_LIMIT = 4000;
+        const QUOTE_COUNT_LIMIT = 5;
+        let pendingQuotes = [];
+        function renderQuoteStrip() {
+          const strip = document.getElementById("quoteStrip");
+          if (!strip) return;
+          strip.innerHTML = "";
+          if (!pendingQuotes.length) {
+            strip.style.display = "none";
+            return;
+          }
+          strip.style.display = "flex";
+          pendingQuotes.forEach((q, i) => {
+            const chip = document.createElement("div");
+            chip.className = "quote-chip";
+            if (q.favicon) {
+              const img = document.createElement("img");
+              img.className = "mark";
+              img.alt = "";
+              img.src = q.favicon;
+              chip.appendChild(img);
+            } else {
+              const letter = document.createElement("span");
+              letter.className = "mark letter";
+              letter.textContent = quoteSourceLabel(q).slice(0, 1);
+              chip.appendChild(letter);
+            }
+            const body = document.createElement("div");
+            body.className = "body";
+            const src = document.createElement("div");
+            src.className = "src";
+            src.textContent = quoteSourceLabel(q);
+            const excerpt = document.createElement("div");
+            excerpt.className = "excerpt";
+            excerpt.textContent = String(q.text || "").slice(0, 40);
+            body.appendChild(src);
+            body.appendChild(excerpt);
+            const x = document.createElement("button");
+            x.type = "button";
+            x.className = "x";
+            x.textContent = "×";
+            x.onclick = () => {
+              pendingQuotes.splice(i, 1);
+              renderQuoteStrip();
+            };
+            chip.appendChild(body);
+            chip.appendChild(x);
+            strip.appendChild(chip);
+          });
+        }
+        function addPendingQuote(raw) {
+          let text = String((raw && raw.text) || "").replace(/\u0000/g, "").trim();
+          if (!text) return;
+          if (pendingQuotes.length >= QUOTE_COUNT_LIMIT) {
+            toast(t("quote.tooMany"));
+            return;
+          }
+          if (text.length > QUOTE_TEXT_LIMIT) {
+            text = text.slice(0, QUOTE_TEXT_LIMIT);
+            toast(t("quote.truncated"));
+          }
+          const active = (chromeState.tabs || []).find((tab) => tab.id === chromeState.activeId) || {};
+          pendingQuotes.push({
+            text,
+            url: String((raw && raw.url) || ""),
+            title: String((raw && raw.title) || ""),
+            siteName: String((raw && raw.siteName) || ""),
+            favicon: String((raw && raw.favicon) || active.favIcon || ""),
+            kind: raw && raw.kind === "note" ? "note" : "page",
+            noteId: String((raw && raw.noteId) || ""),
+          });
+          renderQuoteStrip();
+        }
+        function activeQuoteSource() {
+          const active = (chromeState.tabs || []).find((tab) => tab.id === chromeState.activeId) || {};
+          const url = active.url || chromeState.url || "";
+          let siteName = "";
+          try { siteName = new URL(url).hostname.replace(/^www\./, ""); } catch { /* manual */ }
+          const http = /^https?:\/\//i.test(url);
+          return {
+            url: http ? url : "",
+            title: http ? (active.title || "") : t("quote.manual"),
+            siteName: http ? siteName : "",
+            favicon: active.favIcon || "",
+          };
+        }
         async function sendChat() {
           const input = document.getElementById("chatInput");
           const text = input.value.trim();
           const images = pendingImages.slice();
+          const quotes = pendingQuotes.slice();
           const lock = document.getElementById("composerLock");
           if (lock && !lock.classList.contains("hide")) {
             goSetup("cloud");
             return;
           }
-          if (!text && !images.length) return;
+          if (!text && !images.length && !quotes.length) return;
           input.value = "";
           pendingImages = [];
+          pendingQuotes = [];
           renderPendingImages();
+          renderQuoteStrip();
           const sendBtn = document.getElementById("chatSend");
           sendBtn.disabled = true;
           sendBtn.textContent = "…";
+          const outgoing = text || (images.length ? "请看附图，用中文说明。" : "");
           try {
-            await window.sparkShell.chat(text || "请看附图，用中文说明。", images);
+            await window.sparkShell.chat(outgoing, images, quotes);
           } catch (err) {
             console.error(err);
+            pendingQuotes = quotes;
+            renderQuoteStrip();
+            toast(t("toast.fail"));
           } finally {
             sendBtn.disabled = false;
             sendBtn.textContent = t("chat.send");
@@ -3681,6 +3896,25 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
               }
               return;
             }
+            const plain = String((dt && dt.getData("text/plain")) || "").trim();
+            if (!plain) return;
+            const tabIds = (chromeState.tabs || []).map((tab) => tab.id);
+            if (tabIds.includes(plain)) return;
+            const src = activeQuoteSource();
+            addPendingQuote({ text: plain, ...src, kind: "page" });
+          });
+        }
+        if (window.sparkShell.onQuoteFromPage) {
+          window.sparkShell.onQuoteFromPage((payload) => {
+            addPendingQuote({
+              text: payload && payload.text,
+              url: payload && payload.url,
+              title: payload && payload.title,
+              siteName: payload && payload.siteName,
+              favicon: payload && payload.favicon,
+              kind: (payload && payload.kind) || "page",
+              noteId: payload && payload.noteId,
+            });
           });
         }
         document.getElementById("chatSend").onclick = sendChat;

@@ -41,7 +41,18 @@ contextBridge.exposeInMainWorld("sparkShell", {
   resolveApproval: (id: string, approved: boolean) =>
     ipcRenderer.invoke("spark:resolve-approval", id, approved),
   runQa: () => ipcRenderer.invoke("spark:qa-check"),
-  chat: (text: string, images?: string[]) => ipcRenderer.invoke("spark:chat", text, images),
+  chat: (
+    text: string,
+    images?: string[],
+    quotes?: Array<{
+      text: string;
+      url?: string;
+      title?: string;
+      siteName?: string;
+      kind?: "page" | "note";
+      noteId?: string;
+    }>,
+  ) => ipcRenderer.invoke("spark:chat", text, images, quotes),
   /** 拖进侧栏的本地文件 → 真实磁盘路径（Electron webUtils） */
   filePath: (file: File) => {
     try {
@@ -140,6 +151,28 @@ contextBridge.exposeInMainWorld("sparkShell", {
     ) => cb(payload || {});
     ipcRenderer.on("spark:toast", handler);
     return () => ipcRenderer.removeListener("spark:toast", handler);
+  },
+  onQuoteFromPage: (cb: (payload: {
+    text?: string;
+    url?: string;
+    title?: string;
+    siteName?: string;
+    favicon?: string;
+    kind?: string;
+  }) => void) => {
+    const handler = (
+      _: Electron.IpcRendererEvent,
+      payload: {
+        text?: string;
+        url?: string;
+        title?: string;
+        siteName?: string;
+        favicon?: string;
+        kind?: string;
+      },
+    ) => cb(payload || {});
+    ipcRenderer.on("spark:quote-from-page", handler);
+    return () => ipcRenderer.removeListener("spark:quote-from-page", handler);
   },
   onNotes: (cb: (payload: { search?: string }) => void) => {
     const handler = (_: Electron.IpcRendererEvent, payload: { search?: string }) => cb(payload || {});

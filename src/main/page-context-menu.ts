@@ -144,6 +144,7 @@ export function attachPageContextMenu(
     reload?: () => void;
     print?: () => void;
     find?: () => void;
+    onQuote?: (payload: { text: string; url: string; title: string; siteName: string }) => void;
   },
 ): void {
   const tr = opts?.t || ((key: string) => key);
@@ -155,6 +156,32 @@ export function attachPageContextMenu(
         /\.(png|jpe?g|gif|webp|svg|bmp|ico)(\?|$)/i.test(params.srcURL || ""));
 
     const template: MenuItemConstructorOptions[] = [];
+    const selected = String(params.selectionText || "").trim();
+    if (selected) {
+      template.push(
+        {
+          label: tr("ctx.askSparo"),
+          click: () => {
+            let url = params.pageURL || "";
+            let title = "";
+            try {
+              if (!url) url = wc.getURL();
+              title = wc.getTitle();
+            } catch {
+              /* page already gone */
+            }
+            let siteName = "";
+            try {
+              siteName = new URL(url).hostname.replace(/^www\./, "");
+            } catch {
+              /* not a url */
+            }
+            opts?.onQuote?.({ text: selected, url, title, siteName });
+          },
+        },
+        { type: "separator" },
+      );
+    }
 
     template.push(
       {
