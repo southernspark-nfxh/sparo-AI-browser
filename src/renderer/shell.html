@@ -6,33 +6,33 @@
     <title>Sparo</title>
     <style>
 :root {
-  color-scheme: light;
+  color-scheme: dark;
 
-  /* 纸面 */
-  --page: #e4e0dc;
-  --bg: #eeeae6;
-  --bg2: #eeeae6;
-  --side: #f3f0ec;
+  /* 暖黑底 */
+  --page: #2d2824;
+  --bg: #1a1715;
+  --bg2: #1a1715;
+  --side: #221d1a;
   --card: transparent;
-  --paper: #fbfaf8;
+  --paper: #2a2521;
   --composer: var(--paper);
-  --line: #ddd8d2;
-  --line-strong: #c9c2b8;
-  --surface-2: #e8e4e0;
-  --tab: #e8e4e0;
-  --tab-active: #fbfaf8;
+  --line: #3a342e;
+  --line-strong: #4a433c;
+  --surface-2: #332d28;
+  --tab: #2a2521;
+  --tab-active: #3a342e;
 
   /* 文字 */
-  --text: #1c1a18;
-  --muted: #6e6a66;
+  --text: #f3ece3;
+  --muted: #9c9489;
 
-  /* 品牌 */
-  --accent: #a34a1e;
-  --accent-ink: #fffaf6;
-  --accent-soft: #f6ece5;
-  --ok: #4d7a55;
-  --warn: #96742e;
-  --bad: #a8433a;
+  /* 火焰 */
+  --accent: #e84a1c;
+  --accent-ink: #fff8f0;
+  --accent-soft: #3d2c26;
+  --ok: #4db86b;
+  --warn: #d4a14c;
+  --bad: #c73a2b;
 
   /* 字号 */
   --fs-12: 12px;
@@ -62,8 +62,8 @@
   --sp-6: 24px;
 
   /* 阴影 */
-  --shadow-1: 0 6px 18px rgba(28, 26, 24, .10);
-  --shadow-2: 0 14px 36px rgba(40, 32, 24, .16);
+  --shadow-1: 0 4px 14px rgba(0, 0, 0, .40);
+  --shadow-2: 0 8px 28px rgba(0, 0, 0, .55);
 
   /* 尺寸（T03/T04 再改） */
   --chrome-h: 76px;
@@ -157,6 +157,7 @@ input, textarea, select, .chat-log, .chat-log .bubble {
   min-width: 80px;
   padding: 0 8px 0 10px;
   background: var(--tab);
+  color: var(--muted);
   border-radius: var(--r-8) var(--r-8) 0 0;
   font-size: var(--fs-12);
   border: 1px solid transparent;
@@ -165,6 +166,7 @@ input, textarea, select, .chat-log, .chat-log .bubble {
 }
 .tab.active {
   background: var(--tab-active);
+  color: var(--text);
   border-color: var(--line);
   box-shadow: inset 0 -2px 0 var(--accent);
 }
@@ -265,7 +267,7 @@ input, textarea, select, .chat-log, .chat-log .bubble {
   white-space: nowrap;
   cursor: pointer;
 }
-.mem-chip:hover { background: #fff; }
+.mem-chip:hover { background: var(--surface-2); }
 .url {
   flex: 1;
   height: 32px;
@@ -565,7 +567,7 @@ body.side-collapsed .dock { display: none; }
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 8px 20px 12px;
+  padding: 8px;
   position: relative;
 }
 .welcome {
@@ -698,10 +700,10 @@ body.side-collapsed .dock { display: none; }
 .chat-log {
   min-height: 0;
   font-size: var(--fs-14);
-  line-height: 1.55;
+  line-height: 1.65;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   background: transparent;
   border-radius: 0;
   padding: 0;
@@ -733,58 +735,97 @@ body.side-collapsed .dock { display: none; }
   color: var(--muted);
 }
 .chat-log .bubble {
-  max-width: 80%;
-  padding: 0;
-  border-radius: 0;
+  max-width: 100%;
+  padding: 14px 16px;
+  border-radius: var(--r-10);
   white-space: pre-wrap;
   word-break: break-word;
-  background: transparent;
+  background: var(--paper);
   color: var(--text);
+  line-height: 1.65;
 }
+.chat-log .bubble p,
+.chat-log .bubble li,
+.chat-log .bubble h3,
+.chat-log .bubble h4 { margin-top: 8px; }
 .chat-log .bubble.me {
   color: var(--text);
   background: var(--surface-2);
-  padding: 6px 10px;
+  padding: 14px 16px;
   border-radius: var(--r-10);
 }
-.chat-log .bubble.sparo { color: var(--text); }
+.chat-log .bubble.sparo {
+  color: var(--text);
+  background: var(--paper);
+}
 .chat-log .bubble-wrap {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 4px;
-  max-width: 80%;
+  max-width: calc(100% - 30px);
   min-width: 0;
 }
 .chat-log .bubble-row.me .bubble-wrap { align-items: flex-end; }
 .chat-log .bubble-wrap .bubble { max-width: 100%; }
 .chat-log .bubble-copy {
+  opacity: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-8);
   background: transparent;
   color: var(--muted);
-  font-size: var(--fs-12);
-  padding: 0;
   line-height: 1;
 }
-.chat-log .bubble-copy:hover { color: var(--text); }
-.doc-card {
-  margin-top: 6px;
-  width: 100%;
+.chat-log .bubble-row:hover .bubble-copy,
+.chat-log .bubble-copy:focus-visible { opacity: 1; }
+.chat-log .bubble-copy:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.chat-log .bubble-copy .ic { width: 14px; height: 14px; }
+.chat-log .doc-card {
+  margin-top: 8px;
+  width: auto;
+  max-width: 100%;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
   text-align: left;
   border: 1px solid var(--line);
-  background: var(--paper);
-  border-radius: var(--r-10);
-  padding: 10px 12px;
+  background: var(--surface-2);
+  border-radius: 999px;
+  padding: 0 10px 0 8px;
   cursor: pointer;
   color: var(--text);
 }
-.doc-card:hover { border-color: var(--line-strong); }
-.doc-card .kicker {
-  font-size: var(--fs-12);
-  letter-spacing: .14em;
-  color: var(--muted);
-  margin-bottom: 4px;
+.chat-log .doc-card::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  background: currentColor;
+  -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.6"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/></svg>') center / 14px no-repeat;
+  mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.6"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/></svg>') center / 14px no-repeat;
 }
-.doc-card .ttl { font-size: var(--fs-13); line-height: 1.35; }
-.doc-card .go { font-size: var(--fs-12); color: var(--muted); margin-top: 6px; }
+.chat-log .doc-card:hover { border-color: var(--line-strong); }
+.chat-log .doc-card .kicker {
+  font-size: 12px;
+  letter-spacing: 0;
+  color: var(--text);
+  margin: 0;
+}
+.chat-log .doc-card .ttl,
+.chat-log .doc-card .go {
+  display: none;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font-weight: inherit;
+  height: auto;
+  padding: 0;
+}
 .cortex-card {
   margin-top: 6px;
   width: 100%;
@@ -809,16 +850,17 @@ body.side-collapsed .dock { display: none; }
 .cortex-actions button {
   flex: 1;
   border: 1px solid var(--line);
-  background: #fff;
+  background: var(--paper);
+  color: var(--text);
   border-radius: var(--r-8);
   padding: 6px 8px;
   font-size: var(--fs-12);
   cursor: pointer;
 }
 .cortex-actions button.primary {
-  background: var(--text);
-  color: #fff;
-  border-color: var(--text);
+  background: transparent;
+  color: var(--text);
+  border-color: var(--line-strong);
 }
 .sidebar.need-setup .thread-tools,
 .sidebar.need-setup .shortcuts { display: none; }
@@ -860,7 +902,7 @@ body.side-collapsed .dock { display: none; }
 }
 .approval .row button.ok { color: var(--text); font-weight: var(--fw-sb); }
 
-.dock { padding: 0 16px 16px; }
+.dock { padding: 0 8px 12px; }
 .shortcuts {
   display: flex;
   gap: 14px;
@@ -953,7 +995,7 @@ body.side-collapsed .dock { display: none; }
   border: 0;
   border-radius: 50%;
   background: color-mix(in srgb, var(--text) 80%, transparent);
-  color: #fff;
+  color: var(--bg);
   font-size: var(--fs-12);
   line-height: 16px;
   cursor: pointer;
@@ -1020,18 +1062,21 @@ body.side-collapsed .dock { display: none; }
 }
 .ds-tab:hover { color: var(--text); }
 .ds-tab.on {
-  background: var(--paper);
+  background: var(--surface-2);
   color: var(--text);
   font-weight: var(--fw-sb);
-  box-shadow: var(--shadow-1);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 .ds-panel { display: block; padding: 0 20px 24px; }
 .ds-panel.hide { display: none; }
 .ds-group {
   margin: 16px 0 8px;
+  padding: 6px 10px;
+  background: var(--surface-2);
+  border-left: 2px solid var(--accent);
   font-size: 12px;
   font-weight: 600;
-  color: var(--muted);
+  color: var(--text);
   letter-spacing: .02em;
 }
 .ds-group:first-of-type { margin-top: 4px; }
@@ -1087,22 +1132,41 @@ body.side-collapsed .dock { display: none; }
 }
 .lang-row { margin: 0; }
 .ds-status { font-size: var(--fs-12); color: var(--muted); margin: 0 0 10px; }
-.ds-status.ok { color: var(--text); }
+.ds-status.ok {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+.ds-status.ok::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+  flex: 0 0 7px;
+}
 .mode-cards { display: flex; gap: 8px; margin: 0 0 12px; }
-.mode-card {
+.mode-cards .mode-card {
   flex: 1;
   border: 1px solid var(--line);
-  border-radius: var(--r-16);
+  border-bottom: 2px solid var(--line);
+  border-radius: var(--r-10);
   padding: 10px 10px 12px;
   cursor: pointer;
-  background: transparent;
+  background: var(--paper);
   text-align: left;
   color: inherit;
   font: inherit;
 }
-.mode-card.on {
-  background: var(--accent-soft);
-  border-color: var(--accent);
+.mode-cards .mode-card.on {
+  background: var(--paper);
+  border-color: var(--line);
+  border-bottom: 2px solid var(--accent);
 }
 .mode-card strong { display: block; font-size: var(--fs-13); margin-bottom: 4px; }
 .mode-card span { display: block; font-size: var(--fs-12); color: var(--muted); line-height: 1.4; }
@@ -1262,7 +1326,7 @@ body.side-collapsed .dock { display: none; }
   display: none;
   position: fixed;
   inset: 0;
-  background: rgba(40,32,24,.35);
+  background: rgba(0, 0, 0, .55);
   z-index: 1000;
   align-items: center;
   justify-content: center;
@@ -1274,7 +1338,7 @@ body.side-collapsed .dock { display: none; }
   border: 1px solid var(--line);
   border-radius: var(--r-16);
   padding: 14px;
-  box-shadow: 0 18px 44px rgba(40,32,24,.16);
+  box-shadow: var(--shadow-2);
 }
 .modal-box p { margin: 0 0 12px; font-size: var(--fs-13); line-height: 1.45; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
@@ -1324,8 +1388,8 @@ body.side-collapsed .dock { display: none; }
   font-weight: var(--fw-sb);
 }
 .primary:hover, .save:hover, .ok:hover, #chatSend:hover, .go:hover, .reply-one:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 88%, #000);
-  border-color: color-mix(in srgb, var(--accent) 88%, #000);
+  background: #ff7a33;
+  border-color: #ff7a33;
 }
 .primary:active, .save:active, .ok:active, #chatSend:active, .go:active {
   transform: translateY(1px);
@@ -1365,10 +1429,16 @@ body.side-collapsed .dock { display: none; }
 }
 .sidebar button.danger {
   background: transparent;
-  border: 1px solid transparent;
-  color: var(--bad);
+  border: 0;
+  color: color-mix(in srgb, var(--bad) 70%, var(--muted));
 }
-.sidebar button.danger:hover { background: color-mix(in srgb, var(--bad) 10%, transparent); }
+.sidebar button.danger:hover { background: transparent; color: var(--bad); }
+#btnPfView {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  box-shadow: none;
+}
 .sidebar .save, .sidebar .primary, .sidebar #btnDsSave, .sidebar #btnPfSave, .sidebar #btnCopyAgent {
   width: 100%;
   margin-top: 4px;
@@ -1401,7 +1471,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
   display: flex;
   justify-content: flex-end;
   gap: 2px;
-  padding: 0 14px 4px;
+  padding: 0 8px 4px;
   flex: 0 0 auto;
   opacity: .55;
   transition: opacity .15s;
@@ -1588,6 +1658,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
             <span data-i18n="welcome.nudge">尚未完成设置</span>
             <button type="button" class="linkish" id="welcomeNudgeGo" data-i18n="welcome.nudgeGo">继续设置</button>
           </div>
+          <div id="planStrip"></div>
           <div class="chat-log" id="chat"></div>
           <div class="notes-panel hide" id="notesPanel">
             <div class="notes-head">
@@ -2333,6 +2404,80 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         }
       }
 
+      function renderPlanStrip(plan) {
+        var root = document.getElementById("planStrip");
+        if (!root) return;
+        if (!document.getElementById("planStripStyle")) {
+          var style = document.createElement("style");
+          style.id = "planStripStyle";
+          style.textContent = [
+            "#planStrip.hide{display:none}",
+            "#planStrip{position:sticky;top:0;z-index:2;margin:0 0 12px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--paper)}",
+            "#planStrip .plan-kicker{font-size:var(--fs-12);color:var(--muted);margin-bottom:6px}",
+            "#planStrip ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}",
+            "#planStrip li{display:flex;gap:8px;align-items:flex-start;padding:4px 6px;border-radius:8px;font-size:var(--fs-13);color:var(--text)}",
+            "#planStrip li.is-running{background:var(--accent-soft)}",
+            "#planStrip li .plan-mark{width:2.2em;flex:none;color:var(--muted)}",
+            "#planStrip li.is-done .plan-mark{color:var(--ok)}",
+            "#planStrip li.is-failed .plan-mark{color:var(--bad)}",
+            "#planStrip li .note{display:block;color:var(--muted);font-size:var(--fs-12)}",
+            "#planStrip button.step{border:0;background:transparent;color:inherit;font:inherit;text-align:left;padding:0;cursor:pointer}",
+            "#planStrip .why{margin-top:6px;color:var(--muted);font-size:var(--fs-12)}",
+          ].join("");
+          document.head.appendChild(style);
+        }
+        root.innerHTML = "";
+        var steps = plan && plan.steps;
+        if (!steps || !steps.length) {
+          root.classList.add("hide");
+          return;
+        }
+        root.classList.remove("hide");
+        var kicker = document.createElement("div");
+        kicker.className = "plan-kicker";
+        kicker.textContent = "计划";
+        root.appendChild(kicker);
+        var list = document.createElement("ol");
+        steps.forEach(function (step, index) {
+          var li = document.createElement("li");
+          var status = step.status || "pending";
+          li.className = "is-" + status;
+          var mark = document.createElement("span");
+          mark.className = "plan-mark";
+          mark.textContent = status === "done" ? "✓" : status === "failed" ? "✗" : status === "skipped" ? "跳过" : status === "running" ? "●" : "⏳";
+          var body = document.createElement("div");
+          var label = (index + 1) + ". " + (step.label || step.cap || "");
+          if (status === "pending" || status === "skipped") {
+            var btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "step";
+            btn.textContent = label;
+            btn.onclick = function () {
+              if (window.sparkShell && window.sparkShell.chat) window.sparkShell.chat("先做第" + (index + 1) + "步");
+            };
+            body.appendChild(btn);
+          } else {
+            body.textContent = label;
+          }
+          if (step.note && (status === "failed" || status === "skipped")) {
+            var note = document.createElement("span");
+            note.className = "note";
+            note.textContent = step.note;
+            body.appendChild(note);
+          }
+          li.appendChild(mark);
+          li.appendChild(body);
+          list.appendChild(li);
+        });
+        root.appendChild(list);
+        if (plan.revisedFrom) {
+          var why = document.createElement("div");
+          why.className = "why";
+          why.textContent = plan.revisedFrom;
+          root.appendChild(why);
+        }
+      }
+
       function renderChat(log) {
         const root = document.getElementById("chat");
         root.innerHTML = "";
@@ -2363,7 +2508,9 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           const copyBtn = document.createElement("button");
           copyBtn.type = "button";
           copyBtn.className = "bubble-copy";
-          copyBtn.textContent = t("chat.copy");
+          copyBtn.title = t("chat.copy");
+          copyBtn.setAttribute("aria-label", t("chat.copy"));
+          copyBtn.innerHTML = '<svg class="ic" aria-hidden="true"><use href="#i-doc"/></svg>';
           copyBtn.onclick = async (ev) => {
             ev.stopPropagation();
             try {
@@ -2581,6 +2728,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         renderLessons(payload.lessons);
         renderQa(payload.qa);
         renderChat(payload.chat);
+        renderPlanStrip(payload.plan);
         if (payload.chat && payload.chat.length) scrollDockIntoView();
         if (payload.profile) {
           userProfile.nickname = payload.profile.nickname || "";
@@ -3506,6 +3654,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           ["dragenter", "dragover"].forEach((ev) => {
             composer.addEventListener(ev, (e) => {
               e.preventDefault();
+              if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
               composer.classList.add("dragon");
             });
           });
@@ -3513,21 +3662,24 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           composer.addEventListener("drop", (e) => {
             e.preventDefault();
             composer.classList.remove("dragon");
-            const files = e.dataTransfer && e.dataTransfer.files;
-            if (!files) return;
-            const paths = [];
-            for (const f of files) {
-              if (String(f.type || "").startsWith("image/")) readImageFile(f);
-              else {
-                const p = window.sparkShell.filePath ? window.sparkShell.filePath(f) : "";
-                if (p) paths.push(p);
+            const dt = e.dataTransfer;
+            const files = dt && dt.files;
+            if (files && files.length) {
+              const paths = [];
+              for (const f of files) {
+                if (String(f.type || "").startsWith("image/")) readImageFile(f);
+                else {
+                  const p = window.sparkShell.filePath ? window.sparkShell.filePath(f) : "";
+                  if (p) paths.push(p);
+                }
               }
-            }
-            if (paths.length) {
-              const input = document.getElementById("chatInput");
-              const prefix = input.value.trim() ? input.value.trim() + " " : "";
-              input.value = prefix + paths.join(" ") + " ";
-              input.focus();
+              if (paths.length) {
+                const input = document.getElementById("chatInput");
+                const prefix = input.value.trim() ? input.value.trim() + " " : "";
+                input.value = prefix + paths.join(" ") + " ";
+                input.focus();
+              }
+              return;
             }
           });
         }
