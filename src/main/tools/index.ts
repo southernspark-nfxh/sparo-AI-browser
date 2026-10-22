@@ -10,16 +10,27 @@ import {
 
 export function createToolHandlers(browser: SparkBrowser) {
   return {
-    navigate: (url: string) =>
-      browser.watchPageTool("navigate", { url }, () => navigateTool(browser, url)),
-    snapshot: (selector?: string) => snapshotTool(browser, selector),
-    click: (target: { ref?: string; selector?: string; caret?: boolean }) =>
-      browser.watchPageTool("click", target as Record<string, unknown>, () =>
-        clickTool(browser, target),
+    navigate: (url: string, tabId?: string) =>
+      browser.watchPageTool(
+        "navigate",
+        tabId ? { url, tabId } : { url },
+        () => navigateTool(browser, url, tabId),
+        tabId,
       ),
-    fill: (target: { ref?: string; selector?: string }, value: string) =>
-      browser.watchPageTool("fill", { ...target, value } as Record<string, unknown>, () =>
-        fillTool(browser, target, value),
+    snapshot: (selector?: string, tabId?: string) => snapshotTool(browser, selector, tabId),
+    click: (target: { ref?: string; selector?: string; caret?: boolean }, tabId?: string) =>
+      browser.watchPageTool(
+        "click",
+        tabId ? { ...target, tabId } : (target as Record<string, unknown>),
+        () => clickTool(browser, target, tabId),
+        tabId,
+      ),
+    fill: (target: { ref?: string; selector?: string }, value: string, tabId?: string) =>
+      browser.watchPageTool(
+        "fill",
+        tabId ? { ...target, value, tabId } : ({ ...target, value } as Record<string, unknown>),
+        () => fillTool(browser, target, value, tabId),
+        tabId,
       ),
     execute: (script: string, opts?: { frame?: number | string }) =>
       browser.execute(script, opts),

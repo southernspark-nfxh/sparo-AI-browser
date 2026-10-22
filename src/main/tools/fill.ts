@@ -5,6 +5,7 @@ export async function fillTool(
   browser: SparkBrowser,
   target: { ref?: string; selector?: string },
   value: string,
+  tabId?: string,
 ): Promise<ToolResult> {
-  return browser.fill(target, value);
+  return browser.fill(target, value, tabId);
 }
