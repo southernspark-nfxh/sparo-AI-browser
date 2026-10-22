@@ -1,38 +1,40 @@
 <!doctype html>
 <!-- Single shell: chrome + embedded sidebar (no separate chrome.html / sidebar.html). -->
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light">
   <head>
     <meta charset="UTF-8" />
     <title>Sparo</title>
     <style>
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 
-  /* 暖黑底 */
-  --page: #2d2824;
-  --bg: #1a1715;
-  --bg2: #1a1715;
-  --side: #221d1a;
+  --page: #ffffff;
+  --bg: #fbfbfd;
+  --bg2: #fbfbfd;
+  --side: #f4f5f8;
   --card: transparent;
-  --paper: #2a2521;
-  --composer: var(--paper);
-  --line: #3a342e;
-  --line-strong: #4a433c;
-  --surface-2: #332d28;
-  --tab: #2a2521;
-  --tab-active: #3a342e;
+  --paper: #ffffff;
+  --composer: #ffffff;
+  --line: #e2e5ec;
+  --line-strong: #cfd4df;
+  --surface-2: #eceef4;
+  --tab: #f4f5f8;
+  --tab-active: #ffffff;
 
-  /* 文字 */
-  --text: #f3ece3;
-  --muted: #9c9489;
+  --text: #12141a;
+  --muted: #6b7280;
 
-  /* 火焰 */
-  --accent: #e84a1c;
-  --accent-ink: #fff8f0;
-  --accent-soft: #3d2c26;
-  --ok: #4db86b;
-  --warn: #d4a14c;
-  --bad: #c73a2b;
+  --accent: #2563eb;
+  --accent-2: #7c3aed;
+  --accent-ink: #ffffff;
+  --accent-soft: #e7eefe;
+  --accent-hover: #1d4ed8;
+  --ok: #15a34a;
+  --warn: #b7791f;
+  --bad: #dc2626;
+
+  --grad: linear-gradient(135deg, #2563eb, #7c3aed);
+  --glow: 0 6px 18px rgba(37, 99, 235, .22);
 
   /* 字号 */
   --fs-12: 12px;
@@ -62,8 +64,8 @@
   --sp-6: 24px;
 
   /* 阴影 */
-  --shadow-1: 0 4px 14px rgba(0, 0, 0, .40);
-  --shadow-2: 0 8px 28px rgba(0, 0, 0, .55);
+  --shadow-1: 0 4px 14px rgba(16, 24, 40, .10);
+  --shadow-2: 0 8px 28px rgba(16, 24, 40, .16);
 
   /* 尺寸（T03/T04 再改） */
   --chrome-h: 76px;
@@ -73,6 +75,40 @@
   --radius-in: var(--r-16);
 
   font-family: -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+
+  --page: #0d1117;
+  --bg: #0d1117;
+  --bg2: #0d1117;
+  --side: #121820;
+  --card: transparent;
+  --paper: #161b22;
+  --composer: #182028;
+  --line: #26313c;
+  --line-strong: #35434f;
+  --surface-2: #202a34;
+  --tab: #121820;
+  --tab-active: #182028;
+
+  --text: #e8f1f8;
+  --muted: #8ba0b3;
+
+  --accent: #38bdf8;
+  --accent-2: #a78bfa;
+  --accent-ink: #04121c;
+  --accent-soft: #14262f;
+  --accent-hover: #7dd3fc;
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --bad: #f87171;
+
+  --grad: linear-gradient(135deg, #38bdf8, #a78bfa);
+  --glow: 0 6px 18px rgba(56, 189, 248, .25);
+
+  --shadow-1: 0 4px 14px rgba(0, 0, 0, .45);
+  --shadow-2: 0 8px 28px rgba(0, 0, 0, .60);
 }
 * { box-sizing: border-box; }
 html, body {
@@ -165,10 +201,22 @@ input, textarea, select, .chat-log, .chat-log .bubble {
   -webkit-app-region: no-drag;
 }
 .tab.active {
+  position: relative;
   background: var(--tab-active);
   color: var(--text);
   border-color: var(--line);
-  box-shadow: inset 0 -2px 0 var(--accent);
+  box-shadow: none;
+}
+.tab.active::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--grad);
+  pointer-events: none;
 }
 .tab.drag-over {
   box-shadow: inset 2px 0 0 var(--accent);
@@ -383,7 +431,7 @@ input, textarea, select, .chat-log, .chat-log .bubble {
   color: var(--text);
   font: inherit;
 }
-.history-item:hover { background: rgba(44,42,40,.06); }
+.history-item:hover { background: color-mix(in srgb, var(--text) 7%, transparent); }
 .history-item .ht { font-size: var(--fs-13); }
 .history-item .hu { font-size: var(--fs-12); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history-empty { padding: 24px 16px; color: var(--muted); font-size: var(--fs-13); }
@@ -1039,7 +1087,7 @@ body.side-collapsed .dock { display: none; }
   display: grid;
   place-items: center;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
   font-size: 10px;
 }
 .quote-chip .body { min-width: 0; flex: 1; }
@@ -1462,14 +1510,15 @@ body.side-collapsed .dock { display: none; }
 .ic.fill, .icon-btn.fill .ic { fill: currentColor; stroke: none; }
 
 .primary, .save, .ok, #chatSend, .go, .reply-one {
-  background: var(--accent);
-  border: 1px solid var(--accent);
+  background: var(--grad);
+  border: 1px solid transparent;
   color: var(--accent-ink);
   font-weight: var(--fw-sb);
+  box-shadow: var(--glow);
 }
 .primary:hover, .save:hover, .ok:hover, #chatSend:hover, .go:hover, .reply-one:hover:not(:disabled) {
-  background: #ff7a33;
-  border-color: #ff7a33;
+  filter: brightness(1.06);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 34%, transparent);
 }
 .primary:active, .save:active, .ok:active, #chatSend:active, .go:active {
   transform: translateY(1px);
@@ -1579,6 +1628,13 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
   text-align: left;
 }
     </style>
+    <script>
+      try {
+        if (localStorage.getItem("sparo.theme") === "dark") {
+          document.documentElement.setAttribute("data-theme", "dark");
+        }
+      } catch (err) { /* ignore */ }
+    </script>
   </head>
   <body>
 <svg class="icon-sprite" width="0" height="0" aria-hidden="true" focusable="false">
@@ -1590,7 +1646,8 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
   <symbol id="i-star-on" viewBox="0 0 24 24"><path d="M12 3.8l2.5 5.2 5.7.8-4.1 4 1 5.7-5.1-2.7-5.1 2.7 1-5.7-4.1-4 5.7-.8z"/></symbol>
   <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M7 4h10v16l-5-3.5L7 20z"/></symbol>
   <symbol id="i-history" viewBox="0 0 24 24"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1"/><path d="M3.5 4.5v5h5"/><path d="M12 8v4.5l3 2"/></symbol>
-  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M18.36 5.64L16.95 7.05M5.64 5.64L7.05 7.05M18.36 18.36L16.95 16.95M5.64 18.36L7.05 16.95"/></symbol>
   <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
   <symbol id="i-close" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
   <symbol id="i-chev-up" viewBox="0 0 24 24"><path d="M6 14.5l6-6 6 6"/></symbol>
@@ -1622,6 +1679,9 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           <button id="reload" data-i18n-title="nav.reload" title="刷新"><svg class="ic"><use href="#i-reload"/></svg></button>
         </div>
         <input class="url" id="url" type="text" spellcheck="false" data-i18n-placeholder="url.placeholder" placeholder="输入网址，例如 baidu.com" />
+        <button class="icon-btn" id="btnTheme" data-i18n-title="nav.themeToDark" title="切换到夜间模式" aria-pressed="false">
+          <svg class="ic"><use href="#i-moon"/></svg>
+        </button>
         <button class="icon-btn" id="btnStar" data-i18n-title="bookmark.star" title="收藏此页"><svg class="ic"><use href="#i-star"/></svg></button>
         <button class="icon-btn" id="btnNavMenu" data-i18n-title="nav.more" title="更多" aria-haspopup="menu">
           <svg class="ic"><use href="#i-more"/></svg>
@@ -1738,6 +1798,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
             <span data-i18n="welcome.nudge">尚未完成设置</span>
             <button type="button" class="linkish" id="welcomeNudgeGo" data-i18n="welcome.nudgeGo">继续设置</button>
           </div>
+          <div id="taskStrip"></div>
           <div id="planStrip"></div>
           <div class="chat-log" id="chat"></div>
           <div class="notes-panel hide" id="notesPanel">
@@ -1963,6 +2024,36 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
     <script type="module">
       import { t, setLocale, applyDom, getLocale, LOCALE_META } from "./i18n.ts";
       applyDom();
+
+      const rootEl = document.documentElement;
+      const themeBtn = document.getElementById("btnTheme");
+
+      function currentTheme() {
+        return rootEl.getAttribute("data-theme") === "dark" ? "dark" : "light";
+      }
+
+      function applyTheme(theme, persist) {
+        const dark = theme === "dark";
+        if (dark) rootEl.setAttribute("data-theme", "dark");
+        else rootEl.setAttribute("data-theme", "light");
+
+        const use = themeBtn && themeBtn.querySelector("use");
+        if (use) use.setAttribute("href", dark ? "#i-sun" : "#i-moon");
+        if (themeBtn) {
+          themeBtn.setAttribute("aria-pressed", dark ? "true" : "false");
+          themeBtn.setAttribute("data-i18n-title", dark ? "nav.themeToLight" : "nav.themeToDark");
+          themeBtn.title = t(dark ? "nav.themeToLight" : "nav.themeToDark");
+        }
+
+        try { window.sparkShell?.setTheme?.(theme); } catch (err) { /* ignore */ }
+        if (persist) { try { localStorage.setItem("sparo.theme", theme); } catch (err) { /* ignore */ } }
+      }
+
+      themeBtn?.addEventListener("click", () => {
+        applyTheme(currentTheme() === "dark" ? "light" : "dark", true);
+      });
+
+      applyTheme(currentTheme(), false);
       const tabsEl = document.getElementById("tabs");
       const urlEl = document.getElementById("url");
       const backEl = document.getElementById("back");
@@ -2485,6 +2576,68 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         }
       }
 
+      function renderTaskStrip(tasks) {
+        var root = document.getElementById("taskStrip");
+        if (!root) return;
+        if (!document.getElementById("taskStripStyle")) {
+          var style = document.createElement("style");
+          style.id = "taskStripStyle";
+          style.textContent = [
+            "#taskStrip.hide{display:none}",
+            "#taskStrip{position:sticky;top:0;z-index:3;margin:0 0 8px;display:flex;flex-direction:column;gap:6px}",
+            "#taskStrip .task-card{display:flex;gap:8px;align-items:flex-start;width:100%;text-align:left;padding:8px 10px;border:1px solid var(--line);border-radius:12px;background:var(--paper);color:var(--text);font:inherit;cursor:pointer}",
+            "#taskStrip .task-card.is-running{background:var(--accent-soft)}",
+            "#taskStrip .task-mark{width:1.2em;flex:none;color:var(--muted)}",
+            "#taskStrip .task-card.is-running .task-mark{color:var(--accent)}",
+            "#taskStrip .task-card.is-done .task-mark{color:var(--ok)}",
+            "#taskStrip .task-card.is-waiting_human .task-mark{color:var(--warn)}",
+            "#taskStrip .task-lane{flex:none;font-size:var(--fs-12);color:var(--muted)}",
+            "#taskStrip .task-body{min-width:0;flex:1}",
+            "#taskStrip .task-title{display:block;font-size:var(--fs-13)}",
+            "#taskStrip .task-step{display:block;color:var(--muted);font-size:var(--fs-12)}",
+          ].join("");
+          document.head.appendChild(style);
+        }
+        root.innerHTML = "";
+        var list = Array.isArray(tasks) ? tasks : [];
+        if (!list.length) {
+          root.classList.add("hide");
+          return;
+        }
+        root.classList.remove("hide");
+        list.forEach(function (task) {
+          var btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "task-card is-" + (task.state || "running");
+          btn.onclick = function () {
+            if (task.tabId && window.sparkShell && window.sparkShell.switchTab) {
+              window.sparkShell.switchTab(task.tabId);
+            }
+          };
+          var mark = document.createElement("span");
+          mark.className = "task-mark";
+          mark.textContent =
+            task.state === "done" ? "✓" : task.state === "failed" ? "!" : task.state === "waiting_human" ? "!" : "·";
+          var lane = document.createElement("span");
+          lane.className = "task-lane";
+          lane.textContent = task.lane === "background" ? "后台" : "前台";
+          var body = document.createElement("span");
+          body.className = "task-body";
+          var title = document.createElement("span");
+          title.className = "task-title";
+          title.textContent = task.title || "任务";
+          var step = document.createElement("span");
+          step.className = "task-step";
+          step.textContent = task.step || "";
+          body.appendChild(title);
+          body.appendChild(step);
+          btn.appendChild(mark);
+          btn.appendChild(lane);
+          btn.appendChild(body);
+          root.appendChild(btn);
+        });
+      }
+
       function renderPlanStrip(plan) {
         var root = document.getElementById("planStrip");
         if (!root) return;
@@ -2850,6 +3003,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         renderLessons(payload.lessons);
         renderQa(payload.qa);
         renderChat(payload.chat);
+        renderTaskStrip(payload.tasks);
         renderPlanStrip(payload.plan);
         if (payload.chat && payload.chat.length) scrollDockIntoView();
         if (payload.profile) {

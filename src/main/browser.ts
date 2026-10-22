@@ -625,7 +625,7 @@ export class SparkBrowser {
       minWidth: 800,
       minHeight: 560,
       title: "Sparo",
-      backgroundColor: "#1a1715",
+      backgroundColor: "#fbfbfd",
       show: false,
       autoHideMenuBar: true,
       titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
@@ -633,8 +633,8 @@ export class SparkBrowser {
         ? {}
         : {
             titleBarOverlay: {
-              color: "#1a1715",
-              symbolColor: "#f3ece3",
+              color: "#fbfbfd",
+              symbolColor: "#12141a",
               height: 36,
             },
           }),
@@ -1799,6 +1799,20 @@ export class SparkBrowser {
     };
     ipcMain.removeAllListeners("spark:page-hole");
     ipcMain.on("spark:page-hole", (_e, raw) => this.setPageHoleBounds(raw || {}));
+    ipcMain.removeAllListeners("spark:set-theme");
+    ipcMain.on("spark:set-theme", (_e, raw) => {
+      const dark = String(raw) === "dark";
+      const bg = dark ? "#0d1117" : "#fbfbfd";
+      const fg = dark ? "#e8f1f8" : "#12141a";
+      try {
+        this.window?.setBackgroundColor?.(bg);
+        if (process.platform !== "darwin") {
+          this.window?.setTitleBarOverlay?.({ color: bg, symbolColor: fg, height: 36 });
+        }
+      } catch (err) {
+        // 老版本 Electron 或非 Windows 下没有这个能力，忽略即可
+      }
+    });
     ipcMain.removeAllListeners("spark:set-sidebar-width");
     ipcMain.on("spark:set-sidebar-width", (_e, raw) => {
       const w = Math.round(Number(raw));
