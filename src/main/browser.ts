@@ -123,6 +123,13 @@ import {
 } from "./history.js";
 import { uniqueDownloadPath } from "./downloads.js";
 import { loadChatMemory, saveChatMemory, clearChatMemory, type ChatTurn } from "./profile/chat-memory.js";
+import {
+  decideRecovery,
+  journalMissionClose,
+  recoveryLine,
+  replayMissions,
+  type RestoredMission,
+} from "./agent/mission-journal.js";
 import { composeQuotedPrompt, normalizeQuotes, quotedUserTurn, type SparoQuote } from "./agent/quotes.js";
 import {
   actionKey,
@@ -514,6 +521,8 @@ export class SparkBrowser {
   private approvals = new Map<string, ApprovalRequest>();
   private lastQa: QaReport | null = null;
   private chatLog: ChatTurn[] = [];
+  /** 启动时回放出来的未完成单。只问一次，不挡后面的新句子。 */
+  private pendingRecovery: RestoredMission | null = null;
   private lastReaderSender: WebContents | null = null;
   private activeMission: ActiveMission | undefined;
   private lastMission: ActiveMission | undefined;
@@ -644,6 +653,7 @@ export class SparkBrowser {
       .then(() => this.refreshCloudPlans())
       .then(() => this.pushSidebarState());
     this.chatLog = loadChatMemory(this.configDir());
+    this.offerMissionRecovery();
     this.window.on("resize", () => this.layout());
     this.window.on("maximize", () => this.layout());
     this.window.on("unmaximize", () => this.layout());
@@ -4613,6 +4623,7 @@ export class SparkBrowser {
       current.findings = findings;
       if (current.brainPlan) current.brainPlan = closePlan(current.brainPlan, verify.complete);
       current.state = "done";
+      journalMissionClose(current.id, verify.complete ? "done" : "incomplete");
       this.lastMission = current;
       this.activeMission = undefined;
       this.chatLog.push({ role: "assistant", text: reply, doc: replyDoc });
@@ -4806,6 +4817,44 @@ export class SparkBrowser {
     }
   }
 
+  private offerMissionRecovery(): void {
+    let pending: RestoredMission[] = [];
+    try {
+      pending = replayMissions(this.configDir());
+    } catch (error) {
+      console.warn("[mission-journal] replay failed", error instanceof Error ? error.message : error);
+      return;
+    }
+    const item = pending[pending.length - 1];
+    if (!item) return;
+    this.pendingRecovery = item;
+    this.chatLog.push({ role: "assistant", text: recoveryLine(item) });
+  }
+
+  private async takeRecoveryAnswer(text: string, jobImages: string[]): Promise<ToolResult | null> {
+    const item = this.pendingRecovery;
+    if (!item) return null;
+    const choice = decideRecovery(text);
+    this.pendingRecovery = null;
+    if (!choice) return null;
+    if (choice === "dismiss") {
+      journalMissionClose(item.mission.id, "算了", this.configDir());
+      const reply = "这单先放下了。";
+      this.chatLog.push({ role: "assistant", text: reply });
+      this.pushSidebarState();
+      return { ok: true, message: reply };
+    }
+    const mission = item.mission;
+    this.activeMission = mission;
+    if (mission.state === "waiting_human" || mission.state === "blocked" || mission.state === "propose") {
+      const reply = mission.ask || recoveryLine(item);
+      this.chatLog.push({ role: "assistant", text: reply });
+      this.pushSidebarState();
+      return { ok: true, message: reply, data: { loop: mission.state, briefKind: mission.goal.kind } };
+    }
+    return this.executeMission(mission, jobImages);
+  }
+
   async handleChat(text: string, images?: string[], quotes?: unknown): Promise<ToolResult> {
     const pics = sanitizeImageDataUrls(images);
     const cleanQuotes = normalizeQuotes(quotes);
@@ -4833,6 +4882,8 @@ export class SparkBrowser {
     let jobImages = sanitizeImageDataUrls(images);
     this.chatLog.push(quotedUserTurn(text, cleanQuotes, jobImages));
     this.pushSidebarState();
+    const recovered = await this.takeRecoveryAnswer(text, jobImages);
+    if (recovered) return recovered;
     if (this.helpAsk) {
       const t = text.trim();
       // 只把真正像回答的话当回答（选项/是/否/登录/继续）；普通短句（如「搜今天北京天气」）不当回答，放行到正常分诊
