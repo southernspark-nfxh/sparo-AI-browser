@@ -237,6 +237,30 @@ input, textarea, select, .chat-log, .chat-log .bubble {
   -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.6"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></svg>') center/12px no-repeat;
           mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.6"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></svg>') center/12px no-repeat;
 }
+.tab.done .tab-done {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  margin-left: 4px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.tab.done .tab-done::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #8e939c;
+  flex: 0 0 auto;
+}
+#btnMemory {
+  white-space: normal;
+  line-height: 1.45;
+  text-align: center;
+}
 .tab .title {
   flex: 1;
   min-width: 0;
@@ -1985,6 +2009,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           </div>
             <div class="block">
               <h3 data-i18n="mem.label">内存</h3>
+              <button type="button" class="ghost" id="btnMemory" title="休眠后台标签，释放内存。点休眠的标签会重新加载。">优化内存</button>
               <p class="hint" data-i18n="mem.hint">闲置后台标签会休眠。点回去再加载，登录还在。</p>
               <label class="switch">
                 <input id="memSaver" type="checkbox" checked />
@@ -1993,7 +2018,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
               </label>
               <div class="idle-row" id="memIdleRow">
                 <span data-i18n="mem.idleBefore">闲置</span>
-                <input id="memIdle" type="number" min="1" max="60" value="2" />
+                <input id="memIdle" type="number" min="1" max="60" value="5" />
                 <span data-i18n="mem.idleAfter">分钟后休眠</span>
               </div>
             </div>
@@ -2233,10 +2258,14 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           el.className =
             "tab" +
             (tab.id === chromeState.activeId ? " active" : "") +
-            (tab.discarded ? " sleeping" : "");
+            (tab.discarded ? " sleeping" : "") +
+            (tab.agentStatus === "done" ? " done" : "");
           el.draggable = true;
           el.dataset.id = tab.id;
-          el.title = (tab.discarded ? t("mem.tabSleeping") + "\n" : "") + (tab.url || "");
+          el.title =
+            (tab.agentStatus === "done" ? t("mem.done") + "\n" : "") +
+            (tab.discarded ? t("mem.tabSleeping") + "\n" : "") +
+            (tab.url || "");
           let ico;
           if (tab.favIcon) {
             ico = document.createElement("img");
@@ -2285,6 +2314,12 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           });
           el.appendChild(ico);
           el.appendChild(title);
+          if (tab.agentStatus === "done") {
+            const badge = document.createElement("span");
+            badge.className = "tab-done";
+            badge.textContent = t("mem.done");
+            el.appendChild(badge);
+          }
           el.appendChild(x);
           tabsEl.appendChild(el);
         }
@@ -2305,6 +2340,12 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         starEl.innerHTML = '<svg class="ic"><use href="#i-star"/></svg>';
         starEl.classList.toggle("on", !!chromeState.currentBookmarked);
         starEl.classList.toggle("fill", !!chromeState.currentBookmarked);
+        const memBtn = document.getElementById("btnMemory");
+        const board = chromeState.memoryBoard || "";
+        if (memBtn) {
+          memBtn.textContent = board || t("mem.optimize");
+          memBtn.title = board ? t("mem.moonTitle") + "\n" + board : t("mem.moonTitle");
+        }
       }
 
       function navigateFromBar() {
@@ -2969,7 +3010,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           const idleEl = document.getElementById("memIdle");
           if (memEl && document.activeElement !== memEl) memEl.checked = ds.memorySaver !== false;
           if (idleEl && document.activeElement !== idleEl) {
-            idleEl.value = String(ds.memorySaverIdleMinutes || 2);
+            idleEl.value = String(ds.memorySaverIdleMinutes || 5);
           }
           const idleRow = document.getElementById("memIdleRow");
           if (idleRow) idleRow.style.display = ds.memorySaver === false ? "none" : "";
@@ -4239,6 +4280,18 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         }
         const memSaver = document.getElementById("memSaver");
         if (memSaver) memSaver.onchange = () => saveMemoryPrefs(false);
+        const memBtn = document.getElementById("btnMemory");
+        if (memBtn) {
+          memBtn.onclick = async () => {
+            try {
+              const r = await window.sparkShell.discardInactiveTabs();
+              if (r && r.message) toast(r.message);
+            } catch (err) {
+              console.error(err);
+              toast(t("mem.fail"));
+            }
+          };
+        }
         const memIdle = document.getElementById("memIdle");
         if (memIdle) {
           let idleTimer;

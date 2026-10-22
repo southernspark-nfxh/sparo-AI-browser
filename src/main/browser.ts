@@ -427,6 +427,10 @@ type TabInfo = {
   envId?: string;
   discarded?: boolean;
   favIcon?: string;
+  /** 任务完成后休眠。标签栏用灰点标「已完成」，点一下再唤醒。 */
+  agentStatus?: "done";
+  /** 这张标签正卡在 waiting_human。release 时不休眠。 */
+  holdHuman?: boolean;
   lastActiveAt: number;
 };
 
@@ -514,6 +518,18 @@ function stripMermaid(md: string): string {
     .trim();
 }
 
+/** 侧栏内存按钮标题：N 个标签进程 · 约 X MB。 */
+export function formatTabMemoryBoard(
+  locale: string | undefined,
+  processes: number,
+  mb: number,
+): string {
+  return tx(locale, "mem.board", {
+    n: Math.max(0, Math.round(Number(processes) || 0)),
+    mb: Math.max(0, Math.round(Number(mb) || 0)),
+  });
+}
+
 export class SparkBrowser {
   readonly window: BrowserWindow;
   /** @deprecated use active tab via pageView getter */
@@ -553,6 +569,8 @@ export class SparkBrowser {
   private cloudPlans: CloudPlanPublic[] = [];
   private lastCloudRefuse = "";
   private memoryTimer: ReturnType<typeof setInterval> | null = null;
+  /** 报告和阅读模式共用的标签。用户关掉后置空。手动新开的研究页不记在这里。 */
+  private readerTabId: string | null = null;
   private holeBounds: { x: number; y: number; width: number; height: number } | null = null;
   private sidebarW = SIDEBAR_W;
   // 最近一次正常的窗口客户区尺寸。最小化→恢复瞬间 getContentSize 会短暂返回 0，
@@ -591,11 +609,29 @@ export class SparkBrowser {
   }
 
   /**
-   * 任务结束：保留标签记录，不关闭、不休眠、不切换。
-   * 休眠由 T08 接入。
+   * 任务结束、报告已经落盘：休眠这张标签，释放渲染进程，标签栏留记录。
+   * 还在 waiting_human 则不休眠，等人处理。用户正看着的标签也不休眠。
+   * 点标签走 switchTab → wakeTab。
    */
   releaseAgentTab(tabId: string): void {
-    if (!this.tabs.has(tabId)) return;
+    const tab = this.tabs.get(tabId);
+    if (!tab) return;
+    if (this.tabAwaitsHuman(tabId)) return;
+    if (tabId === this.activeTabId) return;
+    const slept = this.discardTab(tabId);
+    if (!slept && !tab.discarded) return;
+    tab.agentStatus = "done";
+    this.layout();
+    this.pushChromeState();
+  }
+
+  /** 这张标签还在等人（登录 / 验证）。等人时不休眠。 */
+  private tabAwaitsHuman(tabId: string): boolean {
+    const tab = this.tabs.get(tabId);
+    if (tab?.holdHuman) return true;
+    if (this.activeMission?.state !== "waiting_human") return false;
+    const hand = this.agentTabId || this.activeTabId;
+    return hand === tabId;
   }
 
   /**
@@ -1007,7 +1043,7 @@ export class SparkBrowser {
   private autoDiscardIdleTabs(): void {
     if (!this.settings?.memorySaver) return;
     if (this.tabs.size <= 1) return;
-    const idleMs = (this.settings.memorySaverIdleMinutes || 2) * 60_000;
+    const idleMs = (this.settings.memorySaverIdleMinutes || 5) * 60_000;
     const now = Date.now();
     let n = 0;
     for (const [id, tab] of this.tabs) {
@@ -1019,6 +1055,31 @@ export class SparkBrowser {
       this.layout();
       this.pushChromeState();
     }
+  }
+
+  /** 汇总仍活着的标签渲染进程。Electron 的 workingSetSize 单位是 KB。 */
+  private tabProcessUsage(): { processes: number; mb: number } {
+    try {
+      const metrics = typeof app.getAppMetrics === "function" ? app.getAppMetrics() : [];
+      const tabs = metrics.filter((m) => m.type === "Tab");
+      if (tabs.length) {
+        const kb = tabs.reduce((sum, m) => sum + Number(m.memory?.workingSetSize || 0), 0);
+        return { processes: tabs.length, mb: Math.max(0, Math.round(kb / 1024)) };
+      }
+    } catch {
+      /* 指标不可用时退回仍活着的标签数 */
+    }
+    let processes = 0;
+    for (const tab of this.tabs.values()) {
+      const wc = tab.view?.webContents;
+      if (!tab.discarded && wc && !wc.isDestroyed()) processes += 1;
+    }
+    return { processes, mb: 0 };
+  }
+
+  memoryBoardLine(): string {
+    const { processes, mb } = this.tabProcessUsage();
+    return formatTabMemoryBoard(this.settings?.locale, processes, mb);
   }
 
   private createTab(url = DEFAULT_URL, activate = true): string {
@@ -1088,6 +1149,7 @@ export class SparkBrowser {
           t.url ||
           (t.view && !t.view.webContents.isDestroyed() ? t.view.webContents.getURL() : ""),
         discarded: Boolean(t.discarded || !t.view),
+        agentStatus: t.agentStatus === "done" ? "done" : undefined,
         favIcon: t.favIcon || "",
       })),
       activeId: this.activeTabId,
@@ -1121,9 +1183,9 @@ export class SparkBrowser {
     if (!existsSync(abs)) {
       return { ok: false, message: "文档已经不在了" };
     }
-    // 浏览器能直接看的（HTML / PDF / 图片）开新标签；PPT/Office 交给系统默认程序
+    // 浏览器能直接看的（HTML / PDF / 图片）复用阅读器标签；PPT/Office 交给系统默认程序
     if (/\.(html?|pdf|png|jpe?g|svg)$/i.test(abs)) {
-      return this.newTab(pathToFileURL(abs).href);
+      return this.openInReaderTab(pathToFileURL(abs).href);
     }
     void shell.openPath(abs);
     return { ok: true, message: `已交给系统打开：${abs}` };
@@ -1132,6 +1194,32 @@ export class SparkBrowser {
   newTab(url?: string): ToolResult {
     const id = this.createTab(url || DEFAULT_URL, true);
     return { ok: true, message: `Opened tab ${id}`, data: { id, ...this.listTabs() } };
+  }
+
+  /**
+   * 报告和阅读模式共用一个标签：已在且未关就 loadURL 并切过去，否则新建并记下 id。
+   * 用户自己点「新标签」走 newTab，不进这里。
+   */
+  private openInReaderTab(fileUrl: string): ToolResult {
+    const existing = this.readerTabId ? this.tabs.get(this.readerTabId) : undefined;
+    if (!existing) {
+      this.readerTabId = null;
+      const id = this.createTab(fileUrl, true);
+      this.readerTabId = id;
+      return { ok: true, message: `Opened tab ${id}`, data: { id, reused: false, ...this.listTabs() } };
+    }
+    existing.url = fileUrl;
+    const alreadyAwake = Boolean(existing.view) && !existing.discarded;
+    this.switchTab(existing.id);
+    if (alreadyAwake) {
+      const wc = existing.view?.webContents;
+      if (wc && !wc.isDestroyed()) void wc.loadURL(normalizeUrl(fileUrl));
+    }
+    return {
+      ok: true,
+      message: `Opened tab ${existing.id}`,
+      data: { id: existing.id, reused: true, ...this.listTabs() },
+    };
   }
 
   closeTab(id: string): ToolResult {
@@ -1145,6 +1233,7 @@ export class SparkBrowser {
       /* ignore */
     }
     this.lastClosed = { url: closedUrl, envId: tab.envId };
+    if (this.readerTabId === id) this.readerTabId = null;
     if (this.tabs.size <= 1) {
       this.createTab("about:blank", true);
     }
@@ -2331,7 +2420,7 @@ export class SparkBrowser {
       { label: tx(loc, "nav.find"), click: () => this.openFind() },
       { type: "separator" },
       {
-        label: tx(loc, "mem.optimize"),
+        label: `${tx(loc, "mem.optimize")} · ${this.memoryBoardLine()}`,
         click: () => {
           const r = this.discardInactiveTabs();
           if (r.message) toast(r.message);
@@ -2363,6 +2452,7 @@ export class SparkBrowser {
       this.window.webContents.send("spark:chrome-state", {
         ...this.listTabs(),
         ...this.chromeBookmarkState(),
+        memoryBoard: this.memoryBoardLine(),
       });
     } catch (error) {
       console.error("[shell] pushChromeState failed:", error);
@@ -3298,7 +3388,7 @@ export class SparkBrowser {
         configDir: this.configDir(),
         prefs: this.settings.reader,
         openFile: (abs) => {
-          this.newTab(pathToFileURL(abs).href);
+          this.openReport(abs);
         },
       });
       return { ok: true, message: `已打开阅读模式：${result.title}`, data: { files: [doc.path] } };
@@ -3521,7 +3611,7 @@ export class SparkBrowser {
       title: note.meta.title,
       kind: "read",
     });
-    return this.newTab(pathToFileURL(doc.path).href);
+    return this.openReport(doc.path);
   }
 
   private formatNotesList(limit?: number, search?: string): string {
