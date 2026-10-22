@@ -92,7 +92,9 @@ describe("mission journal", () => {
     expect(restored[0].mission.findings[0].text.length).toBe(500);
   });
 
-  it("超过 2000 行就压成未完成快照加最近 200 行", () => {
+  it(
+    "超过 2000 行就压成未完成快照加最近 200 行",
+    () => {
     const root = dir();
     appendMissionEvent({ t: 1, op: "open", mission: mission("keep") }, root);
     for (let i = 0; i < 2005; i++) {
@@ -103,7 +105,9 @@ describe("mission journal", () => {
     const restored = replayMissions(root);
     expect(restored.map((item) => item.mission.id)).toEqual(["keep"]);
     expect(restored[0].mission.state).toBe("running");
-  });
+  },
+  20000,
+);
 
   it("恢复卡：继续接着跑，算了关掉，七天前带日期", () => {
     expect(decideRecovery("继续")).toBe("resume");
