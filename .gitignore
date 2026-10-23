@@ -29,7 +29,13 @@ cloud-device.json
 **/reports/
 
 # Local QA scratch — never publish
+qa-screenshots/
+scripts/qa-*
 scripts/_qa-*
+data/
+.trae/
+.trae-html-share-packages/
+.novel-assistant/
 scripts/__pycache__/
 **/__pycache__/
 .github/qa-notes/
