@@ -124,9 +124,10 @@ describe("makePageView throttling", () => {
       on: () => undefined,
       isDestroyed: () => false,
     };
+    const view = { webContents: wc, on: () => undefined };
     browser.bindPageWebContents({
       id: "user",
-      view: { webContents: wc },
+      view,
       url: "https://example.com",
       title: "user",
       lastActiveAt: 1,
@@ -134,7 +135,7 @@ describe("makePageView throttling", () => {
     browser.bindPageWebContents({
       id: "agent",
       agentOwned: true,
-      view: { webContents: wc },
+      view,
       url: "https://example.com/job",
       title: "job",
       lastActiveAt: 1,
@@ -226,5 +227,48 @@ describe("background tasks do not steal the window", () => {
     browser.focusPageForInput(wc);
     expect(browser.window.focus).not.toHaveBeenCalled();
     expect(wc.focus).not.toHaveBeenCalled();
+  });
+
+  it("opens a report while minimized without restoring, and flashes the taskbar", () => {
+    const { browser, flashes, restores } = shell();
+    const focusable: boolean[] = [];
+    const minimizedAfter: boolean[] = [];
+    let minimized = true;
+    browser.window.isMinimized = () => minimized;
+    (browser.window as { setFocusable: (on: boolean) => void }).setFocusable = (on: boolean) => {
+      focusable.push(on);
+    };
+    (browser.window as { minimize: () => void }).minimize = () => {
+      minimized = true;
+      minimizedAfter.push(1);
+    };
+    (browser as unknown as { mountReaderTab: (url: string) => { ok: boolean } }).mountReaderTab = () => {
+      minimized = false;
+      return { ok: true };
+    };
+    const opened = (browser as unknown as { openInReaderTab: (url: string) => { ok: boolean } }).openInReaderTab(
+      "file:///report.html",
+    );
+    expect(opened.ok).toBe(true);
+    expect(focusable).toEqual([false, true]);
+    expect(minimizedAfter).toEqual([1]);
+    expect(flashes).toEqual([true]);
+    expect(restores).toEqual([]);
+    expect(browser.window.isMinimized()).toBe(true);
+  });
+
+  it("flashes instead of restoring when the shell hangs while minimized", () => {
+    const { browser, flashes, restores } = shell();
+    (browser as unknown as { onShellUnresponsive: () => void }).onShellUnresponsive();
+    expect(flashes).toEqual([true]);
+    expect(restores).toEqual([]);
+  });
+
+  it("still pulls a visible hung shell back on screen", () => {
+    const { browser, flashes, restores, setMinimized } = shell();
+    setMinimized(false);
+    (browser as unknown as { onShellUnresponsive: () => void }).onShellUnresponsive();
+    expect(flashes).toEqual([]);
+    expect(restores).toEqual([1]);
   });
 });

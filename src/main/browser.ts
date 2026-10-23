@@ -50,6 +50,7 @@ import {
   gateSiteDelivery,
   loginRedirectNote,
   openSiteIsTheJob,
+  userDidNotAskToRead,
   parseSiteLanding,
   siteLandingPrompt,
   thoughtFor,
@@ -855,11 +856,7 @@ export class SparkBrowser {
         }
       }
     });
-    this.window.webContents.on("unresponsive", () => {
-      console.error("[shell] unresponsive");
-      noteHang("shell-unresponsive", "sidebar");
-      this.ensureWindowVisible();
-    });
+    this.window.webContents.on("unresponsive", () => this.onShellUnresponsive());
     this.attachChromeShortcuts(this.window.webContents);
     this.attachDownloads(session.defaultSession);
     this.window.webContents.on("context-menu", (_e, params) => {
@@ -1383,8 +1380,17 @@ export class SparkBrowser {
   /**
    * 报告和阅读模式共用一个标签：已在且未关就 loadURL 并切过去，否则新建并记下 id。
    * 用户自己点「新标签」走 newTab，不进这里。
+   * 窗口最小化时只切标签并闪任务栏，不 restore。
    */
   private openInReaderTab(fileUrl: string): ToolResult {
+    let result: ToolResult = { ok: false, message: "未能打开报告" };
+    this.withoutStealingMinimizedWindow(() => {
+      result = this.mountReaderTab(fileUrl);
+    });
+    return result;
+  }
+
+  private mountReaderTab(fileUrl: string): ToolResult {
     const existing = this.readerTabId ? this.tabs.get(this.readerTabId) : undefined;
     if (!existing) {
       this.readerTabId = null;
@@ -1442,6 +1448,53 @@ export class SparkBrowser {
     this.layout();
     this.pushChromeState();
     return { ok: true, message: `Closed tab ${id}`, data: this.listTabs() };
+  }
+
+  /** 最小化时包住会抢焦点的视图操作。做完若窗口被弹回，再最小化，并闪任务栏。 */
+  private windowIsMinimized(): boolean {
+    try {
+      return Boolean(this.window && !this.window.isDestroyed() && this.window.isMinimized());
+    } catch {
+      return false;
+    }
+  }
+
+  private withoutStealingMinimizedWindow(work: () => void): void {
+    const minimized = this.windowIsMinimized();
+    if (!minimized) {
+      work();
+      return;
+    }
+    const win = this.window;
+    try {
+      win.setFocusable(false);
+    } catch {
+      /* ignore */
+    }
+    try {
+      work();
+    } finally {
+      try {
+        if (!win.isDestroyed()) {
+          win.setFocusable(true);
+          if (!win.isMinimized()) win.minimize();
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    this.flashTaskbarIfHidden();
+  }
+
+  /** 壳层假死：人正看着窗口才拉回。最小化时只闪任务栏，后台出报告不能靠这条弹窗。 */
+  private onShellUnresponsive(): void {
+    console.error("[shell] unresponsive");
+    noteHang("shell-unresponsive", "sidebar");
+    if (this.windowIsMinimized()) {
+      this.flashTaskbarIfHidden();
+      return;
+    }
+    this.ensureWindowVisible();
   }
 
   /** First show only. Later calls must not center() — that fights the user dragging the window. */
@@ -5311,6 +5364,22 @@ export class SparkBrowser {
             data: { loop: "waiting_human", briefKind: live.kind },
           };
         }
+      }
+      const onlyOpened = findings.length > 0 && findings.every((f) => f.step.cap === "navigate");
+      if (userDidNotAskToRead(live) && (live.site || onlyOpened)) {
+        const reply = live.site ? `已打开 ${live.site}。` : "页面已打开。";
+        if (current.brainPlan) current.brainPlan = closePlan(current.brainPlan, true);
+        current.state = "done";
+        journalMissionClose(current.id, "done");
+        this.lastMission = current;
+        this.activeMission = undefined;
+        this.chatLog.push({ role: "assistant", text: reply });
+        this.pushSidebarState();
+        return {
+          ok: true,
+          message: reply,
+          data: { loop: "done", briefKind: live.kind, intent: live.intent },
+        };
       }
       this.chatLog.push({ role: "assistant", text: "对照目标汇总…" });
       this.pushSidebarState();
