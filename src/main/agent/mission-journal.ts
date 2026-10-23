@@ -16,7 +16,12 @@ export type MissionEvent =
   | { t: number; op: "turn"; id: string; state: MissionState; plan?: Plan; findings?: StepFinding[] }
   | { t: number; op: "close"; id: string; reason: string };
 
-export type RestoredMission = { mission: ActiveMission; openedAt: number };
+export type RestoredMission = {
+  mission: ActiveMission;
+  openedAt: number;
+  /** 回放时数到的 turn 行。压缩快照会丢掉这个数，执行过的发现仍留在 mission 上。 */
+  turns?: number;
+};
 
 const FINDING_TEXT_CAP = 500;
 const COMPACT_AT = 2000;
@@ -94,7 +99,11 @@ function applyEvent(open: Map<string, RestoredMission>, closed: Set<string>, eve
   }
   if (event.op === "open") {
     if (closed.has(event.mission.id)) return;
-    open.set(event.mission.id, { mission: shrinkMission(event.mission), openedAt: event.t || Date.now() });
+    open.set(event.mission.id, {
+      mission: shrinkMission(event.mission),
+      openedAt: event.t || Date.now(),
+      turns: 0,
+    });
     return;
   }
   const hit = open.get(event.id);
@@ -110,7 +119,7 @@ function applyEvent(open: Map<string, RestoredMission>, closed: Set<string>, eve
     open.delete(event.id);
     return;
   }
-  open.set(event.id, { mission, openedAt: hit.openedAt });
+  open.set(event.id, { mission, openedAt: hit.openedAt, turns: (hit.turns || 0) + 1 });
 }
 
 export function replayMissions(dir = storeConfigDir()): RestoredMission[] {
@@ -182,6 +191,72 @@ export function journalMissionClose(id: string, reason: string, dir = storeConfi
   if (!shouldWrite(dir)) return;
   if (!id) return;
   appendMissionEvent({ t: Date.now(), op: "close", id, reason: reason.slice(0, 80) }, dir);
+}
+
+/** 同一句用户原话。没有 parent / session，阶段 1 只能用这句话分组。 */
+export function utteranceKey(mission: Pick<ActiveMission, "raw" | "goal"> | null | undefined): string {
+  return String(mission?.raw || mission?.goal?.raw || "").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * 实际开始执行过。计划第 0 步在创建时就会被标成 running，那不是执行记录。
+ * turn 行或发现才算。
+ */
+export function missionWasExecuted(item: RestoredMission): boolean {
+  if ((item.turns || 0) > 0) return true;
+  return (item.mission.findings || []).length > 0;
+}
+
+function planStillOpen(mission: ActiveMission): boolean {
+  const steps = mission.brainPlan?.steps || [];
+  if (!steps.length) return true;
+  return steps.some((step) => step.status !== "done" && step.status !== "skipped");
+}
+
+/**
+ * 实际开始执行过、且还没正常收尾的单里，取最近开出的一张。
+ * 只读回放结果，不写盘，也不要在启动时拿它去关旧单。
+ */
+export function pickInterruptedMission(items: RestoredMission[]): RestoredMission | undefined {
+  const eligible = items.filter((item) => {
+    if (item.mission.state === "done" || item.mission.state === "cancelled") return false;
+    if (!missionWasExecuted(item)) return false;
+    if (!planStillOpen(item.mission)) return false;
+    return true;
+  });
+  return eligible[eligible.length - 1];
+}
+
+/**
+ * 追加 close，不改历史行。
+ * onlyIdle 时只顺手关掉同一句里还没执行过的影子单（正常收尾）；
+ * 否则同一句还开着的单全部关掉（用户当场说「算了」）。
+ * 空原文不按组扫，只关 alsoId，避免把原文缺失的单误并成一组。
+ */
+export function journalCloseUtterance(
+  raw: string,
+  reason: string,
+  dir = storeConfigDir(),
+  opts?: { alsoId?: string; onlyIdle?: boolean },
+): string[] {
+  const key = raw.replace(/\s+/g, " ").trim();
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  const push = (id: string | undefined) => {
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    ids.push(id);
+  };
+  if (opts?.alsoId) push(opts.alsoId);
+  if (key) {
+    for (const item of replayMissions(dir)) {
+      if (utteranceKey(item.mission) !== key) continue;
+      if (opts?.onlyIdle && missionWasExecuted(item)) continue;
+      push(item.mission.id);
+    }
+  }
+  for (const id of ids) journalMissionClose(id, reason, dir);
+  return ids;
 }
 
 function shouldWrite(dir: string): boolean {

@@ -6,7 +6,10 @@ import type { AgentStep, StepFinding } from "../src/main/agent/loop.js";
 import {
   appendMissionEvent,
   decideRecovery,
+  journalCloseUtterance,
+  missionWasExecuted,
   parseMissionLine,
+  pickInterruptedMission,
   recoveryLine,
   replayMissions,
   type MissionEvent,
@@ -125,5 +128,149 @@ describe("mission journal", () => {
     expect(replayMissions(root)[0].mission.state).toBe("waiting_human");
     appendMissionEvent({ t: Date.now(), op: "close", id: "m4", reason: "算了" }, root);
     expect(replayMissions(root)).toEqual([]);
+  });
+
+  it("恢复卡只取执行过且没收尾的最近一张，选取本身不写盘", () => {
+    const root = dir();
+    const idle = mission("idle");
+    idle.brainPlan = {
+      createdAt: 1,
+      steps: [{ id: "only", label: "行程手册", cap: "act", covers: ["answer"], status: "running" }],
+    };
+    appendMissionEvent({ t: 1, op: "open", mission: idle }, root);
+    const older = mission("older");
+    appendMissionEvent({ t: 2, op: "open", mission: older }, root);
+    appendMissionEvent({
+      t: 3,
+      op: "turn",
+      id: "older",
+      state: "running",
+      plan: older.brainPlan,
+      findings: [finding("查到机票")],
+    }, root);
+    const newer = mission("newer");
+    newer.raw = "另一句完全不同的话";
+    newer.goal = { ...newer.goal, raw: newer.raw, intent: "另一句" };
+    appendMissionEvent({ t: 4, op: "open", mission: newer }, root);
+    appendMissionEvent({
+      t: 5,
+      op: "turn",
+      id: "newer",
+      state: "running",
+      plan: newer.brainPlan,
+      findings: [finding("还在查")],
+    }, root);
+    const finished = mission("finished");
+    finished.raw = "这句已经做完";
+    finished.goal = { ...finished.goal, raw: finished.raw };
+    finished.brainPlan = {
+      createdAt: 1,
+      steps: [
+        { id: "a", label: "查完", cap: "act", covers: ["answer"], status: "done" },
+        { id: "b", label: "写完", cap: "act", covers: ["answer"], status: "skipped" },
+      ],
+    };
+    appendMissionEvent({ t: 6, op: "open", mission: finished }, root);
+    appendMissionEvent({
+      t: 7,
+      op: "turn",
+      id: "finished",
+      state: "running",
+      plan: finished.brainPlan,
+      findings: [finding("汇总过")],
+    }, root);
+
+    const before = readFileSync(join(root, "missions.jsonl"), "utf8");
+    const pending = replayMissions(root);
+    expect(pending.map((item) => item.mission.id)).toEqual(["idle", "older", "newer", "finished"]);
+    expect(missionWasExecuted(pending[0])).toBe(false);
+    expect(pickInterruptedMission(pending)?.mission.id).toBe("newer");
+    expect(readFileSync(join(root, "missions.jsonl"), "utf8")).toBe(before);
+  });
+
+  it("算了关掉同一句还开着的单，另一句不动；正常收尾只顺手关没执行过的影子单", () => {
+    const root = dir();
+    const prev = process.env.SPARO_MISSION_JOURNAL_DIR;
+    process.env.SPARO_MISSION_JOURNAL_DIR = root;
+    try {
+      const executed = mission("executed");
+      const shadow = mission("shadow");
+      shadow.brainPlan = {
+        createdAt: 1,
+        steps: [{ id: "book", label: "行程手册", cap: "act", covers: ["answer"], status: "running" }],
+      };
+      const spaced = mission("spaced");
+      spaced.raw = "  下周一从北京去上海出差两天  ";
+      spaced.goal = { ...spaced.goal, raw: spaced.raw };
+      const other = mission("other");
+      other.raw = "帮我看看今天天气";
+      other.goal = { ...other.goal, raw: other.raw, intent: "天气" };
+      for (const [t, item] of [
+        [1, executed],
+        [2, shadow],
+        [3, spaced],
+        [4, other],
+      ] as const) {
+        appendMissionEvent({ t, op: "open", mission: item }, root);
+      }
+      appendMissionEvent({
+        t: 5,
+        op: "turn",
+        id: "executed",
+        state: "running",
+        findings: [finding("查到酒店")],
+      }, root);
+      appendMissionEvent({
+        t: 6,
+        op: "turn",
+        id: "other",
+        state: "running",
+        findings: [finding("晴")],
+      }, root);
+
+      const closed = journalCloseUtterance(executed.raw, "算了", root, { alsoId: executed.id });
+      expect(closed.sort()).toEqual(["executed", "shadow", "spaced"]);
+      const left = replayMissions(root);
+      expect(left.map((item) => item.mission.id)).toEqual(["other"]);
+      const reasons = readFileSync(join(root, "missions.jsonl"), "utf8")
+        .split(/\n/)
+        .filter((line) => line.includes('"op":"close"'))
+        .map((line) => JSON.parse(line) as { id: string; reason: string });
+      expect(reasons.map((row) => row.reason)).toEqual(["算了", "算了", "算了"]);
+      expect(reasons.map((row) => row.id).sort()).toEqual(["executed", "shadow", "spaced"]);
+
+      const done = mission("done-main");
+      const twin = mission("done-twin");
+      twin.raw = "周六去杭州";
+      twin.goal = { ...twin.goal, raw: twin.raw };
+      done.raw = twin.raw;
+      done.goal = { ...done.goal, raw: twin.raw };
+      const parallel = mission("parallel");
+      parallel.raw = twin.raw;
+      parallel.goal = { ...parallel.goal, raw: twin.raw };
+      appendMissionEvent({ t: 10, op: "open", mission: done }, root);
+      appendMissionEvent({ t: 11, op: "open", mission: twin }, root);
+      appendMissionEvent({ t: 12, op: "open", mission: parallel }, root);
+      appendMissionEvent({
+        t: 13,
+        op: "turn",
+        id: "done-main",
+        state: "running",
+        findings: [finding("机票")],
+      }, root);
+      appendMissionEvent({
+        t: 14,
+        op: "turn",
+        id: "parallel",
+        state: "running",
+        findings: [finding("另一路还在查")],
+      }, root);
+      const finishedIds = journalCloseUtterance(done.raw, "done", root, { alsoId: done.id, onlyIdle: true });
+      expect(finishedIds.sort()).toEqual(["done-main", "done-twin"]);
+      expect(replayMissions(root).map((item) => item.mission.id).sort()).toEqual(["other", "parallel"]);
+    } finally {
+      if (prev === undefined) delete process.env.SPARO_MISSION_JOURNAL_DIR;
+      else process.env.SPARO_MISSION_JOURNAL_DIR = prev;
+    }
   });
 });
