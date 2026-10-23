@@ -69,6 +69,11 @@ contextBridge.exposeInMainWorld("sparkShell", {
     ipcRenderer.invoke("notes:list", query || {}),
   deleteNote: (id: string) => ipcRenderer.invoke("notes:delete", { id }),
   openNote: (id: string) => ipcRenderer.invoke("notes:open", { id }),
+  notesSearch: (query?: { limit?: number; search?: string }) =>
+    ipcRenderer.invoke("spark:notes-search", query || {}),
+  readNote: (id: string) => ipcRenderer.invoke("notes:read", { id }),
+  saveReply: (payload: { userText?: string; markdown?: string; sourceUrl?: string }) =>
+    ipcRenderer.invoke("notes:saveReply", payload || {}),
   openNotesPanel: (search?: string) => ipcRenderer.invoke("notes:panel", { search: search || "" }),
   readerUndo: () => ipcRenderer.invoke("reader:undo"),
   csScan: (opts?: { fromHuman?: boolean }) => ipcRenderer.invoke("spark:cs-scan", opts),

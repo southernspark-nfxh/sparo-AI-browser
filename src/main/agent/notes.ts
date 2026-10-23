@@ -124,6 +124,18 @@ export function saveNotesIndex(index: NotesIndex): void {
   atomicWrite(indexPath(), JSON.stringify(index, null, 2));
 }
 
+/** 回复卡「存为笔记」的字段：标题取用户原句前 30 字。 */
+export function replyNoteFields(userText: string, reply: string, sourceUrl: string): WriteNoteOpts {
+  const title = String(userText || "").trim().slice(0, 30) || "笔记";
+  const markdown = String(reply || "");
+  return {
+    title,
+    source_url: String(sourceUrl || ""),
+    markdown,
+    word_count: markdown.length,
+  };
+}
+
 /** 写入一篇完整笔记（.md + .meta.json + 更新 index）。返回 NoteMeta。 */
 export function writeNote(opts: WriteNoteOpts): NoteMeta {
   ensureNotesDir();

@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld("SparoAPI", {
   summarizePage: (payload: unknown) => ipcRenderer.invoke("reader:summarizePage", payload),
   saveHighlightNote: (payload: unknown) => ipcRenderer.invoke("notes:saveHighlight", payload),
   saveFullPage: (payload: unknown) => ipcRenderer.invoke("notes:saveFullPage", payload),
+  askSparo: (payload: unknown) => ipcRenderer.invoke("reader:askSparo", payload),
   setCompanion: (on: boolean) => ipcRenderer.invoke("reader:setCompanion", { on }),
   getReaderPrefs: () => ipcRenderer.invoke("reader:prefs"),
   setReaderPrefs: (patch: unknown) => ipcRenderer.invoke("reader:setPrefs", patch),

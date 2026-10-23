@@ -153,6 +153,7 @@ import {
 } from "./agent/mission-journal.js";
 import {
   composeQuotedPrompt,
+  fillNoteQuote,
   normalizeQuotes,
   QUOTE_PAGE_CONTRACT,
   quotedUserTurn,
@@ -205,6 +206,7 @@ import {
   htmlToMarkdown,
   listNotes,
   readNote,
+  replyNoteFields,
   writeNote,
 } from "./agent/notes.js";
 import { detectFileTask, type FileTaskPlan } from "./agent/files/intent.js";
@@ -2530,6 +2532,47 @@ export class SparkBrowser {
     handle("notes:open", async (e, payload?: { id?: string }) => {
       if (!this.senderIsShell(e.sender)) return { ok: false, message: "只能从侧栏打开笔记" };
       return this.openNoteTab(String(payload?.id || ""));
+    });
+    handle("spark:notes-search", async (e, payload?: { limit?: number; search?: string }) => {
+      if (!this.senderIsShell(e.sender)) return { ok: false, notes: [] };
+      const limit = typeof payload?.limit === "number" ? payload.limit : 20;
+      return { ok: true, notes: listNotes(limit, undefined, payload?.search) };
+    });
+    handle("notes:read", async (e, payload?: { id?: string }) => {
+      if (!this.senderIsShell(e.sender)) return { ok: false };
+      const note = readNote(String(payload?.id || ""));
+      if (!note) return { ok: false, message: "找不到这篇笔记" };
+      return {
+        ok: true,
+        note: {
+          ...note.meta,
+          markdown: note.markdown.slice(0, 4000),
+          summary: note.meta.summary || note.markdown.slice(0, 400),
+        },
+      };
+    });
+    handle("notes:saveReply", async (e, payload?: { userText?: string; markdown?: string; sourceUrl?: string }) => {
+      if (!this.senderIsShell(e.sender)) return { ok: false, message: "只能从侧栏存笔记" };
+      const source = String(payload?.sourceUrl || this.getUrl() || "");
+      const fields = replyNoteFields(String(payload?.userText || ""), String(payload?.markdown || ""), source);
+      const meta = writeNote(fields);
+      this.sendToast("已存入笔记库");
+      return { ok: true, message: "已存入笔记库", id: meta.id };
+    });
+    handle("reader:askSparo", async (e, payload?: { text?: string; url?: string; title?: string; siteName?: string }) => {
+      if (!this.senderIsReaderPage(e.sender)) return { ok: false, message: "只能从阅读页问" };
+      const text = String(payload?.text || "").trim().slice(0, 4000);
+      if (!text) return { ok: false, message: "这一页没有正文" };
+      if (this.window.isDestroyed() || this.window.webContents.isDestroyed()) return { ok: false };
+      this.window.webContents.send("spark:quote-from-page", {
+        text,
+        url: String(payload?.url || ""),
+        title: String(payload?.title || ""),
+        siteName: String(payload?.siteName || ""),
+        kind: "page",
+      });
+      this.focusShell();
+      return { ok: true };
     });
     handle("notes:panel", async (e, payload?: { search?: string }) => {
       if (!this.senderIsShell(e.sender)) return { ok: false };
@@ -5940,6 +5983,16 @@ export class SparkBrowser {
     }
   }
 
+  /** 笔记引用带 noteId 时换成库里的全文，截到 4000 字。 */
+  private materializeNoteQuotes(quotes: SparoQuote[]): SparoQuote[] {
+    return quotes.map((quote) => {
+      if (quote.kind !== "note" || !quote.noteId) return quote;
+      const note = readNote(quote.noteId);
+      if (!note) return fillNoteQuote(quote, null);
+      return fillNoteQuote(quote, { title: note.meta.title, markdown: note.markdown });
+    });
+  }
+
   private async handleChatJob(text: string, images?: string[], quotes?: SparoQuote[], tabId?: string): Promise<ToolResult> {
     const boundTab = tabId || this.activeTabId;
     const prevAgentTab = this.agentTabId;
@@ -5979,7 +6032,7 @@ export class SparkBrowser {
     this.recentLearned = [];
 
     if (cleanQuotes.length) {
-      const prompt = composeQuotedPrompt(text, cleanQuotes);
+      const prompt = composeQuotedPrompt(text, this.materializeNoteQuotes(cleanQuotes));
       const cloudGate = await this.beginCloudTaskIfNeeded({ type: "llm", text: prompt }, prompt);
       if (cloudGate === "refused") {
         const reply = this.lastCloudRefuse || this.L("cloud.exhausted");
