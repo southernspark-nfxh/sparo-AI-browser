@@ -257,6 +257,8 @@ export const HIGHLIGHT_OVERLAY_SCRIPT = `(() => {
   var fontBtn = document.getElementById("btnReaderFont");
   var companionBtn = document.getElementById("btnReaderCompanion");
   var saveBtn = document.getElementById("btnReaderSave");
+  var saveNoteBtn = document.getElementById("btnReaderSaveNote");
+  var askBtn = document.getElementById("btnReaderAsk");
   var closeBtn = document.getElementById("btnReaderClose");
   var themes = ["paper", "green", "night"];
   var fonts = [14, 16, 18, 20];
@@ -285,6 +287,32 @@ export const HIGHLIGHT_OVERLAY_SCRIPT = `(() => {
     var bridge = api();
     if (bridge && bridge.setCompanion) bridge.setCompanion(companionOn).catch(function () {});
     toast(companionOn ? "AI伴读已打开" : "AI伴读已关闭");
+  });
+  if (saveNoteBtn) saveNoteBtn.addEventListener("click", function () {
+    var bridge = api();
+    var root = bodyEl();
+    if (!bridge || !bridge.saveFullPage || !root) { toast("存笔记失败"); return; }
+    var html = root.innerHTML || "";
+    var text = root.innerText || "";
+    bridge.saveFullPage({
+      url: sourceUrl,
+      title: pageTitle,
+      siteName: siteName,
+      html: html,
+      text: text,
+      wordCount: text.length
+    }).then(function (res) {
+      toast(res && res.ok ? "已存入笔记库" : ((res && res.message) || "存笔记失败"));
+    }).catch(function () { toast("存笔记失败"); });
+  });
+  if (askBtn) askBtn.addEventListener("click", function () {
+    var bridge = api();
+    var root = bodyEl();
+    var text = root ? String(root.innerText || "").trim().slice(0, 4000) : "";
+    if (!bridge || !bridge.askSparo || !text) { toast("这一页没有正文"); return; }
+    bridge.askSparo({ text: text, url: sourceUrl, title: pageTitle, siteName: siteName }).then(function (res) {
+      toast(res && res.ok ? "已放到侧栏，补一句再发送" : ((res && res.message) || "没能送到侧栏"));
+    }).catch(function () { toast("没能送到侧栏"); });
   });
   if (closeBtn) closeBtn.addEventListener("click", function () {
     var bridge = api();
