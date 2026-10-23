@@ -2,6 +2,7 @@
 
 **Sparo** — *会动手的 AI 浏览器。发送前你确认。*  
 Sparo 本身是 Agent。浏览器是身体。MCP 只是对外再露一双手。操纵的是用户正在看的那一扇窗。  
+多个外部 Agent 可以同时连 3921：`initialize` 拿 `clientId`，之后用请求头 `x-sparo-client`。不带 `tabId` 的操作落在该 client 自己的标签上，不抢用户当前页。后台任务全局最多 3 个，满了返回 `pool_full`。`list_tabs` 的 `owner` 是 `user` 或 `agent:<clientId>`。  
 **主线在本目录。** 原版 `D:\download\Sparo` 只同步能力，不要把云订阅搬过去。
 
 卖点与痛点：[PRODUCT.md](./PRODUCT.md) · 密钥：[API-KEYS.md](./API-KEYS.md) · 云订阅：[CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md)
