@@ -62,6 +62,8 @@
 
 上一句没写完手册，下一句进 `chatQueue`，避免把手册写脏。
 
+任务和标签绑在一起：后台任务用 `createAgentTab` 自己的标签，工具调用带 `tabId`，不再跟用户正看着的那一页。`TaskPool` 同时最多跑 3 个后台任务，前台任务独占一条。最小化时壳层不节流，完成只 `flashFrame`。报告打开若窗口已最小化，只 `switchTab`，不 `restore`。
+
 ## 核心模块
 
 | 模块 | 作用 |
@@ -70,6 +72,11 @@
 | `browser.ts` | 共享窗口、标签、点击填写、`handleChat` / 队列、出行与任务执行、超时停加载 |
 | `agent/stub.ts` | 本地意图 → `ChatAction`（手，不是脑） |
 | `agent/kernel/` | Agent 内核：入句、推理下一步、能力表、契约验收 |
+| `agent/plan.ts` | 侧栏计划卡 |
+| `agent/mission-journal.ts` | 工作单事件溯源，断点续跑 |
+| `agent/task-class.ts` | 前台 / 后台分车道 |
+| `agent/task-pool.ts` | 并行任务池，上限 3 |
+| `agent/site-goal.ts` | 目标站点解析与错配换路 |
 | `agent/runtime.ts` | 工作单开单/续跑/补槽 |
 | `agent/slots.ts` | 槽位表：出发地/目的地/日期，地点表否决假地名 |
 | `agent/loop.ts` | 交付物与手的编译（给能力表用，不当整轮脑） |
