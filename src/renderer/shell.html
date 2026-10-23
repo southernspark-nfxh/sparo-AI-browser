@@ -1012,6 +1012,21 @@ body.side-collapsed .dock { display: none; }
 .note-card .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
 .note-card .chips span { font-size: var(--fs-12); background: var(--composer); border-radius: var(--r-999); padding: 2px 8px; }
 .notes-empty { color: var(--muted); font-size: var(--fs-13); }
+.note-card .row { display: flex; gap: 8px; margin-top: 8px; }
+.note-card .row button { font-size: var(--fs-12); }
+.note-menu {
+  position: absolute; left: 8px; right: 52px; bottom: calc(100% - 8px);
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-16);
+  max-height: 220px; overflow: auto; z-index: 6; display: none; padding: 4px;
+}
+.note-menu.show { display: block; }
+.note-menu button {
+  display: block; width: 100%; text-align: left; border: 0; background: transparent;
+  color: var(--text); border-radius: var(--r-8); padding: 8px 10px; cursor: pointer;
+}
+.note-menu button.on, .note-menu button:hover { background: var(--composer); }
+.note-menu .meta { color: var(--muted); font-size: var(--fs-12); }
+.bubble-save { font-size: var(--fs-12); margin-top: 4px; }
 
 .composer {
   position: relative;
@@ -1911,6 +1926,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
             </div>
             <div id="imagePreviews" class="img-previews" style="display:none"></div>
             <div id="quoteStrip" class="quote-strip" style="display:none"></div>
+            <div id="noteMenu" class="note-menu"></div>
             <textarea id="chatInput" data-i18n-placeholder="chat.placeholder" placeholder="说要做什么，也可粘贴截图、拖入文件或直接给文件路径"></textarea>
             <div class="go-row">
               <button type="button" class="icon-btn ghost" id="chatFile" data-i18n-title="chat.file" title="选一个本地文件，或直接把文件拖进来" aria-label="文件">
@@ -1936,6 +1952,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
             <button type="button" class="ds-tab on" data-panel="common" role="tab" aria-selected="true">常用</button>
             <button type="button" class="ds-tab" data-panel="learn" role="tab" aria-selected="false">经验</button>
             <button type="button" class="ds-tab" data-panel="advanced" role="tab" aria-selected="false">高级</button>
+            <button type="button" class="ds-tab" data-panel="notes" role="tab" aria-selected="false">笔记</button>
           </div>
           <div class="ds-panel" data-panel="common">
             <div class="block">
@@ -2047,6 +2064,13 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
               <h3 data-i18n="learn.lessons">学到的经验</h3>
               <p class="hint" id="lessonEmpty" data-i18n="learn.empty">还没有记下任何站点经验。卡住时问你之后会出现在这里。</p>
               <div id="lessonList"></div>
+            </div>
+          </div>
+          <div class="ds-panel hide" data-panel="notes">
+            <div class="block">
+              <h3>笔记</h3>
+              <input id="settingsNotesSearch" type="search" placeholder="搜索标题或来源" />
+              <div class="notes-list" id="settingsNotesList"></div>
             </div>
           </div>
           <div class="ds-panel hide" data-panel="advanced">
@@ -2851,7 +2875,9 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         const root = document.getElementById("chat");
         root.innerHTML = "";
         const meLabel = userProfile.nickname ? userProfile.nickname.slice(0, 1) : t("chat.me");
+        let lastUser = "";
         for (const m of log || []) {
+          if (m.role === "user") lastUser = m.text || "";
           const row = document.createElement("div");
           row.className = "bubble-row " + (m.role === "user" ? "me" : "sparo");
           const av = document.createElement("div");
@@ -2894,6 +2920,29 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
             }
           };
           wrap.appendChild(copyBtn);
+          if (m.role !== "user" && m.text && window.sparkShell.saveReply) {
+            const saveNote = document.createElement("button");
+            saveNote.type = "button";
+            saveNote.className = "bubble-save ghost";
+            saveNote.textContent = "存为笔记";
+            const userText = lastUser;
+            saveNote.onclick = async (ev) => {
+              ev.stopPropagation();
+              const active = (chromeState.tabs || []).find((tab) => tab.id === chromeState.activeId) || {};
+              try {
+                const res = await window.sparkShell.saveReply({
+                  userText,
+                  markdown: m.text || "",
+                  sourceUrl: active.url || chromeState.url || "",
+                });
+                toast(res && res.ok ? "已存入笔记库" : "存笔记失败");
+              } catch (err) {
+                console.error(err);
+                toast("存笔记失败");
+              }
+            };
+            wrap.appendChild(saveNote);
+          }
           if (m.doc && m.doc.path) {
             const card = document.createElement("button");
             card.type = "button";
@@ -3219,7 +3268,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         if (side) side.classList.toggle("more-open", open);
       }
 
-      const DS_PANELS = ["common", "learn", "advanced"];
+      const DS_PANELS = ["common", "learn", "advanced", "notes"];
       function setDsPanel(name) {
         const target = DS_PANELS.indexOf(name) >= 0 ? name : "common";
         document.querySelectorAll(".ds-tab").forEach((b) => {
@@ -3231,6 +3280,10 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           p.classList.toggle("hide", p.dataset.panel !== target);
         });
         try { localStorage.setItem("sparo.ds.panel", target); } catch (err) { /* ignore */ }
+        if (target === "notes" && typeof renderNotes === "function") {
+          const input = document.getElementById("settingsNotesSearch");
+          renderNotes((input && input.value.trim()) || "", "settingsNotesList");
+        }
       }
       document.querySelectorAll(".ds-tab").forEach((b) => {
         b.onclick = () => setDsPanel(b.dataset.panel);
@@ -3862,8 +3915,8 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           const p = (n) => String(n).padStart(2, "0");
           return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
         }
-        async function renderNotes(search) {
-          const box = document.getElementById("notesList");
+        async function renderNotes(search, listId) {
+          const box = document.getElementById(listId || "notesList");
           if (!box) return;
           let notes = [];
           try {
@@ -3888,20 +3941,36 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
             card.innerHTML = "<strong></strong><div class='meta'></div>" + (tags ? "<div class='chips'>" + tags + "</div>" : "");
             card.querySelector("strong").textContent = note.title || "未命名笔记";
             card.querySelector(".meta").textContent = noteHost(note.source_url) + " · " + noteWhen(note.saved_at);
-            card.onclick = async () => {
+            const row = document.createElement("div");
+            row.className = "row";
+            const openBtn = document.createElement("button");
+            openBtn.type = "button";
+            openBtn.className = "ghost";
+            openBtn.textContent = "打开";
+            openBtn.onclick = async (ev) => {
+              ev.stopPropagation();
               try { await window.sparkShell.openNote(note.id); } catch (err) { console.error(err); toast("打不开这篇笔记"); }
             };
-            card.addEventListener("contextmenu", async (ev) => {
-              ev.preventDefault();
+            const delBtn = document.createElement("button");
+            delBtn.type = "button";
+            delBtn.className = "ghost";
+            delBtn.textContent = "删除";
+            delBtn.onclick = async (ev) => {
+              ev.stopPropagation();
               if (!confirm("删除这篇笔记？")) return;
               try {
                 await window.sparkShell.deleteNote(note.id);
-                renderNotes(document.getElementById("notesSearch").value.trim());
+                const searchEl = document.getElementById(listId === "settingsNotesList" ? "settingsNotesSearch" : "notesSearch");
+                renderNotes((searchEl && searchEl.value.trim()) || "", listId);
               } catch (err) {
                 console.error(err);
                 toast("删除失败");
               }
-            });
+            };
+            row.appendChild(openBtn);
+            row.appendChild(delBtn);
+            card.appendChild(row);
+            card.onclick = () => openBtn.click();
             box.appendChild(card);
           });
         }
@@ -3918,7 +3987,11 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         const notesClose = document.getElementById("notesClose");
         if (notesClose) notesClose.onclick = () => document.getElementById("notesPanel").classList.add("hide");
         const notesSearch = document.getElementById("notesSearch");
-        if (notesSearch) notesSearch.addEventListener("input", () => renderNotes(notesSearch.value.trim()));
+        if (notesSearch) notesSearch.addEventListener("input", () => renderNotes(notesSearch.value.trim(), "notesList"));
+        const settingsNotesSearch = document.getElementById("settingsNotesSearch");
+        if (settingsNotesSearch) {
+          settingsNotesSearch.addEventListener("input", () => renderNotes(settingsNotesSearch.value.trim(), "settingsNotesList"));
+        }
 
         async function runChatGoal(text, btn) {
           if (!text) return;
@@ -4194,7 +4267,104 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
               kind: (payload && payload.kind) || "page",
               noteId: payload && payload.noteId,
             });
+            const box = document.getElementById("chatInput");
+            if (box) box.focus();
           });
+        }
+        let noteMenuItems = [];
+        let noteMenuIndex = 0;
+        let noteMenuAt = -1;
+        function hideNoteMenu() {
+          noteMenuItems = [];
+          noteMenuIndex = 0;
+          noteMenuAt = -1;
+          const menu = document.getElementById("noteMenu");
+          if (menu) {
+            menu.classList.remove("show");
+            menu.innerHTML = "";
+          }
+        }
+        function paintNoteMenu() {
+          const menu = document.getElementById("noteMenu");
+          if (!menu) return;
+          menu.innerHTML = "";
+          if (!noteMenuItems.length) {
+            menu.classList.remove("show");
+            return;
+          }
+          menu.classList.add("show");
+          noteMenuItems.forEach((note, i) => {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = i === noteMenuIndex ? "on" : "";
+            const title = document.createElement("div");
+            title.textContent = note.title || "未命名笔记";
+            const meta = document.createElement("div");
+            meta.className = "meta";
+            meta.textContent = noteHost(note.source_url) + " · " + noteWhen(note.saved_at);
+            btn.appendChild(title);
+            btn.appendChild(meta);
+            btn.onmousedown = (ev) => {
+              ev.preventDefault();
+              pickNoteMenu(i);
+            };
+            menu.appendChild(btn);
+          });
+        }
+        async function pickNoteMenu(index) {
+          const note = noteMenuItems[index];
+          const input = document.getElementById("chatInput");
+          if (!note || !input || noteMenuAt < 0) {
+            hideNoteMenu();
+            return;
+          }
+          const caret = input.selectionStart;
+          const next = input.value.slice(0, noteMenuAt) + input.value.slice(caret);
+          input.value = next;
+          input.selectionStart = input.selectionEnd = noteMenuAt;
+          hideNoteMenu();
+          let excerpt = "";
+          let title = note.title || "笔记";
+          try {
+            const res = await window.sparkShell.readNote(note.id);
+            const body = (res && res.note && (res.note.summary || res.note.markdown)) || "";
+            excerpt = String(body).slice(0, 400);
+            title = (res && res.note && res.note.title) || title;
+          } catch (err) {
+            console.error(err);
+          }
+          if (!excerpt) excerpt = title;
+          addPendingQuote({
+            text: excerpt,
+            title,
+            url: note.source_url || "",
+            kind: "note",
+            noteId: note.id,
+          });
+          input.focus();
+          syncSendButton();
+        }
+        async function refreshNoteMenu() {
+          const input = document.getElementById("chatInput");
+          if (!input) return;
+          const caret = input.selectionStart || 0;
+          const upto = input.value.slice(0, caret);
+          const at = upto.lastIndexOf("@");
+          if (at < 0 || /\s/.test(upto.slice(at + 1))) {
+            hideNoteMenu();
+            return;
+          }
+          noteMenuAt = at;
+          const word = upto.slice(at + 1);
+          try {
+            const res = await window.sparkShell.notesSearch({ limit: 20, search: word });
+            noteMenuItems = (res && res.notes) || [];
+          } catch (err) {
+            console.error(err);
+            noteMenuItems = [];
+          }
+          noteMenuIndex = 0;
+          paintNoteMenu();
         }
         document.getElementById("chatSend").onclick = sendChat;
         const fileBtn = document.getElementById("chatFile");
@@ -4214,10 +4384,32 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           };
         }
         document.getElementById("chatInput").addEventListener("keydown", (e) => {
+          const menuOpen = noteMenuItems.length > 0;
+          if (menuOpen && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+            e.preventDefault();
+            noteMenuIndex = e.key === "ArrowDown"
+              ? (noteMenuIndex + 1) % noteMenuItems.length
+              : (noteMenuIndex - 1 + noteMenuItems.length) % noteMenuItems.length;
+            paintNoteMenu();
+            return;
+          }
+          if (menuOpen && e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            pickNoteMenu(noteMenuIndex);
+            return;
+          }
+          if (menuOpen && e.key === "Escape") {
+            e.preventDefault();
+            hideNoteMenu();
+            return;
+          }
           if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
             sendChat();
           }
+        });
+        document.getElementById("chatInput").addEventListener("input", () => {
+          refreshNoteMenu();
         });
         function applyProviderPreset(localOnly) {
           const provider = document.getElementById("dsProvider").value || "deepseek";

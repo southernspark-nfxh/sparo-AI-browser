@@ -744,6 +744,8 @@ export function readingReportHtml(opts: {
     <button type="button" id="btnReaderFont">${reader.fontSize}px</button>
     <button type="button" id="btnReaderCompanion"${reader.companionOn ? ' class="on"' : ""}>${reader.companionOn ? "AI伴读 开" : "AI伴读 关"}</button>
     <button type="button" class="save-page" id="btnReaderSave">📚 一键盘存</button>
+    <button type="button" id="btnReaderSaveNote">存为笔记</button>
+    <button type="button" id="btnReaderAsk">问 Sparo</button>
     <button type="button" id="btnReaderClose">关闭</button>
   </div>
   <article class="page">
