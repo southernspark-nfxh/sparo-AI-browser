@@ -12,7 +12,7 @@ T07 主体已定稿，但报告/手册打开链路会把最小化窗口拉回前
 
 1. 排查 browser.ts 里 `writeHtmlReport → openReport/openFile → switchTab` 整条链路的 `restore()/show()/presentWindow()/focus()` 调用点。最小化状态下出报告：只允许 switchTab + flashFrame，窗口保持最小化；用户点任务栏回来应看到报告标签已切好。
 2. 顺带排查 synthesize 完成、侧栏推卡片等其它疑似 restore 源，确认没有第二个弹回路径。
-3. 顺手还原 `tests/report-html.test.ts`（内容 diff 为空的行尾痕迹，已挂多轮）：先 `git diff tests/report-html.test.ts` 确认为空，再 `git checkout -- tests/report-html.test.ts`。
+3. 不要还原 `tests/report-html.test.ts`。`fix(t11)` `1bc62e8` 已经把阅读页标题去重和来源链接的断言提交进去了，checkout 会把那几条测试删掉。
 4. 验收（开发窗 9333）：最小化状态下后台调研出报告 → 窗口全程不弹、任务栏闪 → 点回来报告已切好；再连跑多个后台任务保持最小化 2 分钟，零弹回。
 
 ## Commit
