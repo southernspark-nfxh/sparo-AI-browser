@@ -146,7 +146,9 @@ import { uniqueDownloadPath } from "./downloads.js";
 import { loadChatMemory, saveChatMemory, clearChatMemory, type ChatTurn } from "./profile/chat-memory.js";
 import {
   decideRecovery,
-  journalMissionClose,
+  journalCloseUtterance,
+  journalMissionTurn,
+  pickInterruptedMission,
   recoveryLine,
   replayMissions,
   type RestoredMission,
@@ -5020,6 +5022,8 @@ export class SparkBrowser {
       this.pushSidebarState();
       return { ok: false, message: reply };
     }
+    // 执行一开始记一笔。杀进程时这张单算开始过；只被开出来、没进这里的影子单没有这笔。
+    journalMissionTurn(mission, this.configDir());
     try {
       if (await this.applyHostLessons(tabId)) {
         mission.state = "waiting_human";
@@ -5269,7 +5273,7 @@ export class SparkBrowser {
         const reply = `已打开 ${current.goal.site}。`;
         if (current.brainPlan) current.brainPlan = closePlan(current.brainPlan, true);
         current.state = "done";
-        journalMissionClose(current.id, "done");
+        this.closeMissionRecord(current, "done", "idle");
         this.lastMission = current;
         this.activeMission = undefined;
         this.chatLog.push({ role: "assistant", text: reply });
@@ -5377,7 +5381,7 @@ export class SparkBrowser {
               current.findings = findings;
               if (current.brainPlan) current.brainPlan = closePlan(current.brainPlan, true);
               current.state = "done";
-              journalMissionClose(current.id, "done");
+              this.closeMissionRecord(current, "done", "idle");
               this.lastMission = current;
               this.activeMission = undefined;
               this.chatLog.push({ role: "assistant", text: redirected });
@@ -5413,7 +5417,7 @@ export class SparkBrowser {
         const reply = live.site ? `已打开 ${live.site}。` : "页面已打开。";
         if (current.brainPlan) current.brainPlan = closePlan(current.brainPlan, true);
         current.state = "done";
-        journalMissionClose(current.id, "done");
+        this.closeMissionRecord(current, "done", "idle");
         this.lastMission = current;
         this.activeMission = undefined;
         this.chatLog.push({ role: "assistant", text: reply });
@@ -5540,7 +5544,7 @@ export class SparkBrowser {
       current.findings = findings;
       if (current.brainPlan) current.brainPlan = closePlan(current.brainPlan, verify.complete);
       current.state = "done";
-      journalMissionClose(current.id, verify.complete ? "done" : "incomplete");
+      this.closeMissionRecord(current, verify.complete ? "done" : "incomplete", "idle");
       this.lastMission = current;
       this.activeMission = undefined;
       this.chatLog.push({ role: "assistant", text: reply, doc: replyDoc });
@@ -5736,6 +5740,18 @@ export class SparkBrowser {
     }
   }
 
+  /**
+   * 正常收尾关本单，并关掉同一句原话里还没执行过的影子单。
+   * 用户当场说「算了」时 scope 用 all，把这一句还开着的单一起关掉。
+   * 启动恢复只读，不从这里清扫。
+   */
+  private closeMissionRecord(mission: ActiveMission, reason: string, scope: "all" | "idle"): void {
+    journalCloseUtterance(mission.raw || mission.goal?.raw || "", reason, this.configDir(), {
+      alsoId: mission.id,
+      onlyIdle: scope === "idle",
+    });
+  }
+
   private offerMissionRecovery(): void {
     let pending: RestoredMission[] = [];
     try {
@@ -5744,7 +5760,7 @@ export class SparkBrowser {
       console.warn("[mission-journal] replay failed", error instanceof Error ? error.message : error);
       return;
     }
-    const item = pending[pending.length - 1];
+    const item = pickInterruptedMission(pending);
     if (!item) return;
     this.pendingRecovery = item;
     this.chatLog.push({ role: "assistant", text: recoveryLine(item) });
@@ -5757,7 +5773,7 @@ export class SparkBrowser {
     this.pendingRecovery = null;
     if (!choice) return null;
     if (choice === "dismiss") {
-      journalMissionClose(item.mission.id, "算了", this.configDir());
+      this.closeMissionRecord(item.mission, "算了", "all");
       const reply = "这单先放下了。";
       this.chatLog.push({ role: "assistant", text: reply });
       this.pushSidebarState();
@@ -6119,38 +6135,30 @@ export class SparkBrowser {
 
     const homeCity = loadProfile(this.configDir()).identity.homeCity;
     const complete = this.deepseek ? (p: string) => this.deepseek!.completePlain(p) : undefined;
+    const turnCtx = {
+      active: this.activeMission,
+      last: this.lastMission,
+      homeCity: homeCity || undefined,
+      now: new Date(),
+      paused: this.paused,
+    };
+    // 兜底要等模型超时再跑。提前跑会先开一张启发式单，和模型单变成同一句的双胞胎。
     const turn = complete
-      ? await this.withTimeout(
+      ? (await this.withTimeout(
           applyTurnAsync(
             text,
             {
-              active: this.activeMission,
-              last: this.lastMission,
-              homeCity: homeCity || undefined,
-              now: new Date(),
+              ...turnCtx,
               page: { url: this.getUrl(tabId), title: this.getTitle(tabId) },
-              paused: this.paused,
             },
             complete,
             this.configDir(),
           ),
           20000,
-          applyTurn(text, {
-            active: this.activeMission,
-            last: this.lastMission,
-            homeCity: homeCity || undefined,
-            now: new Date(),
-            paused: this.paused,
-          }),
+          null,
           false,
-        )
-      : applyTurn(text, {
-          active: this.activeMission,
-          last: this.lastMission,
-          homeCity: homeCity || undefined,
-          now: new Date(),
-          paused: this.paused,
-        });
+        )) || applyTurn(text, turnCtx)
+      : applyTurn(text, turnCtx);
 
     if (turn.effect === "pause") {
       this.setPaused(true);
