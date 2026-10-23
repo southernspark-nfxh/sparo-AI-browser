@@ -38,10 +38,16 @@ Refs from `snapshot` expire after navigation or major DOM changes — **re-snaps
 
 ## Tabs
 
-- `new_tab(url?)` → open a tab (optional URL); tools act on the **active** tab
+- `new_tab(url?)` → open a tab (optional URL)
 - `close_tab(id)` → close by id (last tab becomes a blank page; window stays)
 - `switch_tab(id)` → set active tab
-- `list_tabs()` → `{ data: tabs… }` including active id/url and `discarded`
+- `list_tabs()` → `{ data: tabs… }` including active id/url, `discarded`, and `owner` (`user` or `agent:<clientId>`)
+
+Page tools take an optional `tabId`: `navigate`, `snapshot`, `click`, `fill`, `page_text`, `execute_primitives`, `press`, `pick_calendar`, `fill_suggest`, `get_url`, `get_title`, `reload`, `go_back`, `go_forward`. Without a client id, omitting `tabId` still means the active tab.
+
+## 多 Agent 并行
+
+`initialize` 的响应里带 `clientId`（也在响应头 `x-sparo-client`）。之后每次请求带上这个头。同一个 client 不传 `tabId` 的页面操作落在它自己最近使用的标签上；还没有就新建后台标签，**不会改用户正在看的那一页**。显式 `tabId` 照传（休眠的标签会先唤醒）。每个 client 的后台任务算进全局池上限 3，满了返回 `pool_full`。登录墙仍然 `waiting_human`。
 - `discard_inactive_tabs()` → sleep background tabs (destroy renderers; click a tab to reload). Skips the current tab and tabs playing sound.
 
 ---
