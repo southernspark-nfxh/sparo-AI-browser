@@ -149,6 +149,12 @@ export function gateSiteDelivery(opts: {
  * 原话只是打开一个点名的站，没有总结、搜索、对比这类后半句。
  * 这种单子的交付是站点本身，不是把首页正文写成阅读页。
  */
+/** 原话没有要求读页、总结或对比。只打开页面时不要再把正文写成阅读页。 */
+export function userDidNotAskToRead(goal: { raw?: string; intent?: string }): boolean {
+  const raw = `${goal.raw || ""}\n${goal.intent || ""}`;
+  return !/总结|摘要|提炼|概括|归纳|对比|比价|调研|评测|阅读|读一下|读这一页|这是什么/.test(raw);
+}
+
 export function openSiteIsTheJob(goal: { raw: string; site?: string }): boolean {
   if (!goal.site) return false;
   const raw = String(goal.raw || "").trim();
