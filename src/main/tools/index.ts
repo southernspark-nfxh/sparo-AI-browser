@@ -1,4 +1,5 @@
 import type { SparkBrowser } from "../browser.js";
+import { ownerForTab } from "../agent/mcp-sessions.js";
 import { navigateTool } from "./navigate.js";
 import { snapshotTool } from "./snapshot.js";
 import { clickTool } from "./click.js";
@@ -93,6 +94,7 @@ export function createToolHandlers(browser: SparkBrowser) {
     url?: string;
     includeOptional?: boolean;
     maxAttempts?: number;
+    tabId?: string;
   }) => browser.executePrimitives(input),
   pick_calendar: (input: {
     triggerRef?: string;
@@ -103,7 +105,11 @@ export function createToolHandlers(browser: SparkBrowser) {
     minutes?: string | number;
     dismiss?: "outside" | "escape";
     value?: unknown;
+    tabId?: string;
   }) => browser.pickCalendar(input),
+  press: (key: string, tabId?: string) => browser.pressKey(key, tabId),
+  fill_suggest: (value: string, target?: { ref?: string; selector?: string }, tabId?: string) =>
+    browser.fillSuggest(value, target, tabId),
   cs_scan: () => browser.csScan(),
   cs_draft_reply: (input?: {
     draft?: string;
@@ -124,13 +130,29 @@ export function createToolHandlers(browser: SparkBrowser) {
     body?: string;
   }) => browser.feishuWork(input),
   new_tab: (url?: string) => browser.newTab(url),
+  create_agent_tab: (url?: string) => browser.createAgentTab(url),
+  tab_ids: () => browser.listTabs().tabs.map((tab) => tab.id),
+  background_running: () => {
+    const pool = (browser as unknown as { taskPool?: { runningBackground?: () => number } }).taskPool;
+    try {
+      return pool?.runningBackground?.() ?? 0;
+    } catch {
+      return 0;
+    }
+  },
     close_tab: (id: string) => browser.closeTab(id),
     switch_tab: (id: string) => browser.switchTab(id),
-    list_tabs: async () => ({
-      ok: true,
-      message: "tabs",
-      data: browser.listTabs(),
-    }),
+    list_tabs: async () => {
+      const listed = browser.listTabs();
+      return {
+        ok: true,
+        message: "tabs",
+        data: {
+          ...listed,
+          tabs: listed.tabs.map((tab) => ({ ...tab, owner: ownerForTab(tab.id) })),
+        },
+      };
+    },
     discard_inactive_tabs: () => browser.discardInactiveTabs(),
     request_approval: (action: string, reason: string, risk?: string) =>
       browser.requestApproval({ action, reason, risk }),
@@ -145,21 +167,21 @@ export function createToolHandlers(browser: SparkBrowser) {
     qa_gate: () => browser.qaGate(),
     sidebar_chat: (text: string, hands?: boolean) =>
       browser.sidebarChatTool(text, { hands }),
-    get_url: async () => ({
+    get_url: async (tabId?: string) => ({
       ok: true,
-      message: browser.getUrl(),
-      data: { url: browser.getUrl() },
+      message: browser.getUrl(tabId),
+      data: { url: browser.getUrl(tabId) },
     }),
-    get_title: async () => ({
+    get_title: async (tabId?: string) => ({
       ok: true,
-      message: browser.getTitle(),
-      data: { title: browser.getTitle() },
+      message: browser.getTitle(tabId),
+      data: { title: browser.getTitle(tabId) },
     }),
     contains_text: (text: string) => browser.containsText(text),
-    page_text: () => browser.pageText(),
-    reload: () => browser.reload(),
-    go_back: () => browser.goBack(),
-    go_forward: () => browser.goForward(),
+    page_text: (tabId?: string) => browser.pageText(tabId),
+    reload: (tabId?: string) => browser.reload(tabId ? { tabId } : undefined),
+    go_back: (tabId?: string) => browser.goBack(tabId ? { tabId } : undefined),
+    go_forward: (tabId?: string) => browser.goForward(tabId ? { tabId } : undefined),
     pause: async () => {
       browser.setPaused(true);
       return { ok: true, message: "Agent paused" };

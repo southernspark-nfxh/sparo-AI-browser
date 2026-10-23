@@ -5,6 +5,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { ToolHandlers } from "./tools/index.js";
 import { listNotes } from "./agent/notes.js";
+import { laneForText } from "./agent/task-class.js";
+import { backgroundPoolDecision, bindClientTab, issueClientId } from "./agent/mcp-sessions.js";
 import {
   applyCors,
   checkRateLimit,
@@ -25,7 +27,24 @@ function textResult(payload: unknown) {
   };
 }
 
-function registerTools(server: McpServer, handlers: ToolHandlers): void {
+type McpScope = {
+  clientId?: string;
+  tabIds: () => string[];
+  createAgentTab: () => string;
+  runningBackground: () => number;
+};
+
+function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpScope): void {
+  const bind = (tabId?: string) =>
+    scope
+      ? bindClientTab({
+          clientId: scope.clientId,
+          tabId,
+          knownTabIds: scope.tabIds(),
+          createAgentTab: scope.createAgentTab,
+        })
+      : tabId;
+  const tabIdField = z.string().optional().describe("可选标签。带 clientId 时省略则落在该 client 自己的标签，不抢用户当前页。");
   server.tool(
     "sparo_info",
     "FIRST TOOL for new agents: what Sparo is, skill catalog, and fastest paths. Call once before exploring. Prefer run_skill only when the skill site matches the user (发小红书 ≠ 发知乎).",
@@ -36,8 +55,8 @@ function registerTools(server: McpServer, handlers: ToolHandlers): void {
   server.tool(
     "navigate",
     "Open a URL and return confirmed {url, title} after load settles. Always check data.confirmed/url before continuing.",
-    { url: z.string().min(1).describe("URL to open") },
-    async ({ url }) => textResult(await handlers.navigate(url)),
+    { url: z.string().min(1).describe("URL to open"), tabId: tabIdField },
+    async ({ url, tabId }) => textResult(await handlers.navigate(url, bind(tabId))),
   );
 
   server.tool(
@@ -48,8 +67,9 @@ function registerTools(server: McpServer, handlers: ToolHandlers): void {
         .string()
         .optional()
         .describe("Optional filter substring for name/selector/ref/placeholder"),
+      tabId: tabIdField,
     },
-    async ({ selector }) => textResult(await handlers.snapshot(selector)),
+    async ({ selector, tabId }) => textResult(await handlers.snapshot(selector, bind(tabId))),
   );
 
   server.tool(
@@ -62,9 +82,10 @@ function registerTools(server: McpServer, handlers: ToolHandlers): void {
         .boolean()
         .optional()
         .describe("Click near right edge (dropdown caret on split buttons)"),
+      tabId: tabIdField,
     },
-    async ({ ref, selector, caret }) =>
-      textResult(await handlers.click({ ref, selector, caret })),
+    async ({ ref, selector, caret, tabId }) =>
+      textResult(await handlers.click({ ref, selector, caret }, bind(tabId))),
   );
 
   server.tool(
@@ -74,9 +95,10 @@ function registerTools(server: McpServer, handlers: ToolHandlers): void {
       ref: z.string().optional(),
       selector: z.string().optional(),
       value: z.string().describe("Text to fill"),
+      tabId: tabIdField,
     },
-    async ({ ref, selector, value }) =>
-      textResult(await handlers.fill({ ref, selector }, value)),
+    async ({ ref, selector, value, tabId }) =>
+      textResult(await handlers.fill({ ref, selector }, value, bind(tabId))),
   );
 
   server.tool(
@@ -388,14 +410,16 @@ function registerTools(server: McpServer, handlers: ToolHandlers): void {
       url: z.string().optional().describe("Optional navigate before analyze"),
       includeOptional: z.boolean().optional(),
       maxAttempts: z.number().optional(),
+      tabId: tabIdField,
     },
-    async ({ payload, url, includeOptional, maxAttempts }) =>
+    async ({ payload, url, includeOptional, maxAttempts, tabId }) =>
       textResult(
         await handlers.execute_primitives({
           payload: payload as Record<string, unknown>,
           url,
           includeOptional,
           maxAttempts,
+          tabId: bind(tabId),
         }),
       ),
   );
@@ -410,8 +434,9 @@ function registerTools(server: McpServer, handlers: ToolHandlers): void {
       hours: z.union([z.string(), z.number()]).optional().describe("24h hours, e.g. 00"),
       minutes: z.union([z.string(), z.number()]).optional().describe("Minutes, e.g. 59 — separate from hours"),
       dismiss: z.enum(["outside", "escape"]).optional(),
+      tabId: tabIdField,
     },
-    async ({ ref, trigger, date, hours, minutes, dismiss }) =>
+    async ({ ref, trigger, date, hours, minutes, dismiss, tabId }) =>
       textResult(
         await handlers.pick_calendar({
           triggerRef: ref,
@@ -420,6 +445,7 @@ function registerTools(server: McpServer, handlers: ToolHandlers): void {
           hours,
           minutes,
           dismiss,
+          tabId: bind(tabId),
         }),
       ),
   );
@@ -511,7 +537,7 @@ function registerTools(server: McpServer, handlers: ToolHandlers): void {
 
   server.tool(
     "new_tab",
-    "Open a new browser tab (optional URL). Tools always act on the active tab.",
+    "Open a new browser tab (optional URL). With a client id, page tools stay on that client's tab instead of the user's active tab.",
     { url: z.string().optional() },
     async ({ url }) => textResult(await handlers.new_tab(url)),
   );
@@ -530,7 +556,7 @@ function registerTools(server: McpServer, handlers: ToolHandlers): void {
     async ({ id }) => textResult(await handlers.switch_tab(id)),
   );
 
-  server.tool("list_tabs", "List tabs and active tab id/url.", {}, async () =>
+  server.tool("list_tabs", "List tabs and active tab id/url. Each tab has owner: user or agent:<clientId>.", {}, async () =>
     textResult(await handlers.list_tabs()),
   );
 
@@ -591,15 +617,21 @@ function registerTools(server: McpServer, handlers: ToolHandlers): void {
       text: z.string().min(1),
       hands: z.boolean().optional(),
     },
-    async ({ text, hands }) => textResult(await handlers.sidebar_chat(text, hands)),
+    async ({ text, hands }) => {
+      if (scope && laneForText(text) === "background") {
+        const gate = backgroundPoolDecision(scope.runningBackground());
+        if (!gate.ok) return textResult({ ok: false, error: gate.error, message: "后台任务已满 3 个" });
+      }
+      return textResult(await handlers.sidebar_chat(text, hands));
+    },
   );
 
-  server.tool("get_url", "Get current page URL", {}, async () =>
-    textResult(await handlers.get_url()),
+  server.tool("get_url", "Get current page URL", { tabId: tabIdField }, async ({ tabId }) =>
+    textResult(await handlers.get_url(bind(tabId))),
   );
 
-  server.tool("get_title", "Get current page title", {}, async () =>
-    textResult(await handlers.get_title()),
+  server.tool("get_title", "Get current page title", { tabId: tabIdField }, async ({ tabId }) =>
+    textResult(await handlers.get_title(bind(tabId))),
   );
 
   server.tool(
@@ -612,20 +644,40 @@ function registerTools(server: McpServer, handlers: ToolHandlers): void {
   server.tool(
     "page_text",
     "Return a slice of visible document.body.innerText for debugging.",
-    {},
-    async () => textResult(await handlers.page_text()),
+    { tabId: tabIdField },
+    async ({ tabId }) => textResult(await handlers.page_text(bind(tabId))),
   );
 
-  server.tool("reload", "Reload current page", {}, async () =>
-    textResult(await handlers.reload()),
+  server.tool("reload", "Reload current page", { tabId: tabIdField }, async ({ tabId }) =>
+    textResult(await handlers.reload(bind(tabId))),
   );
 
-  server.tool("go_back", "Browser back", {}, async () =>
-    textResult(await handlers.go_back()),
+  server.tool("go_back", "Browser back", { tabId: tabIdField }, async ({ tabId }) =>
+    textResult(await handlers.go_back(bind(tabId))),
   );
 
-  server.tool("go_forward", "Browser forward", {}, async () =>
-    textResult(await handlers.go_forward()),
+  server.tool("go_forward", "Browser forward", { tabId: tabIdField }, async ({ tabId }) =>
+    textResult(await handlers.go_forward(bind(tabId))),
+  );
+
+  server.tool(
+    "press",
+    "Press a key in the page. Does not submit a payment or send a post by itself.",
+    { key: z.string().min(1), tabId: tabIdField },
+    async ({ key, tabId }) => textResult(await handlers.press(key, bind(tabId))),
+  );
+
+  server.tool(
+    "fill_suggest",
+    "Fill a suggest box and pick a match.",
+    {
+      value: z.string().min(1),
+      ref: z.string().optional(),
+      selector: z.string().optional(),
+      tabId: tabIdField,
+    },
+    async ({ value, ref, selector, tabId }) =>
+      textResult(await handlers.fill_suggest(value, { ref, selector }, bind(tabId))),
   );
 
   server.tool("pause", "Pause agent control (human takeover)", {}, async () =>
@@ -769,8 +821,25 @@ export async function startMcpServer(handlers: ToolHandlers): Promise<{
     }
 
     // Stateless mode: one transport + server per request (SDK recommended pattern).
-    const server = new McpServer({ name: "sparo", version: "0.1.0" });
-    registerTools(server, handlers);
+    const headerClient = String(req.headers["x-sparo-client"] || "").trim();
+    const parsedEarly = req.method === "POST" ? await readJsonBody(req) : undefined;
+    const rpcMethod = parsedEarly && typeof parsedEarly === "object" && "method" in parsedEarly
+      ? String((parsedEarly as { method?: unknown }).method || "")
+      : "";
+    const clientId = headerClient || (rpcMethod === "initialize" ? issueClientId() : "");
+    if (clientId) res.setHeader("x-sparo-client", clientId);
+    const server = new McpServer(
+      { name: "sparo", version: "0.1.0" },
+      clientId
+        ? { instructions: `clientId=${clientId}。不带 tabId 的页面操作落在这个 client 自己的标签上，不要抢用户当前页。后台池满返回 pool_full。` }
+        : undefined,
+    );
+    registerTools(server, handlers, {
+      clientId: clientId || undefined,
+      tabIds: () => handlers.tab_ids(),
+      createAgentTab: () => handlers.create_agent_tab(),
+      runningBackground: () => handlers.background_running(),
+    });
 
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
@@ -778,9 +847,8 @@ export async function startMcpServer(handlers: ToolHandlers): Promise<{
     });
 
     try {
-      const parsedBody = req.method === "POST" ? await readJsonBody(req) : undefined;
       await server.connect(transport);
-      await transport.handleRequest(req, res, parsedBody);
+      await transport.handleRequest(req, res, parsedEarly);
     } catch (error) {
       console.error("[sparo-mcp] request error:", error);
       if (!res.headersSent) {
