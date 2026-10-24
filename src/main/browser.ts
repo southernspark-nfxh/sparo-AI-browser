@@ -5557,7 +5557,7 @@ export class SparkBrowser {
         );
         if (direct.trim()) synthesized = direct.trim();
       }
-      const verify = verifyContracts(live, findings, { synthesized });
+      const verify = verifyContracts(live, findings, { synthesized, plan: current.brainPlan });
       try {
         writeExperience(this.configDir(), reviewLesson(live, verify, ran.length ? ran : compileHands(live)));
       } catch {
@@ -5603,7 +5603,12 @@ export class SparkBrowser {
       }
 
       // 阅读优先：成篇汇总不进侧栏，落阅读页在窗口里打开
-      const sealedFinal = this.sealLongRead(reply, replyDoc, live.intent);
+      const sealedFinal = this.sealLongRead(
+        reply,
+        replyDoc,
+        live.intent,
+        verify.complete ? undefined : { incompleteNote: verify.notes },
+      );
       reply = sealedFinal.text;
       replyDoc = sealedFinal.doc;
 
@@ -5834,6 +5839,7 @@ export class SparkBrowser {
     journalCloseUtterance(mission.raw || mission.goal?.raw || "", reason, this.configDir(), {
       alsoId: mission.id,
       onlyIdle: scope === "idle",
+      origin: mission,
     });
   }
 
@@ -6747,8 +6753,11 @@ export class SparkBrowser {
     text: string,
     doc?: ChatTurn["doc"],
     fallbackTitle?: string,
-    opts?: { force?: boolean; source?: ReadingSource },
+    opts?: { force?: boolean; source?: ReadingSource; incompleteNote?: string },
   ): { text: string; doc?: ChatTurn["doc"] } {
+    if (opts?.incompleteNote && doc && !opts.force) {
+      return { text: `${opts.incompleteNote}\n《${doc.title}》先写了已查到的。`, doc };
+    }
     if (doc && !opts?.force) {
       // 已有产物时侧栏只留一句，长文一律进产物页
       if (shouldSealLongRead(text)) {
@@ -6756,22 +6765,30 @@ export class SparkBrowser {
       }
       return { text, doc };
     }
-    if (!opts?.force && !shouldSealLongRead(text)) return { text };
+    if (!opts?.force && !shouldSealLongRead(text)) {
+      if (opts?.incompleteNote && !text.includes(opts.incompleteNote)) {
+        return { text: `${opts.incompleteNote}\n${text}` };
+      }
+      return { text };
+    }
     try {
       const title = readingTitleOf(text, fallbackTitle || "整理结果");
+      const incomplete = Boolean(opts?.incompleteNote);
       const sealed = writeHtmlReport(
         this.configDir(),
         `read-${stamp()}`,
         readingReportHtml({
           title,
           body: stripReadingTitle(text),
-          eyebrow: "SPARO 阅读页",
+          eyebrow: incomplete ? "未完成" : "SPARO 阅读页",
           source: opts?.source,
         }),
         { title, kind: "read" },
       );
       this.openReportQuiet(sealed.path);
-      return { text: `《${title}》已写成阅读页，在窗口里打开了。`, doc: sealed };
+      const lead = incomplete ? `${opts?.incompleteNote}\n` : "";
+      const verb = incomplete ? "先写成未完成页" : "已写成阅读页";
+      return { text: `${lead}《${title}》${verb}，在窗口里打开了。`, doc: sealed };
     } catch {
       return { text };
     }
