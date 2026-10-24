@@ -38,6 +38,10 @@ contextBridge.exposeInMainWorld("sparkShell", {
   learningAnswer: (text: string) => ipcRenderer.invoke("spark:learning-answer", text),
   learningSkip: () => ipcRenderer.invoke("spark:learning-skip"),
   deleteLesson: (id: string) => ipcRenderer.invoke("spark:delete-lesson", id),
+  deleteTrigger: (id: string) => ipcRenderer.invoke("spark:delete-trigger", id),
+  toggleTrigger: (id: string, enabled: boolean) => ipcRenderer.invoke("spark:toggle-trigger", id, enabled),
+  rememberTrigger: (payload: { skillId: string; text: string }) =>
+    ipcRenderer.invoke("spark:remember-trigger", payload),
   getStatus: () => ipcRenderer.invoke("spark:get-status"),
   resolveApproval: (id: string, approved: boolean) =>
     ipcRenderer.invoke("spark:resolve-approval", id, approved),
