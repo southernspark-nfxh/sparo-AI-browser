@@ -19,6 +19,11 @@ export type SkillStep = {
   bounds?: { x: number; y: number; w: number; h: number };
 };
 
+/** 沉淀路线的一段。与 agent/distill.ts 同形；store 不 import distill，避免循环依赖。 */
+export type RouteMilestone =
+  | { kind: "fixed"; tool: "navigate" | "page_text" | "wait_for" | "report"; args: Record<string, unknown> }
+  | { kind: "open"; goal: string; tools?: string[] };
+
 export type Skill = {
   id: string;
   title: string;
@@ -33,6 +38,12 @@ export type Skill = {
   stats: { success: number; fail: number };
   enabled: boolean;
   traceFile?: string;
+  /** 沉淀四件套。true 时 run_skill 只回脚手架，不逐字直放。 */
+  distilled?: boolean;
+  route?: RouteMilestone[];
+  params?: Record<string, { type?: string; required?: boolean }>;
+  pitfalls?: Array<{ milestone: number; note: string; from?: string }>;
+  contract?: Record<string, unknown>;
 };
 
 function skillsDir(configDir: string): string {
@@ -49,7 +60,7 @@ function skillPath(configDir: string, id: string): string {
   return join(skillsDir(configDir), `${id}.json`);
 }
 
-function slugify(title: string): string {
+export function slugify(title: string): string {
   return title
     .trim()
     .replace(/[\\/:*?"<>|]/g, "")

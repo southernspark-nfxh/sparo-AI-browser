@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -108,5 +108,86 @@ describe("resolveSkillStrict via runSkill", () => {
     expect(skillCatalogLines(dir)).toBe("");
     writeSkill(dir, "qa-gate-demo", "QA门岗演示");
     expect(skillCatalogLines(dir)).toContain("- qa-gate-demo: QA门岗演示（1 步）");
+  });
+});
+
+describe("distilled scaffold and stats", () => {
+  function readStats(dir: string, id: string): { success: number; fail: number } {
+    const raw = JSON.parse(readFileSync(join(dir, "skills", `${id}.json`), "utf8")) as {
+      stats?: { success?: number; fail?: number };
+    };
+    return { success: raw.stats?.success || 0, fail: raw.stats?.fail || 0 };
+  }
+
+  it("returns scaffold text for a distilled skill and does not touch the browser or stats", async () => {
+    const dir = tmp();
+    const calls = { navigate: 0, pageText: 0 };
+    const live = {
+      getUrl: () => "https://example.com",
+      navigate: async () => {
+        calls.navigate += 1;
+        return { ok: true, message: "opened" };
+      },
+      pageText: async () => {
+        calls.pageText += 1;
+        return { ok: true, message: "text", data: { text: "text" } };
+      },
+    } as SkillBrowser;
+    writeFileSync(
+      join(dir, "skills", "taught-bill.json"),
+      JSON.stringify({
+        id: "taught-bill",
+        title: "核对户号",
+        intent: "核对电费户号",
+        source: "taught",
+        createdAt: "2026-10-24T00:00:00.000Z",
+        updatedAt: "2026-10-24T00:00:00.000Z",
+        steps: [],
+        stepCount: 0,
+        stats: { success: 3, fail: 1 },
+        enabled: true,
+        distilled: true,
+        route: [
+          { kind: "fixed", tool: "navigate", args: { url: "https://example.com/{{id}}" } },
+          { kind: "open", goal: "读通知单上的户号" },
+        ],
+        pitfalls: [{ milestone: 2, note: "通知单可能是图片" }],
+        contract: { deliverable: "report" },
+      }),
+    );
+    const ran = await runSkill(live, dir, { id: "taught-bill" });
+    expect(ran.ok).toBe(true);
+    expect(ran.message).toContain("脚手架");
+    expect(ran.message).toContain("https://example.com/{{id}}");
+    expect(ran.message).toContain("读通知单上的户号");
+    expect((ran.data as { distilled?: boolean }).distilled).toBe(true);
+    expect(calls).toEqual({ navigate: 0, pageText: 0 });
+    expect(readStats(dir, "taught-bill")).toEqual({ success: 3, fail: 1 });
+    const dry = await runSkill(live, dir, { id: "taught-bill", dryRun: true });
+    expect(dry.ok).toBe(true);
+    expect(dry.message).toContain("脚手架");
+    expect(calls).toEqual({ navigate: 0, pageText: 0 });
+    expect(readStats(dir, "taught-bill")).toEqual({ success: 3, fail: 1 });
+    expect(skillCatalogLines(dir)).toContain("- taught-bill: 核对户号（沉淀·2 段路线）");
+  });
+
+  it("counts a real run and leaves dry-run stats unchanged", async () => {
+    const dir = tmp();
+    writeSkill(dir, "qa-nav", "打开一下");
+    const okBrowser = {
+      navigate: async () => ({ ok: true, message: "opened" }),
+    } as SkillBrowser;
+    const ran = await runSkill(okBrowser, dir, { id: "qa-nav" });
+    expect(ran.ok).toBe(true);
+    expect(readStats(dir, "qa-nav")).toEqual({ success: 1, fail: 0 });
+    const dry = await runSkill(okBrowser, dir, { id: "qa-nav", dryRun: true });
+    expect(dry.ok).toBe(true);
+    expect(readStats(dir, "qa-nav")).toEqual({ success: 1, fail: 0 });
+    const failBrowser = {
+      navigate: async () => ({ ok: false, message: "down" }),
+    } as SkillBrowser;
+    const failed = await runSkill(failBrowser, dir, { id: "qa-nav" });
+    expect(failed.ok).toBe(false);
+    expect(readStats(dir, "qa-nav")).toEqual({ success: 1, fail: 1 });
   });
 });
