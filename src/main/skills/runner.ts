@@ -6,6 +6,7 @@ import type { PageSnapshot, SnapshotElement, ToolResult } from "../../shared/typ
 import {
   getSkill,
   listSkills,
+  saveSkill,
   skillSummary,
   type Skill,
   type SkillStep,
@@ -342,7 +343,11 @@ export function skillCatalogLines(configDir: string, limit = 8): string {
   if (!configDir) return "";
   return skillCatalog(configDir)
     .slice(0, limit)
-    .map((s) => `- ${s.id}: ${s.title}（${s.stepCount} 步）`)
+    .map((s) =>
+      s.distilled
+        ? `- ${s.id}: ${s.title}（沉淀·${s.routeLen} 段路线）`
+        : `- ${s.id}: ${s.title}（${s.stepCount} 步）`,
+    )
     .join("\n");
 }
 
@@ -352,6 +357,8 @@ export function skillCatalog(configDir: string): Array<{
   intent: string;
   stepCount: number;
   aliases: string[];
+  distilled?: boolean;
+  routeLen: number;
 }> {
   return listSkills(configDir)
     .filter((s) => s.enabled !== false)
@@ -360,6 +367,8 @@ export function skillCatalog(configDir: string): Array<{
       ...skillSummary(s),
       intent: s.intent,
       aliases: BUILTIN_ALIASES[s.id] || [],
+      distilled: s.distilled === true,
+      routeLen: s.route?.length || 0,
     }));
 }
 
@@ -990,6 +999,40 @@ async function runOneStepWithRetry(
   return last;
 }
 
+function scaffoldText(skill: Skill): string {
+  const lines = ["这是多步骤沉淀路线，当脚手架用，逐步看页面自己走："];
+  const route = skill.route || [];
+  route.forEach((milestone, index) => {
+    const n = index + 1;
+    if (milestone.kind === "fixed") {
+      const url = typeof milestone.args?.url === "string" ? milestone.args.url : "";
+      lines.push(url ? `${n}. ${milestone.tool} ${url}` : `${n}. ${milestone.tool}`);
+    } else {
+      lines.push(`${n}. ${milestone.goal}`);
+    }
+    for (const pit of skill.pitfalls || []) {
+      if (pit.milestone === n && pit.note) lines.push(`   坑：${pit.note}`);
+    }
+  });
+  if (skill.contract && Object.keys(skill.contract).length) {
+    lines.push(`验收：${JSON.stringify(skill.contract)}`);
+  }
+  return lines.join("\n");
+}
+
+function bumpSkillStat(configDir: string, skill: Skill, field: "success" | "fail"): void {
+  try {
+    const stats = {
+      success: Number(skill.stats?.success) || 0,
+      fail: Number(skill.stats?.fail) || 0,
+    };
+    stats[field] += 1;
+    saveSkill(configDir, { ...skill, stats });
+  } catch {
+    /* 记账失败不改返回 */
+  }
+}
+
 export async function runSkill(
   browser: SkillBrowser,
   configDir: string,
@@ -1011,6 +1054,13 @@ export async function runSkill(
       ok: false,
       message: `未找到妙招「${key}」`,
       data: { suggestions },
+    };
+  }
+  if (skill.distilled) {
+    return {
+      ok: true,
+      message: scaffoldText(skill),
+      data: { skillId: skill.id, title: skill.title, distilled: true },
     };
   }
   const steps = (skill.steps || []) as AnyStep[];
@@ -1085,6 +1135,7 @@ export async function runSkill(
       } catch {
         /* ignore diag errors */
       }
+      bumpSkillStat(configDir, skill, "fail");
       return {
         ok: false,
         message: `妙招「${skill.title}」第 ${i + 1} 步失败（${tool}）：${result.message}`,
@@ -1112,6 +1163,7 @@ export async function runSkill(
   const excerpt = readings
     .map((r) => `【${r.label}】\n${r.text.slice(0, 1200)}`)
     .join("\n\n");
+  bumpSkillStat(configDir, skill, "success");
   return {
     ok: true,
     message: readings.length
