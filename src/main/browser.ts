@@ -6389,23 +6389,28 @@ export class SparkBrowser {
       paused: this.paused,
     };
     // 兜底要等模型超时再跑。提前跑会先开一张启发式单，和模型单变成同一句的双胞胎。
-    const raced = complete
-      ? await this.withTimeout(
-          applyTurnAsync(
-            text,
-            {
-              ...turnCtx,
-              page: { url: this.getUrl(tabId), title: this.getTitle(tabId) },
-            },
-            complete,
-            this.configDir(),
-          ),
-          20000,
-          null,
-          false,
+    // coverage 判定经常超过 20 秒。到点先不把启发式单开跑，同一句再等一轮；
+    // 仍没回来才改走兜底，并告诉晚到的模型单不要再落盘。
+    let wantModel = true;
+    const pendingModel = complete
+      ? applyTurnAsync(
+          text,
+          {
+            ...turnCtx,
+            page: { url: this.getUrl(tabId), title: this.getTitle(tabId) },
+          },
+          complete,
+          this.configDir(),
+          { stillWanted: () => wantModel },
         )
       : null;
-    const turn = raced || applyTurn(text, turnCtx);
+    const raced = pendingModel
+      ? await this.withTimeout(pendingModel, 20000, null, false)
+      : null;
+    const modelTurn =
+      raced || (pendingModel ? await this.withTimeout(pendingModel, 40000, null, false) : null);
+    if (!modelTurn) wantModel = false;
+    const turn = modelTurn || applyTurn(text, turnCtx);
     if (turn.mission) {
       try {
         const pending = replayMissions(this.configDir());
