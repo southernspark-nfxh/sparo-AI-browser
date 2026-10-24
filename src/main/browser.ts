@@ -5171,9 +5171,10 @@ export class SparkBrowser {
             };
           }
           const pageUrl = this.getUrl(tabId);
+          const skills = skillCatalogLines(this.configDir());
           if (this.deepseek) {
             return this.withTimeout(
-              thoughtForAsync(current, (p) => this.deepseek!.completePlain(p), undefined, pageUrl),
+              thoughtForAsync(current, (p) => this.deepseek!.completePlain(p), undefined, pageUrl, skills),
               15000,
               thoughtFor(current, undefined, pageUrl),
               false,

@@ -391,7 +391,7 @@ export function applyModelPick(
  * 给模型完整上下文：已做、还缺、可用的手（作为信息而非约束）。
  * 模型自己决定下一步，不再从菜单里挑。
  */
-export function reasonerPromptV2(goal: AgentGoal, findings: StepFinding[], pageUrl?: string): string {
+export function reasonerPromptV2(goal: AgentGoal, findings: StepFinding[], pageUrl?: string, skills?: string): string {
   const seen = findings
     .map((f) => `${f.ok ? "完成" : "失败"} ${f.step.cap} ${f.step.label} → ${(f.text || "").slice(0, 60)}`)
     .join("\n");
@@ -416,6 +416,9 @@ export function reasonerPromptV2(goal: AgentGoal, findings: StepFinding[], pageU
     seen ? `已观察到：\n${seen}` : "还没有观察。",
     `还缺：${verdict.missing.join("、") || "（都齐了，可汇总）"}`,
     `可用的手（参考，不是约束）：${catalog.map((s) => `${s.cap}(${s.covers.join(",")})`).join(" / ")}`,
+    skills
+      ? `可复用的妙招（要用就 next.cap="run_skill"、next.query 填妙招 id；没有合适的就忽略；禁止编造不在清单里的 id）：\n${skills}`
+      : "",
     '只输出 JSON：{"next":{"cap":"...","covers":["stay"],"query":"...","city":"...","site":"...","label":"..."},"why":"..."} 或 {"synthesize":true,"why":"..."} 或 {"ask":"还缺X才能动手","why":"..."}',
   ]
     .filter(Boolean)
@@ -433,6 +436,7 @@ export async function nextThoughtAsync(
     synthesized?: string;
     nudge?: AgentStep;
     pageUrl?: string;
+    skills?: string;
   },
   complete?: (prompt: string) => Promise<string>,
 ): Promise<Thought> {
@@ -442,7 +446,9 @@ export async function nextThoughtAsync(
     return heuristic;
   }
   try {
-    const parsed = parseReasonerJson(await complete(reasonerPromptV2(input.goal, input.findings, input.pageUrl)));
+    const parsed = parseReasonerJson(
+      await complete(reasonerPromptV2(input.goal, input.findings, input.pageUrl, input.skills)),
+    );
     const modelThought = applyModelPick(heuristic, parsed);
     // 模型选了 trip_plan / mission / run_skill 但 step 里缺执行数据
     //（applyModelPick 不带 trip/mission/action）→ 从 compileHands 里补

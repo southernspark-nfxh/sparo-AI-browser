@@ -219,7 +219,7 @@ export function understandLocal(
 /** Hermes 式：先列出每一件独立的事，禁止只报第一个关键词。 */
 export function understandPrompt(
   text: string,
-  ctx?: { homeCity?: string; now?: Date; last?: Brief; page?: { url?: string; title?: string } },
+  ctx?: { homeCity?: string; now?: Date; last?: Brief; page?: { url?: string; title?: string }; skills?: string },
 ): string {
   const today = (ctx?.now || new Date()).toISOString().slice(0, 10);
   return [
@@ -245,6 +245,9 @@ export function understandPrompt(
     "- ingest 判 amend 的条件：只改上一件的约束（更便宜/换城/改日期/排除某块）且没引入新主题。不满足就别判 amend。",
     "- plan 可选；要编就列 [{\"cap\":\"...\",\"covers\":[\"stay\"],\"query\":\"...\",\"city\":\"...\",\"site\":\"...\",\"label\":\"...\"}]。cap 只能用：trip_plan / hotel_search / flight_search / train_search / search_read / video_search / read_page / fill_form / mission / feishu / run_skill / reply_draft / print / navigate / act / synthesize。covers 用交付物 id。site 只能用：酒店 ctrip/tuniu/booking/airbnb，机票 ctrip/qunar/kayak/gflights，检索 baidu/bing，火车 12306/ctrip。用户点名的站不要换。",
     "- cap=navigate 时 query 放目标 URL（用户原话点名的 https://... 原样放进去）；cap=search_read 时 query 放搜索词。",
+    ctx?.skills
+      ? `可复用的妙招（plan 里要用就 cap="run_skill"、query 填妙招 id；没有合适的就忽略；禁止编造不在清单里的 id）：\n${ctx.skills}`
+      : "",
     "交付物 id 只能用：stay food sights itinerary flights trains report page form video answer",
     '只输出 JSON：{"heard":"一句话听懂了什么","ingest":"new","site":"","clauses":[{"text":"原句片段","purpose":"","deliverables":["stay"]}],"deliverables":["stay"],"known":{"cities":[]},"plan":[{"cap":"hotel_search","covers":["stay"],"query":"...","city":"...","site":"ctrip"}]}',
     `用户原话：${text}`,
@@ -387,7 +390,7 @@ export function mergeUnderstanding(
 
 export async function understand(
   text: string,
-  ctx?: { homeCity?: string; now?: Date; last?: Brief; page?: { url?: string; title?: string } },
+  ctx?: { homeCity?: string; now?: Date; last?: Brief; page?: { url?: string; title?: string }; skills?: string },
   complete?: (prompt: string) => Promise<string>,
 ): Promise<Understanding> {
   const local = understandLocal(text, ctx);

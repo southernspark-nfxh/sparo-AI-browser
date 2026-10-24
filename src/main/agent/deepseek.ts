@@ -280,7 +280,7 @@ const TOOLS = [
     function: {
       name: "match_skill",
       description:
-        "Match user intent to a saved skill. Query must keep the user's site (发知乎 ≠ 小红书).",
+        "Match user intent to a saved skill. Query must keep the user's site (发知乎 ≠ 小红书). 只返回候选清单（含 id），不执行。",
       parameters: {
         type: "object",
         properties: { query: { type: "string" } },
@@ -333,7 +333,7 @@ const TOOLS = [
     function: {
       name: "run_skill",
       description:
-        "FAST PATH: run a saved 妙招 end-to-end. Life/research: 比价 / 出差 / 天气 / 电影票 / 快递 / 翻译 / 下载 / 打卡 / 选品 / 租房 / 论文 / 课程 / 热搜 / 新闻汇总 / 求职 / 日本自由行 / 泰国自由行. Also 小红书/填表/飞书/客服. Pass id or query; optional params.",
+        "Run a saved 妙招 by id, or by a phrase the user already remembered. Natural-language intent: match_skill first for a candidate id, then run_skill({ id, params }). A bare query does not execute.",
       parameters: {
         type: "object",
         properties: {
@@ -386,7 +386,7 @@ function systemPrompt(ctx: {
     "SKILL FIRST only when the skill's site matches. No matching skill → snapshot/click/fill yourself. Never ask the user to record a skill instead of acting.",
     "Do not name Xiaohongshu, RedNote, Weibo, Zhihu, or any social network, and do not offer to publish or post, unless the user already named that site or action.",
     "If the current URL is xiaohongshu.com: NEVER fill title/body character-by-character or loop fill. Pass pre-baked text into xhs_inject_compose / xhs_inject_publish (or run_skill params). Detect stage with xhs_page_stage and click Next / auto-layout.",
-    "FEISHU RULE: Use feishu_work or run_skill query 飞书. Inject draft once. NEVER click 发送. Login wall → pause for the human.",
+    "FEISHU RULE: Use feishu_work or run_skill id feishu-web-work. Inject draft once. NEVER click 发送. Login wall → pause for the human.",
     "User said publish/post/发/发布/发三条 = permission to click send. Pause only for payment or customer-service send.",
     `Current page: ${ctx.title || "—"}`,
     `URL: ${ctx.url || "about:blank"}`,
