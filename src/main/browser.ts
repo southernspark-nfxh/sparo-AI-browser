@@ -275,6 +275,7 @@ import {
   matchSkills,
   runSkill,
   skillCatalog,
+  skillCatalogLines,
   resolveSkill,
 } from "./skills/runner.js";
 import { tx } from "../shared/i18n.js";
@@ -603,14 +604,17 @@ function runSkillUtteranceQuery(text: string): string | null {
 }
 
 /**
- * 窄路只放行精确 id/标题，或别名命中。
- * 纯标题子串（「QA门岗演示2」含「QA门岗演示」）不算找到，避免改一个字就被 resolveSkill 模糊跑起来。
- * 不改 resolveSkill 本身；比价 / 穿衣建议这类别名仍然放行。
+ * 窄路只放行精确 id/标题，或别名命中，并带回技能 id。
+ * 纯标题子串（「QA门岗演示2」含「QA门岗演示」）不算找到。
+ * 执行走 id；matchSkills 只用来挑候选，不替 runSkill 模糊直跑。
  */
-function namedSkillQuery(configDir: string, query: string): boolean {
-  if (getSkill(configDir, query)) return true;
-  const reason = matchSkills(configDir, query, 1)[0]?.reason || "";
-  return reason.includes("exact") || reason.includes("alias:");
+function namedSkillId(configDir: string, query: string): string | null {
+  const direct = getSkill(configDir, query);
+  if (direct) return direct.id;
+  const hit = matchSkills(configDir, query, 1)[0];
+  const reason = hit?.reason || "";
+  if (hit && (reason.includes("exact") || reason.includes("alias:"))) return hit.id;
+  return null;
 }
 
 export class SparkBrowser {
@@ -4502,7 +4506,7 @@ export class SparkBrowser {
       data: {
         skills: this.skillsCache.map(skillSummary),
         recording: this.recording,
-        tip: "Intent match: match_skill(query) → run_skill({id|query, params}). Prefer run_skill for 小红书/发文 flows.",
+        tip: "match_skill(query) 拿候选 id → run_skill({ id, params })。run_skill 只认 id 或用户已记住的原话，自然语言 query 不执行。",
       },
     };
   }
@@ -4586,13 +4590,13 @@ export class SparkBrowser {
           "Site first: user said 知乎 → zhihu.com, 微博 → weibo.com. Never substitute Xiaohongshu.",
           "No matching skill → operate the page with snapshot/click/fill. Do not ask the human to record a skill first.",
           "Publishing: read docs/PUBLISHING.md — run_skill or xhs_inject_* (never loop fill).",
-          "Xiaohongshu ONLY if user named 小红书/xhs/rednote: run_skill({ query:'发小红书', params:{ title, body, summary, topics } }).",
+          "Xiaohongshu ONLY if user named 小红书/xhs/rednote: run_skill({ id:'xhs-longform-publish', params:{ title, body, summary, topics } }).",
           "Or: xhs_ensure_editor → xhs_inject_compose → xhs_layout_next → xhs_inject_publish → pause.",
-          "Unknown forms: run_skill({ query:'通用填表', params:{ payload:{ 标题, 正文, … } } }) OR analyze_page → execute_primitives.",
+          "Unknown forms: run_skill({ id:'universal-form-fill', params:{ payload:{ 标题, 正文, … } } }) OR analyze_page → execute_primitives.",
           "Date pickers (X Ads End time): pick_calendar or payload End time — never fill a date string, never click_text a bare day number, never click the month '<' chevron.",
           "Do NOT loop fill/click on multi-field forms — use execute_primitives.",
           "Customer service (any site, semi-auto): cs_one_click_reply or cs_scan → cs_draft_reply (fills composer; NEVER auto-send).",
-          "Feishu web: run_skill({ query:'飞书', params:{ to, body, title, kind } }) or feishu_work. Opens messenger, injects chat/journal draft ONCE. NEVER click 发送.",
+          "Feishu web: run_skill({ id:'feishu-web-work', params:{ to, body, title, kind } }) or feishu_work. Opens messenger, injects chat/journal draft ONCE. NEVER click 发送.",
           "Detect only: xhs_page_stage / feishu_page_stage. Auth: %APPDATA%/sparo-store/mcp-auth.json · GET /health · /tools",
           "Playbook: docs/HERMES-PLAYBOOK.md",
         ],
@@ -4992,7 +4996,7 @@ export class SparkBrowser {
       this.pushSidebarState();
       reply = await this.previewFormFill(userAsk, tabId);
     } else if (action.type === "run_skill") {
-      const label = action.id || action.query;
+      const label = action.query || action.id;
       this.chatLog.push({ role: "assistant", text: `正在按妙招「${label}」执行…` });
       this.pushSidebarState();
       const ran = await this.runSkillTool({ id: action.id, query: action.query });
@@ -5799,6 +5803,16 @@ export class SparkBrowser {
         const hand = await this.executeHand({ type: "mission", mission }, goal.raw, [], goal.kind, tabId);
         return { step, text: hand.reply, url: this.getUrl(tabId), ok: Boolean(hand.reply), doc: hand.replyDoc };
       }
+      if (step.cap === "run_skill" && !step.action && step.query) {
+        const hand = await this.executeHand(
+          { type: "run_skill", id: step.query, query: step.query },
+          goal.raw,
+          [],
+          goal.kind,
+          tabId,
+        );
+        return { step, text: hand.reply, url: this.getUrl(tabId), ok: Boolean(hand.reply), doc: hand.replyDoc };
+      }
       if (step.action) {
         const hand = await this.executeHand(step.action, goal.raw, [], goal.kind, tabId);
         return { step, text: hand.reply, url: this.getUrl(tabId), ok: Boolean(hand.reply), doc: hand.replyDoc };
@@ -6186,14 +6200,15 @@ export class SparkBrowser {
       if (replay) return replay;
       const named = runSkillUtteranceQuery(text);
       if (named) {
-        if (!namedSkillQuery(this.configDir(), named)) {
+        const skillId = namedSkillId(this.configDir(), named);
+        if (!skillId) {
           const message = `未找到妙招「${named}」`;
           this.chatLog.push({ role: "assistant", text: message });
           this.pushSidebarState();
           return { ok: false, message };
         }
         try {
-          const hand = await this.executeHand({ type: "run_skill", query: named }, text, [], "chat", tabId);
+          const hand = await this.executeHand({ type: "run_skill", id: skillId, query: named }, text, [], "chat", tabId);
           this.chatLog.push({ role: "assistant", text: hand.reply, doc: hand.replyDoc });
           this.pushSidebarState();
           return {
@@ -7664,10 +7679,7 @@ export class SparkBrowser {
     try {
       const url = this.getUrl(tabId);
       this.skillsCache = listSkills(this.configDir());
-      const catalog = skillCatalog(this.configDir())
-        .slice(0, 8)
-        .map((s) => `- ${s.id}: ${s.title}`)
-        .join("\n");
+      const catalog = skillCatalogLines(this.configDir());
       const quoteOnly = text.startsWith(QUOTE_PAGE_CONTRACT);
       const history = quoteOnly
         ? []
