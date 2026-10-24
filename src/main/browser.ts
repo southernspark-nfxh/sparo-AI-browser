@@ -59,6 +59,7 @@ import {
   type ActiveMission,
   type Thought,
 } from "./agent/kernel/index.js";
+import { parseRewriteVerdict, rewriteVerdictPrompt } from "./agent/kernel/read-rewrite.js";
 import { writeExperience } from "./agent/experience.js";
 import { canonCity, isCity, plausiblePlace } from "./agent/place.js";
 import { distillSkillFromTrace } from "./agent/remember.js";
@@ -86,7 +87,6 @@ import {
   extractFirstHttpUrl,
   isContinueHint,
   readPageInstruction,
-  routeUserGoal,
   sameSite,
   wantsFillForm,
   wantsPublish,
@@ -6308,8 +6308,9 @@ export class SparkBrowser {
     }
 
     const priorRead = this.priorReadPage(cleanQuotes);
-    if (priorRead && !routeUserGoal(text) && !isPauseText(text) && !isResumeText(text)) {
-      return this.reviseReadPage(text, priorRead);
+    if (priorRead && !isPauseText(text) && !isResumeText(text)) {
+      const verdict = await this.judgeReadRewrite(text, priorRead.title || "");
+      if (verdict === "rewrite") return this.reviseReadPage(text, priorRead);
     }
 
     const homeCity = loadProfile(this.configDir()).identity.homeCity;
@@ -6607,6 +6608,21 @@ export class SparkBrowser {
     } catch {
       return { reply: researchChatBrief(opts.title) };
     }
+  }
+
+  /**
+   * 上一份是阅读页时，问模型这句是改写还是新任务。
+   * 没模型、超时、答非所问都开单。不在原话上做改写词清单。
+   */
+  private async judgeReadRewrite(text: string, priorTitle: string): Promise<"rewrite" | "open"> {
+    if (!this.deepseek) return "open";
+    const raw = await this.withTimeout(
+      this.deepseek.completePlain(rewriteVerdictPrompt(text, priorTitle)),
+      12000,
+      "",
+      false,
+    );
+    return parseRewriteVerdict(raw);
   }
 
   /** 上一则助手消息是阅读页，且这一轮没有新引用。 */
