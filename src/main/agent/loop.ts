@@ -15,6 +15,7 @@ import type { KnownBlock } from "./types.js";
 import { legalSiteTarget, understand, understandLocal } from "./brain/understand.js";
 import type { PlanStep, Understanding } from "./brain/understand.js";
 import { understandPrompt } from "./brain/understand.js";
+import { skillCatalogLines } from "../skills/runner.js";
 
 export const DELIVERABLE_IDS = [
   "stay",
@@ -460,7 +461,8 @@ export async function analyzeGoal(
   const heuristic = analyzeGoalHeuristic(text, ctx);
   if (!complete) return heuristic;
   try {
-    const heard = await understand(text, ctx, complete);
+    const skills = configDir ? skillCatalogLines(configDir) : "";
+    const heard = await understand(text, { ...ctx, skills }, complete);
     const merged = applyHeardSite(
       mergeAnalyze(heuristic, {
       intent: heard.heard,

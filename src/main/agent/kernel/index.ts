@@ -66,7 +66,7 @@ import { notePlanStep } from "./plan.js";
 import { journalMissionTurn } from "../mission-journal.js";
 import { verifyContracts } from "./verify.js";
 
-function thoughtInput(mission: ActiveMission, synthesized?: string, pageUrl?: string) {
+function thoughtInput(mission: ActiveMission, synthesized?: string, pageUrl?: string, skills?: string) {
   return {
     intent: mission.goal.intent,
     goal: mission.goal,
@@ -76,6 +76,7 @@ function thoughtInput(mission: ActiveMission, synthesized?: string, pageUrl?: st
     synthesized,
     nudge: mission.nudge,
     pageUrl,
+    skills,
   };
 }
 
@@ -88,8 +89,9 @@ export async function thoughtForAsync(
   complete?: (prompt: string) => Promise<string>,
   synthesized?: string,
   pageUrl?: string,
+  skills?: string,
 ): Promise<Thought> {
-  return nextThoughtAsync(thoughtInput(mission, synthesized, pageUrl), complete);
+  return nextThoughtAsync(thoughtInput(mission, synthesized, pageUrl, skills), complete);
 }
 
 export function observe(mission: ActiveMission, finding: StepFinding): ActiveMission {
