@@ -198,6 +198,46 @@ export function utteranceKey(mission: Pick<ActiveMission, "raw" | "goal"> | null
   return String(mission?.raw || mission?.goal?.raw || "").replace(/\s+/g, " ").trim();
 }
 
+/** 模型分类比启发式 chat 深。同一句只留更深的那张。 */
+export function missionDepth(mission: ActiveMission): number {
+  const kind = mission.goal?.kind;
+  if (kind === "research" || kind === "trip") return 2;
+  if (kind && kind !== "chat") return 1;
+  return 0;
+}
+
+/**
+ * 模型单落盘前，把同一句还开着的其他单关掉。理由 dup。
+ * 不改历史行，只追加 close。
+ */
+export function adoptModelMission(mission: ActiveMission, dir = storeConfigDir()): string[] {
+  const key = utteranceKey(mission);
+  if (!key || !mission.id) return [];
+  const closed: string[] = [];
+  for (const item of replayMissions(dir)) {
+    if (item.mission.id === mission.id) continue;
+    if (utteranceKey(item.mission) !== key) continue;
+    journalMissionClose(item.mission.id, "dup", dir);
+    closed.push(item.mission.id);
+  }
+  return closed;
+}
+
+/**
+ * 当前这张若已被 dup 关掉，改走同一句里还开着的、分类更深的那张。
+ * 自己还开着就不动。
+ */
+export function preferredMission(current: ActiveMission, pending: RestoredMission[]): ActiveMission {
+  const key = utteranceKey(current);
+  if (!key) return current;
+  const same = pending.filter((item) => utteranceKey(item.mission) === key);
+  if (same.some((item) => item.mission.id === current.id)) return current;
+  const ranked = [...same].sort(
+    (a, b) => missionDepth(b.mission) - missionDepth(a.mission) || a.openedAt - b.openedAt,
+  );
+  return ranked[0]?.mission || current;
+}
+
 /**
  * 实际开始执行过。计划第 0 步在创建时就会被标成 running，那不是执行记录。
  * turn 行或发现才算。

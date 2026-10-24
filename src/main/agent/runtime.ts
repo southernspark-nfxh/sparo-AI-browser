@@ -8,7 +8,7 @@ import { parseLocalIntent } from "./stub.js";
 import { parseTripPlan, type TripPlan } from "./trip-plan.js";
 import type { Brief, Ingest, IngestKind, MissionState, SlotId } from "./types.js";
 import { slotAsk } from "./types.js";
-import { journalTurn } from "./mission-journal.js";
+import { adoptModelMission, journalTurn } from "./mission-journal.js";
 import {
   analyzeSlots,
   classifyKind,
@@ -463,9 +463,29 @@ export async function reviseActivePlan(
   }
 }
 
-export function applyTurn(text: string, ctx: TurnCtx = {}): TurnResult {
+const modelHolds = new Set<string>();
+
+function turnKey(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+/** 模型正在给这句话分类。这段时间启发式不许再开一张单。 */
+export function holdModelTurn(text: string): () => void {
+  const key = turnKey(text);
+  if (!key) return () => undefined;
+  modelHolds.add(key);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    modelHolds.delete(key);
+  };
+}
+
+export function applyTurn(text: string, ctx: TurnCtx = {}, dir?: string): TurnResult {
   const result = sealHeuristic(applyTurnCore(text, ctx));
-  journalTurn(ctx.active, result.mission);
+  if (modelHolds.has(turnKey(text))) return result;
+  journalTurn(ctx.active, result.mission, dir);
   return result;
 }
 
@@ -660,9 +680,15 @@ export async function applyTurnAsync(
   complete?: (prompt: string) => Promise<string>,
   configDir?: string,
 ): Promise<TurnResult> {
-  const result = await applyTurnAsyncBody(text, ctx, complete, configDir);
-  journalTurn(ctx.active, result.mission);
-  return result;
+  const release = holdModelTurn(text);
+  try {
+    const result = await applyTurnAsyncBody(text, ctx, complete, configDir);
+    if (result.mission) adoptModelMission(result.mission, configDir);
+    journalTurn(ctx.active, result.mission, configDir);
+    return result;
+  } finally {
+    release();
+  }
 }
 
 export function missionBriefKind(m: ActiveMission | null | undefined): string | undefined {
