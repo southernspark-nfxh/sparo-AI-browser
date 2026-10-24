@@ -62,7 +62,8 @@ import {
 import { parseRewriteVerdict, rewriteVerdictPrompt } from "./agent/kernel/read-rewrite.js";
 import { writeExperience } from "./agent/experience.js";
 import { canonCity, isCity, plausiblePlace } from "./agent/place.js";
-import { distillSkillFromTrace } from "./agent/remember.js";
+import { distillMission, oneShotJudgePrompt, parseOneShotVerdict } from "./agent/distill.js";
+import { distillSkillFromTrace, shouldSkipRemember } from "./agent/remember.js";
 import {
   missionProgress,
   missionSynthesizePrompt,
@@ -179,7 +180,7 @@ import {
   recordLessonApply,
   upsertLesson,
 } from "./learning/store.js";
-import { isOneShotSkill, matchTrigger, normalizeUtterance } from "./triggers/gate.js";
+import { matchTrigger, normalizeUtterance } from "./triggers/gate.js";
 import {
   deleteTrigger,
   hasTriggerText,
@@ -2509,7 +2510,23 @@ export class SparkBrowser {
       const skillId = String(payload?.skillId || "").trim();
       if (!text || !skillId) return { ok: false };
       const skill = getSkill(this.configDir(), skillId);
-      if (!skill || !isOneShotSkill(skill)) return { ok: false };
+      if (!skill || !this.deepseek) return { ok: false };
+      try {
+        const verdict = parseOneShotVerdict(
+          await this.deepseek.completePlain(
+            oneShotJudgePrompt({
+              title: skill.title,
+              intent: skill.intent,
+              stepCount: skill.stepCount,
+              steps: skill.steps,
+              params: skill.params,
+            }),
+          ),
+        );
+        if (verdict !== true) return { ok: false };
+      } catch {
+        return { ok: false };
+      }
       const saved = upsertTrigger(this.configDir(), { skillId, text });
       if (!saved) return { ok: false };
       this.clearPendingTrigger(text);
@@ -5002,7 +5019,7 @@ export class SparkBrowser {
       this.pushSidebarState();
       const ran = await this.runSkillTool({ id: action.id, query: action.query });
       reply = ran.message;
-      this.maybeOfferTrigger(userAsk, ran);
+      await this.maybeOfferTrigger(userAsk, ran);
       this.pushSidebarState();
     } else if (action.type === "run") {
       const map =
@@ -5622,6 +5639,25 @@ export class SparkBrowser {
         }
       }
       current.findings = findings;
+      if (verify.complete && live.coverage === "new" && this.deepseek) {
+        try {
+          if (!shouldSkipRemember(live.raw, reply) && !findings.some((f) => f.step.cap === "run_skill" && f.ok)) {
+            const skill = await distillMission({
+              configDir: this.configDir(),
+              goal: live,
+              plan: current.brainPlan,
+              findings,
+              complete: (p) => this.deepseek!.completePlain(p),
+            });
+            if (skill) {
+              this.skillsCache = listSkills(this.configDir());
+              reply = `${reply}\n\n${this.L("distill.saved", { title: skill.title })}`;
+            }
+          }
+        } catch {
+          /* 沉淀失败不挡关单 */
+        }
+      }
       if (current.brainPlan) current.brainPlan = closePlan(current.brainPlan, verify.complete);
       current.state = "done";
       this.closeMissionRecord(current, verify.complete ? "done" : "incomplete", "idle");
@@ -6126,12 +6162,12 @@ export class SparkBrowser {
     return false;
   }
 
-  /** 命中且技能仍是 one-shot 才直放。不调 runSkillTool，侧栏不放读页摘录。 */
-  private async replayHabit(text: string): Promise<ToolResult | null> {
+  /** 命中才直放。distilled 不进门岗。失败记账后当轮转脑，不把失败结果吃掉。 */
+  private async replayHabit(text: string): Promise<ToolResult | "fallthrough" | null> {
     const hit = matchTrigger(loadTriggers(this.configDir()), text);
     if (!hit) return null;
     const skill = getSkill(this.configDir(), hit.skillId);
-    if (!skill || !isOneShotSkill(skill)) return null;
+    if (!skill || skill.distilled) return null;
     const title = skill.title || hit.skillId;
     const line = this.L("trigger.byHabit", { title });
     this.chatLog.push({ role: "assistant", text: line });
@@ -6141,20 +6177,38 @@ export class SparkBrowser {
     if (!ran.ok) {
       this.chatLog.push({ role: "assistant", text: ran.message });
       if (next && !next.enabled) this.chatLog.push({ role: "assistant", text: this.L("trigger.dropped") });
+      this.pushSidebarState();
+      return "fallthrough";
     }
     this.pushSidebarState();
-    return { ok: ran.ok, message: ran.ok ? line : ran.message };
+    return { ok: true, message: line };
   }
 
-  /** 登记卡只挂在有 userAsk 的 run_skill 上。已有记录（含停用）或已有未点卡片则不再推。 */
-  private maybeOfferTrigger(userAsk: string, result: ToolResult): void {
+  /** 登记卡只挂在有 userAsk 的 run_skill 上。一步到位由大脑判定。已有记录（含停用）或已有未点卡片则不再推。 */
+  private async maybeOfferTrigger(userAsk: string, result: ToolResult): Promise<void> {
     if (!result.ok) return;
     const data = result.data as { skillId?: string } | undefined;
     const skillId = String(data?.skillId || "").trim();
     const text = normalizeUtterance(userAsk);
     if (!skillId || !text) return;
     const skill = getSkill(this.configDir(), skillId);
-    if (!skill || !isOneShotSkill(skill)) return;
+    if (!skill || !this.deepseek) return;
+    try {
+      const verdict = parseOneShotVerdict(
+        await this.deepseek.completePlain(
+          oneShotJudgePrompt({
+            title: skill.title,
+            intent: skill.intent,
+            stepCount: skill.stepCount,
+            steps: skill.steps,
+            params: skill.params,
+          }),
+        ),
+      );
+      if (verdict !== true) return;
+    } catch {
+      return;
+    }
     if (hasTriggerText(this.configDir(), text)) return;
     if (this.chatLog.some((turn) => turn.pendingTrigger && normalizeUtterance(turn.pendingTrigger.text) === text)) {
       return;
@@ -6205,30 +6259,35 @@ export class SparkBrowser {
 
     if (!this.habitGateBlocked(cleanQuotes, jobImages)) {
       const replay = await this.replayHabit(text);
-      if (replay) return replay;
-      const named = runSkillUtteranceQuery(text);
-      if (named) {
-        const skillId = namedSkillId(this.configDir(), named);
-        if (!skillId) {
-          const message = `未找到妙招「${named}」`;
-          this.chatLog.push({ role: "assistant", text: message });
-          this.pushSidebarState();
-          return { ok: false, message };
-        }
-        try {
-          const hand = await this.executeHand({ type: "run_skill", id: skillId, query: named }, text, [], "chat", tabId);
-          this.chatLog.push({ role: "assistant", text: hand.reply, doc: hand.replyDoc });
-          this.pushSidebarState();
-          return {
-            ok: true,
-            message: hand.reply,
-            data: { files: hand.replyDoc ? [hand.replyDoc.path] : undefined },
-          };
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          this.chatLog.push({ role: "assistant", text: message });
-          this.pushSidebarState();
-          return { ok: false, message };
+      if (replay === "fallthrough") {
+        // 失败当轮转脑：跳过窄路，否则「运行妙招」句式会把同一技能再跑一遍。
+      } else if (replay) {
+        return replay;
+      } else {
+        const named = runSkillUtteranceQuery(text);
+        if (named) {
+          const skillId = namedSkillId(this.configDir(), named);
+          if (!skillId) {
+            const message = `未找到妙招「${named}」`;
+            this.chatLog.push({ role: "assistant", text: message });
+            this.pushSidebarState();
+            return { ok: false, message };
+          }
+          try {
+            const hand = await this.executeHand({ type: "run_skill", id: skillId, query: named }, text, [], "chat", tabId);
+            this.chatLog.push({ role: "assistant", text: hand.reply, doc: hand.replyDoc });
+            this.pushSidebarState();
+            return {
+              ok: true,
+              message: hand.reply,
+              data: { files: hand.replyDoc ? [hand.replyDoc.path] : undefined },
+            };
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.chatLog.push({ role: "assistant", text: message });
+            this.pushSidebarState();
+            return { ok: false, message };
+          }
         }
       }
     }
