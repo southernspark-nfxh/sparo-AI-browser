@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { parseUnderstandJson } from "../src/main/agent/brain/understand.js";
 import {
   adaptPlan,
+  analyzeGoal,
   analyzeGoalHeuristic,
   ensurePlanCovers,
   inferDeliverables,
@@ -110,6 +112,59 @@ describe("verify", () => {
     );
     expect(v.complete).toBe(true);
     expect(v.missing).toEqual([]);
+  });
+});
+
+describe("coverage", () => {
+  it("drops a coverage value outside covered/new", () => {
+    const parsed = parseUnderstandJson(
+      JSON.stringify({ heard: "x", coverage: "weekly", deliverables: ["answer"] }),
+    );
+    expect(parsed?.coverage).toBeUndefined();
+  });
+
+  it("coverage new with a plan proposes a numbered approach", async () => {
+    const goal = await analyzeGoal("帮我核对电费通知单上的户号", { now: NOW }, async () =>
+      JSON.stringify({
+        heard: "核对电费户号",
+        ingest: "new",
+        coverage: "new",
+        deliverables: ["answer"],
+        plan: [
+          { cap: "search_read", covers: ["answer"], label: "抄户号", query: "电费户号" },
+          { cap: "read_page", covers: ["answer"], label: "对账单", query: "通知单" },
+        ],
+      }),
+    );
+    expect(goal.decision).toBe("propose");
+    expect(goal.coverage).toBe("new");
+    expect(goal.approach).toContain("1. 抄户号");
+    expect(goal.approach).toContain("2. 对账单");
+  });
+
+  it("coverage covered does not propose", async () => {
+    const goal = await analyzeGoal("北京订酒店", { now: NOW }, async () =>
+      JSON.stringify({
+        heard: "北京订酒店",
+        coverage: "covered",
+        deliverables: ["stay"],
+        known: { cities: ["北京"] },
+        plan: [{ cap: "hotel_search", covers: ["stay"], city: "北京", label: "查酒店" }],
+      }),
+    );
+    expect(goal.decision).not.toBe("propose");
+    expect(goal.coverage).toBe("covered");
+  });
+
+  it("coverage new without a plan does not propose", async () => {
+    const goal = await analyzeGoal("帮我核对电费通知单上的户号", { now: NOW }, async () =>
+      JSON.stringify({
+        heard: "核对电费户号",
+        coverage: "new",
+        deliverables: ["answer"],
+      }),
+    );
+    expect(goal.decision).not.toBe("propose");
   });
 });
 

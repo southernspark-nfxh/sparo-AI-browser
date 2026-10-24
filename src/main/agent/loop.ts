@@ -60,6 +60,8 @@ export type AgentGoal = {
   site?: string;
   /** 要打开的 URL。登录任务优先用模型给的登录页。 */
   siteUrl?: string;
+  /** 大脑对这句的覆盖判定。new 且编了计划才进 propose。 */
+  coverage?: "covered" | "new";
 };
 
 export type LoopCap =
@@ -478,7 +480,18 @@ export async function analyzeGoal(
     // compileHands 会优先用 handbook，否则走本地启发式 fallback。
     if (heard.plan && heard.plan.length > 0) {
       const handbook = mergePlan(merged, heard.plan);
-      if (handbook.length > 0) return { ...merged, handbook };
+      if (handbook.length > 0) {
+        if (heard.coverage === "new") {
+          const approach = heard.plan
+            .map((s, i) => `${i + 1}. ${(s.label || s.cap).slice(0, 24)}`)
+            .join("；");
+          return sealWorkOrder(
+            { ...merged, handbook, coverage: "new", needsConfirm: true, approach },
+            { homeCity: ctx.homeCity },
+          );
+        }
+        return { ...merged, handbook, coverage: "covered" };
+      }
     }
     return merged;
   } catch {

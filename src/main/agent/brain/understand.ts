@@ -62,6 +62,8 @@ export type Understanding = {
   site?: string;
   /** 要打开的地址。模型给了登录页路径就保留路径。 */
   siteUrl?: string;
+  /** 大脑判断这句有没有被现有妙招/流水线覆盖。只在有模型时出现。 */
+  coverage?: "covered" | "new";
 };
 
 /**
@@ -244,12 +246,13 @@ export function understandPrompt(
     "- ingest 判 new 的硬规则：用户提到上一件事里没有的城市或区域 → new；用户提到跟上一件完全不同的主题（如上一件是行程，这句是回评论/发小红书/总结当前页/比价/值不值得） → new；缺城的行程意图（「我打算去玩两天」） → new（不要继承上一件的城）。",
     "- ingest 判 amend 的条件：只改上一件的约束（更便宜/换城/改日期/排除某块）且没引入新主题。不满足就别判 amend。",
     "- plan 可选；要编就列 [{\"cap\":\"...\",\"covers\":[\"stay\"],\"query\":\"...\",\"city\":\"...\",\"site\":\"...\",\"label\":\"...\"}]。cap 只能用：trip_plan / hotel_search / flight_search / train_search / search_read / video_search / read_page / fill_form / mission / feishu / run_skill / reply_draft / print / navigate / act / synthesize。covers 用交付物 id。site 只能用：酒店 ctrip/tuniu/booking/airbnb，机票 ctrip/qunar/kayak/gflights，检索 baidu/bing，火车 12306/ctrip。用户点名的站不要换。",
+    '- coverage 判这句活有没有现成的做法：可复用的妙招清单里有合适的，或者现有流水线能覆盖（行程/比价/调研/发帖/读页/填表/翻译/飞书/检索），就填 "covered"；都不沾边、需要现场摸索的，填 "new" 并且必须编 plan。判 "new" 要保守：宁可 covered 也不要把普通任务标成新任务。',
     "- cap=navigate 时 query 放目标 URL（用户原话点名的 https://... 原样放进去）；cap=search_read 时 query 放搜索词。",
     ctx?.skills
       ? `可复用的妙招（plan 里要用就 cap="run_skill"、query 填妙招 id；没有合适的就忽略；禁止编造不在清单里的 id）：\n${ctx.skills}`
       : "",
     "交付物 id 只能用：stay food sights itinerary flights trains report page form video answer",
-    '只输出 JSON：{"heard":"一句话听懂了什么","ingest":"new","site":"","clauses":[{"text":"原句片段","purpose":"","deliverables":["stay"]}],"deliverables":["stay"],"known":{"cities":[]},"plan":[{"cap":"hotel_search","covers":["stay"],"query":"...","city":"...","site":"ctrip"}]}',
+    '只输出 JSON：{"heard":"一句话听懂了什么","ingest":"new","coverage":"covered","site":"","clauses":[{"text":"原句片段","purpose":"","deliverables":["stay"]}],"deliverables":["stay"],"known":{"cities":[]},"plan":[{"cap":"hotel_search","covers":["stay"],"query":"...","city":"...","site":"ctrip"}]}',
     `用户原话：${text}`,
   ]
     .filter(Boolean)
@@ -315,6 +318,7 @@ export function parseUnderstandJson(raw: string): Partial<Understanding> | null 
     const ingestRaw = j.ingest ? String(j.ingest) : "";
     const ingest = INGEST_KINDS.has(ingestRaw) ? (ingestRaw as IngestKind) : undefined;
     const siteLegal = j.site ? legalSiteTarget(String(j.site)) : null;
+    const coverage = j.coverage === "covered" || j.coverage === "new" ? j.coverage : undefined;
     return {
       heard: j.heard ? String(j.heard).slice(0, 80) : undefined,
       clauses,
@@ -324,6 +328,7 @@ export function parseUnderstandJson(raw: string): Partial<Understanding> | null 
       ingest,
       site: siteLegal?.host,
       siteUrl: siteLegal?.url,
+      coverage,
     };
   } catch {
     return null;
@@ -371,6 +376,7 @@ export function mergeUnderstanding(
     leftover: local.leftover,
     plan: model.plan?.length ? model.plan : local.plan,
     ingest: model.ingest || local.ingest,
+    coverage: model.coverage,
     site: pickedSite?.host || local.site,
     siteUrl: pickedSite?.url || local.siteUrl,
     known: {

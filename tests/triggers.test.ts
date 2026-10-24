@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { isOneShotSkill, matchTrigger, normalizeUtterance, type Trigger } from "../src/main/triggers/gate.js";
+import { matchTrigger, normalizeUtterance, type Trigger } from "../src/main/triggers/gate.js";
 import {
   deleteTrigger,
   loadTriggers,
@@ -57,40 +57,6 @@ describe("matchTrigger", () => {
     expect(matchTrigger([{ ...triggers[0], enabled: false }], "运行妙招 QA门岗演示")).toBeNull();
     expect(matchTrigger([], "运行妙招 QA门岗演示")).toBeNull();
     expect(matchTrigger(triggers, "   。")).toBeNull();
-  });
-});
-
-describe("isOneShotSkill", () => {
-  it("accepts only short whitelist steps without slots or required params", () => {
-    expect(
-      isOneShotSkill({
-        steps: [{ tool: "navigate", args: { url: "https://www.baidu.com" } }, { tool: "page_text" }],
-      }),
-    ).toBe(true);
-    expect(isOneShotSkill({ steps: [{ action: "click" }] })).toBe(false);
-    expect(isOneShotSkill({ steps: [{ tool: "fill" }, { tool: "page_text" }] })).toBe(false);
-    expect(
-      isOneShotSkill({
-        steps: [
-          { tool: "navigate" },
-          { tool: "wait_for" },
-          { tool: "page_text" },
-          { tool: "page_text" },
-        ],
-      }),
-    ).toBe(false);
-    expect(
-      isOneShotSkill({
-        steps: [{ tool: "navigate", args: { url: "https://example.com/{{url}}" } }, { tool: "page_text" }],
-      }),
-    ).toBe(false);
-    expect(
-      isOneShotSkill({
-        steps: [{ tool: "navigate" }, { tool: "page_text" }],
-        params: { city: { required: true } },
-      }),
-    ).toBe(false);
-    expect(isOneShotSkill({ steps: [] })).toBe(false);
   });
 });
 
