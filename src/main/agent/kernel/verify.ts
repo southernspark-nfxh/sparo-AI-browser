@@ -3,6 +3,9 @@
  * 语义判断（这页是不是真的有餐厅、价格对不对、酒店页上的餐厅算不算）交给模型在 reconsider 阶段判。
  */
 import type { DeliverableId, AgentGoal, StepFinding, VerifyResult } from "../loop.js";
+import type { Plan, PlanStep } from "./plan.js";
+
+const COLLECTION_CAPS = new Set(["read_page", "search_read", "navigate", "act"]);
 
 const LABEL: Record<DeliverableId, string> = {
   stay: "住宿",
@@ -86,10 +89,40 @@ export function summaryFindings(findings: StepFinding[]): string {
     .join("\n");
 }
 
+/** 计划里的采集步必须有对应的成功观察。一步发现只能抵一步。 */
+export function unmetPlanSteps(plan: Plan | undefined, findings: StepFinding[]): PlanStep[] {
+  const steps = (plan?.steps || []).filter(
+    (step) => step.status !== "skipped" && COLLECTION_CAPS.has(step.cap),
+  );
+  const used = new Set<number>();
+  const missing: PlanStep[] = [];
+  for (const step of steps) {
+    const exact = findings.findIndex(
+      (finding, index) =>
+        !used.has(index) &&
+        finding.ok &&
+        (finding.step.id === step.id ||
+          (finding.step.cap === step.cap && finding.step.label === step.label)),
+    );
+    const capOnly =
+      exact >= 0
+        ? exact
+        : findings.findIndex(
+            (finding, index) => !used.has(index) && finding.ok && finding.step.cap === step.cap,
+          );
+    if (capOnly >= 0) {
+      used.add(capOnly);
+      continue;
+    }
+    missing.push(step);
+  }
+  return missing;
+}
+
 export function verifyContracts(
   goal: AgentGoal,
   findings: StepFinding[],
-  opts?: { synthesized?: string },
+  opts?: { synthesized?: string; plan?: Plan },
 ): VerifyResult {
   const required = goal.deliverables.filter((d) => d.required).map((d) => d.id);
   const covered: DeliverableId[] = [];
@@ -115,11 +148,17 @@ export function verifyContracts(
     }
   }
   const missing = required.filter((id) => !covered.includes(id));
+  const unmet = unmetPlanSteps(opts?.plan, findings);
+  const deliverNote = missing.length ? `还缺：${missing.map((id) => LABEL[id]).join("、")}` : "";
+  const stepNote = unmet.length
+    ? `计划里这些步还没执行：${unmet.map((step) => step.label).join("、")}`
+    : "";
+  const notes = [deliverNote, stepNote].filter(Boolean).join(" ");
   return {
-    complete: missing.length === 0,
+    complete: missing.length === 0 && unmet.length === 0,
     covered,
     missing,
-    notes: missing.length ? `还缺：${missing.map((id) => LABEL[id]).join("、")}` : "交付物已齐。",
+    notes: notes || "交付物已齐。",
   };
 }
 
