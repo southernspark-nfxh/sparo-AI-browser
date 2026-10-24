@@ -679,10 +679,13 @@ export async function applyTurnAsync(
   ctx: TurnCtx = {},
   complete?: (prompt: string) => Promise<string>,
   configDir?: string,
+  opts?: { stillWanted?: () => boolean },
 ): Promise<TurnResult> {
   const release = holdModelTurn(text);
   try {
     const result = await applyTurnAsyncBody(text, ctx, complete, configDir);
+    // 调用方超时改走启发式之后，晚到的模型单不再落盘，避免和已经开跑的单变成双胞胎。
+    if (opts?.stillWanted && !opts.stillWanted()) return result;
     if (result.mission) adoptModelMission(result.mission, configDir);
     journalTurn(ctx.active, result.mission, configDir);
     return result;

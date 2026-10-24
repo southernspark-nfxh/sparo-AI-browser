@@ -16,7 +16,7 @@ import {
   replayMissions,
   type MissionEvent,
 } from "../src/main/agent/mission-journal.js";
-import { applyTurn, holdModelTurn } from "../src/main/agent/runtime.js";
+import { applyTurn, applyTurnAsync, holdModelTurn } from "../src/main/agent/runtime.js";
 import type { ActiveMission } from "../src/main/agent/runtime.js";
 
 function dir(): string {
@@ -357,6 +357,25 @@ describe("mission journal", () => {
       expect(replayMissions(root)).toHaveLength(1);
     } finally {
       restore();
+    }
+  });
+
+  it("调用方已经改走兜底时，晚到的模型单不再落盘", async () => {
+    const root = dir();
+    const prev = process.env.SPARO_MISSION_JOURNAL_DIR;
+    process.env.SPARO_MISSION_JOURNAL_DIR = root;
+    try {
+      await applyTurnAsync(
+        "帮我核对电表户号",
+        {},
+        async () => '{"intent":"核对户号"}',
+        root,
+        { stillWanted: () => false },
+      );
+      expect(replayMissions(root)).toEqual([]);
+    } finally {
+      if (prev === undefined) delete process.env.SPARO_MISSION_JOURNAL_DIR;
+      else process.env.SPARO_MISSION_JOURNAL_DIR = prev;
     }
   });
 });
