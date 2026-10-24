@@ -11,6 +11,8 @@ import {
   type SkillStep,
 } from "./store.js";
 import { skillConflictsWithQuery } from "../agent/intent-router.js";
+import { normalizeUtterance } from "../triggers/gate.js";
+import { loadTriggers } from "../triggers/store.js";
 
 export type SkillBrowser = {
   getUrl(): string;
@@ -321,6 +323,27 @@ export function resolveSkill(
     if (publish) return publish;
   }
   return skill;
+}
+
+/** 只认技能 id，或已登记且仍启用的触发语。不按标题、别名、子串猜。 */
+export function resolveSkillStrict(configDir: string, key: string): Skill | null {
+  const direct = getSkill(configDir, key);
+  if (direct) return direct;
+  const want = normalizeUtterance(key);
+  if (!want) return null;
+  const hit = loadTriggers(configDir).find(
+    (row) => row.enabled !== false && normalizeUtterance(row.text) === want,
+  );
+  if (!hit) return null;
+  return getSkill(configDir, hit.skillId);
+}
+
+export function skillCatalogLines(configDir: string, limit = 8): string {
+  if (!configDir) return "";
+  return skillCatalog(configDir)
+    .slice(0, limit)
+    .map((s) => `- ${s.id}: ${s.title}（${s.stepCount} 步）`)
+    .join("\n");
 }
 
 export function skillCatalog(configDir: string): Array<{
@@ -981,7 +1004,7 @@ export async function runSkill(
   if (!key) {
     return { ok: false, message: "run_skill needs id or query" };
   }
-  const skill = resolveSkill(configDir, key);
+  const skill = resolveSkillStrict(configDir, key);
   if (!skill) {
     const suggestions = matchSkills(configDir, key, 5);
     return {
