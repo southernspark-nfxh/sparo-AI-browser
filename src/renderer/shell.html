@@ -2065,6 +2065,11 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
               <p class="hint" id="lessonEmpty" data-i18n="learn.empty">还没有记下任何站点经验。卡住时问你之后会出现在这里。</p>
               <div id="lessonList"></div>
             </div>
+            <div class="block">
+              <h3 data-i18n="trigger.heading">记住的原话</h3>
+              <p class="hint" id="triggerEmpty" data-i18n="trigger.empty">还没有记住的原话。一步就能做完的妙招跑完后，点「记住」会出现在这里。</p>
+              <div id="triggerList"></div>
+            </div>
           </div>
           <div class="ds-panel hide" data-panel="notes">
             <div class="block">
@@ -2619,6 +2624,44 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         }
       }
 
+      function renderTriggers(list) {
+        const root = document.getElementById("triggerList");
+        const empty = document.getElementById("triggerEmpty");
+        if (!root) return;
+        root.innerHTML = "";
+        if (!list || !list.length) {
+          if (empty) empty.style.display = "";
+          return;
+        }
+        if (empty) empty.style.display = "none";
+        for (const item of list) {
+          const row = document.createElement("div");
+          row.className = "approval";
+          const state = item.enabled ? "" : " · " + t("trigger.disabled");
+          row.innerHTML =
+            '<div class="value"><b>' +
+            escapeHtml(item.text || "") +
+            "</b> · " +
+            escapeHtml(item.title || item.skillId || "") +
+            state +
+            '</div><div class="hint">' +
+            escapeHtml(t("trigger.stats", { runs: item.runs || 0, fails: item.fails || 0 })) +
+            '</div><div class="row" style="margin-top:6px"></div>';
+          const toggle = document.createElement("button");
+          toggle.className = "ghost";
+          toggle.textContent = item.enabled ? t("trigger.disable") : t("trigger.restore");
+          toggle.onclick = () => window.sparkShell.toggleTrigger(item.id, !item.enabled);
+          const del = document.createElement("button");
+          del.className = "danger";
+          del.textContent = t("learn.delete");
+          del.onclick = () => window.sparkShell.deleteTrigger(item.id);
+          const actions = row.querySelector(".row");
+          actions.appendChild(toggle);
+          actions.appendChild(del);
+          root.appendChild(row);
+        }
+      }
+
       function renderApprovals(list) {
         const root = document.getElementById("approvals");
         const card = document.getElementById("approvalsCard");
@@ -2920,7 +2963,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
             }
           };
           wrap.appendChild(copyBtn);
-          if (m.role !== "user" && m.text && window.sparkShell.saveReply) {
+          if (m.role !== "user" && m.text && !m.pendingTrigger && window.sparkShell.saveReply) {
             const saveNote = document.createElement("button");
             saveNote.type = "button";
             saveNote.className = "bubble-save ghost";
@@ -3004,6 +3047,43 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
               actions.appendChild(rev);
               card.appendChild(actions);
             }
+            wrap.appendChild(card);
+          }
+          if (m.pendingTrigger && m.pendingTrigger.skillId && m.pendingTrigger.text) {
+            const card = document.createElement("div");
+            card.className = "cortex-card";
+            const kicker = document.createElement("div");
+            kicker.className = "kicker";
+            kicker.textContent = t("trigger.kicker");
+            const ttl = document.createElement("div");
+            ttl.className = "ttl";
+            const raw = String(m.pendingTrigger.text);
+            const shown = raw.length > 28 ? raw.slice(0, 28) + "…" : raw;
+            ttl.textContent = t("trigger.rememberAsk", { text: shown });
+            const actions = document.createElement("div");
+            actions.className = "cortex-actions";
+            const remember = document.createElement("button");
+            remember.type = "button";
+            remember.className = "primary";
+            remember.textContent = t("trigger.remember");
+            const pending = m.pendingTrigger;
+            remember.onclick = async (ev) => {
+              ev.stopPropagation();
+              try {
+                const res = await window.sparkShell.rememberTrigger({
+                  skillId: pending.skillId,
+                  text: pending.text,
+                });
+                if (!res || !res.ok) toast(t("toast.fail"));
+              } catch (err) {
+                console.error(err);
+                toast(t("toast.fail"));
+              }
+            };
+            actions.appendChild(remember);
+            card.appendChild(kicker);
+            card.appendChild(ttl);
+            card.appendChild(actions);
             wrap.appendChild(card);
           }
           if (m.role === "user") {
@@ -3147,6 +3227,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         renderApprovals(payload.approvals);
         renderHelp(payload.help);
         renderLessons(payload.lessons);
+        renderTriggers(payload.triggers);
         renderQa(payload.qa);
         renderChat(payload.chat);
         renderTaskStrip(payload.tasks);
