@@ -17,6 +17,8 @@ export type ChatTurn = {
   quotes?: SparoQuote[];
   /** Cortex 停问 / 出思路，侧栏出按钮。 */
   cortex?: { mode: "ask" | "propose" | "loop"; need?: string; approach?: string };
+  /** 门岗登记卡。用户点「记住」才写入触发语。 */
+  pendingTrigger?: { skillId: string; text: string };
 };
 
 const CAP = 40;

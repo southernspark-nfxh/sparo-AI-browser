@@ -178,6 +178,15 @@ import {
   recordLessonApply,
   upsertLesson,
 } from "./learning/store.js";
+import { isOneShotSkill, matchTrigger, normalizeUtterance } from "./triggers/gate.js";
+import {
+  deleteTrigger,
+  hasTriggerText,
+  loadTriggers,
+  recordOutcome,
+  toggleTrigger,
+  upsertTrigger,
+} from "./triggers/store.js";
 import type { HelpAsk, ObservedAction } from "./learning/types.js";
 import {
   flightHintFromText,
@@ -255,6 +264,7 @@ import {
 import {
   createSkillFromTrace,
   deleteSkill,
+  getSkill,
   listSkills,
   seedBundledSkills,
   skillSummary,
@@ -576,6 +586,32 @@ type BackgroundJob = {
   title: string;
   mission?: ActiveMission;
 };
+
+function missionStillOpen(mission: { state?: string } | undefined): boolean {
+  if (!mission) return false;
+  return mission.state !== "done" && mission.state !== "cancelled";
+}
+
+/** stub.ts 88–90 的句式。不走 parseLocalIntent，避免被 parseMission 抢走，也不截「发小红书」。 */
+function runSkillUtteranceQuery(text: string): string | null {
+  const matched =
+    text.match(/(?:运行|执行|打|用|按)\s*妙招\s*[「"']?(.+?)[」"']?\s*$/i) ||
+    text.match(/run\s*skill\s+(.+)$/i);
+  if (!matched) return null;
+  const query = matched[1].trim().replace(/^["'「」]+|["'「」]+$/g, "");
+  return query || null;
+}
+
+/**
+ * 窄路只放行精确 id/标题，或别名命中。
+ * 纯标题子串（「QA门岗演示2」含「QA门岗演示」）不算找到，避免改一个字就被 resolveSkill 模糊跑起来。
+ * 不改 resolveSkill 本身；比价 / 穿衣建议这类别名仍然放行。
+ */
+function namedSkillQuery(configDir: string, query: string): boolean {
+  if (getSkill(configDir, query)) return true;
+  const reason = matchSkills(configDir, query, 1)[0]?.reason || "";
+  return reason.includes("exact") || reason.includes("alias:");
+}
 
 export class SparkBrowser {
   readonly window: BrowserWindow;
@@ -2453,6 +2489,28 @@ export class SparkBrowser {
       this.pushSidebarState();
       return { ok };
     });
+    handle("spark:delete-trigger", async (_e, id: string) => {
+      const ok = deleteTrigger(this.configDir(), String(id || ""));
+      this.pushSidebarState();
+      return { ok };
+    });
+    handle("spark:toggle-trigger", async (_e, id: string, enabled: boolean) => {
+      const ok = toggleTrigger(this.configDir(), String(id || ""), Boolean(enabled));
+      this.pushSidebarState();
+      return { ok };
+    });
+    handle("spark:remember-trigger", async (_e, payload?: { skillId?: string; text?: string }) => {
+      const text = normalizeUtterance(String(payload?.text || ""));
+      const skillId = String(payload?.skillId || "").trim();
+      if (!text || !skillId) return { ok: false };
+      const skill = getSkill(this.configDir(), skillId);
+      if (!skill || !isOneShotSkill(skill)) return { ok: false };
+      const saved = upsertTrigger(this.configDir(), { skillId, text });
+      if (!saved) return { ok: false };
+      this.clearPendingTrigger(text);
+      this.pushSidebarState();
+      return { ok: true };
+    });
     handle("spark:get-status", async () => this.getSidebarPayload());
     handle("spark:resolve-approval", async (_e, id: string, approved: boolean) =>
       this.resolveApproval(String(id), Boolean(approved)),
@@ -3128,6 +3186,15 @@ export class SparkBrowser {
           }
         : null,
       lessons: loadLessons(this.configDir()).slice(0, 40).map(lessonPublic),
+      triggers: loadTriggers(this.configDir()).slice(0, 40).map((row) => ({
+        id: row.id,
+        skillId: row.skillId,
+        text: row.text,
+        title: getSkill(this.configDir(), row.skillId)?.title || row.skillId,
+        runs: row.runs,
+        fails: row.fails,
+        enabled: row.enabled,
+      })),
       plan: this.sidebarPlan(),
       tasks: this.taskPool.visible(),
     };
@@ -4928,7 +4995,9 @@ export class SparkBrowser {
       const label = action.id || action.query;
       this.chatLog.push({ role: "assistant", text: `正在按妙招「${label}」执行…` });
       this.pushSidebarState();
-      reply = (await this.runSkillTool({ id: action.id, query: action.query })).message;
+      const ran = await this.runSkillTool({ id: action.id, query: action.query });
+      reply = ran.message;
+      this.maybeOfferTrigger(userAsk, ran);
       this.pushSidebarState();
     } else if (action.type === "run") {
       const map =
@@ -5796,7 +5865,11 @@ export class SparkBrowser {
     const waiting = this.matchWaitingResume(text);
     if (waiting) return this.resumeWaiting(waiting, text, pics, cleanQuotes);
     this.dismissAbandonedForegroundWaits();
-    if (laneForText(text) === "background") return this.enqueueBackground(text, pics, cleanQuotes);
+    // 「运行妙招」必须先到门岗窄路。laneForText 会走 parseMission，
+    // 把「运行妙招 比价 / 天气穿衣建议」收成后台工作单，窄路就看不见了。
+    if (!runSkillUtteranceQuery(text) && laneForText(text) === "background") {
+      return this.enqueueBackground(text, pics, cleanQuotes);
+    }
     return this.enqueueForeground(text, pics, cleanQuotes);
   }
 
@@ -6020,6 +6093,67 @@ export class SparkBrowser {
     }
   }
 
+  /** 有未关的单、暂停、引用、附图、后台车道时，门岗和「运行妙招」窄路都让路。 */
+  private habitGateBlocked(cleanQuotes: SparoQuote[], jobImages: string[]): boolean {
+    if (cleanQuotes.length > 0) return true;
+    if (jobImages.length > 0) return true;
+    if (this.paused) return true;
+    if (this.taskStore()?.lane === "background") return true;
+    if (missionStillOpen(this.activeMission)) return true;
+    if (missionStillOpen(this.taskStore()?.mission)) return true;
+    return false;
+  }
+
+  /** 命中且技能仍是 one-shot 才直放。不调 runSkillTool，侧栏不放读页摘录。 */
+  private async replayHabit(text: string): Promise<ToolResult | null> {
+    const hit = matchTrigger(loadTriggers(this.configDir()), text);
+    if (!hit) return null;
+    const skill = getSkill(this.configDir(), hit.skillId);
+    if (!skill || !isOneShotSkill(skill)) return null;
+    const title = skill.title || hit.skillId;
+    const line = this.L("trigger.byHabit", { title });
+    this.chatLog.push({ role: "assistant", text: line });
+    this.pushSidebarState();
+    const ran = await runSkill(this, this.configDir(), { id: hit.skillId });
+    const next = recordOutcome(this.configDir(), hit.id, ran.ok);
+    if (!ran.ok) {
+      this.chatLog.push({ role: "assistant", text: ran.message });
+      if (next && !next.enabled) this.chatLog.push({ role: "assistant", text: this.L("trigger.dropped") });
+    }
+    this.pushSidebarState();
+    return { ok: ran.ok, message: ran.ok ? line : ran.message };
+  }
+
+  /** 登记卡只挂在有 userAsk 的 run_skill 上。已有记录（含停用）或已有未点卡片则不再推。 */
+  private maybeOfferTrigger(userAsk: string, result: ToolResult): void {
+    if (!result.ok) return;
+    const data = result.data as { skillId?: string } | undefined;
+    const skillId = String(data?.skillId || "").trim();
+    const text = normalizeUtterance(userAsk);
+    if (!skillId || !text) return;
+    const skill = getSkill(this.configDir(), skillId);
+    if (!skill || !isOneShotSkill(skill)) return;
+    if (hasTriggerText(this.configDir(), text)) return;
+    if (this.chatLog.some((turn) => turn.pendingTrigger && normalizeUtterance(turn.pendingTrigger.text) === text)) {
+      return;
+    }
+    const shown = text.length > 28 ? `${text.slice(0, 28)}…` : text;
+    this.chatLog.push({
+      role: "assistant",
+      text: this.L("trigger.rememberAsk", { text: shown }),
+      pendingTrigger: { skillId, text },
+    });
+  }
+
+  private clearPendingTrigger(text: string): void {
+    const key = normalizeUtterance(text);
+    this.chatLog = this.chatLog.map((turn) => {
+      if (!turn.pendingTrigger || normalizeUtterance(turn.pendingTrigger.text) !== key) return turn;
+      const { pendingTrigger: _drop, ...rest } = turn;
+      return rest;
+    });
+  }
+
   private async dispatchChatJob(text: string, images?: string[], quotes?: SparoQuote[], tabId?: string): Promise<ToolResult> {
     tabId = tabId || this.agentTabId || this.activeTabId;
     const cleanQuotes = normalizeQuotes(quotes);
@@ -6046,6 +6180,35 @@ export class SparkBrowser {
       this.answerLearning("先不管");
     }
     this.recentLearned = [];
+
+    if (!this.habitGateBlocked(cleanQuotes, jobImages)) {
+      const replay = await this.replayHabit(text);
+      if (replay) return replay;
+      const named = runSkillUtteranceQuery(text);
+      if (named) {
+        if (!namedSkillQuery(this.configDir(), named)) {
+          const message = `未找到妙招「${named}」`;
+          this.chatLog.push({ role: "assistant", text: message });
+          this.pushSidebarState();
+          return { ok: false, message };
+        }
+        try {
+          const hand = await this.executeHand({ type: "run_skill", query: named }, text, [], "chat", tabId);
+          this.chatLog.push({ role: "assistant", text: hand.reply, doc: hand.replyDoc });
+          this.pushSidebarState();
+          return {
+            ok: true,
+            message: hand.reply,
+            data: { files: hand.replyDoc ? [hand.replyDoc.path] : undefined },
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          this.chatLog.push({ role: "assistant", text: message });
+          this.pushSidebarState();
+          return { ok: false, message };
+        }
+      }
+    }
 
     if (cleanQuotes.length) {
       const prompt = composeQuotedPrompt(text, this.materializeNoteQuotes(cleanQuotes));
