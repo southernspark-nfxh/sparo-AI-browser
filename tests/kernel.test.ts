@@ -266,3 +266,38 @@ describe("kernel：只查酒店 / 比价 / 跟进", () => {
     expect(verdict.complete).toBe(false);
   });
 });
+
+describe("关单清点", () => {
+  it("采集步没跑时，长说明也不算完成", () => {
+    const opened = applyTurn("帮我研究一下这个博主", { now: NOW });
+    const goal = {
+      ...opened.mission!.goal,
+      deliverables: [{ id: "answer" as const, label: "直接回答", required: true }],
+    };
+    const seen = {
+      step: { id: "read", label: "读一页", cap: "read_page" as const, covers: ["answer" as const] },
+      text: "当前正文里能看到的主微博只有约 4 条，不能当成上百条。",
+      url: "https://weibo.com/u/1",
+      ok: true,
+    };
+    const missed = verifyContracts(goal, [seen], {
+      synthesized: "材料不足，所以下面只是说明。".repeat(4),
+      plan: {
+        createdAt: 1,
+        steps: [
+          { id: "collect", label: "扩展采集微博样本", cap: "act", covers: ["answer"], status: "pending" },
+        ],
+      },
+    });
+    expect(missed.complete).toBe(false);
+    expect(missed.notes).toContain("扩展采集微博样本");
+    const ran = verifyContracts(goal, [seen], {
+      synthesized: "材料不足，所以下面只是说明。".repeat(4),
+      plan: {
+        createdAt: 1,
+        steps: [{ id: "read", label: "读一页", cap: "read_page", covers: ["answer"], status: "running" }],
+      },
+    });
+    expect(ran.complete).toBe(true);
+  });
+});

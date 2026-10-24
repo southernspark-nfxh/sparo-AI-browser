@@ -295,6 +295,41 @@ describe("mission journal", () => {
     }
   });
 
+  it("收尾不把更深的同句单连坐成 done", () => {
+    const root = dir();
+    const prev = process.env.SPARO_MISSION_JOURNAL_DIR;
+    process.env.SPARO_MISSION_JOURNAL_DIR = root;
+    try {
+      const chat = mission("chat-done");
+      chat.goal = { ...chat.goal, kind: "chat" };
+      const research = mission("research-open");
+      research.goal = { ...research.goal, kind: "research" };
+      appendMissionEvent({ t: 1, op: "open", mission: chat }, root);
+      appendMissionEvent({ t: 2, op: "open", mission: research }, root);
+      appendMissionEvent({
+        t: 3,
+        op: "turn",
+        id: "chat-done",
+        state: "running",
+        findings: [finding("只有约 4 条")],
+      }, root);
+      const closed = journalCloseUtterance(chat.raw, "done", root, {
+        alsoId: chat.id,
+        onlyIdle: true,
+        origin: chat,
+      });
+      expect(closed).toEqual(["chat-done"]);
+      expect(replayMissions(root).map((item) => item.mission.id)).toEqual(["research-open"]);
+      const line = readFileSync(join(root, "missions.jsonl"), "utf8")
+        .split(/\n/)
+        .find((row) => row.includes("chat-done") && row.includes('"op":"close"'));
+      expect(line).toContain('"reason":"done"');
+    } finally {
+      if (prev === undefined) delete process.env.SPARO_MISSION_JOURNAL_DIR;
+      else process.env.SPARO_MISSION_JOURNAL_DIR = prev;
+    }
+  });
+
   it("模型分类进行时，启发式不开第二张单", () => {
     const root = dir();
     const prevConfig = process.env.SPARO_CONFIG_DIR;

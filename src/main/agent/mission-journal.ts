@@ -277,10 +277,11 @@ export function journalCloseUtterance(
   raw: string,
   reason: string,
   dir = storeConfigDir(),
-  opts?: { alsoId?: string; onlyIdle?: boolean },
+  opts?: { alsoId?: string; onlyIdle?: boolean; origin?: ActiveMission },
 ): string[] {
   const key = raw.replace(/\s+/g, " ").trim();
   const ids: string[] = [];
+  const dupIds = new Set<string>();
   const seen = new Set<string>();
   const push = (id: string | undefined) => {
     if (!id || seen.has(id)) return;
@@ -292,10 +293,12 @@ export function journalCloseUtterance(
     for (const item of replayMissions(dir)) {
       if (utteranceKey(item.mission) !== key) continue;
       if (opts?.onlyIdle && missionWasExecuted(item)) continue;
+      if (opts?.onlyIdle && opts.origin && missionDepth(item.mission) > missionDepth(opts.origin)) continue;
+      if (opts?.onlyIdle && item.mission.id !== opts.alsoId) dupIds.add(item.mission.id);
       push(item.mission.id);
     }
   }
-  for (const id of ids) journalMissionClose(id, reason, dir);
+  for (const id of ids) journalMissionClose(id, dupIds.has(id) ? "dup" : reason, dir);
   return ids;
 }
 
