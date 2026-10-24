@@ -149,6 +149,7 @@ import {
   journalCloseUtterance,
   journalMissionTurn,
   pickInterruptedMission,
+  preferredMission,
   recoveryLine,
   replayMissions,
   type RestoredMission,
@@ -6323,8 +6324,8 @@ export class SparkBrowser {
       paused: this.paused,
     };
     // 兜底要等模型超时再跑。提前跑会先开一张启发式单，和模型单变成同一句的双胞胎。
-    const turn = complete
-      ? (await this.withTimeout(
+    const raced = complete
+      ? await this.withTimeout(
           applyTurnAsync(
             text,
             {
@@ -6337,8 +6338,18 @@ export class SparkBrowser {
           20000,
           null,
           false,
-        )) || applyTurn(text, turnCtx)
-      : applyTurn(text, turnCtx);
+        )
+      : null;
+    const turn = raced || applyTurn(text, turnCtx);
+    if (turn.mission) {
+      try {
+        const pending = replayMissions(this.configDir());
+        const preferred = preferredMission(turn.mission, pending);
+        if (preferred.id !== turn.mission.id) turn.mission = preferred;
+      } catch (error) {
+        console.warn("[mission-journal] prefer failed", error instanceof Error ? error.message : error);
+      }
+    }
 
     if (turn.effect === "pause") {
       this.setPaused(true);

@@ -4,16 +4,19 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AgentStep, StepFinding } from "../src/main/agent/loop.js";
 import {
+  adoptModelMission,
   appendMissionEvent,
   decideRecovery,
   journalCloseUtterance,
   missionWasExecuted,
   parseMissionLine,
   pickInterruptedMission,
+  preferredMission,
   recoveryLine,
   replayMissions,
   type MissionEvent,
 } from "../src/main/agent/mission-journal.js";
+import { applyTurn, holdModelTurn } from "../src/main/agent/runtime.js";
 import type { ActiveMission } from "../src/main/agent/runtime.js";
 
 function dir(): string {
@@ -268,9 +271,57 @@ describe("mission journal", () => {
       const finishedIds = journalCloseUtterance(done.raw, "done", root, { alsoId: done.id, onlyIdle: true });
       expect(finishedIds.sort()).toEqual(["done-main", "done-twin"]);
       expect(replayMissions(root).map((item) => item.mission.id).sort()).toEqual(["other", "parallel"]);
+
+      const shallow = mission("shallow");
+      shallow.goal = { ...shallow.goal, kind: "chat", intent: "按原话做事" };
+      const research = mission("research-keep");
+      research.goal = { ...research.goal, kind: "research", intent: "抽样上百条" };
+      appendMissionEvent({ t: 20, op: "open", mission: shallow }, root);
+      const duped = adoptModelMission(research, root);
+      expect(duped).toEqual(["shallow"]);
+      appendMissionEvent({ t: 21, op: "open", mission: research }, root);
+      const dupLines = readFileSync(join(root, "missions.jsonl"), "utf8")
+        .split(/\n/)
+        .filter((line) => line.includes('"reason":"dup"'));
+      expect(dupLines.length).toBeGreaterThan(0);
+      const openIds = replayMissions(root).map((item) => item.mission.id);
+      expect(openIds).toContain("research-keep");
+      expect(openIds).not.toContain("shallow");
+      expect(preferredMission(shallow, replayMissions(root)).id).toBe("research-keep");
+      expect(preferredMission(research, replayMissions(root)).id).toBe("research-keep");
     } finally {
       if (prev === undefined) delete process.env.SPARO_MISSION_JOURNAL_DIR;
       else process.env.SPARO_MISSION_JOURNAL_DIR = prev;
+    }
+  });
+
+  it("模型分类进行时，启发式不开第二张单", () => {
+    const root = dir();
+    const prevConfig = process.env.SPARO_CONFIG_DIR;
+    const prevJournal = process.env.SPARO_MISSION_JOURNAL_DIR;
+    const restore = () => {
+      if (prevConfig === undefined) delete process.env.SPARO_CONFIG_DIR;
+      else process.env.SPARO_CONFIG_DIR = prevConfig;
+      if (prevJournal === undefined) delete process.env.SPARO_MISSION_JOURNAL_DIR;
+      else process.env.SPARO_MISSION_JOURNAL_DIR = prevJournal;
+    };
+    process.env.SPARO_CONFIG_DIR = root;
+    process.env.SPARO_MISSION_JOURNAL_DIR = root;
+    const release = holdModelTurn("帮我研究一下这个博主");
+    try {
+      applyTurn("帮我研究一下这个博主");
+      expect(replayMissions(root)).toEqual([]);
+    } finally {
+      release();
+      restore();
+    }
+    process.env.SPARO_CONFIG_DIR = root;
+    process.env.SPARO_MISSION_JOURNAL_DIR = root;
+    try {
+      applyTurn("帮我研究一下这个博主");
+      expect(replayMissions(root)).toHaveLength(1);
+    } finally {
+      restore();
     }
   });
 });
