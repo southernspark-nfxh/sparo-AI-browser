@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzeGoalHeuristic, type AgentGoal } from "../src/main/agent/loop.js";
+import { analyzeGoalHeuristic, type AgentGoal, type AgentStep } from "../src/main/agent/loop.js";
 import { observe, reconsiderMission } from "../src/main/agent/kernel/index.js";
 import {
   applyParsedRevision,
@@ -182,6 +182,70 @@ describe("计划修订", () => {
     expect(parsePlanRevision('{"revise":true,"steps":[{"cap":"nope","covers":["x"]}]}')).toEqual({
       revise: false,
     });
+  });
+
+  it("提议卡上的「改」换一版做法，不问出发地", async () => {
+    const hands: AgentStep[] = [
+      { id: "a", cap: "read_page", label: "读取当前页", covers: ["page"] },
+      { id: "b", cap: "act", label: "写成报告页", covers: ["report"] },
+    ];
+    const propose: ActiveMission = {
+      id: "m-propose",
+      raw: "读这一页，把标题归纳成一行备忘",
+      findings: [],
+      state: "propose",
+      plan: hands,
+      goal: {
+        raw: "读这一页，把标题归纳成一行备忘",
+        intent: "读当前页并写成备忘",
+        kind: "page",
+        deliverables: [{ id: "page", label: "读懂当前页", required: true }],
+        known: {},
+        unknown: [],
+        needsConfirm: true,
+        decision: "propose",
+        approach: "1. 读取当前页；2. 写成报告页",
+        coverage: "new",
+        handbook: hands,
+      },
+    };
+    const kept = applyTurn("改", { active: propose, now: NOW });
+    expect(kept.effect).toBe("propose");
+    expect(kept.mission?.state).toBe("propose");
+    expect(kept.mission?.blockedSlot).toBeUndefined();
+    expect(kept.say).not.toMatch(/出发地|城市|日期/);
+
+    const again = await applyTurnAsync("改", { active: propose, now: NOW }, async () =>
+      JSON.stringify({
+        revise: true,
+        why: "改成先抄标题",
+        steps: [
+          { label: "只读标题", cap: "read_page", covers: ["page"] },
+          { label: "写一行备忘", cap: "act", covers: ["report"] },
+        ],
+      }),
+    );
+    expect(again.effect).toBe("propose");
+    expect(again.mission?.state).toBe("propose");
+    expect(again.mission?.blockedSlot).toBeUndefined();
+    expect(again.mission?.goal.approach).toBe("1. 只读标题；2. 写一行备忘");
+    expect(again.mission?.goal.needsConfirm).toBe(true);
+    expect(again.say).not.toMatch(/出发地|城市|日期/);
+    expect(again.mission?.id).toBe(propose.id);
+  });
+
+  it("已经卡住的行程说「改」，仍问出发地、城市或日期", () => {
+    const first = run(NY);
+    const blocked: ActiveMission = {
+      ...first.mission!,
+      state: "blocked",
+      blockedSlot: "destination",
+      ask: "想去哪座城市？",
+    };
+    const again = applyTurn("改", { active: blocked, now: NOW });
+    expect(again.effect).toBe("ask");
+    expect(again.mission?.state).toBe("blocked");
+    expect(again.say).toMatch(/出发地、城市还是日期/);
   });
 
   it("applyParsedRevision 保留已完成步骤", () => {
