@@ -438,6 +438,80 @@ function wantsPlanRevisionAsk(text: string, ingest: Ingest["kind"]): boolean {
   return true;
 }
 
+function visibleProposalPlan(mission: ActiveMission): Plan {
+  if (mission.brainPlan?.steps.length) return mission.brainPlan;
+  const hands = mission.goal.handbook?.length ? mission.goal.handbook : mission.plan;
+  if (hands?.length) {
+    return {
+      createdAt: Date.now(),
+      steps: hands.slice(0, 8).map((hand, i) => ({
+        id: hand.id || `h${i}-${hand.cap}`,
+        label: hand.label,
+        cap: hand.cap,
+        covers: [...hand.covers],
+        status: (i === 0 ? "running" : "pending") as Plan["steps"][number]["status"],
+      })),
+    };
+  }
+  return planFromHeuristic(mission.goal);
+}
+
+function approachFromPlan(plan: Plan): string {
+  return plan.steps
+    .filter((step) => step.status !== "skipped" && step.status !== "failed")
+    .map((step, i) => `${i + 1}. ${step.label}`)
+    .join("；");
+}
+
+/**
+ * 提议卡上的「改」只换这一版做法，单子留在 propose。
+ * 不把这句话收成改出发地、城市或日期。
+ */
+async function reviseOpenProposal(
+  text: string,
+  mission: ActiveMission,
+  complete: (prompt: string) => Promise<string>,
+): Promise<ActiveMission | null> {
+  const plan = visibleProposalPlan(mission);
+  const cue = isReviseText(text)
+    ? "换一版做法：不要沿用当前这些步骤，改成另一套能完成原话的步骤。不要询问出发地、城市或日期。"
+    : text;
+  try {
+    const parsed = parsePlanRevision(await complete(planRevisionPrompt(mission.goal, plan, cue)));
+    if (!parsed || !parsed.revise) return null;
+    const brainPlan = applyParsedRevision(plan, parsed);
+    if (brainPlan === plan) return null;
+    const approach = approachFromPlan(brainPlan);
+    if (!approach) return null;
+    const handbook: AgentStep[] = brainPlan.steps
+      .filter((step) => step.status !== "skipped" && step.status !== "failed")
+      .map((step) => ({
+        id: step.id,
+        cap: step.cap as AgentStep["cap"],
+        label: step.label,
+        covers: step.covers as AgentStep["covers"],
+        query: step.label,
+      }));
+    return {
+      ...mission,
+      brainPlan,
+      plan: handbook.length ? handbook : mission.plan,
+      state: "propose",
+      ask: undefined,
+      blockedSlot: undefined,
+      goal: {
+        ...mission.goal,
+        approach,
+        handbook: handbook.length ? handbook : mission.goal.handbook,
+        needsConfirm: true,
+        decision: "propose",
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** 模型判断这句话是不是在改计划。不是、或模型失败，就返回 null，调用方照旧走。 */
 export async function reviseActivePlan(
   text: string,
@@ -516,6 +590,20 @@ function applyTurnCore(text: string, ctx: TurnCtx = {}): TurnResult {
   }
 
   if (ingest.kind === "revise" && ctx.active) {
+    if (ctx.active.state === "propose") {
+      return {
+        effect: "propose",
+        mission: {
+          ...ctx.active,
+          state: "propose",
+          ask: undefined,
+          blockedSlot: undefined,
+        },
+        last: ctx.last,
+        say: "这版先留着。说一下要改哪一步。",
+        ingest: ingest.kind,
+      };
+    }
     return {
       effect: "ask",
       mission: {
@@ -628,6 +716,18 @@ async function applyTurnAsyncBody(
   configDir?: string,
 ): Promise<TurnResult> {
   const ingest = classifyIngest(text, ctx.active, ctx.last, { paused: ctx.paused });
+  if (complete && ctx.active?.state === "propose" && ingest.kind === "revise") {
+    const revised = await reviseOpenProposal(text, ctx.active, complete);
+    if (revised) {
+      return {
+        effect: "propose",
+        mission: revised,
+        last: ctx.last,
+        say: `打算这样做：${revised.goal.approach}`,
+        ingest: "revise",
+      };
+    }
+  }
   const host =
     ctx.active &&
     ctx.active.brainPlan?.steps.length &&
