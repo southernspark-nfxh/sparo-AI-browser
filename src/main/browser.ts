@@ -56,6 +56,7 @@ import {
   thoughtFor,
   thoughtForAsync,
   verifyContracts,
+  earlyExitMayCloseDone,
   type ActiveMission,
   type Thought,
 } from "./agent/kernel/index.js";
@@ -5361,7 +5362,10 @@ export class SparkBrowser {
       }
 
       current = await this.absorbQueuedPlanEdit(current);
-      if (this.namedSiteIsOpen(current.goal, tabId)) {
+      if (
+        this.namedSiteIsOpen(current.goal, tabId) &&
+        earlyExitMayCloseDone(current.goal, current.findings, current.brainPlan)
+      ) {
         const reply = `已打开 ${current.goal.site}。`;
         if (current.brainPlan) current.brainPlan = closePlan(current.brainPlan, true);
         current.state = "done";
@@ -5505,7 +5509,11 @@ export class SparkBrowser {
         }
       }
       const onlyOpened = findings.length > 0 && findings.every((f) => f.step.cap === "navigate");
-      if (userDidNotAskToRead(live) && (live.site || onlyOpened)) {
+      if (
+        userDidNotAskToRead(live) &&
+        (live.site || onlyOpened) &&
+        earlyExitMayCloseDone(live, findings, current.brainPlan)
+      ) {
         const reply = live.site ? `已打开 ${live.site}。` : "页面已打开。";
         if (current.brainPlan) current.brainPlan = closePlan(current.brainPlan, true);
         current.state = "done";

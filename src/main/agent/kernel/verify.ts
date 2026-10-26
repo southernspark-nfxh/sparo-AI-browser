@@ -162,6 +162,24 @@ export function verifyContracts(
   };
 }
 
+/**
+ * 早退旁路（只打开站点 / 没要求读页）能不能 close(done)。
+ * 报告或填表还没交付，或计划里还有没做完的步，就必须走主路径同一套清点。
+ */
+export function earlyExitMayCloseDone(
+  goal: AgentGoal,
+  findings: StepFinding[],
+  plan?: Plan,
+): boolean {
+  const unfinished = (plan?.steps || []).some(
+    (step) => step.status === "pending" || step.status === "running" || step.status === "failed",
+  );
+  if (unfinished) return false;
+  const needsHandoff = goal.deliverables.some((d) => d.required && (d.id === "report" || d.id === "form"));
+  if (!needsHandoff) return true;
+  return verifyContracts(goal, findings, { plan }).complete;
+}
+
 export function deliverableLabel(id: DeliverableId): string {
   return LABEL[id];
 }
