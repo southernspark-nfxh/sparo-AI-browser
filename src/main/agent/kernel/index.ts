@@ -44,7 +44,7 @@ export {
   type Thought,
   type SiteGate,
 } from "./reasoner.js";
-export { verifyContracts, observationCovers, extractEntities, summaryFindings } from "./verify.js";
+export { verifyContracts, earlyExitMayCloseDone, observationCovers, extractEntities, summaryFindings } from "./verify.js";
 export { CAP_REGISTRY, capsFor } from "./caps.js";
 export {
   understand,
