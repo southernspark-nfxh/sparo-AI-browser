@@ -9,37 +9,35 @@
 
 | 项 | 状态 |
 |---|---|
-| 代码仓库 | `southernspark-nfxh/sparo-AI-browser`，`master = b55e93b`，0.1.19 已提交、已打包 |
-| **发布仓库** | `southernspark-nfxh/sparo-agent-browser`——README 安装直链指向它的 `releases/latest/download/Sparo-Setup.exe`（直链现返回 200 = latest 有 asset）。**Release 发这里，不是代码仓库** |
-| 当前 latest | v0.1.15（2026-09-05）；0.1.16–0.1.19 均无 Release、无 tag |
-| 本地安装包 | `release\Sparo-Setup.exe`（2026-10-26 17:35 构建，约 88MB，版本 0.1.19）；`release\Sparo-Setup.exe.blockmap` 可选上传 |
-| gh CLI | 本机曾有坏路径（`...\Temp\gh-cli\bin\gh.exe` 不存在）。执行前 `gh --version` 确认可用；不可用则 `winget install GitHub.cli` 后 `gh auth login` |
+| 仓库 | `southernspark-nfxh/sparo-AI-browser`（**唯一仓库**；旧名 `sparo-agent-browser` 已永久改名，README 里的旧直链 301 到本仓库）。`master = 68da4af`（任务书提交），0.1.19 已提交、已打包 |
+| 当前 latest | v0.1.15（2026-09-05，asset `Sparo-Setup.exe` 91,730,831 字节）；0.1.16–0.1.19 均无 Release、无 tag |
+| 本地安装包 | `release\Sparo-Setup.exe`（2026-10-26 17:35 构建，92,234,371 字节，版本 0.1.19）；`release\Sparo-Setup.exe.blockmap` 可选上传 |
+| gh CLI | 本机没有可用的 `gh`（曾有坏路径 `...\Temp\gh-cli\bin\gh.exe`）。先 `winget install GitHub.cli`，再 `gh auth login` |
 | 代理 | git 与 gh 的网络访问走 `http://127.0.0.1:10792`（git 用 `-c http.proxy=`，gh 设 `HTTPS_PROXY` 环境变量） |
 
 **执行前必须复核**（gh 或网页）：
-1. 发布仓库 `sparo-agent-browser` 的 latest Release 确是 0.1.15，asset 名确为 `Sparo-Setup.exe`；
-2. 发布仓库的基本结构（有无代码、默认分支名）——Release 的 tag 由创建动作自动生成，不依赖本地 tag；
-3. `release\Sparo-Setup.exe` 的时间戳是 2026-10-26 17:35（不是就说明被重打过，先停下确认 0.1.19 测试全绿再继续）。
+1. 仓库 `sparo-AI-browser` 的 latest Release 确是 0.1.15，asset 名确为 `Sparo-Setup.exe`；
+2. `release\Sparo-Setup.exe` 的时间戳是 2026-10-26 17:35、文件版本 0.1.19（不是就先停下确认测试全绿再继续）。
 
 ## §2 执行步骤
 
 1. **gh 就绪**：`gh --version` → `gh auth status`（未登录先 `gh auth login`）。
-2. **（可选，便于追溯）代码仓库打 tag**：
+2. **（可选，便于追溯）本地打 tag**（打在当前 `master`，不指定旧 hash）：
    ```powershell
-   git tag v0.1.19 b55e93b
+   git tag v0.1.19
    git -c http.proxy=http://127.0.0.1:10792 push origin v0.1.19
    ```
-3. **写 release notes** 到临时文件（文案见 §3；对照代码仓库 `CHANGELOG.md` 校准 0.1.16–0.1.18 的概述措辞，别照抄本文的概括）。
-4. **发布仓库创建 Release**：
+3. **写 release notes** 到临时文件（文案见 §3；对照 `CHANGELOG.md` 校准 0.1.16–0.1.18 的概述措辞，别照抄本文的概括）。
+4. **创建 Release**（发到本仓库 `sparo-AI-browser`）：
    ```powershell
    gh release create v0.1.19 "release\Sparo-Setup.exe" `
-     --repo southernspark-nfxh/sparo-agent-browser `
+     --repo southernspark-nfxh/sparo-AI-browser `
      --title "Sparo 0.1.19" `
      --notes-file <notes 路径> `
      --latest
    ```
-   - asset 文件名**必须恰好是 `Sparo-Setup.exe`**——README 直链按这个名字取文件，名字不对直链 404。若本地产物名带版本号（如 `Sparo-0.1.19-win.exe`），上传前复制改名。
-   - 发布仓库无默认分支 / 空仓库时 `gh release create` 仍可用（自动建 tag）；报错则加 `--target main`（或其实际默认分支）。
+   - asset 文件名**必须恰好是 `Sparo-Setup.exe`**——README 直链（旧域名 301 到本仓库）按这个名字取文件，名字不对直链 404。
+   - Release 的 tag 由创建动作自动生成，不依赖本地 tag；报错可加 `--target master`。
 
 ## §3 release notes 文案（起点稿，可校准）
 
