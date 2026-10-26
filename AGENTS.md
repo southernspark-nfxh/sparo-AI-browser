@@ -17,8 +17,8 @@ Tagline: *会动手的 AI 浏览器 — 发送前你确认。*
 | [docs/SKILL-COMMUNITY-M2.md](./docs/SKILL-COMMUNITY-M2.md) | 技能社区（**未开工**，M1 人测过完再开） |
 | [docs/SKILL-FORMAT.md](./docs/SKILL-FORMAT.md) | 技能包命名与字段（本机 `run_skill`，以后才分享） |
 | [docs/THREE-CHANNEL-DESIGN.md](./docs/THREE-CHANNEL-DESIGN.md) | 三通道架构（**设计稿，未开工**，评审后按分期落地） |
-| [docs/PRODUCT-TASKBOOK.md](./docs/PRODUCT-TASKBOOK.md) | 现行任务、QA、待办（v0.3.6） |
-| [CHANGELOG.md](./CHANGELOG.md) | 对外变更（现 0.1.18） |
+| [docs/PRODUCT-TASKBOOK.md](./docs/PRODUCT-TASKBOOK.md) | 现行任务、QA、待办（v0.3.7） |
+| [CHANGELOG.md](./CHANGELOG.md) | 对外变更（现 0.1.19） |
 | [docs/PRODUCT.md](./docs/PRODUCT.md) | 商店定位，不是任务书 |
 
 **此后主线就在本目录改。** 原版 `D:\download\Sparo`（3920 / `%APPDATA%\sparo`）只同步侧栏能力，不要把云订阅搬过去。
@@ -55,6 +55,7 @@ CS: **回复** fills draft only; human clicks send.
 Life query: 侧栏原句（打开站点 + 后半句；酒店/机票/火车/路线走结果页 URL）。读页用 `page_text`。  
 多步日常（比价 / 调研 / 出差 / 挂号）：`parseMission` / `parseTripPlan`，禁止直开京东/淘宝/点评。  
 侧栏每一句先进工作单：**有未关的单就续跑**；新开时模型只填槽，不能选 ask。缺的是合法空槽才问；省名先出思路再动手；吃喝玩接上一趟；「我打算」不是城。  
+任务循环（0.1.19 起）：新任务先出**解题思路卡**，用户确认才开工。长采集滚动翻页时 `page_text` 从第二次起带「较上次 +N 字」，+0 就换策略，不连按同一个键。**关单必有声**：必交付没齐、计划采集步没跑完，不许假 done——只开站 / 没要求读页 / 登录落地三条早退都过同一套清点，缺什么侧栏说人话。挂起任务问「要不要打开 / 换个入口」时，回「打开 / 好 / 继续 / 换个入口」就接回续跑。  
 **死规则：** 多种信息调研（比价 / 选品 / 筛选 / 对比 / 研报）必须出报告页并在窗口打开，侧栏只留一句 + 卡片。禁止把对照表堆进聊天框。不要点进一堆详情循环。吃喝玩不是筛选报告。后台调研在最小化时继续跑，完成只闪任务栏，出报告只切标签，不把窗口弹回来。  
 识图：侧栏粘贴/拖图；`screenshot` 回 base64。纯文本模型降级省略附图。见 [docs/VISION.md](./docs/VISION.md)。  
 云端模型：设置里「自己的 Key / 云端模型」；一句对话一个 `task_id`。已登录后点套餐在本窗口付款，不要再甩到 Chrome。见 `docs/CLOUD-SUBSCRIPTION.md`。

@@ -1,12 +1,24 @@
 # Sparo 现行产品任务书
 
 > 持续更新。与原版 **同一份正文**，便于两边对照。上一版见 [PRODUCT-TASKBOOK-20260811.md](./PRODUCT-TASKBOOK-20260811.md)。  
-> 版本：**v0.3.6 · 2026-10-22**（对外包仍 **0.1.18**，本轮未改版本号）  
-> 状态：**进行中**（云订阅 M1 代码已落地并人测过登录/付款；上架未完；飞书网页已做；侧栏大脑 0.1.18 已让模型编手；10-22 能力升级与界面升级已进代码）  
+> 版本：**v0.3.7 · 2026-10-26**（对外包 **0.1.19**）  
+> 状态：**进行中**（云订阅 M1 代码已落地并人测过登录/付款；上架未完；飞书网页已做；侧栏大脑已让模型编手；10-26 采集闭环与白屏四修已进代码并打包）  
 > 产品文案仍以 [PRODUCT.md](./PRODUCT.md) 为准，不要把任务书当商店上架稿。  
-> 先读：[ARCHITECTURE.md](./ARCHITECTURE.md) · [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) · [CHANGELOG.md](../CHANGELOG.md) 0.1.18 · 根目录 [AGENTS.md](../AGENTS.md)
+> 先读：[ARCHITECTURE.md](./ARCHITECTURE.md) · [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) · [CHANGELOG.md](../CHANGELOG.md) 0.1.19 · 根目录 [AGENTS.md](../AGENTS.md)
 >
-> **大脑进度（0.1.18）：** 听整句、站点表换站、模型编 `handbook` / 写下一步已进代码。`absorb`（页上价格对约束）未开工。9 月交接稿见 [TRAE-PROMPT-AGENT-BRAIN.md](./TRAE-PROMPT-AGENT-BRAIN.md)，以 changelog 和测试为准。
+> **大脑进度（0.1.19）：** 听整句、站点表换站、模型编 `handbook` / 写下一步已进代码。10-26 起任务循环硬规则：新任务出确认卡、关单必有声、跑完计划步才许收摊、挂起答复接得回。`absorb`（页上价格对约束）未开工。9 月交接稿见 [TRAE-PROMPT-AGENT-BRAIN.md](./TRAE-PROMPT-AGENT-BRAIN.md)，以 changelog 和测试为准。
+
+## 2026-10-26 已落地（0.1.19 长采集与白屏）
+
+执行任务书：[TASK-20261026-采集闭环与白屏四修任务书.md](./TASK-20261026-采集闭环与白屏四修任务书.md)。对外变更见 [CHANGELOG.md](../CHANGELOG.md) 0.1.19。
+
+- 新任务先出**解题思路卡**，用户确认才开工（纯 synthesize 计划也出卡）
+- 长采集滚动翻页：`page_text` 从第二次起带「较上次 +N 字」，+0 换策略不连按；重复工具被掐断后，掐断句回流大脑换打法
+- **关单必有声**：只开站 / 没要求读页 / 登录落地三条早退旁路都过同一套清点，必交付没齐不许假 done，incomplete 时侧栏说明还缺什么、计划哪些步没执行，并写未完成报告页
+- **跑完计划步才许收摊**：模型把步的 covers 写宽也骗不过清点，计划采集步（read_page / search_read / navigate / act）没跑完不许汇总
+- **挂起答复接得回**：任务问「要不要打开 / 换个入口」时，回「打开 / 好 / 继续 / 换个入口」接回续跑，不再被当新对话开单
+- 采集规模句（「N 条 / 全部 / 逐条 / N 天 + 采集对象」）没有 report 交付时打回模型重判一次，仍无则照实放行并记日志
+- 窗口偶发空白（restore 后页面视图盖住顶栏侧栏）自愈：还原 / 拉回后自动补排
 
 ## 2026-10-22 已落地
 
