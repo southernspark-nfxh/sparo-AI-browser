@@ -1,0 +1,74 @@
+# TASK-20261026-GitHub 发布 0.1.19 任务书
+
+> 目标：让 GitHub 能下载到最新版 **0.1.19**——把 Release 发到 **发布仓库**，使 README 直链和官网产品页的「最新版」指向 0.1.19。
+> 交给 Cursor 执行。执行前把 §1 的事实逐条核实一遍，对不上就停下来报告，不要硬做。
+
+---
+
+## §1 事实底账（2026-10-26 18:15 前后核实）
+
+| 项 | 状态 |
+|---|---|
+| 代码仓库 | `southernspark-nfxh/sparo-AI-browser`，`master = b55e93b`，0.1.19 已提交、已打包 |
+| **发布仓库** | `southernspark-nfxh/sparo-agent-browser`——README 安装直链指向它的 `releases/latest/download/Sparo-Setup.exe`（直链现返回 200 = latest 有 asset）。**Release 发这里，不是代码仓库** |
+| 当前 latest | v0.1.15（2026-09-05）；0.1.16–0.1.19 均无 Release、无 tag |
+| 本地安装包 | `release\Sparo-Setup.exe`（2026-10-26 17:35 构建，约 88MB，版本 0.1.19）；`release\Sparo-Setup.exe.blockmap` 可选上传 |
+| gh CLI | 本机曾有坏路径（`...\Temp\gh-cli\bin\gh.exe` 不存在）。执行前 `gh --version` 确认可用；不可用则 `winget install GitHub.cli` 后 `gh auth login` |
+| 代理 | git 与 gh 的网络访问走 `http://127.0.0.1:10792`（git 用 `-c http.proxy=`，gh 设 `HTTPS_PROXY` 环境变量） |
+
+**执行前必须复核**（gh 或网页）：
+1. 发布仓库 `sparo-agent-browser` 的 latest Release 确是 0.1.15，asset 名确为 `Sparo-Setup.exe`；
+2. 发布仓库的基本结构（有无代码、默认分支名）——Release 的 tag 由创建动作自动生成，不依赖本地 tag；
+3. `release\Sparo-Setup.exe` 的时间戳是 2026-10-26 17:35（不是就说明被重打过，先停下确认 0.1.19 测试全绿再继续）。
+
+## §2 执行步骤
+
+1. **gh 就绪**：`gh --version` → `gh auth status`（未登录先 `gh auth login`）。
+2. **（可选，便于追溯）代码仓库打 tag**：
+   ```powershell
+   git tag v0.1.19 b55e93b
+   git -c http.proxy=http://127.0.0.1:10792 push origin v0.1.19
+   ```
+3. **写 release notes** 到临时文件（文案见 §3；对照代码仓库 `CHANGELOG.md` 校准 0.1.16–0.1.18 的概述措辞，别照抄本文的概括）。
+4. **发布仓库创建 Release**：
+   ```powershell
+   gh release create v0.1.19 "release\Sparo-Setup.exe" `
+     --repo southernspark-nfxh/sparo-agent-browser `
+     --title "Sparo 0.1.19" `
+     --notes-file <notes 路径> `
+     --latest
+   ```
+   - asset 文件名**必须恰好是 `Sparo-Setup.exe`**——README 直链按这个名字取文件，名字不对直链 404。若本地产物名带版本号（如 `Sparo-0.1.19-win.exe`），上传前复制改名。
+   - 发布仓库无默认分支 / 空仓库时 `gh release create` 仍可用（自动建 tag）；报错则加 `--target main`（或其实际默认分支）。
+
+## §3 release notes 文案（起点稿，可校准）
+
+```markdown
+## 0.1.19 · 长采集与白屏
+
+长采集任务卡住会说人话，窗口偶发空白能自愈，新任务更稳地出确认卡。
+
+自 0.1.15 以来的主要变化：
+- 0.1.16：任务池——前台任务和最多 3 个后台任务并行；最小化时后台继续跑；任务绑标签
+- 0.1.17：侧栏 Agent 内核——一句话一张工作单，模型看见页上结果再改路；比价出报告页
+- 0.1.18：并行收尾、笔记库、侧栏计划卡、断点续跑
+- 0.1.19：新任务确认卡；长采集翻页带增量、卡住换打法；关单说明还缺什么；挂起任务回「继续」能接回；窗口偶发空白自愈
+
+完整变更见 CHANGELOG：https://github.com/southernspark-nfxh/sparo-AI-browser/blob/master/CHANGELOG.md
+```
+
+## §4 验收清单
+
+- [ ] `https://github.com/southernspark-nfxh/sparo-agent-browser/releases/latest` 显示 0.1.19
+- [ ] 直链 `https://github.com/southernspark-nfxh/sparo-agent-browser/releases/latest/download/Sparo-Setup.exe` HTTP 200，文件约 88MB
+- [ ] 下载安装后启动冒烟：关于/设置里版本显示 0.1.19
+- [ ] 官网产品页 `southernspark.dev/zh/products/sparo` 版本号跟随到 0.1.19（有 CDN 缓存就注明等刷新）
+- [ ] （可选）代码仓库存在 tag `v0.1.19`
+
+## §5 红线
+
+- 不改版本号、不重新打包（用 17:35 的现成产物；确需重打，先 `npm test` + `npm run typecheck` 全绿）。
+- asset 只上传 `Sparo-Setup.exe`（最多加 `.blockmap`）。**绝不**把 QA 截图、settings、token、本地脚本传上 Release。
+- 凭据只用 `gh auth` 或环境变量，不写进任何文件、不回显到输出。
+- 发布仓库结构异常（不是自己的仓库、已有未知 Release 等）→ 停下报告，不硬发。
+- 发布完成后把本任务书移入 `docs/archive/2026-10/` 并标「已完成」，随常规 docs 提交。
