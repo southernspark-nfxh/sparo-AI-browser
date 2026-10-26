@@ -7,6 +7,7 @@ import {
 } from "../src/main/agent/kernel/reasoner.js";
 import { compileHands } from "../src/main/agent/loop.js";
 import type { StepFinding } from "../src/main/agent/loop.js";
+import type { Plan } from "../src/main/agent/kernel/plan.js";
 
 const NOW = new Date(2026, 8, 14);
 const NY =
@@ -102,6 +103,80 @@ describe("推理器：模型自己挑下一步，本地最小校验", () => {
     expect(parseReasonerJson('{"synthesize":true,"why":"齐了"}')?.synthesize).toBe(true);
     expect(parseReasonerJson('{"next":{"cap":""}}')).toBeNull();
     expect(parseReasonerJson("不是json")).toBeNull();
+  });
+
+  it("模型说 synthesize 但必须交付没齐：回退本地 next 继续做", async () => {
+    const goal = {
+      raw: "帮我把微博博主“王海林”3天内的所有微博内容都复制一下",
+      intent: "收集王海林近3天微博并整理成可翻阅的产物",
+      kind: "page",
+      deliverables: [
+        { id: "form", label: "填表", required: true },
+        { id: "page", label: "读懂当前页", required: true },
+      ],
+      known: {},
+      unknown: [],
+      decision: "act",
+      approach: "读取微博正文并填入表单",
+      site: "weibo.com",
+      siteUrl: "https://weibo.com/",
+    };
+    const findings: StepFinding[] = [
+      {
+        step: { id: "act-1", cap: "act", label: "搜索并打开主页", covers: ["page"] },
+        text: "已打开博主主页，页面上有正文内容可以读取",
+        ok: true,
+        url: "https://weibo.com/u/1497714867",
+      },
+    ];
+    const thought = await thoughtForAsync(
+      { intent: goal.intent, goal, findings, state: "running" } as never,
+      async () => JSON.stringify({ synthesize: true, why: "页面已打开，先汇总" }),
+    );
+    expect(thought.synthesize).toBeUndefined();
+    expect(thought.next).toBeDefined();
+    expect(thought.why).toContain("还缺必须交付");
+  });
+
+  it("计划采集步没跑完：covers 写得再宽也不许说齐了", async () => {
+    const goal = {
+      raw: "帮我把微博博主“王海林”3天内的所有微博内容都复制一下",
+      intent: "收集王海林近3天微博并整理成可翻阅的产物",
+      kind: "page",
+      deliverables: [
+        { id: "form", label: "填表", required: true },
+        { id: "page", label: "读懂当前页", required: true },
+      ],
+      known: {},
+      unknown: [],
+      decision: "act",
+      approach: "读取微博正文并填入表单",
+      site: "weibo.com",
+      siteUrl: "https://weibo.com/",
+    };
+    const plan: Plan = {
+      createdAt: 1,
+      steps: [
+        { id: "p0", label: "在微博搜索博主王海林", cap: "search_read", covers: ["page"], status: "pending" },
+        { id: "p2", label: "读取近3天微博", cap: "read_page", covers: ["page"], status: "pending" },
+      ],
+    };
+    // 模型编的 act 步把 covers 写宽：page 和 form 一起认领，跑完一步后 missing 为空
+    const findings: StepFinding[] = [
+      {
+        step: { id: "act-1", cap: "act", label: "搜索并打开主页", covers: ["page", "form"] },
+        text: "已打开博主主页，页面上有正文内容",
+        ok: true,
+        url: "https://weibo.com/u/1497714867",
+      },
+    ];
+    const thought = await thoughtForAsync(
+      { intent: goal.intent, goal, findings, state: "running", brainPlan: plan } as never,
+      async () => '{"synthesize":true,"why":"都齐了"}',
+    );
+    expect(thought.synthesize).toBeUndefined();
+    expect(thought.next?.id).toBe("p0");
+    expect(thought.why).toContain("继续做");
   });
 
   it("nextThoughtAsync 启发式已 synthesize 时不调模型", async () => {

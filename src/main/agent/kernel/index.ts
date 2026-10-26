@@ -77,6 +77,7 @@ function thoughtInput(mission: ActiveMission, synthesized?: string, pageUrl?: st
     nudge: mission.nudge,
     pageUrl,
     skills,
+    plan: mission.brainPlan,
   };
 }
 
