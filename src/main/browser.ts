@@ -88,6 +88,8 @@ import {
   detectSite,
   extractFirstHttpUrl,
   isContinueHint,
+  isHelpAnswerHint,
+  isShortAffirmative,
   readPageInstruction,
   sameSite,
   wantsFillForm,
@@ -5933,7 +5935,8 @@ export class SparkBrowser {
     const cleanQuotes = normalizeQuotes(quotes);
     const waiting = this.matchWaitingResume(text);
     if (waiting) return this.resumeWaiting(waiting, text, pics, cleanQuotes);
-    this.dismissAbandonedForegroundWaits();
+    // 答复语（「打开 / 好 / 换个入口」）多半在回答挂起任务的问句，不收它的等待卡片。
+    if (!isShortAffirmative(text) && !isHelpAnswerHint(text)) this.dismissAbandonedForegroundWaits();
     // 「运行妙招」必须先到门岗窄路。laneForText 会走 parseMission，
     // 把「运行妙招 比价 / 天气穿衣建议」收成后台工作单，窄路就看不见了。
     if (!runSkillUtteranceQuery(text) && laneForText(text) === "background") {
@@ -6250,14 +6253,20 @@ export class SparkBrowser {
     const recovered =
       this.taskStore()?.lane === "background" ? null : await this.takeRecoveryAnswer(text, jobImages);
     if (recovered) return recovered;
+    // 挂起任务在等答复，用户回了句短促肯定（站门问「要我先打开 weibo.com 吗？」→「打开」）：
+    // 直接续跑挂起单，不进模型分诊——分诊会把短答复当新 chat 开单。
+    const parkedWaiting = this.taskStore()?.mission;
+    if (
+      parkedWaiting &&
+      parkedWaiting.state === "waiting_human" &&
+      isShortAffirmative(text)
+    ) {
+      return this.executeMission(parkedWaiting, jobImages, tabId);
+    }
     if (this.helpAsk) {
       const t = text.trim();
       // 只把真正像回答的话当回答（选项/是/否/登录/继续）；普通短句（如「搜今天北京天气」）不当回答，放行到正常分诊
-      const looksAnswer =
-        isContinueHint(t) ||
-        /^(是|对|要|需要|否|不是|不用|没有|有弹窗|弹层|要换入口|换入口|换个入口|先登录|要登录|先不管|跳过|不管|我过完了|yes|no|skip|overlay)/i.test(t) ||
-        /登录|登陆|sign\s?in/i.test(t);
-      if (looksAnswer) {
+      if (isHelpAnswerHint(t)) {
         const learned = this.answerLearning(t);
         if (this.activeMission && (this.activeMission.state === "waiting_human" || this.activeMission.state === "running")) {
           return this.executeMission(this.activeMission, jobImages, tabId);

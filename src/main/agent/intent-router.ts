@@ -255,6 +255,31 @@ export function isContinueHint(text: string): boolean {
   );
 }
 
+/**
+ * 挂起任务的短促肯定答复：站门问「要我先打开 weibo.com 吗？」后的「打开 / 好 / 要」。
+ * 全句匹配（不是包含），带宾语的「打开B站」不认，仍走新任务分诊。
+ */
+export function isShortAffirmative(text: string): boolean {
+  const t = text.trim();
+  if (!t || t.length > 8) return false;
+  return /^(打开|好|好的|要|行|可以的?|嗯+|是|对|开始|做吧|去吧|弄吧|搞吧|没问题|ok|okay|yes|继续吧?)$/i.test(
+    t,
+  );
+}
+
+/** helpAsk / 挂起问句的答复语：选项词、是否词、换入口、登录类。开头匹配，跟 helpAsk 分支的口径一致。 */
+export function isHelpAnswerHint(text: string): boolean {
+  const t = text.trim();
+  if (!t || t.length > 48) return false;
+  return (
+    isContinueHint(t) ||
+    /^(是|对|要|需要|否|不是|不用|没有|有弹窗|弹层|要换入口|换入口|换个入口|先登录|要登录|先不管|跳过|不管|我过完了|yes|no|skip|overlay)/i.test(
+      t,
+    ) ||
+    /登录|登陆|sign\s?in/i.test(t)
+  );
+}
+
 export function sameSite(currentUrl: string, targetUrl: string): boolean {
   try {
     const host = (u: string) =>
