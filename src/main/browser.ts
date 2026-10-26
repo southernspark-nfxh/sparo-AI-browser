@@ -5475,7 +5475,8 @@ export class SparkBrowser {
           const afterLand = pageFinger(this.getUrl(tabId), this.getTitle(tabId));
           if (!isLoginWall(afterLand) && !isCaptchaWall(afterLand) && !(landing && "done" in landing)) {
             const redirected = loginRedirectNote(live, findings);
-            if (redirected) {
+            // 登录落地收工同样过清点：采集单误入这段流程时，还有没交的就不许假 done。
+            if (redirected && earlyExitMayCloseDone(live, findings, current.brainPlan)) {
               current.findings = findings;
               if (current.brainPlan) current.brainPlan = closePlan(current.brainPlan, true);
               current.state = "done";
