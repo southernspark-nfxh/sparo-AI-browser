@@ -12,7 +12,8 @@ import {
   type LoopCap,
   type StepFinding,
 } from "../loop.js";
-import { verifyContracts } from "./verify.js";
+import { verifyContracts, unmetPlanSteps } from "./verify.js";
+import type { Plan } from "./plan.js";
 import { canonCity } from "../place.js";
 import { sameSite } from "../intent-router.js";
 import { legalSiteTarget } from "../brain/understand.js";
@@ -32,8 +33,12 @@ function usedStepIds(findings: StepFinding[]): Set<string> {
 }
 
 /** 对照缺块挑一手。排除的块不查；用户说先做的优先。启发式兜底用。 */
-export function suggestNextStep(goal: AgentGoal, findings: StepFinding[]): AgentStep | undefined {
-  const verdict = verifyContracts(goal, findings);
+export function suggestNextStep(
+  goal: AgentGoal,
+  findings: StepFinding[],
+  plan?: Plan,
+): AgentStep | undefined {
+  const verdict = verifyContracts(goal, findings, { plan });
   const excluded = new Set<string>(goal.known.exclude || []);
   const prefer = goal.known.prefer || [];
   const missing = verdict.missing.filter((id) => id !== "answer" && !excluded.has(id));
@@ -258,6 +263,7 @@ export function nextThought(input: {
   synthesized?: string;
   nudge?: AgentStep;
   pageUrl?: string;
+  plan?: Plan;
 }): Thought {
   const dels = input.goal.deliverables.filter((d) => d.required).map((d) => d.id);
   const base = {
@@ -275,20 +281,37 @@ export function nextThought(input: {
   if (forced) {
     return { ...base, next: forced, why: "目标站点与当前页不符，先打开该站。" };
   }
-  const verdict = verifyContracts(input.goal, input.findings, { synthesized: input.synthesized });
+  const verdict = verifyContracts(input.goal, input.findings, {
+    synthesized: input.synthesized,
+    plan: input.plan,
+  });
   if (verdict.complete) {
     return { ...base, synthesize: true, why: "交付物已齐，汇总。" };
   }
   const seen = new Set(input.findings.map((f) => f.step.id));
   let next =
     (input.nudge && !seen.has(input.nudge.id) ? input.nudge : undefined) ||
-    suggestNextStep(input.goal, input.findings);
+    suggestNextStep(input.goal, input.findings, input.plan);
   // answer-only 单：suggestNextStep 把 answer 当兜底过滤了，这里手动挑一只 cover answer 的手
   if (!next && !verdict.complete) {
     const answerHand = compileHands(input.goal).find(
       (s) => s.covers.includes("answer") && !seen.has(s.id),
     );
     if (answerHand) next = answerHand;
+  }
+  // 交付块看似齐了（模型编的步把 covers 写宽了），但计划里的采集步还没跑完：按计划继续。
+  // 失败步不抵扣，连续失败由循环的 stall 计数收摊，这里不重复设闸。
+  if (!next && !verdict.complete) {
+    const unmet = unmetPlanSteps(input.plan, input.findings);
+    if (unmet.length) {
+      // unmet 只含采集 cap（read_page/search_read/navigate/act），都在 LoopCap 里。
+      const step = unmet[0];
+      return {
+        ...base,
+        next: { ...step, cap: step.cap as LoopCap, covers: step.covers as AgentStep["covers"] },
+        why: "计划里还有没做完的步，先做完再汇总。",
+      };
+    }
   }
   if (!next) {
     return { ...base, synthesize: true, why: verdict.notes };
@@ -402,7 +425,7 @@ export function reasonerPromptV2(goal: AgentGoal, findings: StepFinding[], pageU
     "原则：",
     "- 不要把任务推回给用户。能动手就动手。除非真缺合法空槽（出发地、日期、人数等），才输出 ask。",
     "- 硬规则：目标点名了站点（见「目标站点」）而当前页域名不是它，第一步 next 必须是 navigate，query 用该站 URL。不许在错页上读页、搜索或汇总，也不许写「为什么做不了」。解释为什么做不了永远不是交付。",
-    "- 交付物都齐了就输出 synthesize: true。人还停在别的网站上时不许 synthesize。",
+    "- 交付物都齐了就输出 synthesize: true。人还停在别的网站上时不许 synthesize。「还缺」非空也不许 synthesize——那是没做完，继续给 next；真做不了就 ask，不许收摊。",
     "- cap 只能用：trip_plan / hotel_search / flight_search / train_search / search_read / video_search / read_page / fill_form / mission / feishu / run_skill / reply_draft / print / navigate / act / synthesize。",
     "- covers 用交付物 id：stay food sights itinerary flights trains report page form video answer。",
     "- site 只能用：酒店 ctrip/tuniu/booking/airbnb，机票 ctrip/qunar/kayak/gflights，检索 baidu/bing，火车 12306/ctrip。用户点名的站不要换。",
@@ -437,6 +460,7 @@ export async function nextThoughtAsync(
     nudge?: AgentStep;
     pageUrl?: string;
     skills?: string;
+    plan?: Plan;
   },
   complete?: (prompt: string) => Promise<string>,
 ): Promise<Thought> {
@@ -450,6 +474,20 @@ export async function nextThoughtAsync(
       await complete(reasonerPromptV2(input.goal, input.findings, input.pageUrl, input.skills)),
     );
     const modelThought = applyModelPick(heuristic, parsed);
+    // 模型说收摊，但必须交付的还没齐：不透传，按本地的 next 继续做。
+    // 走到这里说明本地还有 next（本地想收摊的话上面已经提前返回了）。
+    if (
+      modelThought.synthesize &&
+      !verifyContracts(input.goal, input.findings, {
+        synthesized: input.synthesized,
+        plan: input.plan,
+      }).complete
+    ) {
+      return {
+        ...heuristic,
+        why: `模型想收摊（${parsed?.why ? String(parsed.why).slice(0, 60) : "没给理由"}），但还缺必须交付，继续做。`,
+      };
+    }
     // 模型选了 trip_plan / mission / run_skill 但 step 里缺执行数据
     //（applyModelPick 不带 trip/mission/action）→ 从 compileHands 里补
     const ns = modelThought.next;
