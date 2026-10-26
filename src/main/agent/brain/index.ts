@@ -2,6 +2,7 @@ export {
   understand,
   understandLocal,
   understandPrompt,
+  wantsCollectScale,
   parseUnderstandJson,
   mergeUnderstanding,
   splitHeard,
