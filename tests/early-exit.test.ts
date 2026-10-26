@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { earlyExitMayCloseDone } from "../src/main/agent/kernel/verify.js";
-import { openSiteIsTheJob, userDidNotAskToRead } from "../src/main/agent/kernel/reasoner.js";
+import { loginRedirectNote, openSiteIsTheJob, userDidNotAskToRead } from "../src/main/agent/kernel/reasoner.js";
 import type { AgentGoal, DeliverableId, StepFinding } from "../src/main/agent/loop.js";
 import type { Plan } from "../src/main/agent/kernel/plan.js";
 
@@ -60,5 +60,23 @@ describe("早退旁路不许在未交付时 close(done)", () => {
       ok: true,
     };
     expect(earlyExitMayCloseDone(goal(["page"]), [finding], donePlan)).toBe(true);
+  });
+
+  it("登录落地收工：采集单误入登录流程也不许假 done", () => {
+    const loginFindings: StepFinding[] = [
+      {
+        step: {
+          id: "n0",
+          cap: "navigate",
+          label: "打开登录页",
+          covers: ["page"],
+          query: "https://weibo.com/login.php",
+        },
+        text: "站点跳回站内",
+        ok: true,
+      },
+    ];
+    expect(loginRedirectNote(goal(["form", "page"]), loginFindings)).toContain("没有停在登录墙");
+    expect(earlyExitMayCloseDone(goal(["form", "page"]), loginFindings, plan("done"))).toBe(false);
   });
 });
