@@ -8,6 +8,7 @@ import {
   readPageInstruction,
   leftoverAfterOpen,
   extractFirstHttpUrl,
+  isShortAffirmative,
 } from "../src/main/agent/intent-router.js";
 import { mutationsToSteps, shouldSkipRemember } from "../src/main/agent/remember.js";
 
@@ -66,6 +67,22 @@ describe("parseLocalIntent site routing", () => {
     if (a.type === "navigate") {
       expect(a.url).toContain("weibo.com");
     }
+  });
+
+  it("短促肯定答复只认全句，带宾语的任务句不认", () => {
+    expect(isShortAffirmative("打开")).toBe(true);
+    expect(isShortAffirmative(" 好 ")).toBe(true);
+    expect(isShortAffirmative("要")).toBe(true);
+    expect(isShortAffirmative("可以的")).toBe(true);
+    expect(isShortAffirmative("继续吧")).toBe(true);
+    expect(isShortAffirmative("ok")).toBe(true);
+    expect(isShortAffirmative("打开微博")).toBe(false);
+    expect(isShortAffirmative("打开B站")).toBe(false);
+    expect(isShortAffirmative("帮我打开微博")).toBe(false);
+    expect(isShortAffirmative("好，帮我打开微博")).toBe(false);
+    expect(isShortAffirmative("不用")).toBe(false);
+    expect(isShortAffirmative("算了")).toBe(false);
+    expect(isShortAffirmative("")).toBe(false);
   });
 
   it("打开百度，搜天气 keeps the search half", () => {
