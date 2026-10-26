@@ -64,6 +64,8 @@ export type Understanding = {
   siteUrl?: string;
   /** 大脑判断这句有没有被现有妙招/流水线覆盖。只在有模型时出现。 */
   coverage?: "covered" | "new";
+  /** 采集规模句打回重判一次后仍无 report。上层只记日志，不改写交付物。 */
+  rejudgeFailed?: boolean;
 };
 
 /**
@@ -394,6 +396,36 @@ export function mergeUnderstanding(
   };
 }
 
+/**
+ * 采集规模：N 条 / 全部 / 逐条 / 上百条，以及「N 天」再加采集对象。
+ * 单独的「玩 N 天」是行程天数，不在这里打回。只决定要不要重判，不改写交付物。
+ */
+const COLLECT_COUNT = /上百条|逐条|全部|(?:\d+|[一二三四五六七八九十百两]+)\s*条/;
+const COLLECT_DAYS = /(?:\d+|[一二三四五六七八九十百两]+)\s*天/;
+const COLLECT_OBJECT = /复制|采集|逐条|微博|帖子|博文|笔记|评论|内容/;
+
+export function wantsCollectScale(text: string): boolean {
+  if (COLLECT_COUNT.test(text)) return true;
+  return COLLECT_DAYS.test(text) && COLLECT_OBJECT.test(text);
+}
+
+const COLLECT_REJUDGE_HINT = "用户要的是可翻阅的产物，不是填表。";
+
+async function hearOnce(
+  local: Understanding,
+  text: string,
+  prompt: string,
+  complete: (prompt: string) => Promise<string>,
+): Promise<Understanding | null> {
+  try {
+    const parsed = parseUnderstandJson(await complete(prompt));
+    if (parsed) return mergeUnderstanding(local, parsed, text);
+  } catch {
+    /* 这一问失败，交给调用方决定是否再问一次 */
+  }
+  return null;
+}
+
 export async function understand(
   text: string,
   ctx?: { homeCity?: string; now?: Date; last?: Brief; page?: { url?: string; title?: string }; skills?: string },
@@ -401,11 +433,13 @@ export async function understand(
 ): Promise<Understanding> {
   const local = understandLocal(text, ctx);
   if (!complete) return local;
-  try {
-    const parsed = parseUnderstandJson(await complete(understandPrompt(text, ctx)));
-    if (parsed) return mergeUnderstanding(local, parsed, text);
-  } catch {
-    /* 模型失败用本地理解 */
+  const prompt = understandPrompt(text, ctx);
+  const first = await hearOnce(local, text, prompt, complete);
+  const merged = first ?? local;
+  if (!wantsCollectScale(text) || merged.deliverables.includes("report")) return merged;
+  const second = await hearOnce(local, text, `${prompt}\n${COLLECT_REJUDGE_HINT}`, complete);
+  if (!second || !second.deliverables.includes("report")) {
+    return { ...(second ?? merged), rejudgeFailed: true };
   }
-  return local;
+  return second;
 }

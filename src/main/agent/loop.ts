@@ -465,6 +465,9 @@ export async function analyzeGoal(
   try {
     const skills = configDir ? skillCatalogLines(configDir) : "";
     const heard = await understand(text, { ...ctx, skills }, complete);
+    if (heard.rejudgeFailed) {
+      console.warn("[understand] 采集规模句回炉后仍无 report", text.slice(0, 80));
+    }
     const merged = applyHeardSite(
       mergeAnalyze(heuristic, {
       intent: heard.heard,
