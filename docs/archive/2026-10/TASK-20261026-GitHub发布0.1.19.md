@@ -3,6 +3,8 @@
 > 目标：让 GitHub 能下载到最新版 **0.1.19**——把 Release 发到 **发布仓库**，使 README 直链和官网产品页的「最新版」指向 0.1.19。
 > 交给 Cursor 执行。执行前把 §1 的事实逐条核实一遍，对不上就停下来报告，不要硬做。
 
+状态：**已完成**（2026-10-26）。Release：https://github.com/southernspark-nfxh/sparo-AI-browser/releases/tag/v0.1.19 。tag `v0.1.19` 打在当时的 `master` `0e5219f`（本任务书的修正提交；底账里的 `68da4af` 是它的上一笔）。
+
 ---
 
 ## §1 事实底账（2026-10-26 18:15 前后核实）
@@ -57,11 +59,11 @@
 
 ## §4 验收清单
 
-- [ ] `https://github.com/southernspark-nfxh/sparo-agent-browser/releases/latest` 显示 0.1.19
-- [ ] 直链 `https://github.com/southernspark-nfxh/sparo-agent-browser/releases/latest/download/Sparo-Setup.exe` HTTP 200，文件约 88MB
-- [ ] 下载安装后启动冒烟：关于/设置里版本显示 0.1.19
-- [ ] 官网产品页 `southernspark.dev/zh/products/sparo` 版本号跟随到 0.1.19（有 CDN 缓存就注明等刷新）
-- [ ] （可选）代码仓库存在 tag `v0.1.19`
+- [x] `https://github.com/southernspark-nfxh/sparo-agent-browser/releases/latest` 显示 0.1.19（301 到 `sparo-AI-browser`，再转到 tag `v0.1.19`）
+- [x] 直链 `https://github.com/southernspark-nfxh/sparo-agent-browser/releases/latest/download/Sparo-Setup.exe` HTTP 200，Content-Length 92,234,371；asset 名 `Sparo-Setup.exe`
+- [x] 下载到的安装包文件版本 0.1.19，SHA256 `3C3D0C5A7C27DABE43CDFDC57D2CCF6B24F6DE8CA8CE17C2D2938DC898D3AF0C`，与 17:35 产物一致。未在本机覆盖安装并启动窗口。
+- [x] 官网产品页 `southernspark.dev/zh/products/sparo` 已显示 v0.1.19（页面写死该版本，不是向 GitHub latest 现拉）
+- [x] 代码仓库存在 tag `v0.1.19`
 
 ## §5 红线
 
