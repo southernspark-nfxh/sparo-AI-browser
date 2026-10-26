@@ -166,6 +166,60 @@ describe("coverage", () => {
     );
     expect(goal.decision).not.toBe("propose");
   });
+
+  it("coverage new with a pure synthesize plan still proposes, handbook falls back", async () => {
+    const goal = await analyzeGoal("帮我设计一个密室逃脱的三道谜题，要环环相扣", { now: NOW }, async () =>
+      JSON.stringify({
+        heard: "设计三道密室谜题",
+        ingest: "new",
+        coverage: "new",
+        deliverables: ["answer"],
+        plan: [
+          { cap: "synthesize", covers: ["answer"], label: "设计谜题一" },
+          { cap: "synthesize", covers: ["answer"], label: "设计谜题二" },
+        ],
+      }),
+    );
+    expect(goal.decision).toBe("propose");
+    expect(goal.needsConfirm).toBe(true);
+    expect(goal.coverage).toBe("new");
+    expect(goal.approach).toContain("1. 设计谜题一");
+    expect(goal.approach).toContain("2. 设计谜题二");
+    expect(goal.handbook?.length).toBeGreaterThan(0);
+  });
+
+  it("coverage new with a mixed plan proposes, handbook keeps only the legal steps", async () => {
+    const goal = await analyzeGoal("打开网易云音乐，帮我建一个适合跑步听的歌单", { now: NOW }, async () =>
+      JSON.stringify({
+        heard: "建跑步歌单",
+        ingest: "new",
+        coverage: "new",
+        deliverables: ["answer"],
+        plan: [
+          { cap: "navigate", covers: ["answer"], label: "打开网易云", query: "https://music.163.com" },
+          { cap: "synthesize", covers: ["answer"], label: "编歌单" },
+        ],
+      }),
+    );
+    expect(goal.decision).toBe("propose");
+    expect(goal.coverage).toBe("new");
+    expect(goal.handbook?.some((s) => s.cap === "navigate")).toBe(true);
+    expect(goal.handbook?.some((s) => s.cap === "synthesize")).toBe(false);
+  });
+
+  it("coverage covered with an all-synthesize plan stays silent", async () => {
+    const goal = await analyzeGoal("帮我核对电费通知单上的户号", { now: NOW }, async () =>
+      JSON.stringify({
+        heard: "核对电费户号",
+        coverage: "covered",
+        deliverables: ["answer"],
+        plan: [{ cap: "synthesize", covers: ["answer"], label: "直接答" }],
+      }),
+    );
+    expect(goal.decision).not.toBe("propose");
+    expect(goal.coverage).toBeUndefined();
+    expect(goal.handbook).toBeUndefined();
+  });
 });
 
 describe("hotel-only", () => {
