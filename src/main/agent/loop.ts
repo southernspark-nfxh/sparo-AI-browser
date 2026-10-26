@@ -479,17 +479,25 @@ export async function analyzeGoal(
     // 模型在 understand 阶段编了 plan：转成 AgentStep[] 写入 handbook，
     // compileHands 会优先用 handbook，否则走本地启发式 fallback。
     if (heard.plan && heard.plan.length > 0) {
+      // 新任务出卡不依赖 mergePlan 结果：纯 synthesize plan（isLegalCap 拒收）也照出。
+      if (heard.coverage === "new") {
+        const handbook = mergePlan(merged, heard.plan);
+        const approach = heard.plan
+          .map((s, i) => `${i + 1}. ${(s.label || s.cap).slice(0, 24)}`)
+          .join("；");
+        return sealWorkOrder(
+          {
+            ...merged,
+            handbook: handbook.length > 0 ? handbook : compileHands(merged),
+            coverage: "new",
+            needsConfirm: true,
+            approach,
+          },
+          { homeCity: ctx.homeCity },
+        );
+      }
       const handbook = mergePlan(merged, heard.plan);
       if (handbook.length > 0) {
-        if (heard.coverage === "new") {
-          const approach = heard.plan
-            .map((s, i) => `${i + 1}. ${(s.label || s.cap).slice(0, 24)}`)
-            .join("；");
-          return sealWorkOrder(
-            { ...merged, handbook, coverage: "new", needsConfirm: true, approach },
-            { homeCity: ctx.homeCity },
-          );
-        }
         return { ...merged, handbook, coverage: "covered" };
       }
     }
@@ -660,6 +668,7 @@ export function planForGoal(goal: AgentGoal): AgentStep[] {
  * 模型在 understand 阶段编的 PlanStep[] → AgentStep[]。
  * 校验：cap ∈ LOOP_CAP_SET、covers ⊆ DELIVERABLE_IDS。site 不校验（留给 composeStep/caps 执行层）。
  * 模型乱编的 cap/covers 直接丢弃；空数组返回，调用方走 compileHands fallback。
+ * 出卡不依赖本函数结果：纯 synthesize plan 也会出卡（analyzeGoal 的 coverage:"new" 分支在 mergePlan 之前）。
  */
 /** 校验模型编的 cap 合法：在 LOOP_CAP_SET 且不是 synthesize（synthesize 是终止信号不是手）。 */
 export function isLegalCap(cap: string): boolean {
