@@ -17,7 +17,7 @@ import { join, resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { pageViewCoversChrome } from "./page-bounds.js";
+import { pageViewCoversChrome, resetChromeCoverBudget, takeChromeCoverFix, type ChromeCoverBudget } from "./page-bounds.js";
 import { laneForText, type TaskLane } from "./agent/task-class.js";
 import { shouldSuspend as poolShouldSuspend, TaskPool, type PoolTask } from "./agent/task-pool.js";
 import type {
@@ -928,7 +928,10 @@ export class SparkBrowser {
       .then(() => this.pushSidebarState());
     this.chatLog = loadChatMemory(this.configDir());
     this.offerMissionRecovery();
-    this.window.on("resize", () => this.layout());
+    this.window.on("resize", () => {
+      this.chromeCover = resetChromeCoverBudget(Date.now());
+      this.layout();
+    });
     this.window.on("maximize", () => this.layout());
     this.window.on("unmaximize", () => this.layout());
     this.window.on("enter-full-screen", () => this.layout());
@@ -936,7 +939,9 @@ export class SparkBrowser {
     // Windows 上最小化→恢复不一定补一次有效 resize（事件可能在尺寸还是 0 时触发）。
     // Electron 没有 unminimize；restore 就是从最小化还原。延迟补排，防止页面视图停在 100px 窄条。
     this.window.on("restore", () => {
+      this.chromeCover = resetChromeCoverBudget(Date.now());
       this.scheduleLayout(150);
+      this.armChromeGuard();
       // 壳层回到前台就恢复节流。Agent 标签是独立 webContents，不受这条影响。
       this.setShellBackgroundThrottling(true);
     });
@@ -1542,6 +1547,8 @@ export class SparkBrowser {
       return;
     }
     this.ensureWindowVisible();
+    this.chromeCover = resetChromeCoverBudget(Date.now());
+    this.armChromeGuard();
   }
 
   /** First show only. Later calls must not center() — that fights the user dragging the window. */
@@ -2241,14 +2248,10 @@ export class SparkBrowser {
       return;
     }
     if (!pageViewCoversChrome(actual, hole)) return;
-    const now = Date.now();
-    if (now - this.chromeCoverWindow > 3000) {
-      this.chromeCoverWindow = now;
-      this.chromeCoverFixes = 0;
-    }
-    this.chromeCoverFixes += 1;
-    if (this.chromeCoverFixes > 8) return;
-    if (this.chromeCoverFixes === 1) {
+    const taken = takeChromeCoverFix(this.chromeCover, Date.now());
+    this.chromeCover = taken.state;
+    if (!taken.allow) return;
+    if (taken.state.fixes === 1) {
       console.warn("[layout] page view covered chrome, restoring page hole");
     }
     this.boundsGuard = true;
@@ -2263,7 +2266,7 @@ export class SparkBrowser {
 
   /** 父布局之后再排几次。拉伸若落在首屏绘制，单次 100ms 补排会错过。 */
   private armChromeGuard(): void {
-    for (const timer of this.chromeGuardTimers) clearTimeout(timer);
+    for (const timer of this.chromeGuardTimers || []) clearTimeout(timer);
     this.chromeGuardTimers = [100, 450, 1200, 2500].map((delay) =>
       setTimeout(() => {
         if (this.window.isDestroyed()) return;
@@ -2326,8 +2329,7 @@ export class SparkBrowser {
   private layoutTimer: ReturnType<typeof setTimeout> | null = null;
   private chromeGuardTimers: ReturnType<typeof setTimeout>[] = [];
   private boundsGuard = false;
-  private chromeCoverFixes = 0;
-  private chromeCoverWindow = 0;
+  private chromeCover: ChromeCoverBudget = { windowStart: 0, fixes: 0 };
   /** 向 shell 要一次最新的 page-hole 测量（恢复过渡的回调可能丢过）。 */
   private requestHoleReport(): void {
     try {
