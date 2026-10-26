@@ -1,16 +1,16 @@
 # Sparo 现行产品任务书
 
-> 持续更新。与原版 **同一份正文**，便于两边对照。上一版见 [PRODUCT-TASKBOOK-20260811.md](./PRODUCT-TASKBOOK-20260811.md)。  
+> 持续更新。与原版 **同一份正文**，便于两边对照。上一版见 [archive/2026-08/PRODUCT-TASKBOOK-20260811.md](./archive/2026-08/PRODUCT-TASKBOOK-20260811.md)。  
 > 版本：**v0.3.7 · 2026-10-26**（对外包 **0.1.19**）  
 > 状态：**进行中**（云订阅 M1 代码已落地并人测过登录/付款；上架未完；飞书网页已做；侧栏大脑已让模型编手；10-26 采集闭环与白屏四修已进代码并打包）  
 > 产品文案仍以 [PRODUCT.md](./PRODUCT.md) 为准，不要把任务书当商店上架稿。  
 > 先读：[ARCHITECTURE.md](./ARCHITECTURE.md) · [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) · [CHANGELOG.md](../CHANGELOG.md) 0.1.19 · 根目录 [AGENTS.md](../AGENTS.md)
 >
-> **大脑进度（0.1.19）：** 听整句、站点表换站、模型编 `handbook` / 写下一步已进代码。10-26 起任务循环硬规则：新任务出确认卡、关单必有声、跑完计划步才许收摊、挂起答复接得回。`absorb`（页上价格对约束）未开工。9 月交接稿见 [TRAE-PROMPT-AGENT-BRAIN.md](./TRAE-PROMPT-AGENT-BRAIN.md)，以 changelog 和测试为准。
+> **大脑进度（0.1.19）：** 听整句、站点表换站、模型编 `handbook` / 写下一步已进代码。10-26 起任务循环硬规则：新任务出确认卡、关单必有声、跑完计划步才许收摊、挂起答复接得回。`absorb`（页上价格对约束）未开工。9 月交接稿见 [archive/2026-09/TRAE-PROMPT-AGENT-BRAIN.md](./archive/2026-09/TRAE-PROMPT-AGENT-BRAIN.md)，以 changelog 和测试为准。
 
 ## 2026-10-26 已落地（0.1.19 长采集与白屏）
 
-执行任务书：[TASK-20261026-采集闭环与白屏四修任务书.md](./TASK-20261026-采集闭环与白屏四修任务书.md)。对外变更见 [CHANGELOG.md](../CHANGELOG.md) 0.1.19。
+执行任务书：[archive/2026-10/TASK-20261026-采集闭环与白屏四修任务书.md](./archive/2026-10/TASK-20261026-采集闭环与白屏四修任务书.md)。对外变更见 [CHANGELOG.md](../CHANGELOG.md) 0.1.19。
 
 - 新任务先出**解题思路卡**，用户确认才开工（纯 synthesize 计划也出卡）
 - 长采集滚动翻页：`page_text` 从第二次起带「较上次 +N 字」，+0 换策略不连按；重复工具被掐断后，掐断句回流大脑换打法
@@ -554,4 +554,4 @@ RAG是什么 打开百度百科和知乎做成笔记
 | [UNIVERSAL-ANALYZER.md](./UNIVERSAL-ANALYZER.md) | 填表 / 日历 |
 | [CUSTOMER-SERVICE.md](./CUSTOMER-SERVICE.md) | 客服半自动 |
 | [MCP-API.md](./MCP-API.md) | 工具表 |
-| [PRODUCT-TASKBOOK-20260811.md](./PRODUCT-TASKBOOK-20260811.md) | 8 月归档 |
+| [archive/](./archive/) | 过期任务书、BUG 底稿、交接稿按月归档 |
