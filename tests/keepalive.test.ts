@@ -150,6 +150,7 @@ describe("background tasks do not steal the window", () => {
     const throttle: boolean[] = [];
     const flashes: boolean[] = [];
     const restores: number[] = [];
+    const armed: number[] = [];
     let minimized = true;
     let focused = false;
     browser.chatRunning = false;
@@ -173,11 +174,17 @@ describe("background tasks do not steal the window", () => {
     browser.ensureWindowVisible = () => {
       restores.push(1);
     };
+    browser.chromeGuardTimers = [];
+    browser.chromeCover = { windowStart: 0, fixes: 0 };
+    browser.armChromeGuard = () => {
+      armed.push(1);
+    };
     return {
       browser,
       throttle,
       flashes,
       restores,
+      armed,
       setMinimized: (on: boolean) => {
         minimized = on;
       },
@@ -258,17 +265,19 @@ describe("background tasks do not steal the window", () => {
   });
 
   it("flashes instead of restoring when the shell hangs while minimized", () => {
-    const { browser, flashes, restores } = shell();
+    const { browser, flashes, restores, armed } = shell();
     (browser as unknown as { onShellUnresponsive: () => void }).onShellUnresponsive();
     expect(flashes).toEqual([true]);
     expect(restores).toEqual([]);
+    expect(armed).toEqual([]);
   });
 
   it("still pulls a visible hung shell back on screen", () => {
-    const { browser, flashes, restores, setMinimized } = shell();
+    const { browser, flashes, restores, armed, setMinimized } = shell();
     setMinimized(false);
     (browser as unknown as { onShellUnresponsive: () => void }).onShellUnresponsive();
     expect(flashes).toEqual([]);
     expect(restores).toEqual([1]);
+    expect(armed).toEqual([1]);
   });
 });
