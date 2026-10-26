@@ -113,7 +113,7 @@ const TOOLS = [
     function: {
       name: "page_text",
       description:
-        "Read visible text on the current page (and iframes). Use this to translate, explain, or summarize what the user is looking at. Snapshot is NOT a substitute.",
+        "Read visible text on the current page (and iframes). Use this to translate, explain, or summarize what the user is looking at. Snapshot is NOT a substitute. message 里「较上次 +0 字」表示这一屏没有新内容：换策略，或向用户说明已经采到哪里。不要连按同一个键。",
       parameters: { type: "object", properties: {} },
     },
   },
@@ -422,6 +422,31 @@ function callFingerprint(name: string, args: Record<string, unknown>): string {
   return `${name}:${JSON.stringify(args)}`;
 }
 
+/**
+ * 同一次工具循环里，对比上一份 page_text。
+ * 第一次没有「上次」，不标注。同文本是 +0，变长是 +N。只标注，不决定下一步。
+ */
+export function pageTextGrowthNote(previous: string | undefined, next: string): string | undefined {
+  if (previous === undefined) return undefined;
+  const delta = next.length - previous.length;
+  return `较上次 ${delta < 0 ? String(delta) : `+${delta}`} 字`;
+}
+
+function pageTextBody(data: unknown): string {
+  if (!data || typeof data !== "object") return "";
+  const text = (data as { text?: unknown }).text;
+  return typeof text === "string" ? text : "";
+}
+
+/** 掐断句必须留在返回文本里，这一步的 finding 才带得走。模型后话接在后面。 */
+function withRepeatStop(locale: string | undefined, body: string): string {
+  const stop = tx(locale, "llm.repeatStop");
+  const rest = body.trim();
+  if (!stop) return rest;
+  if (rest.includes(stop)) return rest;
+  return rest ? `${stop}\n\n${rest}` : stop;
+}
+
 export class DeepSeekAgentProvider {
   readonly name = "deepseek";
   lastMutations: Array<{ tool: string; args: Record<string, unknown> }> = [];
@@ -492,15 +517,12 @@ export class DeepSeekAgentProvider {
 
     const toolNotes: string[] = [];
     const recentFingerprints: string[] = [];
+    let lastPageText: string | undefined;
     let rounds = 0;
     for (;;) {
       rounds += 1;
       if (rounds > 16) {
-        return (
-          (tx(ctx.locale, "llm.repeatStop") ||
-            "这一页的控件连试多轮都没走完（常见是城市联想或日期弹层）。请换一种说法，或先点开目标页再让我读结果。") +
-          (toolNotes.length ? "\n\n" + toolNotes.slice(-8).join("\n") : "")
-        );
+        return withRepeatStop(ctx.locale, toolNotes.slice(-8).join("\n"));
       }
       const data = await this.completion(messages, "auto");
       const choice = data?.choices?.[0]?.message as ChatMessage | undefined;
@@ -564,14 +586,21 @@ export class DeepSeekAgentProvider {
         ) {
           this.lastMutations.push({ tool: name, args });
         }
+        let message = result.message;
+        if (name === "page_text" && result.ok) {
+          const text = pageTextBody(result.data);
+          const note = pageTextGrowthNote(lastPageText, text);
+          lastPageText = text;
+          if (note) message = message ? `${message}（${note}）` : note;
+        }
         const payload = truncate(
           JSON.stringify({
             ok: result.ok,
-            message: result.message,
+            message,
             data: result.data ?? undefined,
           }),
         );
-        toolNotes.push(`${name}: ${result.message}`);
+        toolNotes.push(`${name}: ${message}`);
         messages.push({
           role: "tool",
           tool_call_id: call.id,
@@ -581,13 +610,14 @@ export class DeepSeekAgentProvider {
       }
 
       if (repeated) {
+        const stop = tx(ctx.locale, "llm.repeatStop");
         messages.push({
           role: "user",
-          content: tx(ctx.locale, "llm.repeatStop"),
+          content: stop,
         });
         const final = await this.completion(messages, "none");
         const text = contentText(final?.choices?.[0]?.message?.content);
-        return text || toolNotes.slice(-20).join("\n");
+        return withRepeatStop(ctx.locale, text || toolNotes.slice(-20).join("\n"));
       }
     }
   }
