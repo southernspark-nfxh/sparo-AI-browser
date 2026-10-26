@@ -21,8 +21,8 @@
 **敏感内容分布（重点）**：
 
 - 含账号 `[已抹除]`：`QA-PRODUCT-UX-20260913.md`（untracked，**未被 ignore**）
-- 含本机路径 `C:\Users\<用户名数字>\...`：`QA-REPORT-0.1.17.md`（untracked，**未被 ignore**）
-- 含 `C:/Users/<用户名数字>` 的 `scripts/qa-b2-*.json`、`tmp-*.json`：**已被 ignore**，不会进库
+- 含本机路径 `C:\Users\<本机用户名>\...`：`QA-REPORT-0.1.17.md`（untracked，**未被 ignore**）
+- 含 `C:/Users/<本机用户名>` 的 `scripts/qa-b2-*.json`、`tmp-*.json`：**已被 ignore**，不会进库
 - `qa-screenshots/`（含截图与 QA 脚本，脚本里有 token 读取逻辑）：**已被 ignore**
 - `sparo-uiux-qa/screens/` 的截图：文本扫描干净，但截图画面可能含桌面/账号信息，**未见内容审查**
 - 其余 untracked（`docs/BUG-*`、`docs/TASK-*`、`docs/THREE-CHANNEL-DESIGN.md`、`sparo-three-channel/tasks/*`、`sparo-agent-upgrade/tasks/*`、`NOTICE_SKILLS_SYSTEM_FIX_20260913.md`）：文本扫描干净
@@ -152,5 +152,5 @@ gh api "search/code?q=repo:southernspark-nfxh/sparo-AI-browser+<用户名数字>
 - `git log --all -S 'sk-db95102'` → 空；`--diff-filter=A -- settings.json` → 空；`-S 'mcp-auth' -- '*.json'` → 空
 - `git grep`（src/ 与 tests/，模式 `sk-…20+`/`<用户名数字>`/Bearer）→ 零命中
 - docs/、sparo-three-channel/、sparo-agent-upgrade/、NOTICE_* 文本扫描 → 零命中
-- QA-PRODUCT-UX-20260913.md:45 含 `[已抹除]`；QA-REPORT-0.1.17.md:259,295-296 含 `C:\Users\<用户名数字>` 路径
-- scripts/qa-*.json、tmp-*.json 含 `C:/Users/<用户名数字>`，但均在 ignore 内
+- QA-PRODUCT-UX-20260913.md:45 含 `[已抹除]`；QA-REPORT-0.1.17.md:259,295-296 含 `C:\Users\<本机用户名>` 路径
+- scripts/qa-*.json、tmp-*.json 含 `C:/Users/<本机用户名>`，但均在 ignore 内
