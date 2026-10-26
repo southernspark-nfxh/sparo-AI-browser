@@ -40,6 +40,10 @@ scripts/__pycache__/
 **/__pycache__/
 .github/qa-notes/
 
+# Root QA reports with local account/paths — never publish
+/QA-*.md
+/sparo-uiux-qa/
+
 # Runtime browser profile — lives in %APPDATA%/sparo-store, not this repo
 sessions.json
 bookmarks.json
