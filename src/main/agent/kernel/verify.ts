@@ -3,6 +3,7 @@
  * 语义判断（这页是不是真的有餐厅、价格对不对、酒店页上的餐厅算不算）交给模型在 reconsider 阶段判。
  */
 import type { DeliverableId, AgentGoal, StepFinding, VerifyResult } from "../loop.js";
+import { sameSite } from "../intent-router.js";
 import type { Plan, PlanStep } from "./plan.js";
 
 const COLLECTION_CAPS = new Set(["read_page", "search_read", "navigate", "act"]);
@@ -96,7 +97,35 @@ export function publishReceipt(findings: StepFinding[]): boolean {
   );
 }
 
-/** 计划里的采集步必须有对应的成功观察。一步发现只能抵一步。 */
+function compactLedger(text: string): string {
+  const raw = String(text || "");
+  let decoded = raw;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    decoded = raw;
+  }
+  return decoded.replace(/\s+/g, "");
+}
+
+/** 计划步标签里有一段连续 4 字，出现在这条成功发现的流水里。 */
+function labelInFinding(label: string, finding: StepFinding): boolean {
+  const needle = compactLedger(label);
+  if (needle.length < 4) return false;
+  const hay = compactLedger(
+    [finding.step.label, finding.step.query, finding.url, String(finding.text || "").slice(0, 400)].join(
+      "\n",
+    ),
+  );
+  for (let n = Math.min(12, needle.length); n >= 4; n--) {
+    for (let i = 0; i <= needle.length - n; i++) {
+      if (hay.includes(needle.slice(i, i + n))) return true;
+    }
+  }
+  return false;
+}
+
+/** 计划里的采集步必须有对应的成功观察。同 cap 一步发现只能抵一步；流水对得上的可以共用一条发现。 */
 export function unmetPlanSteps(plan: Plan | undefined, findings: StepFinding[]): PlanStep[] {
   const steps = (plan?.steps || []).filter(
     (step) => step.status !== "skipped" && COLLECTION_CAPS.has(step.cap),
@@ -121,15 +150,23 @@ export function unmetPlanSteps(plan: Plan | undefined, findings: StepFinding[]):
       used.add(capOnly);
       continue;
     }
+    if (findings.some((finding) => finding.ok && labelInFinding(step.label, finding))) continue;
     missing.push(step);
   }
   return missing;
 }
 
+/** 点了目标站、当前页却在别的站：不许 done。没点站点或还不知道当前页时不拦。 */
+export function pageBlocksDone(goal: { site?: string; siteUrl?: string }, pageUrl?: string): boolean {
+  const target = goal.siteUrl || (goal.site ? `https://${goal.site}/` : "");
+  if (!target || !pageUrl) return false;
+  return !sameSite(pageUrl, target);
+}
+
 export function verifyContracts(
   goal: AgentGoal,
   findings: StepFinding[],
-  opts?: { synthesized?: string; plan?: Plan },
+  opts?: { synthesized?: string; plan?: Plan; pageUrl?: string },
 ): VerifyResult {
   const required = goal.deliverables.filter((d) => d.required).map((d) => d.id);
   const covered: DeliverableId[] = [];
@@ -166,9 +203,11 @@ export function verifyContracts(
   const stepNote = !settled && unmet.length
     ? `计划里这些步还没执行：${unmet.map((step) => step.label).join("、")}`
     : "";
-  const notes = [deliverNote, stepNote].filter(Boolean).join(" ");
+  const offSite = pageBlocksDone(goal, opts?.pageUrl);
+  const offNote = offSite ? "当前页不是目标站点，不能当这单做完。" : "";
+  const notes = [offNote, deliverNote, stepNote].filter(Boolean).join(" ");
   return {
-    complete: missing.length === 0 && (unmet.length === 0 || settled),
+    complete: !offSite && missing.length === 0 && (unmet.length === 0 || settled),
     covered,
     missing,
     notes: notes || "交付物已齐。",

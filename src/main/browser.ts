@@ -60,6 +60,7 @@ import {
   thoughtForAsync,
   verifyContracts,
   earlyExitMayCloseDone,
+  pageBlocksDone,
   type ActiveMission,
   type Thought,
 } from "./agent/kernel/index.js";
@@ -5567,7 +5568,11 @@ export class SparkBrowser {
           if (!isLoginWall(afterLand) && !isCaptchaWall(afterLand) && !(landing && "done" in landing)) {
             const redirected = loginRedirectNote(live, findings);
             // 登录落地收工同样过清点：采集单误入这段流程时，还有没交的就不许假 done。
-            if (redirected && earlyExitMayCloseDone(live, findings, current.brainPlan)) {
+            if (
+              redirected &&
+              !pageBlocksDone(live, this.getUrl(tabId)) &&
+              earlyExitMayCloseDone(live, findings, current.brainPlan)
+            ) {
               current.findings = findings;
               if (current.brainPlan) current.brainPlan = closePlan(current.brainPlan, true);
               current.state = "done";
@@ -5606,6 +5611,7 @@ export class SparkBrowser {
       if (
         userDidNotAskToRead(live) &&
         (live.site || onlyOpened) &&
+        !pageBlocksDone(live, this.getUrl(tabId)) &&
         earlyExitMayCloseDone(live, findings, current.brainPlan)
       ) {
         const reply = live.site ? `已打开 ${live.site}。` : "页面已打开。";
@@ -5676,7 +5682,11 @@ export class SparkBrowser {
         );
         if (direct.trim()) synthesized = direct.trim();
       }
-      const verify = verifyContracts(live, findings, { synthesized, plan: current.brainPlan });
+      const verify = verifyContracts(live, findings, {
+        synthesized,
+        plan: current.brainPlan,
+        pageUrl: this.getUrl(tabId),
+      });
       try {
         writeExperience(this.configDir(), reviewLesson(live, verify, ran.length ? ran : compileHands(live)));
       } catch {
