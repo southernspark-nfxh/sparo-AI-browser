@@ -18,6 +18,8 @@ Tagline: *会动手的 AI 浏览器 — 发送前你确认。*
 | [docs/SKILL-FORMAT.md](./docs/SKILL-FORMAT.md) | 技能包命名与字段（本机 `run_skill`，以后才分享） |
 | [docs/THREE-CHANNEL-DESIGN.md](./docs/THREE-CHANNEL-DESIGN.md) | 三通道架构（**设计稿，未开工**，评审后按分期落地） |
 | [docs/PRODUCT-TASKBOOK.md](./docs/PRODUCT-TASKBOOK.md) | 现行任务、QA、待办（v0.3.7） |
+| [docs/DECISION-POINTS.md](./docs/DECISION-POINTS.md) | 能提前结束任务的本地判断，先登记再合码 |
+| [docs/QA-GOLDEN-SCENARIOS.md](./docs/QA-GOLDEN-SCENARIOS.md) | 黄金场景，用底账核对，不看侧栏感觉 |
 | [CHANGELOG.md](./CHANGELOG.md) | 对外变更（现 0.1.19） |
 | [docs/PRODUCT.md](./docs/PRODUCT.md) | 商店定位，不是任务书 |
 
@@ -67,3 +69,5 @@ Life query: 侧栏原句（打开站点 + 后半句；酒店/机票/火车/路�
 - Shipping store-channel builds that mention prices / payment UI
 - Telling end users to `npm run start`
 - 改完侧栏/引导就喊人测；自己没点过的按钮不要当完成
+- 新增会提前结束任务、绕过脑区或改走向的本地判断，却没先写进 `docs/DECISION-POINTS.md`
+- 用单测绿代替黄金场景；重打包前不跑受影响场景。安装包至少复测 G1、G2、G3（见 `docs/QA-GOLDEN-SCENARIOS.md`）
