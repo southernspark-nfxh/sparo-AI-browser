@@ -162,7 +162,7 @@ describe("推理器：模型自己挑下一步，本地最小校验", () => {
         { id: "p2", label: "读取近3天微博", cap: "read_page", covers: ["page"], status: "pending" },
       ],
     };
-    // 模型编的 act 步把 covers 写宽：page 和 form 一起认领，跑完一步后 missing 为空
+    // 模型编的 act 步把 covers 写宽：阅读页不能把 form 抵掉，也不许就此收摊。
     const findings: StepFinding[] = [
       {
         step: { id: "act-1", cap: "act", label: "搜索并打开主页", covers: ["page", "form"] },
@@ -176,8 +176,8 @@ describe("推理器：模型自己挑下一步，本地最小校验", () => {
       async () => '{"synthesize":true,"why":"都齐了"}',
     );
     expect(thought.synthesize).toBeUndefined();
-    expect(thought.next?.id).toBe("p0");
-    expect(thought.why).toContain("继续做");
+    expect(thought.next?.covers).toContain("form");
+    expect(thought.why).not.toContain("交付物已齐");
   });
 
   it("nextThoughtAsync 启发式已 synthesize 时不调模型", async () => {

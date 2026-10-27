@@ -97,6 +97,20 @@ export function publishReceipt(findings: StepFinding[]): boolean {
   );
 }
 
+/** 填表/发布手动作之后读回输入框，确认里面有字。空读回和阅读页都不算填上。 */
+export function formReadback(findings: StepFinding[]): boolean {
+  return findings.some((f) => {
+    if (!f.ok) return false;
+    const text = String(f.text || "").trim();
+    if (!/回读确认/.test(text)) return false;
+    return !/不匹配|没填|未填|为空|未生成/.test(text);
+  });
+}
+
+function formDelivered(findings: StepFinding[]): boolean {
+  return publishReceipt(findings) || formReadback(findings);
+}
+
 function compactLedger(text: string): string {
   const raw = String(text || "");
   let decoded = raw;
@@ -187,8 +201,8 @@ export function verifyContracts(
       if (synth.length > 20 || findings.some((f) => f.ok && f.text.length > 20)) covered.push(id);
       continue;
     }
-    if (id === "form" && publishReceipt(findings)) {
-      covered.push(id);
+    if (id === "form") {
+      if (formDelivered(findings)) covered.push(id);
       continue;
     }
     if (findings.some((f) => observationCovers(f, id))) {
@@ -197,9 +211,11 @@ export function verifyContracts(
   }
   const missing = required.filter((id) => !covered.includes(id));
   const unmet = unmetPlanSteps(opts?.plan, findings);
-  // 发布回执已经齐了：剩下的计划步是漫游，不再挡住关单。
-  const settled = required.includes("form") && publishReceipt(findings) && missing.length === 0;
-  const deliverNote = missing.length ? `还缺：${missing.map((id) => LABEL[id]).join("、")}` : "";
+  // 发布回执或读回确认已经齐了：剩下的计划步是漫游，不再挡住关单。
+  const settled = required.includes("form") && formDelivered(findings) && missing.length === 0;
+  const deliverNote = missing.length
+    ? `还缺：${missing.map((id) => (id === "form" ? "没填进发布框" : LABEL[id])).join("、")}`
+    : "";
   const stepNote = !settled && unmet.length
     ? `计划里这些步还没执行：${unmet.map((step) => step.label).join("、")}`
     : "";
