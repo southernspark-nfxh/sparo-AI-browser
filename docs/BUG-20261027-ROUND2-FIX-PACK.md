@@ -13,11 +13,10 @@ R1 无手漏网 > R2 假 done > R3 继续不续跑 > R4 弹前台 > R5 微博链
 
 ## R1. 缺参/无手的步仍在进循环（F1 漏网面）
 
-- 症状：五笔修复的 F1（`03877ad`）只拦住「cap 完全无分支」；**参数缺失的合法 cap**（navigate 没目标、train_search 缺参数）仍漏进循环，执行时才报「这一步没有对应的手」。
-- 证据：S7 去程 `train_search ok=false`；批次外 15:36 两次 `cap=navigate ok=False :: 这一步没有对应的手`。
-- 修法：计划层校验（loop.ts `stepCanRun` 镜像处）补齐**每个 cap 的必填参数校验**，与执行层手的真实要求对齐（navigate 必须有 site/url、search_read 必须有 query、train_search 必须有起讫+日期……）；缺参 → 计划层打回重出一次；二次仍缺 → 说人话拒单。执行层遇无手仍是最后防线。
-- 注意：必填清单从执行层现有分支的参数检查里**收集**，不新造第三套。
-- 测试：navigate 无 url、search_read 无 query、train_search 缺日期三条计划层打回用例；合法参数不受影响回归。
+- 症状：`stepCanRun` 已经在查必填，但和 `runLoopStep` 不是同一套，所以「计划层说能跑、执行层说没手」。
+- 证据：S7 去程 `m-mvqcuzkq-3vsuv`。步是 `train_search`，query「11月6日北京到南京高铁时刻与价格」，`city=南京`，没有 from/to/date。原话已知 `start=2026-11-07`、没有出发地。正则左边「日北京」能被 `canonCity` 收成北京（`endsWith("北京")`），右边「南京高铁时刻与价」被 `plausiblePlace` 的排除词「高铁」挡掉。整对因此不覆盖，出发地字段仍是空的，腿为 null。旧的 `stepCanRun` 不要求这对词是城市，看见 `known.start` 就放行，进循环后才报「这一步没有对应的手」。随后那次带空格的「北京到南京」才组得出腿，日期用的是酒店入住日 11 月 7 日。日期回落另见 `BUG-20261027-TRAVEL-DATE-FALLBACK.md`，不在 R1 里修。
+- 修法：机票/高铁只留 `travelSearchLeg` 一套。日期用 `step.date`，没有再用 `known.start`。查询里的城市必须过同一套地名校验。组不出腿，`stepCanRun` 为假，走现有拒收，不进 `runLoopStep`。`navigate` 用 `navigateTarget`：query 为空但标签本身是网址（登陆微博那步标签是 `https://weibo.com/login.php`、query 丢了）也算有手，执行层打开这个网址。不新造第三套必填清单，也不另开一轮模型重试。
+- 测试：S7 这步计划层打回；「北京到南京」加 `step.date` 能组腿；from/to 在字段上、日期只在 `known.start` 也能组腿；navigate 标签是网址则放行，普通中文标签不放行。
 
 ## R2. 假 done 两种收口
 
@@ -29,7 +28,7 @@ R1 无手漏网 > R2 假 done > R3 继续不续跑 > R4 弹前台 > R5 微博链
 ## R3. 「继续」不续跑，重问要不要打开站点
 
 - 症状：S9 回「继续」，系统又出「要我先打开 ctrip.com 吗？」，不续跑挂起的计划步。上一轮修的短肯定恢复通道只认答复、没接回**未完成的计划步**。
-- 修法：挂起单收到「打开/好/继续」且存在 pending 计划步 → 直接续跑这些步；只有真的没有可续步时才重新提议。AGENTS.md 口径早已写明，这次落到代码。
+- 修法：挂起单收到「打开/好/继续」且存在 pending 计划步 → 直接续跑这些步；只有真的没有可续步时才重新提议。AGENTS.md 口径早已写明，这次落到代码。这句「要我先打开 ctrip.com 吗？」来自 `gateSiteDelivery`（`reasoner.ts`），`browser.ts` 收摊时原样发出。续跑要接着做没完成的步，不要再进这道「还没停在该站就再问一次」。
 - 测试：挂起单 + pending 步 +「继续」→ 下一步是执行步而非再问卡。
 
 ## R4. 最小化后自己弹回前台（UI/壳层，独立 commit）
