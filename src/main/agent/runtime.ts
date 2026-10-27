@@ -37,6 +37,7 @@ import {
   parsePlanJson,
   parsePlanRevision,
   planFromHeuristic,
+  settleTravelPlan,
   planPrompt,
   planRevisionPrompt,
   type Plan,
@@ -382,9 +383,25 @@ function acceptProposal(active: ActiveMission, homeCity?: string, now: Date = ne
   };
 }
 
+function applyTravelSettle<T extends ActiveMission | null | undefined>(mission: T): T {
+  if (!mission?.brainPlan?.steps.length) return mission;
+  const settled = settleTravelPlan(mission.brainPlan, mission.goal, mission.plan || []);
+  const runnableTravel = settled.hands.some((h) => h.cap === "train_search" || h.cap === "flight_search");
+  const askNow = Boolean(settled.ask) && !runnableTravel;
+  return {
+    ...mission,
+    brainPlan: settled.plan,
+    plan: settled.hands,
+    goal: { ...mission.goal, handbook: settled.hands.length ? settled.hands : mission.goal.handbook },
+    state: askNow ? "waiting_human" : mission.state,
+    ask: askNow ? settled.ask : mission.ask,
+  };
+}
+
 function withHeuristicPlan<T extends ActiveMission | null | undefined>(mission: T): T {
-  if (!mission || mission.state !== "running" || mission.brainPlan?.steps.length) return mission;
-  return { ...mission, brainPlan: planFromHeuristic(mission.goal) };
+  if (!mission || mission.state !== "running") return mission;
+  if (mission.brainPlan?.steps.length) return applyTravelSettle(mission);
+  return applyTravelSettle({ ...mission, brainPlan: planFromHeuristic(mission.goal) });
 }
 
 function sealHeuristic(result: TurnResult): TurnResult {
@@ -403,7 +420,7 @@ async function withModelPlan<T extends ActiveMission | null | undefined>(
   if (complete) {
     try {
       const parsed = parsePlanJson(await complete(planPrompt(mission.goal)));
-      if (parsed?.steps.length) return { ...mission, brainPlan: parsed };
+      if (parsed?.steps.length) return applyTravelSettle({ ...mission, brainPlan: parsed });
     } catch {
       /* 断网或超时：下面用本地兜底，任务不卡死 */
     }

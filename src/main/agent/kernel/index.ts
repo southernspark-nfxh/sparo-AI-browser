@@ -23,6 +23,7 @@ export {
   parsePlanJson,
   parsePlanRevision,
   planFromHeuristic,
+  settleTravelPlan,
   planPrompt,
   planRevisionPrompt,
   type Plan,

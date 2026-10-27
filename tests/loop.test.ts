@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseUnderstandJson } from "../src/main/agent/brain/understand.js";
+import { settleTravelPlan, type Plan } from "../src/main/agent/kernel/plan.js";
 import {
   adaptPlan,
   analyzeGoal,
@@ -226,7 +227,9 @@ describe("coverage", () => {
 });
 
 describe("travel leg matches the execution hand", () => {
+  const now = new Date(2026, 9, 27);
   const s7Goal = {
+    raw: "帮我搜一下 11月7日和8日南京的酒店 6日北京到南京高铁时间和价格 8日晚返回北京",
     known: { cities: ["北京", "南京"], start: "2026-11-07", end: "2026-11-08" },
   };
   const s7Step = {
@@ -236,14 +239,28 @@ describe("travel leg matches the execution hand", () => {
     city: "南京",
   };
 
-  it("S7 去程：日期粘在城市上时组不出腿，计划层也不放行", () => {
-    expect(travelSearchLeg(s7Step, s7Goal)).toBeNull();
-    expect(stepCanRun(s7Step, s7Goal)).toBe(false);
+  it("S7 去程：粘在城市上的日期拆成 11 月 6 日，不用入住日", () => {
+    expect(travelSearchLeg(s7Step, s7Goal, now)).toEqual({
+      from: "北京",
+      to: "南京",
+      date: "2026-11-06",
+    });
+    expect(stepCanRun(s7Step, s7Goal)).toBe(true);
+  });
+
+  it("返程从标签拆出 11 月 8 日南京回北京", () => {
+    expect(
+      travelSearchLeg(
+        { cap: "train_search", label: "查11月8日晚南京回北京高铁车次与票价", query: "查11月8日晚南京回北京高铁车次与票价" },
+        s7Goal,
+        now,
+      ),
+    ).toEqual({ from: "南京", to: "北京", date: "2026-11-08" });
   });
 
   it("查询能拆出城市、日期在 step.date 上时，腿和计划层一致", () => {
     const step = { cap: "train_search", query: "北京到南京", date: "2026-11-06" };
-    expect(travelSearchLeg(step, { known: {} })).toEqual({
+    expect(travelSearchLeg(step, { known: {} }, now)).toEqual({
       from: "北京",
       to: "南京",
       date: "2026-11-06",
@@ -251,13 +268,39 @@ describe("travel leg matches the execution hand", () => {
     expect(stepCanRun(step, { known: {} })).toBe(true);
   });
 
-  it("起讫在字段上、日期只在 known.start 时也能组腿", () => {
-    const step = { cap: "flight_search", from: "北京", to: "南京" };
-    expect(travelSearchLeg(step, { known: { start: "2026-11-06" } })).toEqual({
+  it("北京到南京没有本段日期时，不许拿 known.start 组腿", () => {
+    const step = { cap: "train_search", query: "北京到南京", label: "北京到南京" };
+    expect(travelSearchLeg(step, { known: { start: "2026-11-07" } }, now)).toBeNull();
+    expect(stepCanRun(step, { known: { start: "2026-11-07" } })).toBe(false);
+  });
+
+  it("拒收的车次步标 failed 并写缺槽，拆得出的补进手册", () => {
+    const plan: Plan = {
+      createdAt: 1,
+      steps: [
+        { id: "go", label: "查11月6日北京到南京高铁", cap: "train_search", covers: ["trains"], status: "pending" },
+        { id: "bare", label: "查高铁", cap: "train_search", covers: ["trains"], status: "pending" },
+      ],
+    };
+    const goal = {
+      raw: s7Goal.raw,
+      known: s7Goal.known,
+      deliverables: [],
+      intent: "",
+      kind: "travel",
+      decision: "act",
+    } as unknown as AgentGoal;
+    const settled = settleTravelPlan(plan, goal, [], now);
+    expect(settled.hands.find((h) => h.id === "go")).toMatchObject({
       from: "北京",
       to: "南京",
       date: "2026-11-06",
     });
+    expect(settled.plan.steps.find((s) => s.id === "go")?.status).toBe("pending");
+    const bare = settled.plan.steps.find((s) => s.id === "bare");
+    expect(bare?.status).toBe("failed");
+    expect(bare?.note).toMatch(/缺/);
+    expect(settled.ask).toBeTruthy();
   });
 
   it("navigate 没有 query、标签是网址时有手；普通中文标签没有", () => {

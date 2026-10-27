@@ -205,9 +205,16 @@ export function verifyContracts(
     : "";
   const offSite = pageBlocksDone(goal, opts?.pageUrl);
   const offNote = offSite ? "当前页不是目标站点，不能当这单做完。" : "";
-  const notes = [offNote, deliverNote, stepNote].filter(Boolean).join(" ");
+  const failedLegs = (opts?.plan?.steps || []).filter(
+    (step) =>
+      (step.cap === "train_search" || step.cap === "flight_search") &&
+      step.status === "failed" &&
+      step.note,
+  );
+  const legNote = failedLegs.map((step) => `${step.label}：${step.note}`).join(" ");
+  const notes = [offNote, deliverNote, stepNote, legNote].filter(Boolean).join(" ");
   return {
-    complete: !offSite && missing.length === 0 && (unmet.length === 0 || settled),
+    complete: !offSite && failedLegs.length === 0 && missing.length === 0 && (unmet.length === 0 || settled),
     covered,
     missing,
     notes: notes || "交付物已齐。",
