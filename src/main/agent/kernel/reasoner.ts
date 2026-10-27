@@ -4,8 +4,10 @@
  */
 import {
   compileHands,
+  failedSameWay,
   isLegalCap,
   filterLegalCovers,
+  stepCanRun,
   type AgentGoal,
   type AgentStep,
   type DeliverableId,
@@ -336,32 +338,60 @@ export function nextThought(input: {
     return { ...base, synthesize: true, why: "交付物已齐，汇总。" };
   }
   const seen = new Set(input.findings.map((f) => f.step.id));
+  const hydrate = (step: AgentStep): AgentStep => {
+    if (step.query || step.action) return step;
+    if (
+      step.cap === "search_read" ||
+      step.cap === "video_search" ||
+      step.cap === "act" ||
+      step.cap === "run_skill"
+    ) {
+      const query = (step.label || input.goal.raw || "").trim().slice(0, 80);
+      if (query) return { ...step, query };
+    }
+    return step;
+  };
+  const usable = (step?: AgentStep): AgentStep | undefined => {
+    if (!step) return undefined;
+    const ready = hydrate(step);
+    if (!stepCanRun(ready, input.goal) || failedSameWay(input.findings, ready)) return undefined;
+    return ready;
+  };
   let next =
-    (input.nudge && !seen.has(input.nudge.id) ? input.nudge : undefined) ||
-    suggestNextStep(input.goal, input.findings, input.plan);
+    usable(input.nudge && !seen.has(input.nudge.id) ? input.nudge : undefined) ||
+    usable(suggestNextStep(input.goal, input.findings, input.plan));
   // answer-only 单：suggestNextStep 把 answer 当兜底过滤了，这里手动挑一只 cover answer 的手
   if (!next && !verdict.complete) {
     const answerHand = compileHands(input.goal).find(
       (s) => s.covers.includes("answer") && !seen.has(s.id),
     );
-    if (answerHand) next = answerHand;
+    next = usable(answerHand);
   }
   // 交付块看似齐了（模型编的步把 covers 写宽了），但计划里的采集步还没跑完：按计划继续。
-  // 失败步不抵扣，连续失败由循环的 stall 计数收摊，这里不重复设闸。
+  // 同一失败不再原样重试：没手或已经失败过的步跳过。
   if (!next && !verdict.complete) {
     const unmet = unmetPlanSteps(input.plan, input.findings);
-    if (unmet.length) {
-      // unmet 只含采集 cap（read_page/search_read/navigate/act），都在 LoopCap 里。
-      const step = unmet[0];
+    for (const step of unmet) {
+      const ready = usable({
+        ...step,
+        cap: step.cap as LoopCap,
+        covers: step.covers as AgentStep["covers"],
+      });
+      if (!ready) continue;
       return {
         ...base,
-        next: { ...step, cap: step.cap as LoopCap, covers: step.covers as AgentStep["covers"] },
+        next: ready,
         why: "计划里还有没做完的步，先做完再汇总。",
       };
     }
   }
   if (!next) {
-    return { ...base, synthesize: true, why: verdict.notes };
+    const repeated = input.findings.some((f) => !f.ok && failedSameWay(input.findings, f.step));
+    return {
+      ...base,
+      synthesize: true,
+      why: repeated ? "同样的失败不再原样重试。" : verdict.notes,
+    };
   }
   return {
     ...base,
@@ -442,6 +472,14 @@ export function applyModelPick(
   }
   const cap = pick.cap || "";
   if (!isLegalCap(cap)) return heuristic;
+  const query = pick.query?.slice(0, 80);
+  // 没有执行分支的 cap，以及缺查询词就一定会落到「没有对应的手」的散手，计划层直接打回。
+  const needsQuery =
+    cap === "search_read" || cap === "navigate" || cap === "video_search" || cap === "act" || cap === "run_skill";
+  if (cap === "feishu" || cap === "reply_draft" || cap === "print" || (needsQuery && !query)) {
+    console.warn("[plan] 拒收没有手的步骤", cap, query || "");
+    return heuristic;
+  }
   const covers = filterLegalCovers(pick.covers || []);
   if (!covers.length) return heuristic;
   const city = pick.city ? canonCity(pick.city) || "" : "";
@@ -549,6 +587,17 @@ export async function nextThoughtAsync(
     if (ns && ns.cap === "run_skill" && !ns.action) {
       const hand = compileHands(input.goal).find((s) => s.cap === "run_skill");
       if (hand?.action) ns.action = hand.action;
+    }
+    if (ns && (failedSameWay(input.findings, ns) || !stepCanRun(ns, input.goal))) {
+      console.warn("[plan] 拒收没有手或已失败的步骤", ns.cap, ns.label || "");
+      if (
+        heuristic.next &&
+        stepCanRun(heuristic.next, input.goal) &&
+        !failedSameWay(input.findings, heuristic.next)
+      ) {
+        return heuristic;
+      }
+      return { ...heuristic, next: undefined, synthesize: true, why: "同样的失败不再原样重试。" };
     }
     return modelThought;
   } catch {

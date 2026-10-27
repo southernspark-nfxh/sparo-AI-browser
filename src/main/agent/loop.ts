@@ -678,6 +678,88 @@ export function isLegalCap(cap: string): boolean {
   return LOOP_CAP_SET.has(cap) && cap !== "synthesize";
 }
 
+type HandStep = {
+  cap: string;
+  query?: string;
+  city?: string;
+  from?: string;
+  to?: string;
+  date?: string;
+  trip?: unknown;
+  mission?: unknown;
+  action?: unknown;
+  label?: string;
+};
+
+type HandGoal = {
+  raw?: string;
+  siteUrl?: string;
+  known?: { cities?: string[]; origin?: string; start?: string };
+};
+
+/**
+ * runLoopStep 里这一步有没有手。只认执行分支，不认文档。
+ * search_read / navigate 有查询词才算有手；feishu、reply_draft、print 没有分支。
+ */
+export function stepCanRun(step: HandStep, goal?: HandGoal): boolean {
+  if (step.action) return true;
+  const query = String(step.query || "").trim();
+  switch (step.cap) {
+    case "hotel_search":
+      return Boolean(step.city || goal?.known?.cities?.[0]);
+    case "flight_search":
+    case "train_search": {
+      if (step.from && step.to && (step.date || goal?.known?.start)) return true;
+      let from = goal?.known?.origin || "";
+      let to = step.city || goal?.known?.cities?.[0] || "";
+      const m = query.match(
+        /([一-龥A-Za-z·]{2,8})\s*(?:→|->|—|-|飞|到|至)\s*([一-龥A-Za-z·]{2,8})/,
+      );
+      if (m) {
+        from = m[1];
+        to = m[2];
+      }
+      return Boolean(from && to && (step.date || goal?.known?.start));
+    }
+    case "navigate":
+      return Boolean(query);
+    case "search_read":
+    case "video_search":
+    case "run_skill":
+    case "act":
+      return Boolean(query);
+    case "read_page":
+    case "fill_form":
+      return true;
+    case "trip_plan":
+      return Boolean(step.trip);
+    case "mission":
+      return Boolean(step.mission || (goal?.raw && parseMission(goal.raw)));
+    default:
+      return false;
+  }
+}
+
+/** 同一步：同一只手、同一个查询、同一句标签。 */
+export function sameAttempt(
+  a: { cap: string; query?: string; label?: string },
+  b: { cap: string; query?: string; label?: string },
+): boolean {
+  return (
+    a.cap === b.cap &&
+    String(a.query || "") === String(b.query || "") &&
+    String(a.label || "") === String(b.label || "")
+  );
+}
+
+/** 这一步已经以失败结束过。原样再跑会撞上同一句失败原因。 */
+export function failedSameWay(
+  findings: StepFinding[],
+  step: { cap: string; query?: string; label?: string },
+): boolean {
+  return findings.some((f) => !f.ok && sameAttempt(f.step, step));
+}
+
 /** 过滤合法交付物 id，丢掉模型编的非法值。 */
 export function filterLegalCovers(covers: string[]): DeliverableId[] {
   return covers
@@ -690,7 +772,10 @@ export function mergePlan(goal: AgentGoal, planSteps: PlanStep[]): AgentStep[] {
   let i = 0;
   for (const s of planSteps) {
     const cap = String(s.cap || "");
-    if (!isLegalCap(cap)) continue;
+    if (!isLegalCap(cap)) {
+      console.warn("[plan] 拒收没有手的步骤", cap || "(空)");
+      continue;
+    }
     const covers = filterLegalCovers(s.covers || []);
     if (!covers.length) continue;
     const city = s.city ? canonCity(s.city) || "" : "";
@@ -701,6 +786,11 @@ export function mergePlan(goal: AgentGoal, planSteps: PlanStep[]): AgentStep[] {
     };
     // 模型 plan 里如果选了 trip_plan，补上 trip 数据（和 nextThoughtAsync 一致）
     if (cap === "trip_plan" && goal.plan) extra.trip = goal.plan;
+    if (!stepCanRun({ cap, ...extra, mission: cap === "mission" ? parseMission(goal.raw) : undefined }, goal)) {
+      console.warn("[plan] 拒收没有手的步骤", cap, s.label || s.query || "");
+      continue;
+    }
+    if (cap === "mission" && !extra.mission) extra.mission = parseMission(goal.raw);
     out.push(
       step(cap as LoopCap, s.label || covers.map((c) => LABEL[c] || c).join("、"), covers, extra),
     );

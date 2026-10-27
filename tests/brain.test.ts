@@ -248,6 +248,17 @@ describe("大脑：听整句，不丢掉顺便", () => {
     expect(hands.filter((h) => h.cap === "mission")).toHaveLength(1);
   });
 
+  it("mergePlan 拒收没有手的步骤：无 query 的 search_read、没有分支的 feishu", () => {
+    const goal = analyzeGoalHeuristic("北京订酒店", { now: NOW });
+    const handbook = mergePlan(goal, [
+      { cap: "search_read", covers: ["food"] },
+      { cap: "feishu", covers: ["answer"] },
+      { cap: "search_read", covers: ["food"], query: "北京美食" },
+    ]);
+    expect(handbook.map((s) => s.cap)).toEqual(["search_read"]);
+    expect(handbook[0].query).toBe("北京美食");
+  });
+
   it("mergePlan 校验：非法 cap / 非法 covers / synthesize 被丢掉", () => {
     const goal = analyzeGoalHeuristic("北京订酒店", { now: NOW });
     const handbook = mergePlan(goal, [
