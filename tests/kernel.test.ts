@@ -366,4 +366,68 @@ describe("关单清点", () => {
     expect(verdict.complete).toBe(false);
     expect(verdict.notes).toContain("当前页不是目标站点");
   });
+
+  it("发布框为空、只有阅读页：不许 done，并说没填进发布框", () => {
+    const goal = {
+      raw: "帮我写一条今天热搜相关的微博",
+      intent: "写一条热搜微博",
+      kind: "form" as const,
+      deliverables: [{ id: "form" as const, label: "填表", required: true }],
+      known: {},
+      unknown: [] as string[],
+      decision: "act" as const,
+      approach: "写草稿",
+    };
+    const page = {
+      step: { id: "read", label: "直接回答", cap: "read_page" as const, covers: ["form" as const] },
+      text: "今天热搜相关微博正文：未知。未生成可发布内容。",
+      url: "file:///reports/read.html",
+      ok: true,
+    };
+    const verdict = verifyContracts(goal, [page], { synthesized: page.text });
+    expect(verdict.complete).toBe(false);
+    expect(verdict.notes).toContain("没填进发布框");
+  });
+
+  it("填完读回有字：form 可抵", () => {
+    const goal = {
+      raw: "填表",
+      intent: "填表",
+      kind: "form" as const,
+      deliverables: [{ id: "form" as const, label: "填表", required: true }],
+      known: {},
+      unknown: [] as string[],
+      decision: "act" as const,
+      approach: "填",
+    };
+    const filled = {
+      step: { id: "fill", label: "填表", cap: "fill_form" as const, covers: ["form" as const] },
+      text: "已填入并回读确认 12 字（fill）",
+      url: "https://weibo.com/",
+      ok: true,
+    };
+    expect(verifyContracts(goal, [filled]).complete).toBe(true);
+  });
+
+  it("读回为空：incomplete，文案说没填进发布框", () => {
+    const goal = {
+      raw: "发一下",
+      intent: "确认草稿",
+      kind: "form" as const,
+      deliverables: [{ id: "form" as const, label: "填表", required: true }],
+      known: {},
+      unknown: [] as string[],
+      decision: "act" as const,
+      approach: "填",
+    };
+    const empty = {
+      step: { id: "fill", label: "填表", cap: "fill_form" as const, covers: ["form" as const] },
+      text: "回读确认不匹配 expected=20 actual=0",
+      url: "https://weibo.com/",
+      ok: true,
+    };
+    const verdict = verifyContracts(goal, [empty]);
+    expect(verdict.complete).toBe(false);
+    expect(verdict.notes).toContain("没填进发布框");
+  });
 });
