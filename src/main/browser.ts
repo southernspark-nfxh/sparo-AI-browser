@@ -43,6 +43,7 @@ import {
 import {
   applyTurn,
   applyTurnAsync,
+  missionWaitsOnLogin,
   closePlan,
   focusPlanOnStep,
   nudgeFromPlan,
@@ -50,6 +51,7 @@ import {
   reconsiderMission,
   reviseActivePlan,
   gateSiteDelivery,
+  siteAskYieldsToPlan,
   loginRedirectNote,
   siteOpenEndsTheJob,
   skipLoneNavigate,
@@ -5228,7 +5230,7 @@ export class SparkBrowser {
           pageUrl: this.getUrl(tabId),
           findings: current.findings,
         });
-        if (siteGate.action === "ask") {
+        if (siteGate.action === "ask" && !siteAskYieldsToPlan(current.brainPlan)) {
           current.state = "waiting_human";
           current.waitReason = "help";
           current.ask = siteGate.ask;
@@ -5391,7 +5393,7 @@ export class SparkBrowser {
             pageUrl: this.getUrl(tabId),
             findings: current.findings,
           });
-          if (stalled.action === "ask") {
+          if (stalled.action === "ask" && !siteAskYieldsToPlan(current.brainPlan)) {
             current.state = "waiting_human";
             current.waitReason = "help";
             current.ask = stalled.ask;
@@ -5509,7 +5511,10 @@ export class SparkBrowser {
         pageUrl: this.getUrl(tabId),
         findings,
       });
-      if (afterGate.action === "ask" || afterGate.action === "navigate") {
+      if (
+        (afterGate.action === "ask" || afterGate.action === "navigate") &&
+        !siteAskYieldsToPlan(current.brainPlan)
+      ) {
         const ask = afterGate.action === "ask" ? afterGate.ask : `要我先打开 ${live.site} 吗？`;
         current.state = "waiting_human";
         current.waitReason = "help";
@@ -5998,7 +6003,12 @@ export class SparkBrowser {
     }
     const mission = item.mission;
     this.activeMission = mission;
-    if (mission.state === "waiting_human" || mission.state === "blocked" || mission.state === "propose") {
+    const resumeWork =
+      !missionWaitsOnLogin(mission) && siteAskYieldsToPlan(mission.brainPlan);
+    if (
+      (mission.state === "waiting_human" || mission.state === "blocked" || mission.state === "propose") &&
+      !resumeWork
+    ) {
       const reply = mission.ask || recoveryLine(item);
       this.chatLog.push({ role: "assistant", text: reply });
       this.pushSidebarState();
