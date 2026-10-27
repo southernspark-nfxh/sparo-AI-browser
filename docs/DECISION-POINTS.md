@@ -29,5 +29,8 @@
 | 19 | 挂起短肯定 | `intent-router.ts` `isShortAffirmative`；`browser.ts` 挂起单分支 | 全句是「打开 / 好 / 继续」时续跑挂起单，不开新单 | 全句正则 | 保留。带宾语的「打开微博」不认 |
 | 20 | `pageBlocksDone` | `verify.ts` `pageBlocksDone`；`browser.ts` 登录落地、没要求读页、最终 `verifyContracts` 三处关 done 之前 | 目标站点和当前页不同站时不许 `close(done)` | 当前 URL 与 `site` / `siteUrl` | 保留。登录墙若仍在该站（含子域）不算挡住。没点站点的单不拦 |
 | 21 | 关单流水对上计划步 | `verify.ts` `unmetPlanSteps` 的标签与发现重叠 | 计划步的标签有连续 4 字出现在某条成功发现的标签、query、URL 或正文里，关单不再写「还没执行」 | 实际 turn 流水，不看计划状态假设 | 保留。对不上的采集步仍挡住 done，见 `kernel.test.ts`「采集步没跑」 |
+| 22 | 高铁/机票拒收后补槽 | `plan.ts` `settleTravelPlan`；`runtime.ts` 计划挂上之后 | 组不出腿的车次步先用原句和该步标签再拆 from/to/date，拆得出就补进可执行手册；仍缺出发地或这段日期就问人，并在卡片上标 failed 写人话。不许 pending 到关单还不解释 | 原句、步标签、`known` 里的出发地。日期不看第 23 条禁止的入住日 | 保留。只补车次槽，不改酒店步 |
+| 23 | 车次日期不回落入住日 | `loop.ts` `travelSearchLeg` | `train_search` / `flight_search` 的日期只取 `step.date` 或该段 label/query/原句里拆出的日期。`known.start` 是酒店或另一段的日子时不拿来组腿 | 该段文字里的月日 | 保留。拆不出日期就走第 22 条，不许默用入住日 |
+| 24 | 关单「没执行」先对流水 | `verify.ts` `unmetPlanSteps` 的按段解码 | 页面正文里有残缺 `%` 时不再把整段 URL 解码扔掉；搜索 URL 里的中文查询能对上计划步。对不上的采集步即使 answer 已被长文覆盖，仍写「没执行」并挡住 done | 发现的 URL / query，按百分号片段解码 | 保留。禁止用「必交付已齐」把没跑的采集步移出清单，见「采集步没跑」 |
 
 模型把采集句编成「一步 navigate + 只有 answer」时，第 1 条仍会当成只是开站。这是信脑区计划的残留，不是词表漏洞。无计划又带「复制」的句子在过期日前仍走第 2 条。
