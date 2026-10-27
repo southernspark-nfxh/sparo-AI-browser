@@ -196,6 +196,45 @@ describe("推理器：模型自己挑下一步，本地最小校验", () => {
     expect(thought).toBeDefined();
   });
 
+  it("发布回执已齐就关单，不再让模型派生检索", async () => {
+    const goal = {
+      raw: "自动给我发一下",
+      intent: "把草稿发出去",
+      kind: "publish",
+      deliverables: [{ id: "form", label: "填表", required: true }],
+      known: {},
+      unknown: [],
+      decision: "act",
+      approach: "填好并发送",
+    };
+    const findings: StepFinding[] = [
+      {
+        step: { id: "send-1", cap: "run_skill", label: "发送", covers: ["form"], query: "发微博" },
+        text: "已发送。发布成功，账号 南方星火southernSPARK",
+        url: "https://weibo.com",
+        ok: true,
+      },
+    ];
+    const plan: Plan = {
+      createdAt: 1,
+      steps: [{ id: "p9", label: "搜这句话", cap: "search_read", covers: ["page"], status: "pending" }],
+    };
+    let called = 0;
+    const thought = await thoughtForAsync(
+      { intent: goal.intent, goal, findings, state: "running", brainPlan: plan } as never,
+      async () => {
+        called += 1;
+        return JSON.stringify({
+          next: { cap: "search_read", covers: ["page"], query: "自动给我发一下" },
+          why: "再看一眼",
+        });
+      },
+    );
+    expect(called).toBe(0);
+    expect(thought.synthesize).toBe(true);
+    expect(thought.next).toBeUndefined();
+  });
+
   it("search_read 没有查询词：打回启发式，不把没手的步交出去", async () => {
     const t = applyTurn(NY, { now: NOW });
     const thought = await thoughtForAsync(t.mission!, async () =>

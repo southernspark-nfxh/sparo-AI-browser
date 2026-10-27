@@ -89,6 +89,13 @@ export function summaryFindings(findings: StepFinding[]): string {
     .join("\n");
 }
 
+/** 发布手自己写下的回执。草稿填好或已经发出，都算这单的表单交付，不再往下漫游。 */
+export function publishReceipt(findings: StepFinding[]): boolean {
+  return findings.some((f) =>
+    f.ok && /^(已发送|发布成功|已写入草稿)/.test(String(f.text || "").trim()),
+  );
+}
+
 /** 计划里的采集步必须有对应的成功观察。一步发现只能抵一步。 */
 export function unmetPlanSteps(plan: Plan | undefined, findings: StepFinding[]): PlanStep[] {
   const steps = (plan?.steps || []).filter(
@@ -143,19 +150,25 @@ export function verifyContracts(
       if (synth.length > 20 || findings.some((f) => f.ok && f.text.length > 20)) covered.push(id);
       continue;
     }
+    if (id === "form" && publishReceipt(findings)) {
+      covered.push(id);
+      continue;
+    }
     if (findings.some((f) => observationCovers(f, id))) {
       covered.push(id);
     }
   }
   const missing = required.filter((id) => !covered.includes(id));
   const unmet = unmetPlanSteps(opts?.plan, findings);
+  // 发布回执已经齐了：剩下的计划步是漫游，不再挡住关单。
+  const settled = required.includes("form") && publishReceipt(findings) && missing.length === 0;
   const deliverNote = missing.length ? `还缺：${missing.map((id) => LABEL[id]).join("、")}` : "";
-  const stepNote = unmet.length
+  const stepNote = !settled && unmet.length
     ? `计划里这些步还没执行：${unmet.map((step) => step.label).join("、")}`
     : "";
   const notes = [deliverNote, stepNote].filter(Boolean).join(" ");
   return {
-    complete: missing.length === 0 && unmet.length === 0,
+    complete: missing.length === 0 && (unmet.length === 0 || settled),
     covered,
     missing,
     notes: notes || "交付物已齐。",
