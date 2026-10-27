@@ -533,6 +533,21 @@ export function reasonerPromptV2(goal: AgentGoal, findings: StepFinding[], pageU
     .join("\n");
 }
 
+/** 这一步还在补没交付的块，或就是计划里还没跑完的采集步。答不出就该关单。 */
+function stepStillOwed(
+  goal: AgentGoal,
+  findings: StepFinding[],
+  plan: Plan | undefined,
+  synthesized: string | undefined,
+  step: AgentStep,
+): boolean {
+  const verdict = verifyContracts(goal, findings, { synthesized, plan });
+  if (verdict.missing.some((id) => step.covers.includes(id))) return true;
+  return unmetPlanSteps(plan, findings).some(
+    (row) => row.id === step.id || (row.cap === step.cap && row.label === step.label),
+  );
+}
+
 /** 有模型时让模型决定下一步；失败或启发式已 ask/propose/synthesize 就走兜底。 */
 export async function nextThoughtAsync(
   input: {
@@ -598,6 +613,12 @@ export async function nextThoughtAsync(
         return heuristic;
       }
       return { ...heuristic, next: undefined, synthesize: true, why: "同样的失败不再原样重试。" };
+    }
+    if (ns && !stepStillOwed(input.goal, input.findings, input.plan, input.synthesized, ns)) {
+      if (heuristic.next && stepStillOwed(input.goal, input.findings, input.plan, input.synthesized, heuristic.next)) {
+        return heuristic;
+      }
+      return { ...heuristic, next: undefined, synthesize: true, why: "必交付已齐，不再往下走。" };
     }
     return modelThought;
   } catch {
