@@ -6,7 +6,8 @@ Hermes: [`docs/HERMES-PLAYBOOK.md`](../../docs/HERMES-PLAYBOOK.md).
 ## Rule
 
 **AI = stage + clicks. Script = inject pre-baked content once.**  
-**Unknown forms = analyze_page → execute_primitives (skill `universal-form-fill`).**
+**Unknown forms = analyze_page → execute_primitives (skill `universal-form-fill`).**  
+**发布：当句说了自动发才点发送，否则只填草稿。** 见 [`docs/PUBLISHING.md`](../../docs/PUBLISHING.md)。
 
 打包格式：[docs/SKILL-FORMAT.md](../../docs/SKILL-FORMAT.md)。社区分享仍是 M2，未开工。
 

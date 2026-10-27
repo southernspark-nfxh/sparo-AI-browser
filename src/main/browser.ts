@@ -62,6 +62,8 @@ import {
   type Thought,
 } from "./agent/kernel/index.js";
 import { parseRewriteVerdict, rewriteVerdictPrompt } from "./agent/kernel/read-rewrite.js";
+import { alternateSite, decideStall, NO_PROGRESS_MS } from "./agent/kernel/stall.js";
+import { allowClick, classifyClick } from "./agent/publish-gate.js";
 import { writeExperience } from "./agent/experience.js";
 import { canonCity, isCity, plausiblePlace } from "./agent/place.js";
 import { distillMission, oneShotJudgePrompt, parseOneShotVerdict } from "./agent/distill.js";
@@ -4570,7 +4572,9 @@ export class SparkBrowser {
     dryRun?: boolean;
   }): Promise<ToolResult> {
     this.skillsCache = listSkills(this.configDir());
-    const r = await runSkill(this, this.configDir(), input);
+    const params = { ...(input.params || {}) };
+    if (params.autoPublish == null) params.autoPublish = this.activeMission?.goal?.autoSend === true;
+    const r = await runSkill(this, this.configDir(), { ...input, params });
     const readings = (r.data as { readings?: Array<{ label?: string; text?: string; url?: string }> } | undefined)
       ?.readings;
     if (this.deepseek && Array.isArray(readings) && readings.length) {
@@ -5160,6 +5164,9 @@ export class SparkBrowser {
       const ran: AgentStep[] = [];
       let stall = 0;
       let missionOkRuns = 0;
+      let stallSwitched = false;
+      const triedLabels: string[] = [];
+      let stallSay = "";
       for (let i = 0; i < 8; i++) {
         current = await this.absorbQueuedPlanEdit(current);
         if (this.namedSiteIsOpen(current.goal, tabId, current.brainPlan, current.plan)) break;
@@ -5282,9 +5289,61 @@ export class SparkBrowser {
         this.pushSidebarState();
         ran.push(thought.next);
         const ls0 = Date.now();
-        const finding = await this.runLoopStep(thought.next, current.goal, tabId);
+        const finding = await this.withTimeout(
+          this.runLoopStep(thought.next, current.goal, tabId),
+          NO_PROGRESS_MS,
+          {
+            step: thought.next,
+            text: "这一步超过 5 分钟没有新结果。",
+            url: this.getUrl(tabId),
+            ok: false,
+          },
+          true,
+        );
         if (thought.next.cap === "mission" && finding.ok) missionOkRuns += 1;
         current = observe(current, finding);
+        if (finding.text.startsWith("这一步超过 5 分钟")) {
+          triedLabels.push(thought.next.label || thought.next.cap);
+          const lastNote =
+            [...current.findings].reverse().find((row) => row !== finding)?.text || finding.text;
+          let decision = decideStall({
+            elapsedMs: NO_PROGRESS_MS,
+            waitingHuman: false,
+            switched: stallSwitched,
+            tried: triedLabels,
+            lastNote,
+          });
+          if (decision.action === "switch") {
+            const alt = alternateSite(thought.next.cap, thought.next.site);
+            this.chatLog.push({ role: "assistant", text: decision.say });
+            this.pushSidebarState();
+            if (alt) {
+              stallSwitched = true;
+              stall = 0;
+              current = {
+                ...current,
+                nudge: {
+                  ...thought.next,
+                  id: `${thought.next.id}-alt-${alt}`,
+                  site: alt,
+                  label: `换到${alt}再试`,
+                },
+              };
+              continue;
+            }
+            decision = decideStall({
+              elapsedMs: NO_PROGRESS_MS,
+              waitingHuman: false,
+              switched: true,
+              tried: triedLabels,
+              lastNote,
+            });
+          }
+          if (decision.action === "close") {
+            stallSay = decision.say;
+            break;
+          }
+        }
         if (this.namedSiteIsOpen(current.goal, tabId, current.brainPlan, current.plan)) break;
         // 登录墙 / 人机验证墙：只有人能过。停下问人，不再烧步骤。
         // 但只对「本来就要在墙内操作」的步骤生效（fill_form/act/read_page 等）；
@@ -5372,6 +5431,22 @@ export class SparkBrowser {
         current = revised;
         this.activeMission = current;
         this.pushSidebarState();
+      }
+
+      if (stallSay) {
+        const reply = stallSay;
+        if (current.brainPlan) current.brainPlan = closePlan(current.brainPlan, false);
+        current.state = "done";
+        this.closeMissionRecord(current, "incomplete", "idle");
+        this.lastMission = current;
+        this.activeMission = undefined;
+        this.chatLog.push({ role: "assistant", text: reply });
+        this.pushSidebarState();
+        return {
+          ok: true,
+          message: reply,
+          data: { loop: "done", briefKind: current.goal.kind, intent: current.goal.intent },
+        };
       }
 
       current = await this.absorbQueuedPlanEdit(current);
@@ -8281,6 +8356,8 @@ export class SparkBrowser {
     const tabId = opts?.tabId;
     const blocked = this.assertNotPaused();
     if (blocked) return blocked;
+    const gate = allowClick(classifyClick(text), this.activeMission?.goal?.autoSend === true);
+    if (!gate.ok) return { ok: false, message: gate.message || "没有代点" };
     try {
       const wc = this.viewForTab(tabId || this.activeTabId).webContents;
       const found = (await wc.executeJavaScript(
