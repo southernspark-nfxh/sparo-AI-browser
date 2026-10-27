@@ -5,6 +5,15 @@
 Product rule: **AI detects stage and clicks; scripts deliver pre-baked content.**  
 Do **not** type title/body into fields character-by-character. Do **not** loop `fill`.
 
+## 发布权限（2026-10-27）
+
+当句是否自动点发送，由模型在理解结果的 `autoSend` 里判定。本地不扫原话抢答。
+
+- 用户当句说「自动发 / 直接发 / 帮我发出去」→ `autoSend: true`，可以点发送。发完就关单。
+- 用户没说 → `autoSend: false`，只把内容填进发布框，侧栏告诉人自己点发送。
+- 「发一下」「帮我写一条」都不算授权。
+- 支付、登录、验证码永远不代点，跟 `autoSend` 无关。
+
 ---
 
 ## 0. Connect (once)

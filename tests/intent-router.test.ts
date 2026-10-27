@@ -238,7 +238,7 @@ describe("agentCapabilityBrief", () => {
     const zh = agentCapabilityBrief("zh");
     const lines = zh.split("\n").filter(Boolean);
     expect(new Set(lines).size).toBe(lines.length);
-    expect(zh.split("用户明确说「发 / 发布 / 发三条」").length - 1).toBe(1);
+    expect(zh.split("当句明确说自动发、直接发、帮我发出去").length - 1).toBe(1);
     expect(zh.split("你越用越懂这个用户").length - 1).toBe(1);
     expect(zh).toMatch(/本机先拆/);
     expect(zh).not.toMatch(/intent-router 先判断/);

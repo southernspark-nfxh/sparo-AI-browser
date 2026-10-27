@@ -62,6 +62,8 @@ export type AgentGoal = {
   siteUrl?: string;
   /** 大脑对这句的覆盖判定。new 且编了计划才进 propose。 */
   coverage?: "covered" | "new";
+  /** 模型判定当句允许自动点发送。本地不从原话推断，缺省就是只填草稿。 */
+  autoSend?: boolean;
 };
 
 export type LoopCap =
@@ -479,6 +481,7 @@ export async function analyzeGoal(
     }),
       heard,
     );
+    merged.autoSend = heard.autoSend === true;
     // 模型在 understand 阶段编了 plan：转成 AgentStep[] 写入 handbook，
     // compileHands 会优先用 handbook，否则走本地启发式 fallback。
     if (heard.plan && heard.plan.length > 0) {

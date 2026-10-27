@@ -66,6 +66,8 @@ export type Understanding = {
   coverage?: "covered" | "new";
   /** 采集规模句打回重判一次后仍无 report。上层只记日志，不改写交付物。 */
   rejudgeFailed?: boolean;
+  /** 模型判定当句允许自动点发送。只接受 JSON 布尔 true，本地不扫原话。 */
+  autoSend?: boolean;
 };
 
 /**
@@ -250,11 +252,12 @@ export function understandPrompt(
     "- plan 可选；要编就列 [{\"cap\":\"...\",\"covers\":[\"stay\"],\"query\":\"...\",\"city\":\"...\",\"site\":\"...\",\"label\":\"...\"}]。cap 只能用：trip_plan / hotel_search / flight_search / train_search / search_read / video_search / read_page / fill_form / mission / feishu / run_skill / reply_draft / print / navigate / act / synthesize。covers 用交付物 id。site 只能用：酒店 ctrip/tuniu/booking/airbnb，机票 ctrip/qunar/kayak/gflights，检索 baidu/bing，火车 12306/ctrip。用户点名的站不要换。",
     '- coverage 判这句活有没有现成的做法：可复用的妙招清单里有合适的，或者现有流水线能覆盖（行程/比价/调研/发帖/读页/填表/翻译/飞书/检索），就填 "covered"；都不沾边、需要现场摸索的，填 "new" 并且必须编 plan。判 "new" 要保守：宁可 covered 也不要把普通任务标成新任务。',
     "- cap=navigate 时 query 放目标 URL（用户原话点名的 https://... 原样放进去）；cap=search_read 时 query 放搜索词。",
+    "- autoSend 只在用户当句明确要你自动发出去（自动发、直接发、帮我发出去）时为 true。没说、只说写一条、或只说「发一下」都不算，填 false。只填草稿，发送留给人。",
     ctx?.skills
       ? `可复用的妙招（plan 里要用就 cap="run_skill"、query 填妙招 id；没有合适的就忽略；禁止编造不在清单里的 id）：\n${ctx.skills}`
       : "",
     "交付物 id 只能用：stay food sights itinerary flights trains report page form video answer",
-    '只输出 JSON：{"heard":"一句话听懂了什么","ingest":"new","coverage":"covered","site":"","clauses":[{"text":"原句片段","purpose":"","deliverables":["stay"]}],"deliverables":["stay"],"known":{"cities":[]},"plan":[{"cap":"hotel_search","covers":["stay"],"query":"...","city":"...","site":"ctrip"}]}',
+    '只输出 JSON：{"heard":"一句话听懂了什么","ingest":"new","coverage":"covered","autoSend":false,"site":"","clauses":[{"text":"原句片段","purpose":"","deliverables":["stay"]}],"deliverables":["stay"],"known":{"cities":[]},"plan":[{"cap":"hotel_search","covers":["stay"],"query":"...","city":"...","site":"ctrip"}]}',
     `用户原话：${text}`,
   ]
     .filter(Boolean)
@@ -331,6 +334,7 @@ export function parseUnderstandJson(raw: string): Partial<Understanding> | null 
       site: siteLegal?.host,
       siteUrl: siteLegal?.url,
       coverage,
+      autoSend: j.autoSend === true,
     };
   } catch {
     return null;
@@ -381,6 +385,7 @@ export function mergeUnderstanding(
     coverage: model.coverage,
     site: pickedSite?.host || local.site,
     siteUrl: pickedSite?.url || local.siteUrl,
+    autoSend: model.autoSend === true,
     known: {
       ...local.known,
       ...model.known,
