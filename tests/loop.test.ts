@@ -7,7 +7,10 @@ import {
   ensurePlanCovers,
   inferDeliverables,
   mergeAnalyze,
+  navigateTarget,
   planForGoal,
+  stepCanRun,
+  travelSearchLeg,
   verifyProgress,
   type AgentGoal,
   type AgentStep,
@@ -219,6 +222,51 @@ describe("coverage", () => {
     expect(goal.decision).not.toBe("propose");
     expect(goal.coverage).toBeUndefined();
     expect(goal.handbook).toBeUndefined();
+  });
+});
+
+describe("travel leg matches the execution hand", () => {
+  const s7Goal = {
+    known: { cities: ["北京", "南京"], start: "2026-11-07", end: "2026-11-08" },
+  };
+  const s7Step = {
+    cap: "train_search",
+    label: "搜11月6日北京到南京高铁",
+    query: "11月6日北京到南京高铁时刻与价格",
+    city: "南京",
+  };
+
+  it("S7 去程：日期粘在城市上时组不出腿，计划层也不放行", () => {
+    expect(travelSearchLeg(s7Step, s7Goal)).toBeNull();
+    expect(stepCanRun(s7Step, s7Goal)).toBe(false);
+  });
+
+  it("查询能拆出城市、日期在 step.date 上时，腿和计划层一致", () => {
+    const step = { cap: "train_search", query: "北京到南京", date: "2026-11-06" };
+    expect(travelSearchLeg(step, { known: {} })).toEqual({
+      from: "北京",
+      to: "南京",
+      date: "2026-11-06",
+    });
+    expect(stepCanRun(step, { known: {} })).toBe(true);
+  });
+
+  it("起讫在字段上、日期只在 known.start 时也能组腿", () => {
+    const step = { cap: "flight_search", from: "北京", to: "南京" };
+    expect(travelSearchLeg(step, { known: { start: "2026-11-06" } })).toEqual({
+      from: "北京",
+      to: "南京",
+      date: "2026-11-06",
+    });
+  });
+
+  it("navigate 没有 query、标签是网址时有手；普通中文标签没有", () => {
+    expect(navigateTarget({ label: "https://weibo.com/login.php" })).toBe(
+      "https://weibo.com/login.php",
+    );
+    expect(stepCanRun({ cap: "navigate", label: "https://weibo.com/login.php" })).toBe(true);
+    expect(stepCanRun({ cap: "navigate", label: "打开微博登录页" })).toBe(false);
+    expect(stepCanRun({ cap: "search_read", label: "查今天北京天气" })).toBe(false);
   });
 });
 
