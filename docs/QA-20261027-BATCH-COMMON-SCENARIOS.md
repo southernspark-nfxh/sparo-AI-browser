@@ -42,7 +42,65 @@
 
 ## 验收
 
-- [ ] 12 条全部有底账证据记录（过/不过/blocked）。
-- [ ] 总表落盘（可追加到 `docs/QA-GOLDEN-SCENARIOS.md` 或本文件末尾）。
-- [ ] 不过的条目各有 BUG 单或在登记册可查。
-- [ ] ★ 五条在安装包上复测通过。
+- [x] 12 条全部有底账证据记录（过/不过/blocked/未跑）。
+- [x] 总表落盘（本文件末尾）。
+- [x] 不过的条目各有 BUG 单或在登记册可查。
+- [ ] ★ 五条在安装包上复测通过。开发版未全过，按任务书不打安装包。
+
+---
+
+## 执行结果（2026-10-27 开发版，commit `5c5e320`）
+
+跑法见 `docs/QA-20261027-MINIMIZED-BATCH-RUN.md`。开发版进程 pid `34388`（`node_modules\electron\dist\electron.exe`，含五笔修复之后重新拉起）。旧进程是 11:19 起的，不含那五笔，已停掉。
+
+启动参数（只为让侧栏能被元素级驱动，未改 `src/`）：`--force-renderer-accessibility --remote-debugging-port=9333`。
+
+**驱动偏差：** 本机会话没有 Computer Use 的 `get_app_state` / `element_id`。Windows UIA 在窗口非最小化、非前台时仍只有 `Intermediate D3D Window`，edit/button 都是 0。侧栏句子改为本机 CDP 对 `shell.html` 的 `#chatInput` 赋值并点击 `#chatSend`。没有坐标点击，没有 `SetForegroundWindow` 去点用户窗口。每条发送前后都记了前台 pid。观察用 `chat-memory.json`、`missions.jsonl`，以及页面 DOM 回读。
+
+S7 日期换成当时可订的 **11月6日去程 / 11月7–8日南京酒店 / 11月8日晚返程**（编写日的 11月13–15日超出 12306 常见预售窗）。
+
+S4 未发。S3 没有把草稿填进微博发布框。公开帖等用户点头再测。
+
+### 总表
+
+| # | 结论 | 底账 | 证据 |
+|---|---|---|---|
+| S1 ★ | 过 | `m-mvqcfvb6-vl0vm` close=done | raw=`打开微博`。侧栏「已打开 weibo.com。」一步计划，不是多步，也没有读无关页。 |
+| S2 ★ | 不过 | `m-mvqcifdx-kq02h` close=done | 前置已停在 `weibo.com/u/2803301701`（人民日报）。有「正在做 1/」，findings=3。妙招去点「王海林0516」，页面上没有这个人。没有新文档文件。收尾侧栏是「已打开 weibo.com。」见既有 `BUG-20261027-READ-INTENT-EARLY-EXIT`，妙招点错人见 `BUG-20261027-WEIBO-SKILL-MISS`。 |
+| S3 | 不过 | `m-mvqcmhw8-pohvi` close=done | raw 原句。查了百度「今天微博热搜」，结果页没有具体条目。妙招第 2 步 `click requires ref or selector`。阅读页 `read-2026-10-27T07-14-43.html` 写明「自动填入未完成」。没有点发送。见 `BUG-20261027-WEIBO-SKILL-MISS`。 |
+| S4 | 未跑 | — | 发布框里没有 S3 草稿。不在未确认时发公开微博。 |
+| S5 | 不过 | `m-mvqcri4j-jv5vi` close=incomplete | 意图写了「不自动发送」。findings 里没有点发送，只打开了两次微博首页，然后说正文未知。计划步「读取上一条热搜微博草稿」没执行。没点发送这一条守住了；「确认草稿已填好」没有。见同一张微博技能单。 |
+| S6 ★ | 不过 | `m-mvqct1j9-80d5w` close=incomplete | 侧栏给出了天气：北京今天（10/27）晴，1～16°C，15:15 约 15°C。搜索 URL 已打开。关单却说「搜今天北京天气并读取结果」没执行。缺口与事实不符。见 `BUG-20261027-CLOSE-SAYS-STEP-SKIPPED`。 |
+| S7 ★ | 不过 | `m-mvqcuzkq-3vsuv` 未 close | raw 为替换后的日期原句。携程停在首页（入住 10月27日，上海广告），酒店没查到。去程 `train_search` 文本是「这一步没有对应的手。」随后打开 12306，URL 日期是 `2026-11-07`（原句是 6 日），页面文本里有车次/座席字样，但没有返程交付。然后问「要我先打开 ctrip.com 吗？」停住。约 9 分钟无终态，按 10 分钟上限停下。见 `BUG-20261027-TRAIN-SEARCH-NO-HAND` 与 `BUG-20261027-CONTINUE-REASKS-SITE`。 |
+| S8 | blocked | — | 前置是「上一条助手消息带阅读页」。S2 收尾是「已打开 weibo.com。」，`reports/` 在该时刻没有新文件。没有发这句，避免把改写捷径测歪。 |
+| S9 | 不过 | `m-mvq60gub-oom09` 仍是原单 | 启动恢复卡：「上次……跑到第 1 步查南京酒店，继续？」回「继续」后原单还在，没有新 open，也没有销毁。接着又问「要我先打开 ctrip.com 吗？」。再回一次「继续」，同样复读目标和问句，findings 仍是旧的 2 条。见 `BUG-20261027-CONTINUE-REASKS-SITE`。 |
+| S10 | 过 | `m-mvqd6bpj-27mxu` close=incomplete | raw 原句。报告页 `mission-research-2026-10-27T07-31-04.html` 当时就是窗口里的页。对照表在报告里。侧栏收尾是未完成步的一句，加上报告标题，没有把对照表堆进聊天。incomplete 把已经「正在查」的步说成没执行，记在 `BUG-20261027-CLOSE-SAYS-STEP-SKIPPED`，不推翻这条的交付。 |
+| S11 | blocked | — | 微博首页是信息流，没有打开的评论楼，指认不了「这条评论」。不代点进评论区，避免误发公开回复。 |
+| S12 | 过 | `m-mvqdcs8r-erkaw` close=done | 前置打开 `https://httpbin.org/forms/post`。DOM 回读：`custname=Sparo测试`，`custtel=13800138000`，`custemail=test@example.com`，尺寸/配料/备注为空。地址仍是 `/forms/post`，没有提交。侧栏有「识别到 12 个字段」「提交前停下」。最后又冒出一句「已打开 httpbin.org。」，声音和交付不一致，见既有早退单，字段本身是填上的。 |
+
+过 3（S1、S10、S12） / 不过 6（S2、S3、S5、S6、S7、S9） / blocked 2（S8、S11） / 未跑 1（S4）。
+
+### 执行日志（抢焦）
+
+窗口在出现后被最小化。前台在各条发送时都不是 Sparo，除了 S7 发送前 Sparo 已经是最小化但仍占着前台（15:19:24），随后交回 Chrome。
+
+`fg-change sparo=True` 共 14 次，按爆发归并：
+
+| 时间 | 落在哪条 | 说明 |
+|---|---|---|
+| 15:01:54 | 启动 | `presentWindow` 第一次 `focus()`。看守把它最小化并交回当时的前台。 |
+| 15:10:59 | S2 | 复制博主任务进行中，窗口被拉回前台。后台阅读不该弹。 |
+| 15:12:06、15:12:12 | S2 刚关单之后 | 再次拉回。 |
+| 15:13:01、15:13:21、15:14:47 | S3 | 写草稿过程中反复拉回，不是只一次。 |
+| 15:18:45 | S6 | 查天气时拉回。 |
+| 15:26:00 | S7 | 查行程时拉回。 |
+| 15:31:22 | S10 | 出报告时拉回。 |
+| 15:33:37 | S12 | 填表时拉回。代码里填表/回复/发帖允许拉回一次；这一次对得上人机同窗。 |
+
+理想值 0 次没有达到。产品自己把最小化窗口拉回前台，登记为 `docs/BUG-20261027-MINIMIZED-WINDOW-FOREGROUND.md`。
+
+看守在 15:12 之前还会尝试把焦点交还，并且一度有两个看守叠在一起，交还失败时会多闪几下。15:16 之后只做最小化，不再 `SetForegroundWindow`。这些是测试看守的动作，和产品拉回前台分开记。
+
+坐标点击：0。用户前台窗口（Chrome / 微信 / 飞书 / Cursor / TRAE）没有被坐标键鼠操作。
+
+安装包：未构建。任务书要求开发版全过才 `npm run dist`。
