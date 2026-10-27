@@ -160,6 +160,11 @@ export function userDidNotAskToRead(goal: { raw?: string; intent?: string }): bo
   return !/总结|摘要|提炼|概括|归纳|对比|比价|调研|评测|阅读|读一下|读这一页|这是什么/.test(raw);
 }
 
+/**
+ * 无计划产物时，用原话猜「这单是不是只打开站点」。
+ * 兜底正则，过期 2027-01-23：到期后没有脑区计划或可执行手册就不许本地判开站完成。
+ * 登记见 docs/DECISION-POINTS.md。有计划时以 siteOpenEndsTheJob 为准，这里不再单独拍板。
+ */
 export function openSiteIsTheJob(goal: { raw: string; site?: string }): boolean {
   if (!goal.site) return false;
   const raw = String(goal.raw || "").trim();
@@ -175,6 +180,46 @@ export function openSiteIsTheJob(goal: { raw: string; site?: string }): boolean 
     return false;
   }
   return true;
+}
+
+type OpenJobGoal = {
+  raw: string;
+  site?: string;
+  deliverables?: { id: string; required?: boolean }[];
+};
+
+function deliverablesAreAnswerOnly(goal: OpenJobGoal): boolean {
+  const rows = goal.deliverables || [];
+  if (!rows.some((row) => row.required && row.id === "answer")) return false;
+  return rows.every((row) => row.id === "answer");
+}
+
+function hasNonAnswerDeliverable(goal: OpenJobGoal): boolean {
+  return (goal.deliverables || []).some((row) => row.id !== "answer");
+}
+
+/**
+ * 当前页已在目标站上时，能不能把任务当成「只是开站」结束。
+ * 有脑区计划就只看计划：恰好一步 navigate，且必交付只有 answer。
+ * 没有脑区计划时看可执行手册（mission.plan，不是行程 goal.plan）。
+ * 两份都没有，才退回 openSiteIsTheJob。交付物里已经有读页/报告/填表时，无计划也不许早退。
+ */
+export function siteOpenEndsTheJob(
+  goal: OpenJobGoal,
+  brainPlan?: { steps: { cap: string }[] } | null,
+  compiled?: { cap: string }[] | null,
+): boolean {
+  if (!goal.site) return false;
+  const brainSteps = brainPlan?.steps || [];
+  if (brainSteps.length > 0) {
+    return brainSteps.length === 1 && brainSteps[0].cap === "navigate" && deliverablesAreAnswerOnly(goal);
+  }
+  const compiledSteps = compiled || [];
+  if (compiledSteps.length > 0) {
+    return compiledSteps.length === 1 && compiledSteps[0].cap === "navigate" && deliverablesAreAnswerOnly(goal);
+  }
+  if (hasNonAnswerDeliverable(goal)) return false;
+  return openSiteIsTheJob(goal);
 }
 
 /** 登录地址已经打开过、站点却跳进站内时，交这一句并收工。换账号是下一句新任务。 */

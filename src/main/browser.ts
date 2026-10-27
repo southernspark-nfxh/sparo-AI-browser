@@ -49,7 +49,8 @@ import {
   reviseActivePlan,
   gateSiteDelivery,
   loginRedirectNote,
-  openSiteIsTheJob,
+  siteOpenEndsTheJob,
+  skipLoneNavigate,
   userDidNotAskToRead,
   parseSiteLanding,
   siteLandingPrompt,
@@ -5094,9 +5095,17 @@ export class SparkBrowser {
     return revised;
   }
 
-  /** 原话只是打开这个站，而且当前页已经在这个站上。登录墙不算打开完成。 */
-  private namedSiteIsOpen(goal: AgentGoal, tabId?: string): boolean {
-    if (!openSiteIsTheJob(goal) || !goal.site) return false;
+  /**
+   * 原话只是打开这个站，而且当前页已经在这个站上。登录墙不算打开完成。
+   * 是不是「只是开站」看 siteOpenEndsTheJob，三处调用共用这一处。
+   */
+  private namedSiteIsOpen(
+    goal: AgentGoal,
+    tabId: string | undefined,
+    brainPlan: ActiveMission["brainPlan"],
+    compiled: AgentGoal["handbook"],
+  ): boolean {
+    if (!siteOpenEndsTheJob(goal, brainPlan, compiled) || !goal.site) return false;
     const here = pageFinger(this.getUrl(tabId), this.getTitle(tabId));
     const siteUrl = goal.siteUrl || `https://${goal.site}/`;
     return Boolean(here.url) && sameSite(here.url, siteUrl) && !isLoginWall(here) && !isCaptchaWall(here);
@@ -5153,7 +5162,7 @@ export class SparkBrowser {
       let missionOkRuns = 0;
       for (let i = 0; i < 8; i++) {
         current = await this.absorbQueuedPlanEdit(current);
-        if (this.namedSiteIsOpen(current.goal, tabId)) break;
+        if (this.namedSiteIsOpen(current.goal, tabId, current.brainPlan, current.plan)) break;
         const planned = nudgeFromPlan(current.brainPlan, current.plan || []);
         if (planned) {
           const fresh = current.nudge && !current.findings.some((f) => f.step.id === current.nudge!.id);
@@ -5276,7 +5285,7 @@ export class SparkBrowser {
         const finding = await this.runLoopStep(thought.next, current.goal, tabId);
         if (thought.next.cap === "mission" && finding.ok) missionOkRuns += 1;
         current = observe(current, finding);
-        if (this.namedSiteIsOpen(current.goal, tabId)) break;
+        if (this.namedSiteIsOpen(current.goal, tabId, current.brainPlan, current.plan)) break;
         // 登录墙 / 人机验证墙：只有人能过。停下问人，不再烧步骤。
         // 但只对「本来就要在墙内操作」的步骤生效（fill_form/act/read_page 等）；
         // search_read / navigate 是要离开墙去别的域的，导航失败按普通失败走自纠，不误报卡墙。
@@ -5366,8 +5375,12 @@ export class SparkBrowser {
       }
 
       current = await this.absorbQueuedPlanEdit(current);
+      if (this.namedSiteIsOpen(current.goal, tabId, current.brainPlan, current.plan)) {
+        // 唯一的 navigate 还标着 running。先跳过它，清点才认这单已经做完。不要放宽 unfinished。
+        if (current.brainPlan) current.brainPlan = skipLoneNavigate(current.brainPlan);
+      }
       if (
-        this.namedSiteIsOpen(current.goal, tabId) &&
+        this.namedSiteIsOpen(current.goal, tabId, current.brainPlan, current.plan) &&
         earlyExitMayCloseDone(current.goal, current.findings, current.brainPlan)
       ) {
         const reply = `已打开 ${current.goal.site}。`;
