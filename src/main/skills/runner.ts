@@ -11,6 +11,7 @@ import {
   type Skill,
   type SkillStep,
 } from "./store.js";
+import { writeExperience } from "../agent/experience.js";
 import { skillConflictsWithQuery } from "../agent/intent-router.js";
 import { normalizeUtterance } from "../triggers/gate.js";
 import { loadTriggers } from "../triggers/store.js";
@@ -303,7 +304,7 @@ export function resolveSkill(
   idOrQuery: string,
 ): Skill | null {
   const direct = getSkill(configDir, idOrQuery);
-  if (direct) return direct;
+  if (direct && direct.enabled !== false) return direct;
   // Prefer clean skill if taught skill points at one
   const matches = matchSkills(configDir, idOrQuery, 3);
   if (!matches.length) return null;
@@ -329,7 +330,7 @@ export function resolveSkill(
 /** 只认技能 id，或已登记且仍启用的触发语。不按标题、别名、子串猜。 */
 export function resolveSkillStrict(configDir: string, key: string): Skill | null {
   const direct = getSkill(configDir, key);
-  if (direct) return direct;
+  if (direct) return direct.enabled === false ? null : direct;
   const want = normalizeUtterance(key);
   if (!want) return null;
   const hit = loadTriggers(configDir).find(
@@ -1020,6 +1021,35 @@ function scaffoldText(skill: Skill): string {
   return lines.join("\n");
 }
 
+/** 妙招记下来的字在页面上找不到。换页、超时不算。 */
+export function recordedTextMiss(message: string, recorded: string): boolean {
+  const text = String(recorded || "").trim();
+  if (text.length < 2) return false;
+  return String(message || "").includes(text) && /找不到|未找到|not found|no element/i.test(message);
+}
+
+function recordedTextOf(step: AnyStep): string {
+  const args = step.args && typeof step.args === "object" ? step.args : {};
+  return String(step.text || args.text || step.innerText || args.innerText || step.ariaLabel || "").trim();
+}
+
+function retireBrokenSkill(configDir: string, skill: Skill, recorded: string): void {
+  try {
+    const current = getSkill(configDir, skill.id) || skill;
+    saveSkill(configDir, {
+      ...current,
+      enabled: false,
+      retiredReason: `找不到记录的文本「${recorded.slice(0, 40)}」`,
+    });
+    writeExperience(configDir, {
+      cue: skill.title,
+      lesson: `妙招「${skill.title}」记错了关键文本「${recorded.slice(0, 24)}」，已停用，下次不要优先用它。`,
+    });
+  } catch {
+    /* 停用失败不改这次的失败返回 */
+  }
+}
+
 function bumpSkillStat(configDir: string, skill: Skill, field: "success" | "fail"): void {
   try {
     const stats = {
@@ -1136,6 +1166,8 @@ export async function runSkill(
         /* ignore diag errors */
       }
       bumpSkillStat(configDir, skill, "fail");
+      const recorded = recordedTextOf(step);
+      if (recordedTextMiss(result.message, recorded)) retireBrokenSkill(configDir, skill, recorded);
       return {
         ok: false,
         message: `妙招「${skill.title}」第 ${i + 1} 步失败（${tool}）：${result.message}`,
