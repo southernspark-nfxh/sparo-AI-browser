@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { skillCatalogLines, runSkill } from "../src/main/skills/runner.js";
+import { skillCatalogLines, resolveSkillStrict, runSkill } from "../src/main/skills/runner.js";
 import type { SkillBrowser } from "../src/main/skills/runner.js";
 
 const dirs: string[] = [];
@@ -132,6 +132,38 @@ describe("resolveSkillStrict via runSkill", () => {
     expect(saved.retiredReason).toContain("王海林0516");
     const again = await runSkill(fake, dir, { id: "bad-name" });
     expect(again.message).toContain("未找到妙招");
+  });
+
+  it("停用后，仍启用但要点同一段错名的妙招也不再被选中", async () => {
+    const dir = tmp();
+    const retired = {
+      id: "bad-name",
+      title: "微博博主三天内微博复制",
+      intent: "复制微博",
+      source: "taught",
+      createdAt: "2026-10-24T00:00:00.000Z",
+      updatedAt: "2026-10-27T07:10:05.000Z",
+      steps: [{ action: "click_text", text: "王海林0516" }],
+      stepCount: 1,
+      stats: { success: 0, fail: 1 },
+      enabled: false,
+      retiredReason: "找不到记录的文本「王海林0516」",
+    };
+    const sibling = {
+      ...retired,
+      id: "search-person",
+      title: "微博搜人进主页",
+      enabled: true,
+      retiredReason: undefined,
+      steps: [
+        { action: "click_text", text: "王海林V" },
+        { action: "click_text", text: "王海林0516" },
+      ],
+    };
+    writeFileSync(join(dir, "skills", "bad-name.json"), JSON.stringify(retired));
+    writeFileSync(join(dir, "skills", "search-person.json"), JSON.stringify(sibling));
+    expect(resolveSkillStrict(dir, "search-person")).toBeNull();
+    expect(skillCatalogLines(dir)).not.toContain("微博搜人进主页");
   });
 
   it("formats catalog lines and returns empty text for an empty dir", () => {

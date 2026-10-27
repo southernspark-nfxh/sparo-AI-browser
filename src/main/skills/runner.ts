@@ -226,6 +226,40 @@ function skillKeywords(skill: Skill): string[] {
   return [...new Set([blob, ...aliases.map((a) => a.toLowerCase())])];
 }
 
+function stepRecordedText(step: {
+  text?: string;
+  innerText?: string;
+  ariaLabel?: string;
+  args?: { text?: string; innerText?: string };
+}): string {
+  const args = step.args && typeof step.args === "object" ? step.args : {};
+  return String(step.text || args.text || step.innerText || args.innerText || step.ariaLabel || "").trim();
+}
+
+/** 已停用妙招里记错的点击文本。别的仍启用的妙招再要点同一段字，就不要再选它。 */
+export function retiredClickTexts(skills: Skill[]): Set<string> {
+  const banned = new Set<string>();
+  for (const skill of skills) {
+    if (skill.enabled !== false || !skill.retiredReason) continue;
+    for (const step of skill.steps || []) {
+      const text = stepRecordedText(step);
+      if (text.length >= 2) banned.add(text);
+    }
+  }
+  return banned;
+}
+
+export function skillUsesRetiredText(skill: Skill, banned: Set<string>): boolean {
+  if (!banned.size) return false;
+  return (skill.steps || []).some((step) => banned.has(stepRecordedText(step)));
+}
+
+function selectableSkills(configDir: string): Skill[] {
+  const all = listSkills(configDir);
+  const banned = retiredClickTexts(all);
+  return all.filter((skill) => skill.enabled !== false && !skillUsesRetiredText(skill, banned));
+}
+
 export function matchSkills(
   configDir: string,
   query: string,
@@ -233,7 +267,7 @@ export function matchSkills(
 ): SkillMatch[] {
   const q = query.trim().toLowerCase();
   if (!q) return [];
-  const skills = listSkills(configDir).filter((s) => s.enabled !== false);
+  const skills = selectableSkills(configDir);
   const scored: SkillMatch[] = [];
   for (const s of skills) {
     const platform = String((s as { platform?: string }).platform || "");
@@ -304,7 +338,9 @@ export function resolveSkill(
   idOrQuery: string,
 ): Skill | null {
   const direct = getSkill(configDir, idOrQuery);
-  if (direct && direct.enabled !== false) return direct;
+  if (direct && direct.enabled !== false && !skillUsesRetiredText(direct, retiredClickTexts(listSkills(configDir)))) {
+    return direct;
+  }
   // Prefer clean skill if taught skill points at one
   const matches = matchSkills(configDir, idOrQuery, 3);
   if (!matches.length) return null;
@@ -330,7 +366,11 @@ export function resolveSkill(
 /** 只认技能 id，或已登记且仍启用的触发语。不按标题、别名、子串猜。 */
 export function resolveSkillStrict(configDir: string, key: string): Skill | null {
   const direct = getSkill(configDir, key);
-  if (direct) return direct.enabled === false ? null : direct;
+  if (direct) {
+    if (direct.enabled === false) return null;
+    if (skillUsesRetiredText(direct, retiredClickTexts(listSkills(configDir)))) return null;
+    return direct;
+  }
   const want = normalizeUtterance(key);
   if (!want) return null;
   const hit = loadTriggers(configDir).find(
@@ -361,8 +401,7 @@ export function skillCatalog(configDir: string): Array<{
   distilled?: boolean;
   routeLen: number;
 }> {
-  return listSkills(configDir)
-    .filter((s) => s.enabled !== false)
+  return selectableSkills(configDir)
     .slice(0, 20)
     .map((s) => ({
       ...skillSummary(s),
@@ -1029,8 +1068,7 @@ export function recordedTextMiss(message: string, recorded: string): boolean {
 }
 
 function recordedTextOf(step: AnyStep): string {
-  const args = step.args && typeof step.args === "object" ? step.args : {};
-  return String(step.text || args.text || step.innerText || args.innerText || step.ariaLabel || "").trim();
+  return stepRecordedText(step);
 }
 
 function retireBrokenSkill(configDir: string, skill: Skill, recorded: string): void {
@@ -1045,6 +1083,15 @@ function retireBrokenSkill(configDir: string, skill: Skill, recorded: string): v
       cue: skill.title,
       lesson: `妙招「${skill.title}」记错了关键文本「${recorded.slice(0, 24)}」，已停用，下次不要优先用它。`,
     });
+    for (const other of listSkills(configDir)) {
+      if (other.id === current.id || other.enabled === false) continue;
+      if (!(other.steps || []).some((step) => stepRecordedText(step) === recorded)) continue;
+      saveSkill(configDir, {
+        ...other,
+        enabled: false,
+        retiredReason: `找不到记录的文本「${recorded.slice(0, 40)}」`,
+      });
+    }
   } catch {
     /* 停用失败不改这次的失败返回 */
   }
