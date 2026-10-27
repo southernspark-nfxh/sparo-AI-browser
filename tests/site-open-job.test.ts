@@ -89,4 +89,14 @@ describe("只是开站必须看计划，不能单靠原话正则", () => {
     const plan = steps(["navigate", "read_page"]);
     expect(skipLoneNavigate(plan)).toBe(plan);
   });
+
+  it("「打开」紧跟的/了/着/过是状态，不是开站指令", () => {
+    expect(openSiteIsTheJob({ raw: "当前我打开的这个博主", site: "weibo.com" })).toBe(false);
+    expect(openSiteIsTheJob({ raw: "我打开的这个博主", site: "weibo.com" })).toBe(false);
+    expect(openSiteIsTheJob({ raw: "打开过的网页", site: "weibo.com" })).toBe(false);
+    expect(openSiteIsTheJob({ raw: "打开了微博", site: "weibo.com" })).toBe(false);
+    expect(openSiteIsTheJob({ raw: INCIDENT, site: "weibo.com" })).toBe(false);
+    expect(openSiteIsTheJob({ raw: "打开微博", site: "weibo.com" })).toBe(true);
+    expect(openSiteIsTheJob({ raw: "帮我打开微信读书", site: "weread.qq.com" })).toBe(true);
+  });
 });

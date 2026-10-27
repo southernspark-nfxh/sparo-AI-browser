@@ -169,6 +169,8 @@ export function openSiteIsTheJob(goal: { raw: string; site?: string }): boolean 
   if (!goal.site) return false;
   const raw = String(goal.raw || "").trim();
   if (!raw) return false;
+  // 「打开的 / 打开了 / 打开着 / 打开过」是已经发生的状态，不是祈使。助词，不是领域词表。
+  if (/(?:打开|前往|进入)[的了着过]/.test(raw)) return false;
   if (!/(?:打开|前往|进入)/.test(raw) && !/(?:^|[\s，,])去/.test(raw)) return false;
   const rest = raw
     .replace(/https?:\/\/\S+/gi, "")
