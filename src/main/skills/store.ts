@@ -37,6 +37,8 @@ export type Skill = {
   stepCount: number;
   stats: { success: number; fail: number };
   enabled: boolean;
+  /** 记错关键文本后停用，避免下次还优先撞它。 */
+  retiredReason?: string;
   traceFile?: string;
   /** 沉淀四件套。true 时 run_skill 只回脚手架，不逐字直放。 */
   distilled?: boolean;

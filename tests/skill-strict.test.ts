@@ -102,6 +102,38 @@ describe("resolveSkillStrict via runSkill", () => {
     expect(r.message).toContain("未找到妙招");
   });
 
+  it("停用记错关键文本的妙招，下次不再执行", async () => {
+    const dir = tmp();
+    writeFileSync(
+      join(dir, "skills", "bad-name.json"),
+      JSON.stringify({
+        id: "bad-name",
+        title: "微博博主三天内微博复制-2e45b3",
+        intent: "复制微博",
+        source: "taught",
+        createdAt: "2026-10-24T00:00:00.000Z",
+        updatedAt: "2026-10-24T00:00:00.000Z",
+        steps: [{ tool: "click_text", text: "王海林0516" }],
+        stepCount: 1,
+        stats: { success: 0, fail: 0 },
+        enabled: true,
+      }),
+    );
+    const fake = {
+      clickText: async () => ({ ok: false, message: "text not found: 王海林0516" }),
+    } as unknown as SkillBrowser;
+    const first = await runSkill(fake, dir, { id: "bad-name" });
+    expect(first.ok).toBe(false);
+    const saved = JSON.parse(readFileSync(join(dir, "skills", "bad-name.json"), "utf8")) as {
+      enabled?: boolean;
+      retiredReason?: string;
+    };
+    expect(saved.enabled).toBe(false);
+    expect(saved.retiredReason).toContain("王海林0516");
+    const again = await runSkill(fake, dir, { id: "bad-name" });
+    expect(again.message).toContain("未找到妙招");
+  });
+
   it("formats catalog lines and returns empty text for an empty dir", () => {
     const dir = tmp();
     expect(skillCatalogLines("")).toBe("");
