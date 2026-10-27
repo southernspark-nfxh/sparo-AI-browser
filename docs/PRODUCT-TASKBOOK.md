@@ -523,6 +523,15 @@ RAG是什么 打开百度百科和知乎做成笔记
 
 ---
 
+## 8.1 打包前回归
+
+脑区、路由、关单的改动，提交说明或任务书里写上「影响黄金场景 G?」。场景账本：[QA-GOLDEN-SCENARIOS.md](./QA-GOLDEN-SCENARIOS.md)。本地判断登记册：[DECISION-POINTS.md](./DECISION-POINTS.md)。
+
+- 能断言的进 `npm test`。G2 的「不在第 0 步结束」在 `tests/site-open-job.test.ts`。单测绿不算场景通。
+- 重打包前，受影响的场景在 `npm run start` 下跑一遍，按账本里的底账语句核对。
+- 安装包至少复测 G1、G2、G3。记下 commit 和 `release\Sparo-Setup.exe` 的修改时间。
+- 2026-10-27：开站抢答已进 `8dcee01`、`1bf9aa0`。G1–G8 实机和安装包这轮没跑，结果栏留在黄金场景账本里。
+
 ## 9. 怎么继续改（给后续 Agent）
 
 1. 先读根目录 `AGENTS.md`（30 秒）和 [ARCHITECTURE.md](./ARCHITECTURE.md)，再看本文 §8。云订阅先读 [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md)。不要扫整个 `src/`。  
@@ -545,6 +554,8 @@ RAG是什么 打开百度百科和知乎做成笔记
 | [sparo-agent-upgrade/PLAN.md](../sparo-agent-upgrade/PLAN.md) | 2026-10-22 能力升级任务书 |
 | [sparo-uiux-qa/tasks/00-修改总计划.md](../sparo-uiux-qa/tasks/00-修改总计划.md) | 界面升级任务书 |
 | 本文 `PRODUCT-TASKBOOK.md` | 现行任务、日志、QA、待办 |
+| [QA-GOLDEN-SCENARIOS.md](./QA-GOLDEN-SCENARIOS.md) | 黄金场景和底账核对 |
+| [DECISION-POINTS.md](./DECISION-POINTS.md) | 任务循环决策点登记册 |
 | [CHANGELOG.md](../CHANGELOG.md) | 对外变更（现 0.1.18） |
 | [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) | 云订阅 M1 交接（计量、目录、验收） |
 | [SKILL-COMMUNITY-M2.md](./SKILL-COMMUNITY-M2.md) | 技能社区 M2（存档，未开工） |
