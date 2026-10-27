@@ -281,10 +281,17 @@ export function skipLoneNavigate(plan: Plan, note = "当前页已在该站"): Pl
   return { ...plan, steps: [{ ...step, status: "skipped", note }] };
 }
 
-/** 收摊：交付齐了就把还没勾的标完成；没收齐就标跳过，卡片不留转圈。 */
+/** 收摊。还在跑或还没开始的步不许涂成完成，就算对账说齐了也标跳过。 */
 export function closePlan(plan: Plan, complete: boolean): Plan {
   const steps = plan.steps.map((s) => {
     if (s.status === "done" || s.status === "failed" || s.status === "skipped") return s;
+    if (s.status === "running" || s.status === "pending") {
+      return {
+        ...s,
+        status: "skipped" as const,
+        note: s.note || (complete ? "这段还没跑完" : "先汇总已查到的"),
+      };
+    }
     if (complete) return { ...s, status: "done" as const };
     return { ...s, status: "skipped" as const, note: s.note || "先汇总已查到的" };
   });
