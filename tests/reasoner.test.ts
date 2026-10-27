@@ -50,7 +50,7 @@ describe("推理器：模型自己挑下一步，本地最小校验", () => {
     const t = applyTurn(NY, { now: NOW });
     const after = observe(t.mission!, stayFinding(t.mission!));
     const thought = await thoughtForAsync(after, async () =>
-      JSON.stringify({ next: { cap: "search_read", covers: ["sights"] }, why: "先补景点" }),
+      JSON.stringify({ next: { cap: "search_read", covers: ["sights"], query: "纽约景点" }, why: "先补景点" }),
     );
     expect(thought.next?.cap).toBe("search_read");
     expect(thought.next?.covers).toContain("sights");
@@ -194,6 +194,36 @@ describe("推理器：模型自己挑下一步，本地最小校验", () => {
     // state=synthesize 不在 nextThought 的分支里，但 heuristic.synthesize 路径会触发
     // 这里主要验证不爆栈
     expect(thought).toBeDefined();
+  });
+
+  it("search_read 没有查询词：打回启发式，不把没手的步交出去", async () => {
+    const t = applyTurn(NY, { now: NOW });
+    const thought = await thoughtForAsync(t.mission!, async () =>
+      JSON.stringify({ next: { cap: "search_read", covers: ["food"] }, why: "先搜" }),
+    );
+    expect(thought.next?.cap).toBe("hotel_search");
+    expect(thought.next?.cap).not.toBe("search_read");
+  });
+
+  it("同一步已经失败过两次：不再原样重试第三次", () => {
+    const t = applyTurn(NY, { now: NOW });
+    const mission = t.mission!;
+    const failed = mission.plan.find((s) => s.cap === "search_read") || mission.plan[0];
+    const finding = (n: number): StepFinding => ({
+      step: { ...failed, id: `${failed.id}-${n}` },
+      text: "这一步没有对应的手。",
+      url: "",
+      ok: false,
+    });
+    const once = observe(mission, finding(1));
+    const twice = observe(once, finding(2));
+    const thought = thoughtFor(twice);
+    const again =
+      thought.next &&
+      thought.next.cap === failed.cap &&
+      (thought.next.query || "") === (failed.query || "") &&
+      (thought.next.label || "") === (failed.label || "");
+    expect(again).toBeFalsy();
   });
 
   it("可用的手 catalog 含住宿和检索", () => {
