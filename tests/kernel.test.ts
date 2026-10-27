@@ -300,4 +300,70 @@ describe("关单清点", () => {
     });
     expect(ran.complete).toBe(true);
   });
+
+  it("S6：搜索记在 navigate 上时，不再说搜索步没跑", () => {
+    const opened = applyTurn("打开百度，搜今天北京天气", { now: NOW });
+    const goal = {
+      ...opened.mission!.goal,
+      deliverables: [{ id: "answer" as const, label: "直接回答", required: true }],
+    };
+    const weather = encodeURIComponent("今天北京天气");
+    const seen = {
+      step: {
+        id: "nav",
+        label: "打开 baidu.com",
+        cap: "navigate" as const,
+        covers: ["answer" as const],
+        query: `https://www.baidu.com/s?wd=${weather}`,
+      },
+      text: "北京 15:15更新 15° 1~16°C 晴",
+      url: `https://www.baidu.com/s?wd=${weather}`,
+      ok: true,
+    };
+    const verdict = verifyContracts(goal, [seen], {
+      synthesized: "北京今天晴，1～16°C。",
+      plan: {
+        createdAt: 1,
+        steps: [
+          { id: "p0", label: "打开百度", cap: "navigate", covers: ["answer"], status: "running" },
+          {
+            id: "p1",
+            label: "搜今天北京天气并读取结果",
+            cap: "search_read",
+            covers: ["answer"],
+            status: "pending",
+          },
+        ],
+      },
+    });
+    expect(verdict.complete).toBe(true);
+    expect(verdict.notes).not.toContain("还没执行");
+  });
+
+  it("登陆停在别的站：交付写了也不许 done", () => {
+    const opened = applyTurn("登陆微博", { now: NOW });
+    const goal = {
+      ...opened.mission!.goal,
+      site: "weibo.com",
+      siteUrl: "https://weibo.com/login.php",
+      deliverables: [{ id: "answer" as const, label: "直接回答", required: true }],
+    };
+    const seen = {
+      step: {
+        id: "nav",
+        label: "https://weibo.com/login.php",
+        cap: "navigate" as const,
+        covers: ["answer" as const],
+      },
+      text: "北京小客车指标调控管理信息系统摇号结果",
+      url: "https://www.baidu.com/s?wd=北京小汽车哪里摇号",
+      ok: true,
+    };
+    const verdict = verifyContracts(goal, [seen], {
+      synthesized: "已打开 weibo.com。",
+      pageUrl: seen.url,
+    });
+    expect(verdict.complete).toBe(false);
+    expect(verdict.notes).toContain("当前页不是目标站点");
+  });
 });
