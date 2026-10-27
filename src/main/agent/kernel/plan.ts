@@ -6,6 +6,8 @@ import {
   compileHands,
   filterLegalCovers,
   isLegalCap,
+  travelSearchLeg,
+  travelSlotGap,
   type AgentGoal,
   type AgentStep,
 } from "../loop.js";
@@ -185,6 +187,55 @@ export function appendPlanAlternative(
     status: "running",
   });
   return { ...plan, steps, revisedFrom: reason.slice(0, 80) };
+}
+
+/**
+ * 高铁/机票步组不出腿时：能从原句和标签拆出的补进手册；拆不出就标 failed 并写缺哪一槽。
+ * 缺出发地或这段日期时给出问句。酒店步不动。
+ */
+export function settleTravelPlan(
+  plan: Plan,
+  goal: AgentGoal,
+  hands: AgentStep[],
+  now = new Date(),
+): { plan: Plan; hands: AgentStep[]; ask?: string } {
+  const steps = plan.steps.map((s) => ({ ...s, covers: [...s.covers] }));
+  const nextHands = hands.map((h) => ({ ...h, covers: [...h.covers] }));
+  let ask: string | undefined;
+  for (const step of steps) {
+    if (step.status !== "pending" && step.status !== "running") continue;
+    if (step.cap !== "train_search" && step.cap !== "flight_search") continue;
+    const probe = { cap: step.cap, label: step.label, query: step.label };
+    const leg = travelSearchLeg(probe, goal, now);
+    if (leg) {
+      const same = nextHands.find(
+        (h) => h.cap === step.cap && (h.id === step.id || h.label === step.label || (h.from === leg.from && h.to === leg.to)),
+      );
+      if (same) {
+        same.from = same.from || leg.from;
+        same.to = same.to || leg.to;
+        same.date = leg.date;
+        same.query = same.query || `${leg.from}到${leg.to}`;
+      } else {
+        nextHands.push({
+          id: step.id,
+          cap: step.cap as AgentStep["cap"],
+          label: step.label,
+          covers: step.covers as AgentStep["covers"],
+          query: `${leg.from}到${leg.to}`,
+          from: leg.from,
+          to: leg.to,
+          date: leg.date,
+        });
+      }
+      continue;
+    }
+    const gap = travelSlotGap(probe, goal, now);
+    step.status = "failed";
+    step.note = gap.note;
+    if (gap.ask && !ask) ask = gap.ask;
+  }
+  return { plan: { ...plan, steps }, hands: nextHands, ask };
 }
 
 /** 把计划当前步对上可执行手册里的那一手，保留 query / trip / mission。 */

@@ -1,8 +1,8 @@
 /**
  * 交付物、计划、验收。不管入句，不管问人。
  */
-import { canonCity, isCity, plausiblePlace } from "./place.js";
-import { addDays } from "./travel.js";
+import { canonCity, findCities, isCity, plausiblePlace } from "./place.js";
+import { addDays, parseLooseCheckin } from "./travel.js";
 import { parseMission, tripEatPlayMission, type Mission } from "./mission.js";
 import { parseLocalIntent, type ChatAction } from "./stub.js";
 import type { TripPlan } from "./trip-plan.js";
@@ -709,32 +709,95 @@ function namedPlace(raw: string): string {
   return canonCity(raw) || plausiblePlace(raw) || "";
 }
 
+/** 这一段自己的日期。不读 known.start：那经常是酒店入住日，不是这趟车的日子。 */
+export function segmentTravelDate(
+  step: { query?: string; label?: string; date?: string },
+  goal?: HandGoal,
+  now = new Date(),
+): string {
+  const explicit = String(step.date || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(explicit)) return explicit;
+  const own = [explicit, step.label, step.query].filter(Boolean).join(" ");
+  const full = own ? parseLooseCheckin(own, now) : null;
+  if (full) return full;
+  const day = own.match(/(?:^|[^\d])(\d{1,2})\s*[日号]/);
+  if (!day) return "";
+  const month = own.match(/(\d{1,2})\s*月/) || String(goal?.raw || "").match(/(\d{1,2})\s*月/);
+  if (!month) return "";
+  return parseLooseCheckin(`${month[1]}月${day[1]}日`, now) || "";
+}
+
+function citySide(raw: string): string {
+  const cities = findCities(raw);
+  if (cities.length) return cities[0];
+  return namedPlace(raw);
+}
+
+function routePair(text: string): { from: string; to: string } | null {
+  const stripped = text
+    .replace(/\d{4}\s*年/g, " ")
+    .replace(/\d{1,2}\s*月\s*\d{1,2}\s*[日号]?/g, " ")
+    .replace(/(?:^|[^\d])\d{1,2}\s*[日号]/g, " ");
+  const back = stripped.match(/([一-龥A-Za-z·]{2,12})\s*(?:返回|回到|回来|回)\s*([一-龥A-Za-z·]{2,12})/);
+  if (back) {
+    const from = citySide(back[1]);
+    const to = citySide(back[2]);
+    if (from && to && from !== to) return { from, to };
+  }
+  const forward = stripped.match(ROUTE_RE);
+  if (forward) {
+    const from = citySide(forward[1]);
+    const to = citySide(forward[2]);
+    if (from && to && from !== to) return { from, to };
+  }
+  const cities = findCities(stripped);
+  if (cities.length >= 2) return { from: cities[0], to: cities[1] };
+  return null;
+}
+
 /**
  * 机票/高铁执行分支组腿的唯一口径。
- * 日期用 step.date，没有再用 known.start。
- * 查询里的城市必须过 canonCity / plausiblePlace，和 runLoopStep 同一套。
+ * 日期只用 step.date，或从这一段的 label / query / 原句里拆出来的月日。
+ * 不用 known.start。查询里粘着「高铁」的一侧用城市词库收口，不把整截交给排除词。
  */
 export function travelSearchLeg(
-  step: { query?: string; city?: string; from?: string; to?: string; date?: string },
+  step: { query?: string; label?: string; city?: string; from?: string; to?: string; date?: string },
   goal?: HandGoal,
+  now = new Date(),
 ): TravelLeg | null {
-  const date = String(step.date || goal?.known?.start || "").trim();
+  const date = segmentTravelDate(step, goal, now);
   const fromField = String(step.from || "").trim();
   const toField = String(step.to || "").trim();
   if (fromField && toField && date) return { from: fromField, to: toField, date };
-  let from = fromField || goal?.known?.origin || "";
-  let to = toField || step.city || goal?.known?.cities?.[0] || "";
-  const m = String(step.query || "").match(ROUTE_RE);
-  if (m) {
-    const a = namedPlace(m[1]);
-    const b = namedPlace(m[2]);
-    if (a && b) {
-      from = a;
-      to = b;
-    }
-  }
+  const pair = routePair([step.query, step.label, step.city].filter(Boolean).join(" "));
+  let from = fromField || pair?.from || "";
+  let to = toField || pair?.to || "";
+  if (!from && goal?.known?.origin && to) from = canonCity(goal.known.origin) || namedPlace(goal.known.origin);
   if (from && to && date) return { from, to, date };
   return null;
+}
+
+/** 组不出腿时缺的是哪一槽。给拒收留痕和问人用。 */
+export function travelSlotGap(
+  step: { query?: string; label?: string; city?: string; from?: string; to?: string; date?: string },
+  goal?: HandGoal,
+  now = new Date(),
+): { note: string; ask?: string } {
+  const date = segmentTravelDate(step, goal, now);
+  const pair = routePair([step.query, step.label, step.city].filter(Boolean).join(" "));
+  const from = String(step.from || "").trim() || pair?.from || "";
+  const to = String(step.to || "").trim() || pair?.to || "";
+  const missing: string[] = [];
+  if (!from) missing.push("出发地");
+  if (!to) missing.push("目的地");
+  if (!date) missing.push("这段日期");
+  const note = missing.length ? `缺${missing.join("、")}` : "组不出这一段的车次";
+  const ask = !from
+    ? "还缺出发地，告诉我从哪出发再查车。"
+    : !date
+      ? "还缺这段车次的日期，告诉我哪一天再查。"
+      : undefined;
+  return { note, ask };
 }
 
 /** navigate 真正会打开的目标。query 为空时，标签本身是网址也算。 */
@@ -824,7 +887,13 @@ export function mergePlan(goal: AgentGoal, planSteps: PlanStep[]): AgentStep[] {
     };
     // 模型 plan 里如果选了 trip_plan，补上 trip 数据（和 nextThoughtAsync 一致）
     if (cap === "trip_plan" && goal.plan) extra.trip = goal.plan;
-    if (!stepCanRun({ cap, ...extra, mission: cap === "mission" ? parseMission(goal.raw) : undefined }, goal)) {
+    if (!stepCanRun({
+      cap,
+      label: s.label,
+      ...extra,
+      query: (extra.query as string | undefined) || s.label,
+      mission: cap === "mission" ? parseMission(goal.raw) : undefined,
+    }, goal)) {
       console.warn("[plan] 拒收没有手的步骤", cap, s.label || s.query || "");
       continue;
     }
