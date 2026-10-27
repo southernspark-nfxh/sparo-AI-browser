@@ -4,26 +4,29 @@ export type PageRect = { x: number; y: number; width: number; height: number };
  * 页面视图被原生布局拉成整窗时，会盖住顶栏和侧栏，窗口上只剩系统按钮。
  * 停在屏幕外的后台标签（x 远小于 0）不算盖住。
  */
-export type ChromeCoverBudget = { windowStart: number; fixes: number };
+export type ChromeCoverBudget = { windowStart: number; fixes: number; lastFix: number };
 
 const CHROME_COVER_WINDOW_MS = 3000;
-const CHROME_COVER_CAP = 8;
+/** 同一瞬间连着拉，只挡这一下，下一拍仍救。不许攒到 N 次后永久放弃。 */
+const CHROME_COVER_DEBOUNCE_MS = 200;
 
-/** restore / resize 时把 8 次上限和 3 秒窗一起清掉，守卫才能再救白屏。 */
+/** restore / resize 时清掉去抖计数，守卫接着救白屏。 */
 export function resetChromeCoverBudget(now: number): ChromeCoverBudget {
-  return { windowStart: now, fixes: 0 };
+  return { windowStart: now, fixes: 0, lastFix: 0 };
 }
 
-/** 3 秒窗内最多 8 次。返回 allow=false 时调用方不再重排。 */
+/** 只做限频去抖。allow=false 只表示这一下太密，过了去抖间隔必须再允许。 */
 export function takeChromeCoverFix(
   state: ChromeCoverBudget,
   now: number,
 ): { state: ChromeCoverBudget; allow: boolean } {
+  if (state.lastFix > 0 && now - state.lastFix < CHROME_COVER_DEBOUNCE_MS) {
+    return { state, allow: false };
+  }
   const fresh = now - state.windowStart > CHROME_COVER_WINDOW_MS ? resetChromeCoverBudget(now) : state;
-  const fixes = fresh.fixes + 1;
   return {
-    state: { windowStart: fresh.windowStart, fixes },
-    allow: fixes <= CHROME_COVER_CAP,
+    state: { windowStart: fresh.windowStart, fixes: fresh.fixes + 1, lastFix: now },
+    allow: true,
   };
 }
 

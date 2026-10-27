@@ -15,16 +15,18 @@ describe("pageViewCoversChrome", () => {
     expect(pageViewCoversChrome({ x: 0, y: 0, width: 1020, height: 780 }, hole)).toBe(true);
   });
 
-  it("3 秒内第 9 次停下，restore 重置后又能排", () => {
+  it("连续拉 20 次也不放弃，去抖只挡同一瞬间", () => {
     let state = resetChromeCoverBudget(1_000);
-    for (let i = 0; i < 8; i += 1) {
-      const taken = takeChromeCoverFix(state, 1_000 + i);
+    for (let i = 0; i < 20; i += 1) {
+      const taken = takeChromeCoverFix(state, 1_000 + i * 200);
       state = taken.state;
       expect(taken.allow).toBe(true);
     }
-    const blocked = takeChromeCoverFix(state, 1_100);
-    expect(blocked.allow).toBe(false);
-    const afterRestore = takeChromeCoverFix(resetChromeCoverBudget(2_000), 2_000);
+    const burst = takeChromeCoverFix(state, state.lastFix + 50);
+    expect(burst.allow).toBe(false);
+    const again = takeChromeCoverFix(burst.state, burst.state.lastFix + 200);
+    expect(again.allow).toBe(true);
+    const afterRestore = takeChromeCoverFix(resetChromeCoverBudget(20_000), 20_000);
     expect(afterRestore.allow).toBe(true);
     expect(afterRestore.state.fixes).toBe(1);
   });

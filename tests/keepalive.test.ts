@@ -175,7 +175,7 @@ describe("background tasks do not steal the window", () => {
       restores.push(1);
     };
     browser.chromeGuardTimers = [];
-    browser.chromeCover = { windowStart: 0, fixes: 0 };
+    browser.chromeCover = { windowStart: 0, fixes: 0, lastFix: 0 };
     browser.armChromeGuard = () => {
       armed.push(1);
     };

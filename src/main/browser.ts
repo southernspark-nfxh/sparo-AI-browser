@@ -968,10 +968,15 @@ export class SparkBrowser {
     this.registerIpc();
     this.createTab(DEFAULT_URL, true);
     this.memoryTimer = setInterval(() => this.autoDiscardIdleTabs(), 30_000);
+    this.startChromeHoleWatch();
     this.window.on("closed", () => {
       if (this.memoryTimer) {
         clearInterval(this.memoryTimer);
         this.memoryTimer = null;
+      }
+      if (this.chromeHoleTimer) {
+        clearInterval(this.chromeHoleTimer);
+        this.chromeHoleTimer = null;
       }
     });
   }
@@ -2234,22 +2239,58 @@ export class SparkBrowser {
    * 自己这次 setBounds 触发的 bounds-changed 用 boundsGuard 挡掉，避免来回拉。
    */
   private onPageViewBoundsChanged(view: WebContentsView): void {
-    if (this.boundsGuard || this.overlay !== "none") return;
-    const hole = this.pageBounds();
-    if (!hole) return;
     let actual: { x: number; y: number; width: number; height: number };
     try {
       actual = view.getBounds();
     } catch {
       return;
     }
-    if (!pageViewCoversChrome(actual, hole)) return;
+    const active = this.getActiveTab();
+    if (active?.view === view) {
+      this.logChromeHole("bounds-changed", this.lastActiveBounds, actual);
+      this.lastActiveBounds = actual;
+    }
+    if (this.boundsGuard || this.overlay !== "none") return;
+    const hole = this.reportedPageHole();
+    if (!hole || !pageViewCoversChrome(actual, hole)) return;
+    this.healCoveredChrome(actual, hole);
+  }
+
+  /** 约 2 秒对一次：活跃视图盖住最近一次 #pageHole 就拉回。烧过事件预算也继续。 */
+  private startChromeHoleWatch(): void {
+    if (this.chromeHoleTimer) return;
+    this.chromeHoleTimer = setInterval(() => this.assertChromeHole(), 2000);
+  }
+
+  private assertChromeHole(): void {
+    try {
+      if (!this.window || this.window.isDestroyed()) return;
+      const tab = this.getActiveTab();
+      if (!tab?.view || tab.discarded) return;
+      const hole = this.reportedPageHole();
+      if (!hole) return;
+      const actual = tab.view.getBounds();
+      if (!pageViewCoversChrome(actual, hole)) return;
+      this.healCoveredChrome(actual, hole);
+    } catch {
+      /* 视图已销毁 */
+    }
+  }
+
+  private reportedPageHole(): { x: number; y: number; width: number; height: number } | null {
+    const hole = this.holeBounds;
+    if (!hole || hole.width < 80 || hole.height < 80) return null;
+    return hole;
+  }
+
+  private healCoveredChrome(
+    actual: { x: number; y: number; width: number; height: number },
+    hole: { x: number; y: number; width: number; height: number },
+  ): void {
     const taken = takeChromeCoverFix(this.chromeCover, Date.now());
     this.chromeCover = taken.state;
     if (!taken.allow) return;
-    if (taken.state.fixes === 1) {
-      console.warn("[layout] page view covered chrome, restoring page hole");
-    }
+    this.logChromeHole("heal", actual, hole);
     this.boundsGuard = true;
     try {
       this.applyViewBounds(false);
@@ -2258,6 +2299,24 @@ export class SparkBrowser {
     } finally {
       this.boundsGuard = false;
     }
+  }
+
+  private logChromeHole(
+    kind: "bounds-changed" | "heal",
+    oldBounds: { x: number; y: number; width: number; height: number } | null,
+    newBounds: { x: number; y: number; width: number; height: number },
+  ): void {
+    let minimized = false;
+    let maximized = false;
+    try {
+      minimized = Boolean(this.window && !this.window.isDestroyed() && this.window.isMinimized());
+      maximized = Boolean(this.window && !this.window.isDestroyed() && this.window.isMaximized());
+    } catch {
+      /* ignore */
+    }
+    console.log(
+      `[chrome-hole] ${kind} t=${Date.now()} active=${this.activeTabId || ""} minimized=${minimized} maximized=${maximized} old=${JSON.stringify(oldBounds)} new=${JSON.stringify(newBounds)}`,
+    );
   }
 
   /** 父布局之后再排几次。拉伸若落在首屏绘制，单次 100ms 补排会错过。 */
@@ -2324,8 +2383,10 @@ export class SparkBrowser {
 
   private layoutTimer: ReturnType<typeof setTimeout> | null = null;
   private chromeGuardTimers: ReturnType<typeof setTimeout>[] = [];
+  private chromeHoleTimer: ReturnType<typeof setInterval> | null = null;
   private boundsGuard = false;
-  private chromeCover: ChromeCoverBudget = { windowStart: 0, fixes: 0 };
+  private lastActiveBounds: { x: number; y: number; width: number; height: number } | null = null;
+  private chromeCover: ChromeCoverBudget = { windowStart: 0, fixes: 0, lastFix: 0 };
   /** 向 shell 要一次最新的 page-hole 测量（恢复过渡的回调可能丢过）。 */
   private requestHoleReport(): void {
     try {
