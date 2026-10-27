@@ -19,6 +19,7 @@ import { randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { pageViewCoversChrome, resetChromeCoverBudget, takeChromeCoverFix, type ChromeCoverBudget } from "./page-bounds.js";
 import { coPresenceMayRestore } from "./shell-focus.js";
+import { traceMainWindow } from "./focus-trace.js";
 import { laneForText, type TaskLane } from "./agent/task-class.js";
 import { shouldSuspend as poolShouldSuspend, TaskPool, type PoolTask } from "./agent/task-pool.js";
 import type {
@@ -902,6 +903,7 @@ export class SparkBrowser {
       },
     });
     this.window.setMenuBarVisibility(false);
+    traceMainWindow(this.window);
     this.window.webContents.on("render-process-gone", (_e, details) => {
       console.error("[shell] render-process-gone", details.reason);
       noteHang("shell-render-gone", details.reason);
