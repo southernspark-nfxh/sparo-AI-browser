@@ -4,6 +4,7 @@ import { observe, thoughtFor, thoughtForAsync } from "../src/main/agent/kernel/i
 import {
   parseReasonerJson,
   applyModelPick,
+  siteAskYieldsToPlan,
 } from "../src/main/agent/kernel/reasoner.js";
 import { compileHands } from "../src/main/agent/loop.js";
 import type { StepFinding } from "../src/main/agent/loop.js";
@@ -263,6 +264,23 @@ describe("推理器：模型自己挑下一步，本地最小校验", () => {
       (thought.next.query || "") === (failed.query || "") &&
       (thought.next.label || "") === (failed.label || "");
     expect(again).toBeFalsy();
+  });
+
+  it("还有没做完的酒店步时，站门问句让路", () => {
+    expect(
+      siteAskYieldsToPlan({
+        steps: [
+          { status: "running", cap: "hotel_search" },
+          { status: "pending", cap: "train_search" },
+        ],
+      }),
+    ).toBe(true);
+    expect(
+      siteAskYieldsToPlan({
+        steps: [{ status: "pending", cap: "navigate" }],
+      }),
+    ).toBe(false);
+    expect(siteAskYieldsToPlan(undefined)).toBe(false);
   });
 
   it("可用的手 catalog 含住宿和检索", () => {

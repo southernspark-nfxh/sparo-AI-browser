@@ -134,6 +134,13 @@ function navigateAttempted(goal: AgentGoal, findings: StepFinding[]): boolean {
  * 收摊守门：人还在错页上时，说明文不能当交付。
  * 还没去过就 navigate；去过仍不在该站就问一句，不标完成。
  */
+/** 计划里还有没做完的非开站步：站门问句让路，接着做这些步。 */
+export function siteAskYieldsToPlan(plan?: { steps: { status: string; cap: string }[] }): boolean {
+  return (plan?.steps || []).some(
+    (step) => (step.status === "pending" || step.status === "running") && step.cap !== "navigate",
+  );
+}
+
 export function gateSiteDelivery(opts: {
   goal: AgentGoal;
   pageUrl?: string;
