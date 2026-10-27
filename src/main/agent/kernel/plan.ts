@@ -218,6 +218,18 @@ export function focusPlanOnStep(
   };
 }
 
+/**
+ * 人已经在目标站上，唯一的 navigate 不用再跑。
+ * 只跳过这一步，好让早退清点看见「计划已收完」。多步计划原样返回。
+ */
+export function skipLoneNavigate(plan: Plan, note = "当前页已在该站"): Plan {
+  if (plan.steps.length !== 1) return plan;
+  const step = plan.steps[0];
+  if (step.cap !== "navigate") return plan;
+  if (step.status === "done" || step.status === "skipped") return plan;
+  return { ...plan, steps: [{ ...step, status: "skipped", note }] };
+}
+
 /** 收摊：交付齐了就把还没勾的标完成；没收齐就标跳过，卡片不留转圈。 */
 export function closePlan(plan: Plan, complete: boolean): Plan {
   const steps = plan.steps.map((s) => {
