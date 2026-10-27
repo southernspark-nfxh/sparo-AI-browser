@@ -18,6 +18,7 @@ import { pathToFileURL } from "node:url";
 import { randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { pageViewCoversChrome, resetChromeCoverBudget, takeChromeCoverFix, type ChromeCoverBudget } from "./page-bounds.js";
+import { coPresenceMayRestore } from "./shell-focus.js";
 import { laneForText, type TaskLane } from "./agent/task-class.js";
 import { shouldSuspend as poolShouldSuspend, TaskPool, type PoolTask } from "./agent/task-pool.js";
 import type {
@@ -1620,21 +1621,20 @@ export class SparkBrowser {
   }
 
   /**
-   * 填表、回复评论、发帖确认（含支付前核对）是人机同窗：
-   * 窗口已经最小化时只拉回一次，方便看着草稿和付款。
-   * 后台调研、比价、行程不走这里。
+   * 填表、回复、发帖不再把窗口拉回前台。
+   * 最小化时人自己点任务栏；新侧栏消息只闪任务栏。
    */
   private restoreForCoPresence(): void {
     if (this.coPresenceRestored) return;
     this.coPresenceRestored = true;
     if (this.window.isDestroyed()) return;
-    let minimized = false;
+    let minimized = true;
     try {
       minimized = this.window.isMinimized();
     } catch {
       return;
     }
-    if (!minimized) return;
+    if (!coPresenceMayRestore(minimized)) return;
     this.ensureWindowVisible(false);
   }
 
@@ -3497,7 +3497,7 @@ export class SparkBrowser {
 
   /** Address-bar / sidebar 一键回复：扫当前页 → 模型起草 → 填入。不点发送。 */
   async csOneClickReply(): Promise<ToolResult & { data?: CsDraftData }> {
-    // 回复评论是前台任务：窗口最小化时拉回一次，人看着草稿再自己点发送。
+    // 回复评论不把最小化窗口拉回前台。人要看草稿时自己点任务栏。
     this.restoreForCoPresence();
     const hasKey = this.modelReady();
     const res = await this.csDraftReply({
@@ -5125,7 +5125,7 @@ export class SparkBrowser {
     this.pushSidebarState();
     const goal = mission.goal;
     if (goal.kind === "form" || goal.kind === "publish") {
-      // 填表 / 发帖确认（含支付前核对）人机同窗：最小化时拉回一次。调研和行程不进这个分支。
+      // 填表 / 发帖不再把最小化窗口拉回前台。调研和行程本来也不进这个分支。
       this.restoreForCoPresence();
     }
     const cloudGate = await this.beginCloudTaskIfNeeded({ type: "llm", text: goal.raw }, goal.raw);
@@ -6650,7 +6650,7 @@ export class SparkBrowser {
   }
 
   private async previewFormFill(userText: string, tabId?: string): Promise<string> {
-    // 填表是前台任务：最小化时拉回一次，人看着字段和之后的付款确认。
+    // 填表不把最小化窗口拉回前台。人要看字段时自己点任务栏。
     this.restoreForCoPresence();
     tabId = tabId || this.agentTabId || this.activeTabId;
     const analyzed = await this.analyzePage(tabId);
