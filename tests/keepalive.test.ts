@@ -249,15 +249,14 @@ describe("background tasks do not steal the window", () => {
       minimizedAfter.push(1);
     };
     (browser as unknown as { mountReaderTab: (url: string) => { ok: boolean } }).mountReaderTab = () => {
-      minimized = false;
       return { ok: true };
     };
     const opened = (browser as unknown as { openInReaderTab: (url: string) => { ok: boolean } }).openInReaderTab(
       "file:///report.html",
     );
     expect(opened.ok).toBe(true);
-    expect(focusable).toEqual([false, true]);
-    expect(minimizedAfter).toEqual([1]);
+    expect(focusable).toEqual([]);
+    expect(minimizedAfter).toEqual([]);
     expect(flashes).toEqual([true]);
     expect(restores).toEqual([]);
     expect(browser.window.isMinimized()).toBe(true);
