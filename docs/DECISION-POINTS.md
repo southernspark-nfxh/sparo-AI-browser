@@ -27,5 +27,7 @@
 | 17 | 入口 turn 算执行过 | `browser.ts` `executeMission` 里进循环前的 `journalMissionTurn`；`mission-journal.ts` `missionWasExecuted` | 计划第 0 步在创建时就是 `running`，这条空 `findings` 的 turn 仍让 `turns > 0` | 有 turn 行 | **待另开** [BUG-20261027-ENTRY-TURN-COUNTS-AS-RUN.md](./BUG-20261027-ENTRY-TURN-COUNTS-AS-RUN.md) |
 | 18 | 模型收摊 | `browser.ts` `thought.synthesize \|\| !thought.next` | 离开循环。计划仍有未完成步时，清点不许 done | 模型 | 保留 |
 | 19 | 挂起短肯定 | `intent-router.ts` `isShortAffirmative`；`browser.ts` 挂起单分支 | 全句是「打开 / 好 / 继续」时续跑挂起单，不开新单 | 全句正则 | 保留。带宾语的「打开微博」不认 |
+| 20 | `pageBlocksDone` | `verify.ts` `pageBlocksDone`；`browser.ts` 登录落地、没要求读页、最终 `verifyContracts` 三处关 done 之前 | 目标站点和当前页不同站时不许 `close(done)` | 当前 URL 与 `site` / `siteUrl` | 保留。登录墙若仍在该站（含子域）不算挡住。没点站点的单不拦 |
+| 21 | 关单流水对上计划步 | `verify.ts` `unmetPlanSteps` 的标签与发现重叠 | 计划步的标签有连续 4 字出现在某条成功发现的标签、query、URL 或正文里，关单不再写「还没执行」 | 实际 turn 流水，不看计划状态假设 | 保留。对不上的采集步仍挡住 done，见 `kernel.test.ts`「采集步没跑」 |
 
 模型把采集句编成「一步 navigate + 只有 answer」时，第 1 条仍会当成只是开站。这是信脑区计划的残留，不是词表漏洞。无计划又带「复制」的句子在过期日前仍走第 2 条。
