@@ -340,6 +340,71 @@ describe("关单清点", () => {
     expect(verdict.notes).not.toContain("还没执行");
   });
 
+  it("S6：正文里有残缺百分号时，编码过的搜索 URL 仍算这步跑过", () => {
+    const opened = applyTurn("打开百度，搜今天北京天气", { now: NOW });
+    const goal = {
+      ...opened.mission!.goal,
+      deliverables: [{ id: "answer" as const, label: "直接回答", required: true }],
+    };
+    const weather = encodeURIComponent("今天北京天气");
+    const seen = {
+      step: {
+        id: "nav",
+        label: "打开 baidu.com",
+        cap: "navigate" as const,
+        covers: ["answer" as const],
+        query: `https://www.baidu.com/s?wd=${weather}`,
+      },
+      text: "北京 18:35更新 10° 1~16°C 晴 折扣 50% 起",
+      url: `https://www.baidu.com/s?wd=${weather}`,
+      ok: true,
+    };
+    const verdict = verifyContracts(goal, [seen], {
+      synthesized: "北京今天晴，10°C，1～16°C。",
+      plan: {
+        createdAt: 1,
+        steps: [
+          { id: "p0", label: "打开百度", cap: "navigate", covers: ["answer"], status: "running" },
+          { id: "p1", label: "搜今天北京天气", cap: "search_read", covers: ["answer"], status: "pending" },
+        ],
+      },
+    });
+    expect(verdict.complete).toBe(true);
+    expect(verdict.notes).not.toContain("没执行");
+  });
+
+  it("S6：天气答案没给出时仍是 incomplete", () => {
+    const opened = applyTurn("打开百度，搜今天北京天气", { now: NOW });
+    const goal = {
+      ...opened.mission!.goal,
+      deliverables: [{ id: "answer" as const, label: "直接回答", required: true }],
+    };
+    const seen = {
+      step: {
+        id: "nav",
+        label: "打开 baidu.com",
+        cap: "navigate" as const,
+        covers: ["answer" as const],
+        query: "https://www.baidu.com/",
+      },
+      text: "百度一下",
+      url: "https://www.baidu.com/",
+      ok: true,
+    };
+    const verdict = verifyContracts(goal, [seen], {
+      synthesized: "还在首页。",
+      plan: {
+        createdAt: 1,
+        steps: [
+          { id: "p0", label: "打开百度", cap: "navigate", covers: ["answer"], status: "done" },
+          { id: "p1", label: "搜今天北京天气", cap: "search_read", covers: ["answer"], status: "pending" },
+        ],
+      },
+    });
+    expect(verdict.complete).toBe(false);
+    expect(verdict.notes).toContain("没执行");
+  });
+
   it("登陆停在别的站：交付写了也不许 done", () => {
     const opened = applyTurn("登陆微博", { now: NOW });
     const goal = {
