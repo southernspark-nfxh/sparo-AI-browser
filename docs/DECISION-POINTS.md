@@ -15,7 +15,7 @@
 | 5 | `userDidNotAskToRead` | `reasoner.ts` `userDidNotAskToRead`；调用 `browser.ts` 循环后的「没要求读页」关单 | 计划看起来做完、且点了站点时，可以 `close(done)` 并回「已打开」 | 正则。词表里没有复制、文档、导出 | **待另开** [BUG-20261027-READ-INTENT-EARLY-EXIT.md](./BUG-20261027-READ-INTENT-EARLY-EXIT.md)。本册不改它 |
 | 6 | `loginRedirectNote` | `reasoner.ts` `loginRedirectNote`；调用在站点落地之后 | 登录地址被跳回站内时可以收工 | 发现里有过登录 URL 的 navigate | 保留。同一条 `earlyExitMayCloseDone`，采集单不许假 done |
 | 7 | `stall >= 3` | `browser.ts` 主循环「连着 3 步没进展」 | 离开循环去汇总，或先问要不要打开站点。不直接 done | 连续失败计数 | 保留。失败收摊，不判完成 |
-| 8 | `gateSiteDelivery` | `reasoner.ts` `gateSiteDelivery`；循环内、stall、循环后各一处 | 能改成先 navigate，或 `waiting_human` 问要不要打开 | 点了站点、当前页不在该站、还没 navigate 过 | 保留。只决定要不要先开站，不判任务完成 |
+| 8 | `gateSiteDelivery` | `reasoner.ts` `gateSiteDelivery`；循环内、stall、循环后各一处。`siteAskYieldsToPlan` 在问句发出前 | 能改成先 navigate，或 `waiting_human` 问要不要打开。计划里还有 pending/running 的非 navigate 步时不问，接着做那些步 | 点了站点、当前页不在该站、还没 navigate 过 | 保留。只决定要不要先开站，不判任务完成。登录墙不走这条让路 |
 | 9 | `repeatStop` | `deepseek.ts` 同一工具指纹连续 4 次 | 停掉这一轮工具循环，把掐断句交回大脑。不关工作单 | 调用指纹 | 保留。只停重复调用 |
 | 10 | mission 二次执行守卫 | `browser.ts` `missionOkRuns >= 1` | 报告单的 mission 整手成功一次后，再要 mission 就离开循环去合成 | 成功次数 | 保留。防同一报告连扫。定点 `search_read` 不受限 |
 | 11 | 阅读页改写门岗 | `browser.ts` `judgeReadRewrite`，上一则是阅读页时 | 只有模型答 `rewrite` 才改旧页，否则开新单 | 模型 | 交还模型。保留 |
