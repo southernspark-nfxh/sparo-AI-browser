@@ -113,12 +113,14 @@ function formDelivered(findings: StepFinding[]): boolean {
 
 function compactLedger(text: string): string {
   const raw = String(text || "");
-  let decoded = raw;
-  try {
-    decoded = decodeURIComponent(raw);
-  } catch {
-    decoded = raw;
-  }
+  // 整段 decode 会在正文里碰到残缺 % 时整段失败，搜索 URL 里的中文查询就对不上计划步。
+  const decoded = raw.replace(/(?:%[0-9A-Fa-f]{2})+/g, (seq) => {
+    try {
+      return decodeURIComponent(seq);
+    } catch {
+      return seq;
+    }
+  });
   return decoded.replace(/\s+/g, "");
 }
 
