@@ -219,13 +219,12 @@ describe("background tasks do not steal the window", () => {
     expect(restores).toEqual([]);
   });
 
-  it("restores once for a reply and never for a research ask", () => {
+  it("does not restore for a reply or a research ask while minimized", () => {
     const { browser, restores } = shell();
     browser.maybeRestoreForCoPresence(undefined, "对比三款轻薄本，出一份报告");
-    expect(restores).toEqual([]);
     browser.maybeRestoreForCoPresence(undefined, "帮我回当前页评论");
     browser.maybeRestoreForCoPresence("one_click_reply", "帮我回当前页评论");
-    expect(restores).toEqual([1]);
+    expect(restores).toEqual([]);
   });
 
   it("does not focus a minimized window from the click path", () => {
