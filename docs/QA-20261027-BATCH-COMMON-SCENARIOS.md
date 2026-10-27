@@ -104,3 +104,41 @@ S4 未发。S3 没有把草稿填进微博发布框。公开帖等用户点头�
 坐标点击：0。用户前台窗口（Chrome / 微信 / 飞书 / Cursor / TRAE）没有被坐标键鼠操作。
 
 安装包：未构建。任务书要求开发版全过才 `npm run dist`。
+
+---
+
+## 第二轮修复后重跑（2026-10-27，HEAD `33ed725`）
+
+规程：`docs/QA-20261027-ROUND2-RERUN.md`，跑法沿用最小化任务书。开发版主进程 pid `3700`（`node_modules\electron\dist\electron.exe . --force-renderer-accessibility --remote-debugging-port=9333`），版本 0.1.19。旧的 15:01 进程不含这轮修复，已停掉后重拉。
+
+本机会话仍没有 UIA 的 `get_app_state` / `element_id`。侧栏句子仍是 CDP 对 `shell.html` 的 `#chatInput` 赋值并点击 `#chatSend`。坐标点击 0。没有对用户窗口 `SetForegroundWindow`。窗口用 `ShowWindow(SW_SHOWMINNOACTIVE)` 最小化。
+
+启动时侧栏挂着恢复卡：「上次……起草一条感慨姆巴佩的帖子……继续？」按最小化任务书先按 S9 处理，避免它吞掉后面的句子。S2 前置停在 `https://weibo.com/u/2803301701`（人民日报）。S7 日期沿用上一轮：11月6日去程 / 11月7–8日酒店 / 11月8日晚返程。
+
+过 3（S2、S5、S9） / 不过 3（S3、S6、S7） / blocked 0。六条未全过，未 `npm run dist`，★ 五条未在安装包上复测。S4 仍冻结。
+
+### 总表
+
+| # | 结论 | 底账 | 证据 |
+|---|---|---|---|
+| S2 ★ | 过 | `m-mvqjiobt-eeei8` close=incomplete | raw 原句。findings=8，全是 read_page / navigate / act，没有妙招去点「王海林0516」。文档 `reports/goal-2026-10-27T10-30-39.html`：人民日报 1 条可见微博，其余写「未知」。收尾是「当前页不是目标站点，不能当这单做完。」不是「已打开 weibo.com。」 |
+| S3 | 不过 | `m-mvqjr1zb-tf641` close=done | raw 原句。妙招第 2 步 `click requires ref or selector`。阅读页写「正文：未知」「未生成可发布内容」。没点发送。关单却是 done，侧栏说阅读页已打开。见 `BUG-20261027-S3-READING-PAGE-DONE.md`。 |
+| S5 | 过 | `m-mvqjw49z-0773g` close=incomplete | 没点发送，页面仍是微博首页，发布框里有热搜草稿（外交部回应姆巴佩、能源绿色转型等）。发现写明「草稿已经填进微博发布框，没有点发送」。妙招第 2 步同样 `click requires ref or selector`。收尾另有一句「确认发……按当前版本发送」，同时写「读取当前微博页面」没执行；发送动作没有发生。 |
+| S6 ★ | 不过 | `m-mvqjzpdf-74cup` close=incomplete | 侧栏：今天北京晴，10°C（18:35），1～16°C。搜索 URL 已打开。计划步 `搜今天北京天气` 仍 pending。收尾含「没执行」。见 `BUG-20261027-S6-CLOSE-STILL-SKIPS.md`。 |
+| S7 ★ | 不过 | `m-mvqk186v-2ymra` close=incomplete | raw 为替换后的日期原句。`known.start=2026-11-07`。酒店列表 URL 的入住/退房是 11月7–8日。两步 `train_search` 一直 pending，没有 12306 URL，对不上「去程必须是 2026-11-06」。没有「没有对应的手」，也没有再问打开 ctrip.com。约 50 秒关单，侧栏「还缺：车票」。见 `BUG-20261027-S7-TRAINS-NOT-RUN.md`。日期回落单仍开着。 |
+| S9 | 过 | `m-mvqex65j-kk7i6` 原单 close=done | 回「继续」后没有新 open。18:19:10 之后同一单新增发现（5 → 14），是 act / navigate / run_skill，不是再问「要我先打开 weibo.com 吗？」。18:24:17 close=done。 |
+
+### 执行日志（抢焦）
+
+前台监视从 18:18:13 开到六条结束。Sparo 自己回到前台 **6 次**（pid `3700`）：
+
+| 时间 | 落在哪条 |
+|---|---|
+| 18:19:35 | S9 出报告时占住前台 |
+| 18:29:43、18:29:45、18:30:21、18:30:23、18:30:52 | S2 复制博主期间五次离开最小化 |
+
+S3 / S5 / S6 / S7 没有再拉回。18:29:25 的 `sparo=True` 是 TRAE 窗口标题带了仓库路径，不是 Sparo 进程，不计入。看守只做最小化，不把焦点交回别的程序。R4 不过，见 `BUG-20261027-R4-RESTORES-AGAIN.md`。
+
+坐标点击：0。
+
+安装包：未构建。六条没有全过。
