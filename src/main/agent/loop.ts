@@ -700,9 +700,55 @@ type HandGoal = {
   known?: { cities?: string[]; origin?: string; start?: string };
 };
 
+const ROUTE_RE =
+  /([一-龥A-Za-z·]{2,8})\s*(?:→|->|—|-|飞|到|至)\s*([一-龥A-Za-z·]{2,8})/;
+
+export type TravelLeg = { from: string; to: string; date: string };
+
+function namedPlace(raw: string): string {
+  return canonCity(raw) || plausiblePlace(raw) || "";
+}
+
+/**
+ * 机票/高铁执行分支组腿的唯一口径。
+ * 日期用 step.date，没有再用 known.start。
+ * 查询里的城市必须过 canonCity / plausiblePlace，和 runLoopStep 同一套。
+ */
+export function travelSearchLeg(
+  step: { query?: string; city?: string; from?: string; to?: string; date?: string },
+  goal?: HandGoal,
+): TravelLeg | null {
+  const date = String(step.date || goal?.known?.start || "").trim();
+  const fromField = String(step.from || "").trim();
+  const toField = String(step.to || "").trim();
+  if (fromField && toField && date) return { from: fromField, to: toField, date };
+  let from = fromField || goal?.known?.origin || "";
+  let to = toField || step.city || goal?.known?.cities?.[0] || "";
+  const m = String(step.query || "").match(ROUTE_RE);
+  if (m) {
+    const a = namedPlace(m[1]);
+    const b = namedPlace(m[2]);
+    if (a && b) {
+      from = a;
+      to = b;
+    }
+  }
+  if (from && to && date) return { from, to, date };
+  return null;
+}
+
+/** navigate 真正会打开的目标。query 为空时，标签本身是网址也算。 */
+export function navigateTarget(step: { query?: string; label?: string }): string {
+  const query = String(step.query || "").trim();
+  if (query) return query;
+  const label = String(step.label || "").trim();
+  return legalSiteTarget(label) ? label : "";
+}
+
 /**
  * runLoopStep 里这一步有没有手。只认执行分支，不认文档。
  * search_read / navigate 有查询词才算有手；feishu、reply_draft、print 没有分支。
+ * 机票/高铁必须能组出和执行层相同的腿，否则进循环只会报「没有对应的手」。
  */
 export function stepCanRun(step: HandStep, goal?: HandGoal): boolean {
   if (step.action) return true;
@@ -711,21 +757,10 @@ export function stepCanRun(step: HandStep, goal?: HandGoal): boolean {
     case "hotel_search":
       return Boolean(step.city || goal?.known?.cities?.[0]);
     case "flight_search":
-    case "train_search": {
-      if (step.from && step.to && (step.date || goal?.known?.start)) return true;
-      let from = goal?.known?.origin || "";
-      let to = step.city || goal?.known?.cities?.[0] || "";
-      const m = query.match(
-        /([一-龥A-Za-z·]{2,8})\s*(?:→|->|—|-|飞|到|至)\s*([一-龥A-Za-z·]{2,8})/,
-      );
-      if (m) {
-        from = m[1];
-        to = m[2];
-      }
-      return Boolean(from && to && (step.date || goal?.known?.start));
-    }
+    case "train_search":
+      return travelSearchLeg(step, goal) !== null;
     case "navigate":
-      return Boolean(query);
+      return Boolean(navigateTarget(step));
     case "search_read":
     case "video_search":
     case "run_skill":

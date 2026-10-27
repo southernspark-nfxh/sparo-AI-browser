@@ -32,8 +32,10 @@ import { parseLocalIntent, type ChatAction } from "./agent/stub.js";
 import {
   compileHands,
   goalProgress,
+  navigateTarget,
   reviewLesson,
   synthesizePrompt,
+  travelSearchLeg,
   type AgentGoal,
   type AgentStep,
   type StepFinding,
@@ -65,7 +67,6 @@ import { parseRewriteVerdict, rewriteVerdictPrompt } from "./agent/kernel/read-r
 import { alternateSite, decideStall, NO_PROGRESS_MS } from "./agent/kernel/stall.js";
 import { allowClick, classifyClick } from "./agent/publish-gate.js";
 import { writeExperience } from "./agent/experience.js";
-import { canonCity, isCity, plausiblePlace } from "./agent/place.js";
 import { distillMission, oneShotJudgePrompt, parseOneShotVerdict } from "./agent/distill.js";
 import { distillSkillFromTrace, shouldSkipRemember } from "./agent/remember.js";
 import {
@@ -5812,30 +5813,7 @@ export class SparkBrowser {
         );
         return { step, text, url: this.getUrl(tabId), ok: text.length > 40 };
       }
-      const scatteredLeg = (
-        s: AgentStep,
-      ): { from: string; to: string; date: string } | null => {
-        if (s.from && s.to && s.date) return { from: s.from, to: s.to, date: s.date };
-        // 模型散手只给了自由文本（如「搜北京→成都 10月8日机票」）：从原话已知事实补齐
-        const origin = goal.known.origin || "";
-        const target = s.city || goal.known.cities?.[0] || "";
-        let from = origin;
-        let to = target;
-        const m = String(s.query || "").match(
-          /([一-龥A-Za-z·]{2,8})\s*(?:→|->|—|-|飞|到|至)\s*([一-龥A-Za-z·]{2,8})/,
-        );
-        if (m) {
-          const a = canonCity(m[1]) || plausiblePlace(m[1]);
-          const b = canonCity(m[2]) || plausiblePlace(m[2]);
-          if (a && b) {
-            from = a;
-            to = b;
-          }
-        }
-        const date = goal.known.start || "";
-        return from && to && date ? { from, to, date } : null;
-      };
-      const flightLeg = step.cap === "flight_search" ? scatteredLeg(step) : null;
+      const flightLeg = step.cap === "flight_search" ? travelSearchLeg(step, goal) : null;
       if (step.cap === "flight_search" && flightLeg) {
         const text = await this.runTravelSearch(
           {
@@ -5851,7 +5829,7 @@ export class SparkBrowser {
         );
         return { step, text, url: this.getUrl(tabId), ok: text.length > 40 };
       }
-      const trainLeg = step.cap === "train_search" ? scatteredLeg(step) : null;
+      const trainLeg = step.cap === "train_search" ? travelSearchLeg(step, goal) : null;
       if (step.cap === "train_search" && trainLeg) {
         const text = await this.runTravelSearch(
           {
@@ -5865,9 +5843,10 @@ export class SparkBrowser {
         );
         return { step, text, url: this.getUrl(tabId), ok: text.length > 40 };
       }
-      if (step.cap === "navigate" && step.query) {
+      const navTarget = step.cap === "navigate" ? navigateTarget(step) : "";
+      if (step.cap === "navigate" && navTarget) {
         // query 可能是 URL、英文域名或中文站名；中文站名映射真实域名，不直接当域名导航
-        const url = resolveStepUrl(step.query);
+        const url = resolveStepUrl(navTarget);
         const nav = await this.withTimeout(this.navigate(url, { asHuman: true, tabId }), 12000, {
           ok: false,
           message: "打开超时",
