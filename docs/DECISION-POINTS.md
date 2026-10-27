@@ -32,5 +32,6 @@
 | 22 | 高铁/机票拒收后补槽 | `plan.ts` `settleTravelPlan`；`runtime.ts` 计划挂上之后 | 组不出腿的车次步先用原句和该步标签再拆 from/to/date，拆得出就补进可执行手册；仍缺出发地或这段日期就问人，并在卡片上标 failed 写人话。不许 pending 到关单还不解释 | 原句、步标签、`known` 里的出发地。日期不看第 23 条禁止的入住日 | 保留。只补车次槽，不改酒店步 |
 | 23 | 车次日期不回落入住日 | `loop.ts` `travelSearchLeg` | `train_search` / `flight_search` 的日期只取 `step.date` 或该段 label/query/原句里拆出的日期。`known.start` 是酒店或另一段的日子时不拿来组腿 | 该段文字里的月日 | 保留。拆不出日期就走第 22 条，不许默用入住日 |
 | 24 | 关单「没执行」先对流水 | `verify.ts` `unmetPlanSteps` 的按段解码 | 页面正文里有残缺 `%` 时不再把整段 URL 解码扔掉；搜索 URL 里的中文查询能对上计划步。对不上的采集步即使 answer 已被长文覆盖，仍写「没执行」并挡住 done | 发现的 URL / query，按百分号片段解码 | 保留。禁止用「必交付已齐」把没跑的采集步移出清单，见「采集步没跑」 |
+| 25 | 同 cap 多段逐段对账 | `verify.ts` 车次/机票/酒店多步配对；`plan.ts` `closePlan` | 计划里同一 cap 有多步时，一条成功发现只抵一段。缺的那段在「还缺」里单列（如「还缺：返程车票」），不许 done。`closePlan(complete=true)` 不把仍在 running/pending 的步涂成 done，标 skipped 并写上这段还没跑完 | 计划步顺序、发现的 cap，以及步标签里的月日和发现 URL 里的日期 | 保留。单段计划仍按原交付物对账。禁止一条去程发现抵掉整个车票 |
 
 模型把采集句编成「一步 navigate + 只有 answer」时，第 1 条仍会当成只是开站。这是信脑区计划的残留，不是词表漏洞。无计划又带「复制」的句子在过期日前仍走第 2 条。
