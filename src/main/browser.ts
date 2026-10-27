@@ -1115,6 +1115,11 @@ export class SparkBrowser {
       try {
         child.setMenuBarVisibility(false);
         child.webContents.setUserAgent(chromeUserAgent());
+        // 最小化时网页弹窗会把主窗口一起带回前台。挂起，不 show / focus。
+        if (this.windowIsMinimized()) {
+          child.hide();
+          return;
+        }
         child.show();
         child.focus();
       } catch {
@@ -1136,7 +1141,9 @@ export class SparkBrowser {
       }
       const openUrl = details.url;
       if (openUrl && openUrl !== "about:blank") {
-        if (tab.envId) this.createEnvTab(tab.envId, openUrl);
+        if (this.windowIsMinimized()) {
+          this.createTab(openUrl, false, { agentOwned: tab.agentOwned === true });
+        } else if (tab.envId) this.createEnvTab(tab.envId, openUrl);
         else this.createTab(openUrl, true);
       }
       return { action: "deny" };
@@ -1512,7 +1519,6 @@ export class SparkBrowser {
     return { ok: true, message: `Closed tab ${id}`, data: this.listTabs() };
   }
 
-  /** 最小化时包住会抢焦点的视图操作。做完若窗口被弹回，再最小化，并闪任务栏。 */
   private windowIsMinimized(): boolean {
     try {
       return Boolean(this.window && !this.window.isDestroyed() && this.window.isMinimized());
@@ -1521,31 +1527,11 @@ export class SparkBrowser {
     }
   }
 
+  /** 最小化时包住会抢焦点的视图操作。最小化期间直接做，不先抢再按回去。完成只闪任务栏。 */
   private withoutStealingMinimizedWindow(work: () => void): void {
     const minimized = this.windowIsMinimized();
-    if (!minimized) {
-      work();
-      return;
-    }
-    const win = this.window;
-    try {
-      win.setFocusable(false);
-    } catch {
-      /* ignore */
-    }
-    try {
-      work();
-    } finally {
-      try {
-        if (!win.isDestroyed()) {
-          win.setFocusable(true);
-          if (!win.isMinimized()) win.minimize();
-        }
-      } catch {
-        /* ignore */
-      }
-    }
-    this.flashTaskbarIfHidden();
+    work();
+    if (minimized) this.flashTaskbarIfHidden();
   }
 
   /** 壳层假死：人正看着窗口才拉回。最小化时只闪任务栏，后台出报告不能靠这条弹窗。 */
@@ -1919,6 +1905,7 @@ export class SparkBrowser {
 
   private focusOmnibox(): void {
     try {
+      if (this.windowIsMinimized()) return;
       this.window.webContents.focus();
       void this.window.webContents.executeJavaScript(
         `(() => { const el = document.getElementById("url"); if (!el) return; el.focus(); el.select(); })()`,
@@ -2019,7 +2006,7 @@ export class SparkBrowser {
     if (this.overlay === "history") this.closeHistory();
     this.findOpen = true;
     try {
-      this.window.webContents.focus();
+      if (!this.windowIsMinimized()) this.window.webContents.focus();
       this.window.webContents.send("spark:open-find");
     } catch {
       /* ignore */
@@ -2078,7 +2065,7 @@ export class SparkBrowser {
     this.overlay = "history";
     this.layout();
     try {
-      this.window.webContents.focus();
+      if (!this.windowIsMinimized()) this.window.webContents.focus();
       this.window.webContents.send("spark:history", {
         items: loadHistory(this.configDir()),
       });
@@ -2364,7 +2351,7 @@ export class SparkBrowser {
 
   private focusShell(): void {
     try {
-      if (this.window.isDestroyed()) return;
+      if (this.window.isDestroyed() || this.windowIsMinimized()) return;
       this.window.webContents.focus();
     } catch {
       /* ignore */
