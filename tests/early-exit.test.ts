@@ -35,6 +35,21 @@ describe("早退旁路不许在未交付时 close(done)", () => {
   it("王海林原话开单时 site 已在，但不是「只打开站点」", () => {
     expect(openSiteIsTheJob({ raw: WANG, site: "weibo.com" })).toBe(false);
     expect(userDidNotAskToRead({ raw: WANG, intent: "抓取微博正文并复制" })).toBe(true);
+    expect(userDidNotAskToRead({ raw: WANG, kind: "page" })).toBe(false);
+    expect(
+      userDidNotAskToRead({
+        raw: WANG,
+        deliverables: [{ id: "page", required: true }],
+      }),
+    ).toBe(false);
+    expect(userDidNotAskToRead({ raw: WANG, planSteps: 4 })).toBe(false);
+  });
+
+  it("复制下来做成文档：词表仍不认，脑区产物在场就不许早退成已打开", () => {
+    const raw = "当前我打开的这个博主 最近三天的微博 帮我复制下来 做成一个文档";
+    expect(userDidNotAskToRead({ raw })).toBe(true);
+    expect(userDidNotAskToRead({ raw, kind: "page" })).toBe(false);
+    expect(userDidNotAskToRead({ raw, planSteps: 2 })).toBe(false);
   });
 
   it("required 填表未交付，即使站点已打开也不许 close(done)", () => {

@@ -5614,7 +5614,13 @@ export class SparkBrowser {
       }
       const onlyOpened = findings.length > 0 && findings.every((f) => f.step.cap === "navigate");
       if (
-        userDidNotAskToRead(live) &&
+        userDidNotAskToRead({
+          raw: live.raw,
+          intent: live.intent,
+          kind: live.kind,
+          deliverables: live.deliverables,
+          planSteps: current.brainPlan?.steps.length,
+        }) &&
         (live.site || onlyOpened) &&
         !pageBlocksDone(live, this.getUrl(tabId)) &&
         earlyExitMayCloseDone(live, findings, current.brainPlan)
