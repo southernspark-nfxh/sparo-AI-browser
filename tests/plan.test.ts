@@ -3,6 +3,7 @@ import { analyzeGoalHeuristic, type AgentGoal, type AgentStep } from "../src/mai
 import { observe, reconsiderMission } from "../src/main/agent/kernel/index.js";
 import {
   applyParsedRevision,
+  closePlan,
   parsePlanJson,
   parsePlanRevision,
   planFromHeuristic,
@@ -265,6 +266,20 @@ describe("计划修订", () => {
     expect(next.steps.find((s) => s.id === "a")?.status).toBe("done");
     expect(next.steps.some((s) => s.label === "写手册" && s.status === "skipped")).toBe(true);
     expect(next.steps.some((s) => s.cap === "hotel_search" && s.status === "running")).toBe(true);
+  });
+
+  it("complete 时不把还在跑的步涂成 done", () => {
+    const plan: Plan = {
+      createdAt: 1,
+      steps: [
+        { id: "a", label: "查11月6日北京到南京高铁", cap: "train_search", covers: ["trains"], status: "done" },
+        { id: "b", label: "查11月8日晚南京回北京高铁", cap: "train_search", covers: ["trains"], status: "running" },
+      ],
+    };
+    const closed = closePlan(plan, true);
+    expect(closed.steps[0].status).toBe("done");
+    expect(closed.steps[1].status).toBe("skipped");
+    expect(closed.steps[1].note).toContain("还没跑完");
   });
 });
 

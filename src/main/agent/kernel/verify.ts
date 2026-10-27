@@ -141,6 +141,82 @@ function labelInFinding(label: string, finding: StepFinding): boolean {
   return false;
 }
 
+const MULTI_LEG_CAPS = new Set(["train_search", "flight_search", "hotel_search"]);
+
+/** 步标签里的「N月N日」，以及发现 URL 里对应的 -MM-DD。 */
+function legDateTokens(label: string): string[] {
+  const tokens: string[] = [];
+  const re = /(\d{1,2})月(\d{1,2})日/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(label))) {
+    const month = Number(match[1]);
+    const day = Number(match[2]);
+    const mm = String(month).padStart(2, "0");
+    const dd = String(day).padStart(2, "0");
+    tokens.push(`${month}月${day}日`);
+    tokens.push(`-${mm}-${dd}`);
+  }
+  return tokens;
+}
+
+function findingMatchesLeg(step: PlanStep, finding: StepFinding): boolean {
+  if (!finding.ok || finding.step.cap !== step.cap) return false;
+  if (finding.step.id && finding.step.id === step.id) return true;
+  if (finding.step.label && finding.step.label === step.label) return true;
+  const tokens = legDateTokens(step.label);
+  if (!tokens.length) return false;
+  const hay = [finding.step.label, finding.step.query, finding.url, finding.text].join("\n");
+  return tokens.some((token) => hay.includes(token));
+}
+
+function legGapPhrase(step: PlanStep): string {
+  const back = /返|回/.test(step.label || "");
+  if (step.cap === "flight_search") return back ? "返程机票" : "去程机票";
+  if (step.cap === "hotel_search") return back ? "返程住宿" : "住宿";
+  return back ? "返程车票" : "去程车票";
+}
+
+function legCoverId(step: PlanStep): DeliverableId | null {
+  if (step.cap === "train_search") return "trains";
+  if (step.cap === "flight_search") return "flights";
+  if (step.cap === "hotel_search") return "stay";
+  return null;
+}
+
+/**
+ * 同一 cap 有多步时，一条成功发现只抵一段。
+ * 有月日的步只认带上这段日期的发现，避免去程页面里的城市名把返程也抵掉。
+ */
+function unmetTravelLegs(plan: Plan | undefined, findings: StepFinding[]): PlanStep[] {
+  const steps = (plan?.steps || []).filter(
+    (step) => step.status !== "skipped" && step.status !== "failed" && MULTI_LEG_CAPS.has(step.cap),
+  );
+  const missing: PlanStep[] = [];
+  for (const cap of [...new Set(steps.map((step) => step.cap))]) {
+    const group = steps.filter((step) => step.cap === cap);
+    if (group.length < 2) continue;
+    const used = new Set<number>();
+    const open: PlanStep[] = [];
+    for (const step of group) {
+      const idx = findings.findIndex((finding, index) => !used.has(index) && findingMatchesLeg(step, finding));
+      if (idx >= 0) used.add(idx);
+      else open.push(step);
+    }
+    for (const step of open) {
+      if (legDateTokens(step.label).length > 0) {
+        missing.push(step);
+        continue;
+      }
+      const idx = findings.findIndex(
+        (finding, index) => !used.has(index) && finding.ok && finding.step.cap === cap,
+      );
+      if (idx >= 0) used.add(idx);
+      else missing.push(step);
+    }
+  }
+  return missing;
+}
+
 /** 计划里的采集步必须有对应的成功观察。同 cap 一步发现只能抵一步；流水对得上的可以共用一条发现。 */
 export function unmetPlanSteps(plan: Plan | undefined, findings: StepFinding[]): PlanStep[] {
   const steps = (plan?.steps || []).filter(
@@ -211,13 +287,18 @@ export function verifyContracts(
       covered.push(id);
     }
   }
-  const missing = required.filter((id) => !covered.includes(id));
+  const legGaps = unmetTravelLegs(opts?.plan, findings);
+  const legCovers = new Set(
+    legGaps.map((step) => legCoverId(step)).filter((id): id is DeliverableId => Boolean(id)),
+  );
+  const missing = required.filter((id) => !covered.includes(id) && !legCovers.has(id));
   const unmet = unmetPlanSteps(opts?.plan, findings);
   // 发布回执或读回确认已经齐了：剩下的计划步是漫游，不再挡住关单。
-  const settled = required.includes("form") && formDelivered(findings) && missing.length === 0;
+  const settled = required.includes("form") && formDelivered(findings) && missing.length === 0 && legGaps.length === 0;
   const deliverNote = missing.length
     ? `还缺：${missing.map((id) => (id === "form" ? "没填进发布框" : LABEL[id])).join("、")}`
     : "";
+  const gapNote = legGaps.length ? `还缺：${legGaps.map((step) => legGapPhrase(step)).join("、")}` : "";
   const stepNote = !settled && unmet.length
     ? `计划里这些步还没执行：${unmet.map((step) => step.label).join("、")}`
     : "";
@@ -230,9 +311,14 @@ export function verifyContracts(
       step.note,
   );
   const legNote = failedLegs.map((step) => `${step.label}：${step.note}`).join(" ");
-  const notes = [offNote, deliverNote, stepNote, legNote].filter(Boolean).join(" ");
+  const notes = [offNote, deliverNote, gapNote, stepNote, legNote].filter(Boolean).join(" ");
   return {
-    complete: !offSite && failedLegs.length === 0 && missing.length === 0 && (unmet.length === 0 || settled),
+    complete:
+      !offSite &&
+      failedLegs.length === 0 &&
+      legGaps.length === 0 &&
+      missing.length === 0 &&
+      (unmet.length === 0 || settled),
     covered,
     missing,
     notes: notes || "交付物已齐。",

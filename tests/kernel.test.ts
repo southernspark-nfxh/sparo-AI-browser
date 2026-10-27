@@ -495,4 +495,52 @@ describe("关单清点", () => {
     expect(verdict.complete).toBe(false);
     expect(verdict.notes).toContain("没填进发布框");
   });
+
+  it("S7：去程有发现、返程没有时，还缺返程车票，不许 done", () => {
+    const goal = {
+      raw: "帮我搜一下 11月7日和8日南京的酒店 6日北京到南京高铁时间和价格 8日晚返回北京",
+      intent: "查酒店和高铁",
+      kind: "trip" as const,
+      deliverables: [
+        { id: "stay" as const, label: "住宿", required: true },
+        { id: "trains" as const, label: "车票", required: true },
+      ],
+      known: {},
+      unknown: [] as string[],
+      decision: "act" as const,
+      approach: "查",
+    };
+    const hotel = {
+      step: { id: "h", label: "搜南京酒店", cap: "hotel_search" as const, covers: ["stay" as const] },
+      text: "南京维景国际酒店",
+      url: "https://hotels.ctrip.com/hotels/list?city=12&checkin=2026-11-07&checkout=2026-11-08",
+      ok: true,
+    };
+    const outbound = {
+      step: { id: "go", label: "查11月6日北京到南京高铁", cap: "train_search" as const, covers: ["trains" as const] },
+      text: "G3 北京南到南京南",
+      url: "https://kyfw.12306.cn/otn/leftTicket/init?date=2026-11-06&fs=BJP&ts=NJH",
+      ok: true,
+    };
+    const plan = {
+      createdAt: 1,
+      steps: [
+        { id: "p0", label: "查11月7—8日南京酒店", cap: "hotel_search", covers: ["stay"], status: "done" as const },
+        { id: "p1", label: "查11月6日北京到南京高铁车次、时间和价格", cap: "train_search", covers: ["trains"], status: "done" as const },
+        { id: "p2", label: "查11月8日晚南京回北京高铁车次、时间和价格", cap: "train_search", covers: ["trains"], status: "running" as const },
+      ],
+    };
+    const gap = verifyContracts(goal, [hotel, outbound], { plan });
+    expect(gap.complete).toBe(false);
+    expect(gap.notes).toContain("还缺：返程车票");
+    const back = {
+      step: { id: "back", label: "查11月8日晚南京回北京高铁", cap: "train_search" as const, covers: ["trains" as const] },
+      text: "G2 南京南到北京南",
+      url: "https://kyfw.12306.cn/otn/leftTicket/init?date=2026-11-08&fs=NJH&ts=BJP",
+      ok: true,
+    };
+    const done = verifyContracts(goal, [hotel, outbound, back], { plan });
+    expect(done.complete).toBe(true);
+    expect(done.notes).not.toContain("还缺");
+  });
 });
