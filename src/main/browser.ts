@@ -18,6 +18,7 @@ import { pathToFileURL } from "node:url";
 import { randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { pageViewCoversChrome, resetChromeCoverBudget, takeChromeCoverFix, type ChromeCoverBudget } from "./page-bounds.js";
+import { clickPointUsable, offscreenAgentBounds, viewportTooSmall } from "./agent-viewport.js";
 import { coPresenceMayRestore } from "./shell-focus.js";
 import { traceMainWindow } from "./focus-trace.js";
 import { laneForText, type TaskLane } from "./agent/task-class.js";
@@ -610,7 +611,7 @@ function missionStillOpen(mission: { state?: string } | undefined): boolean {
 /** stub.ts 88–90 的句式。不走 parseLocalIntent，避免被 parseMission 抢走，也不截「发小红书」。 */
 function runSkillUtteranceQuery(text: string): string | null {
   const matched =
-    text.match(/(?:运行|执行|打|用|按)\s*妙招\s*[「"']?(.+?)[」"']?\s*$/i) ||
+    text.match(/(?:运行|执行|打|用|按)\s*技能\s*[「"']?(.+?)[」"']?\s*$/i) ||
     text.match(/run\s*skill\s+(.+)$/i);
   if (!matched) return null;
   const query = matched[1].trim().replace(/^["'「」]+|["'「」]+$/g, "");
@@ -687,6 +688,11 @@ export class SparkBrowser {
   // 最近一次正常的窗口客户区尺寸。最小化→恢复瞬间 getContentSize 会短暂返回 0，
   // 不能拿 0 去算页面 bounds（会把视图夹到 100px 并残留）。
   private lastGoodContent = { width: 0, height: 0 };
+  /** 最小化之前，用户真正看见的窗口位置。代理把窗口挪到屏幕外时不覆盖它。 */
+  private lastUserWindowBounds: { x: number; y: number; width: number; height: number } | null = null;
+  /** 当前窗口是为了保持页面尺寸而放在屏幕外，不是用户拉到前台。 */
+  private agentOffscreen = false;
+  private ignoreFocusUntil = 0;
   private overlay: "none" | "history" = "none";
   private findOpen = false;
   private lastClosed: { url: string; envId?: string } | null = null;
@@ -941,6 +947,7 @@ export class SparkBrowser {
     this.chatLog = loadChatMemory(this.configDir());
     this.offerMissionRecovery();
     this.window.on("resize", () => {
+      this.rememberUserWindowBounds();
       this.chromeCover = resetChromeCoverBudget(Date.now());
       this.layout();
     });
@@ -958,7 +965,10 @@ export class SparkBrowser {
       this.setShellBackgroundThrottling(true);
     });
     this.window.on("minimize", () => this.syncShellKeepalive());
-    this.window.on("focus", () => this.clearTaskbarFlash());
+    this.window.on("focus", () => {
+      this.clearTaskbarFlash();
+      this.returnWindowIfUserFocused();
+    });
     this.window.on("show", () => this.scheduleLayout(150));
     this.window.once("ready-to-show", () => this.presentWindow());
     this.window.webContents.once("did-finish-load", () => this.presentWindow());
@@ -2211,6 +2221,82 @@ export class SparkBrowser {
     return fallback;
   }
 
+  private rememberUserWindowBounds(): void {
+    if (this.agentOffscreen) return;
+    if (!this.window || this.window.isDestroyed() || this.window.isMinimized()) return;
+    const b = this.window.getBounds();
+    if (b.width < 400 || b.height < 300 || b.x < -4000) return;
+    this.lastUserWindowBounds = { x: b.x, y: b.y, width: b.width, height: b.height };
+  }
+
+  /**
+   * 点击、读坐标之前调用。窗口最小化或客户区过小时，先还原再放到屏幕外，
+   * 保持上次的宽高，不 focus。填值走 DOM，不要调用这里。
+   */
+  private async ensureOperableViewport(): Promise<void> {
+    if (!this.window || this.window.isDestroyed()) return;
+    const [rawW, rawH] = this.window.getContentSize();
+    if (!viewportTooSmall(this.window.isMinimized(), rawW, rawH)) return;
+    this.rememberUserWindowBounds();
+    const size = offscreenAgentBounds(
+      this.lastGoodContent.width || this.lastUserWindowBounds?.width || rawW,
+      this.lastGoodContent.height || this.lastUserWindowBounds?.height || rawH,
+    );
+    this.agentOffscreen = true;
+    this.ignoreFocusUntil = Date.now() + 2500;
+    let hid = false;
+    try {
+      this.window.setOpacity(0);
+      hid = true;
+      if (this.window.isMinimized()) this.window.restore();
+      this.window.setBounds(size);
+      this.window.showInactive();
+    } catch {
+      /* ignore */
+    } finally {
+      if (hid) {
+        try {
+          this.window.setOpacity(1);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    this.applyViewBounds(false);
+    await sleep(220);
+  }
+
+  /** 用户之后真正点到这个窗口时，把它放回最小化前的位置。 */
+  private returnWindowIfUserFocused(): void {
+    if (!this.agentOffscreen || Date.now() < this.ignoreFocusUntil) return;
+    if (!this.window || this.window.isDestroyed()) return;
+    const now = this.window.getBounds();
+    const area = screen.getPrimaryDisplay().workArea;
+    const alreadyVisible = now.x > area.x - 80 && now.x < area.x + area.width;
+    this.agentOffscreen = false;
+    if (alreadyVisible) {
+      this.rememberUserWindowBounds();
+      this.scheduleLayout(150);
+      return;
+    }
+    const saved = this.lastUserWindowBounds;
+    const next =
+      saved && saved.width >= 400 && saved.x > -4000
+        ? saved
+        : {
+            x: area.x + Math.max(0, Math.round((area.width - 1280) / 2)),
+            y: area.y + Math.max(0, Math.round((area.height - 860) / 2)),
+            width: 1280,
+            height: 860,
+          };
+    try {
+      this.window.setBounds(next);
+    } catch {
+      /* ignore */
+    }
+    this.scheduleLayout(150);
+  }
+
   private applyViewBounds(followUp = true): void {
     if (this.window.isDestroyed()) return;
     const bounds = this.pageBounds();
@@ -2930,7 +3016,7 @@ export class SparkBrowser {
       const ok = deleteSkill(this.configDir(), String(id));
       this.skillsCache = listSkills(this.configDir());
       this.pushSidebarState();
-      return { ok, message: ok ? `已删除妙招 ${id}` : `未找到 ${id}` };
+      return { ok, message: ok ? `已删除技能 ${id}` : `未找到 ${id}` };
     });
     handle("spark:bookmark-sources", async () => ({
       ok: true,
@@ -5079,7 +5165,7 @@ export class SparkBrowser {
       reply = await this.previewFormFill(userAsk, tabId);
     } else if (action.type === "run_skill") {
       const label = action.query || action.id;
-      this.chatLog.push({ role: "assistant", text: `正在按妙招「${label}」执行…` });
+      this.chatLog.push({ role: "assistant", text: `正在按技能「${label}」执行…` });
       this.pushSidebarState();
       const ran = await this.runSkillTool({ id: action.id, query: action.query });
       reply = ran.message;
@@ -6080,8 +6166,8 @@ export class SparkBrowser {
     if (waiting) return this.resumeWaiting(waiting, text, pics, cleanQuotes);
     // 答复语（「打开 / 好 / 换个入口」）多半在回答挂起任务的问句，不收它的等待卡片。
     if (!isShortAffirmative(text) && !isHelpAnswerHint(text)) this.dismissAbandonedForegroundWaits();
-    // 「运行妙招」必须先到门岗窄路。laneForText 会走 parseMission，
-    // 把「运行妙招 比价 / 天气穿衣建议」收成后台工作单，窄路就看不见了。
+    // 「运行技能」必须先到门岗窄路。laneForText 会走 parseMission，
+    // 把「运行技能 比价 / 天气穿衣建议」收成后台工作单，窄路就看不见了。
     if (!runSkillUtteranceQuery(text) && laneForText(text) === "background") {
       return this.enqueueBackground(text, pics, cleanQuotes);
     }
@@ -6308,7 +6394,7 @@ export class SparkBrowser {
     }
   }
 
-  /** 有未关的单、暂停、引用、附图、后台车道时，门岗和「运行妙招」窄路都让路。 */
+  /** 有未关的单、暂停、引用、附图、后台车道时，门岗和「运行技能」窄路都让路。 */
   private habitGateBlocked(cleanQuotes: SparoQuote[], jobImages: string[]): boolean {
     if (cleanQuotes.length > 0) return true;
     if (jobImages.length > 0) return true;
@@ -6423,7 +6509,7 @@ export class SparkBrowser {
     if (!this.habitGateBlocked(cleanQuotes, jobImages)) {
       const replay = await this.replayHabit(text);
       if (replay === "fallthrough") {
-        // 失败当轮转脑：跳过窄路，否则「运行妙招」句式会把同一技能再跑一遍。
+        // 失败当轮转脑：跳过窄路，否则「运行技能」句式会把同一技能再跑一遍。
       } else if (replay) {
         return replay;
       } else {
@@ -6431,7 +6517,7 @@ export class SparkBrowser {
         if (named) {
           const skillId = namedSkillId(this.configDir(), named);
           if (!skillId) {
-            const message = `未找到妙招「${named}」`;
+            const message = `未找到技能「${named}」`;
             this.chatLog.push({ role: "assistant", text: message });
             this.pushSidebarState();
             return { ok: false, message };
@@ -8376,11 +8462,14 @@ export class SparkBrowser {
     tabId?: string;
     },
   ): Promise<void> {
+    const cx = Math.round(x);
+    const cy = Math.round(y);
+    if (!clickPointUsable(cx, cy)) {
+      throw new Error(`拒绝点击无效坐标 ${cx},${cy}`);
+    }
     const tabId = opts?.tabId;
     const wc = this.viewForTab(tabId || this.activeTabId).webContents;
     this.focusPageForInput(wc);
-    const cx = Math.round(x);
-    const cy = Math.round(y);
     const button = opts?.button || "left";
     const clickCount = opts?.doubleClick ? 2 : 1;
     const downDelayMs = opts?.downDelayMs ?? 30;
@@ -8414,6 +8503,7 @@ export class SparkBrowser {
     const gate = allowClick(classifyClick(text), this.activeMission?.goal?.autoSend === true);
     if (!gate.ok) return { ok: false, message: gate.message || "没有代点" };
     try {
+      await this.ensureOperableViewport();
       const wc = this.viewForTab(tabId || this.activeTabId).webContents;
       const found = (await wc.executeJavaScript(
         `(${FIND_TEXT_SCRIPT})(${JSON.stringify(text)}, ${JSON.stringify(Boolean(opts?.exact))}, ${JSON.stringify(Boolean(opts?.withinPortal))})`,
@@ -8505,6 +8595,13 @@ export class SparkBrowser {
       const y = Math.round(hit.y);
       if (opts?.caret && hit.w && hit.w > 24) {
         x = Math.round(hit.x + hit.w / 2 - 8);
+      }
+      if (!clickPointUsable(x, y)) {
+        return {
+          ok: false,
+          message: `拒绝点击无效坐标 ${x},${y}`,
+          data: hit,
+        };
       }
       await this.trustedClickAt(x, y, { hoverOnly: true, tabId });
       await sleep(60);
@@ -9506,7 +9603,7 @@ export class SparkBrowser {
       const skillTitle =
         taskName ||
         data.task ||
-        `妙招 ${new Date().toLocaleString("zh-CN", { hour12: false })}`;
+        `技能 ${new Date().toLocaleString("zh-CN", { hour12: false })}`;
       const skill = createSkillFromTrace({
         configDir,
         title: skillTitle,
@@ -9521,7 +9618,7 @@ export class SparkBrowser {
       this.pushSidebarState();
       return {
         ok: true,
-        message: `已保存妙招「${skill.title}」（${skill.stepCount} 步）`,
+        message: `已保存技能「${skill.title}」（${skill.stepCount} 步）`,
         data: {
           ...data,
           file,
@@ -9692,6 +9789,7 @@ export class SparkBrowser {
 
   async snapshot(selector?: string, tabId?: string): Promise<ToolResult & { data?: PageSnapshot }> {
     try {
+      await this.ensureOperableViewport();
       const wc = this.viewForTab(tabId || this.activeTabId).webContents;
       const raw = (await wc.executeJavaScript(SNAPSHOT_SCRIPT, true)) as PageSnapshot & {
         iframeMeta?: IframeMeta[];
@@ -9779,6 +9877,7 @@ export class SparkBrowser {
     }
 
     try {
+      await this.ensureOperableViewport();
       const before = await this.probe(tabId);
       const wc = this.viewForTab(tabId || this.activeTabId).webContents;
 
@@ -9894,6 +9993,13 @@ export class SparkBrowser {
       const y = Math.round(hit.y);
       if (target.caret && hit.width && hit.width > 24) {
         x = Math.round(hit.x + hit.width / 2 - 8);
+      }
+      if (!clickPointUsable(x, y)) {
+        return {
+          ok: false,
+          message: `拒绝点击无效坐标 ${x},${y}`,
+          data: hit,
+        };
       }
       await this.trustedClickAt(x, y, { hoverOnly: true, tabId });
       await sleep(80);

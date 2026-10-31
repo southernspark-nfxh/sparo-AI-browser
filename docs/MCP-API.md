@@ -99,7 +99,7 @@ Still registered on the MCP surface; most useful when DXM pages / flag are in pl
 
 ---
 
-## Skills（妙招）
+## Skills（技能）
 
 - `list_skills()` → list saved skills
 - `match_skill(query)` → rank skills for a natural-language goal (e.g. `发小红书`)

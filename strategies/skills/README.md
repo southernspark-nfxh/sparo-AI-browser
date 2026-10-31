@@ -1,4 +1,4 @@
-# Sparo skills（妙招）
+# Sparo skills（技能）
 
 Agent-facing catalog. Full publish playbook: [`docs/PUBLISHING.md`](../../docs/PUBLISHING.md).  
 Hermes: [`docs/HERMES-PLAYBOOK.md`](../../docs/HERMES-PLAYBOOK.md).
@@ -16,6 +16,7 @@ Hermes: [`docs/HERMES-PLAYBOOK.md`](../../docs/HERMES-PLAYBOOK.md).
 | id | Say | What it does |
 |----|-----|----------------|
 | `universal-form-fill` | 通用填表 / 自动填表 | **analyze_page → execute_primitives**（任意站点） |
+| `dxm-crawl-prep` | 店小秘上品 / 采集箱编辑 | 采集箱编辑手册。`run_skill` 只回路线，不代点保存、不跳转 |
 | `cs-semi-auto-reply` | 客服回复 / 帮我回客户 | **cs_scan → cs_draft_reply**（填草稿，不自动发送） |
 | `xhs-longform-publish` | 发小红书 / 小红书发布 | ensure editor → **inject** title/body → layout → next → inject topics → pause |
 | `xhs-longform-compose` | 小红书草稿 | shorter compose path; prefer `xhs-longform-publish` |

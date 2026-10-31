@@ -209,7 +209,7 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
 
   server.tool(
     "run_skill",
-    "FAST PATH: execute a saved 妙招 in the shared Sparo window (navigate/click/fill/…). Prefer this over inventing click sequences. Pauses before publish. Params: title, body, topics[], mdPath.",
+    "FAST PATH: execute a saved skill in the shared Sparo window (navigate/click/fill/…). Prefer this over inventing click sequences. Pauses before publish. Params: title, body, topics[], mdPath.",
     {
       id: z.string().optional().describe("Skill id, e.g. xhs-longform-publish"),
       query: z

@@ -1,5 +1,5 @@
 /**
- * Skill match + execute — turn saved 妙招 into fast browser automation.
+ * Skill match + execute — turn saved skills into fast browser automation.
  */
 import { existsSync, readFileSync } from "node:fs";
 import type { PageSnapshot, SnapshotElement, ToolResult } from "../../shared/types.js";
@@ -138,6 +138,13 @@ const BUILTIN_ALIASES: Record<string, string[]> = {
     "analyze_page",
     "execute_primitives",
   ],
+  "dxm-crawl-prep": [
+    "店小秘上品",
+    "店小秘采集箱",
+    "采集箱编辑",
+    "1688回填",
+    "上品之前",
+  ],
   "xhs-longform-publish": [
     "小红书",
     "发小红书",
@@ -236,7 +243,7 @@ function stepRecordedText(step: {
   return String(step.text || args.text || step.innerText || args.innerText || step.ariaLabel || "").trim();
 }
 
-/** 已停用妙招里记错的点击文本。别的仍启用的妙招再要点同一段字，就不要再选它。 */
+/** 已停用技能里记错的点击文本。别的仍启用的技能再要点同一段字，就不要再选它。 */
 export function retiredClickTexts(skills: Skill[]): Set<string> {
   const banned = new Set<string>();
   for (const skill of skills) {
@@ -1060,7 +1067,7 @@ function scaffoldText(skill: Skill): string {
   return lines.join("\n");
 }
 
-/** 妙招记下来的字在页面上找不到。换页、超时不算。 */
+/** 技能记下来的字在页面上找不到。换页、超时不算。 */
 export function recordedTextMiss(message: string, recorded: string): boolean {
   const text = String(recorded || "").trim();
   if (text.length < 2) return false;
@@ -1081,7 +1088,7 @@ function retireBrokenSkill(configDir: string, skill: Skill, recorded: string): v
     });
     writeExperience(configDir, {
       cue: skill.title,
-      lesson: `妙招「${skill.title}」记错了关键文本「${recorded.slice(0, 24)}」，已停用，下次不要优先用它。`,
+      lesson: `技能「${skill.title}」记错了关键文本「${recorded.slice(0, 24)}」，已停用，下次不要优先用它。`,
     });
     for (const other of listSkills(configDir)) {
       if (other.id === current.id || other.enabled === false) continue;
@@ -1129,7 +1136,7 @@ export async function runSkill(
     const suggestions = matchSkills(configDir, key, 5);
     return {
       ok: false,
-      message: `未找到妙招「${key}」`,
+      message: `未找到技能「${key}」`,
       data: { suggestions },
     };
   }
@@ -1142,7 +1149,7 @@ export async function runSkill(
   }
   const steps = (skill.steps || []) as AnyStep[];
   if (!steps.length) {
-    return { ok: false, message: `妙招「${skill.title}」没有可执行步骤` };
+    return { ok: false, message: `技能「${skill.title}」没有可执行步骤` };
   }
   const vars = buildVars(skill, input.params || {});
   if (input.dryRun) {
@@ -1217,7 +1224,7 @@ export async function runSkill(
       if (recordedTextMiss(result.message, recorded)) retireBrokenSkill(configDir, skill, recorded);
       return {
         ok: false,
-        message: `妙招「${skill.title}」第 ${i + 1} 步失败（${tool}）：${result.message}`,
+        message: `技能「${skill.title}」第 ${i + 1} 步失败（${tool}）：${result.message}`,
         data: {
           skillId: skill.id,
           title: skill.title,
@@ -1230,7 +1237,7 @@ export async function runSkill(
     if (tool === "pause") {
       return {
         ok: true,
-        message: `妙招「${skill.title}」已执行到暂停（${i + 1}/${steps.length}）。${result.message}`,
+        message: `技能「${skill.title}」已执行到暂停（${i + 1}/${steps.length}）。${result.message}`,
         data: { skillId: skill.id, title: skill.title, log, paused: true },
       };
     }
@@ -1246,8 +1253,8 @@ export async function runSkill(
   return {
     ok: true,
     message: readings.length
-      ? `妙招「${skill.title}」完成（${log.length} 步）\n\n${excerpt}`
-      : `妙招「${skill.title}」完成（${log.length} 步）`,
+      ? `技能「${skill.title}」完成（${log.length} 步）\n\n${excerpt}`
+      : `技能「${skill.title}」完成（${log.length} 步）`,
     data: { skillId: skill.id, title: skill.title, log, readings },
   };
 }

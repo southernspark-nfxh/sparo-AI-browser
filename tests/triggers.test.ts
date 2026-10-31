@@ -50,12 +50,12 @@ describe("normalizeUtterance", () => {
 
 describe("matchTrigger", () => {
   it("matches the whole utterance only", () => {
-    const triggers = [row({ text: "运行妙招 QA门岗演示" })];
-    expect(matchTrigger(triggers, "运行妙招 QA门岗演示")?.skillId).toBe("qa-gate-demo");
-    expect(matchTrigger(triggers, "  运行妙招 QA门岗演示。 ")).not.toBeNull();
-    expect(matchTrigger(triggers, "运行妙招 QA门岗演示2")).toBeNull();
-    expect(matchTrigger([{ ...triggers[0], enabled: false }], "运行妙招 QA门岗演示")).toBeNull();
-    expect(matchTrigger([], "运行妙招 QA门岗演示")).toBeNull();
+    const triggers = [row({ text: "运行技能 QA门岗演示" })];
+    expect(matchTrigger(triggers, "运行技能 QA门岗演示")?.skillId).toBe("qa-gate-demo");
+    expect(matchTrigger(triggers, "  运行技能 QA门岗演示。 ")).not.toBeNull();
+    expect(matchTrigger(triggers, "运行技能 QA门岗演示2")).toBeNull();
+    expect(matchTrigger([{ ...triggers[0], enabled: false }], "运行技能 QA门岗演示")).toBeNull();
+    expect(matchTrigger([], "运行技能 QA门岗演示")).toBeNull();
     expect(matchTrigger(triggers, "   。")).toBeNull();
   });
 });
@@ -63,8 +63,8 @@ describe("matchTrigger", () => {
 describe("trigger store", () => {
   it("persists upsert, dedupes text, toggles, and deletes", () => {
     const dir = tmp();
-    const a = upsertTrigger(dir, { skillId: "qa-gate-demo", text: "  运行妙招 QA门岗演示。 " });
-    const b = upsertTrigger(dir, { skillId: "other", text: "运行妙招 QA门岗演示" });
+    const a = upsertTrigger(dir, { skillId: "qa-gate-demo", text: "  运行技能 QA门岗演示。 " });
+    const b = upsertTrigger(dir, { skillId: "other", text: "运行技能 QA门岗演示" });
     expect(a?.id).toMatch(/^[0-9a-f]{8}$/);
     expect(b?.id).toBe(a?.id);
     expect(b?.skillId).toBe("other");
@@ -84,13 +84,13 @@ describe("trigger store", () => {
 
   it("counts outcomes and disables after two failures", () => {
     const dir = tmp();
-    const saved = upsertTrigger(dir, { skillId: "qa-gate-demo", text: "运行妙招 QA门岗演示" });
+    const saved = upsertTrigger(dir, { skillId: "qa-gate-demo", text: "运行技能 QA门岗演示" });
     expect(saved).not.toBeNull();
     const once = recordOutcome(dir, saved!.id, false);
     expect(once).toMatchObject({ fails: 1, enabled: true, runs: 0 });
     const twice = recordOutcome(dir, saved!.id, false);
     expect(twice).toMatchObject({ fails: 2, enabled: false });
-    const again = upsertTrigger(dir, { skillId: "qa-gate-demo", text: "运行妙招 QA门岗演示" });
+    const again = upsertTrigger(dir, { skillId: "qa-gate-demo", text: "运行技能 QA门岗演示" });
     expect(again?.id).toBe(saved?.id);
     toggleTrigger(dir, saved!.id, true);
     const ok = recordOutcome(dir, saved!.id, true);
@@ -103,8 +103,8 @@ describe("trigger store", () => {
     const dir = tmp();
     writeFileSync(join(dir, "skill-triggers.json"), "{", "utf8");
     expect(loadTriggers(dir)).toEqual([]);
-    const saved = upsertTrigger(dir, { skillId: "qa-gate-demo", text: "运行妙招 QA门岗演示" });
+    const saved = upsertTrigger(dir, { skillId: "qa-gate-demo", text: "运行技能 QA门岗演示" });
     expect(loadTriggers(dir)).toHaveLength(1);
-    expect(saved?.text).toBe("运行妙招 QA门岗演示");
+    expect(saved?.text).toBe("运行技能 QA门岗演示");
   });
 });

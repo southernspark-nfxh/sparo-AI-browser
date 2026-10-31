@@ -1,0 +1,79 @@
+{
+  "id": "dxm-crawl-prep",
+  "title": "店小秘采集箱：上品前编辑",
+  "kind": "site",
+  "version": 1,
+  "shareable": false,
+  "distilled": true,
+  "platform": "dianxiaomi",
+  "aliases": ["店小秘上品", "店小秘采集箱", "采集箱编辑", "1688回填", "上品之前"],
+  "createdAt": "2026-10-31T00:00:00.000Z",
+  "updatedAt": "2026-10-31T00:00:00.000Z",
+  "intent": "人已经停在店小秘采集箱编辑页，要按页面自带功能改文字、尺寸和包装，并对照 1688 来源补字段。不代点保存并认领。",
+  "declared_domains": ["www.dianxiaomi.com", "detail.1688.com"],
+  "declared_actions": ["page_text", "click_text", "menu_click", "execute"],
+  "human_gates": ["login", "captcha", "pay", "保存并认领"],
+  "params": {},
+  "steps": [],
+  "route": [
+    {
+      "kind": "open",
+      "goal": "确认当前是 /web/productCrawl/edit。不要 reload，不要在编辑页点「访问」（会换掉草稿）。来源页用新标签打开 1688。"
+    },
+    {
+      "kind": "open",
+      "goal": "文字字段用页面原生 input/textarea 的 value 赋值，并派发 input 和 change。不要逐字 fill，不要循环填标题和描述。"
+    },
+    {
+      "kind": "open",
+      "goal": "菜单和弹窗仍用 click / click_text / menu_click。这些工具会在窗口最小化时把页面放到屏幕外并保持正常宽高，坐标为负就停手。"
+    },
+    {
+      "kind": "open",
+      "goal": "批量改尺寸：编辑图片 → 批量改图片尺寸。弹窗标题是「批量图片尺寸」。等比例、图片小边 800，再点生成 JPG。不要点清空图片。"
+    },
+    {
+      "kind": "open",
+      "goal": "页顶「一键翻译」只译文字。编辑图片里的「图片翻译」和「图片白底」要花秘豆，停下来让人确认。保存并认领不点。"
+    }
+  ],
+  "pitfalls": [
+    {
+      "milestone": 1,
+      "note": "这是采集箱，不是速卖通编辑页。不要套 6 张主图、零售价公式、运费模板、欧盟责任人。"
+    },
+    {
+      "milestone": 2,
+      "note": "来源品牌没有可授权自有品牌时，不要把品牌写成已授权。外箱尺寸不是单件尺寸。"
+    },
+    {
+      "milestone": 3,
+      "note": "不要 remove .ant-select-dropdown，也不要给 .ant-dropdown 留下 display:none。子菜单要点开一层再点条目。"
+    },
+    {
+      "milestone": 4,
+      "note": "可见主图变 800 不等于变种图和描述图都变了。看 .img-size，必要时再进「查看更多」。"
+    }
+  ],
+  "knownGaps": [
+    "页顶一键翻译的箭头有时点在文字上，菜单停在屏幕外，高度为 0。",
+    "图片翻译、批量编辑是子菜单，一次 menu_click 可能只打开第一层。",
+    "描述区和变种图不一定跟主图一起改到短边 800。",
+    "代理点保存不一定出现成功提示，保存要人确认。"
+  ],
+  "notes": [
+    "run_skill 只返回这条路线，不会自己跳转或点保存。",
+    "库存按上架规则可封顶 2000。采集箱价格列若已是货源价换汇，不要改成速卖通零售公式。",
+    "包装重量用千克。来源克数要先换算，例如 9 克写成 0.009。"
+  ],
+  "agentPlaybook": [
+    "match_skill({ query: \"店小秘上品\" })，再 get_skill({ id: \"dxm-crawl-prep\" }) 读完整规则。",
+    "run_skill 不会代为编辑。对照 route 自己调 page_text、execute、menu_click。",
+    "填值不需要把窗口拉回前台。要点菜单时用 click_text，不要自己发负数坐标。"
+  ],
+  "contract": {
+    "doNotNavigateAway": true,
+    "doNotClick": ["保存并认领", "清空图片", "访问"],
+    "paidConfirm": ["图片翻译", "图片白底"]
+  }
+}

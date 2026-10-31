@@ -541,7 +541,7 @@ export function reasonerPromptV2(goal: AgentGoal, findings: StepFinding[], pageU
     `还缺：${verdict.missing.join("、") || "（都齐了，可汇总）"}`,
     `可用的手（参考，不是约束）：${catalog.map((s) => `${s.cap}(${s.covers.join(",")})`).join(" / ")}`,
     skills
-      ? `可复用的妙招（要用就 next.cap="run_skill"、next.query 填妙招 id；没有合适的就忽略；禁止编造不在清单里的 id）：\n${skills}`
+      ? `可复用的技能（要用就 next.cap="run_skill"、next.query 填技能 id；没有合适的就忽略；禁止编造不在清单里的 id）：\n${skills}`
       : "",
     '只输出 JSON：{"next":{"cap":"...","covers":["stay"],"query":"...","city":"...","site":"...","label":"..."},"why":"..."} 或 {"synthesize":true,"why":"..."} 或 {"ask":"还缺X才能动手","why":"..."}',
   ]

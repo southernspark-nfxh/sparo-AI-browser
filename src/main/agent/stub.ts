@@ -81,12 +81,12 @@ export function parseLocalIntent(input: string, locale?: string): ChatAction {
   const routed = routeUserGoal(t);
   if (routed) return routed;
 
-  if (/我的妙招|妙招列表|列出妙招|list\s*skills?/i.test(t)) {
+  if (/我的技能|技能列表|列出技能|list\s*skills?/i.test(t)) {
     return { type: "list_skills" };
   }
 
   const runNamed =
-    t.match(/(?:运行|执行|打|用|按)\s*妙招\s*[「"']?(.+?)[」"']?\s*$/i) ||
+    t.match(/(?:运行|执行|打|用|按)\s*技能\s*[「"']?(.+?)[」"']?\s*$/i) ||
     t.match(/run\s*skill\s+(.+)$/i);
   if (runNamed) {
     return {
