@@ -22,7 +22,7 @@ T1 高铁步静默丢步（+日期回落） > T2 form 假覆盖假 done > T3 关
 
 ## T2. form 交付物被结构覆盖假抵，S3 假 done
 
-- 症状：S3 `m-mvqjr1zb-tf641` 发布框是空的（妙招第 2 步 `click requires ref or selector`），阅读页自己写「未生成可发布内容」，却 close=done。
+- 症状：S3 `m-mvqjr1zb-tf641` 发布框是空的（技能第 2 步 `click requires ref or selector`），阅读页自己写「未生成可发布内容」，却 close=done。
 - 根因：[verify.ts](file:///d:/download/sparo上架应用商店版/src/main/agent/kernel/verify.ts#L190-L196) 里 `form` 先查 `publishReceipt`，查不到就回落到通用结构覆盖——任何 `ok` 且 `covers` 含 `form` 的 finding 都能把 form 抵掉。起草/读页类发现于是能冒充「草稿已填好」。R5 只做了停用连通，「动作后自检、读回核对」没有落到 verify 层。
 - 修法：`form` 必交付只认两种回执——发布手写下的（`已发送` / `发布成功` / `已写入草稿`），或填表/发布手动作后**读回输入框核对成功**的回执。读回是空的就必须说没填上，不许拿阅读页当交付。普通 ok finding 一律不抵 form。注意别误伤 S12 类通用填表：fill_form 手补做读回核对，核对成功的回执同样算数。
 - 测试：发布框为空 + 有阅读页 → 不许 done；fill 后读回有字 → form 可抵；读回为空 → incomplete 且文案说「没填进发布框」。

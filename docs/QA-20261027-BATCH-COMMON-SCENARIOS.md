@@ -66,8 +66,8 @@ S4 未发。S3 没有把草稿填进微博发布框。公开帖等用户点头�
 | # | 结论 | 底账 | 证据 |
 |---|---|---|---|
 | S1 ★ | 过 | `m-mvqcfvb6-vl0vm` close=done | raw=`打开微博`。侧栏「已打开 weibo.com。」一步计划，不是多步，也没有读无关页。 |
-| S2 ★ | 不过 | `m-mvqcifdx-kq02h` close=done | 前置已停在 `weibo.com/u/2803301701`（人民日报）。有「正在做 1/」，findings=3。妙招去点「王海林0516」，页面上没有这个人。没有新文档文件。收尾侧栏是「已打开 weibo.com。」见既有 `BUG-20261027-READ-INTENT-EARLY-EXIT`，妙招点错人见 `BUG-20261027-WEIBO-SKILL-MISS`。 |
-| S3 | 不过 | `m-mvqcmhw8-pohvi` close=done | raw 原句。查了百度「今天微博热搜」，结果页没有具体条目。妙招第 2 步 `click requires ref or selector`。阅读页 `read-2026-10-27T07-14-43.html` 写明「自动填入未完成」。没有点发送。见 `BUG-20261027-WEIBO-SKILL-MISS`。 |
+| S2 ★ | 不过 | `m-mvqcifdx-kq02h` close=done | 前置已停在 `weibo.com/u/2803301701`（人民日报）。有「正在做 1/」，findings=3。技能去点「王海林0516」，页面上没有这个人。没有新文档文件。收尾侧栏是「已打开 weibo.com。」见既有 `BUG-20261027-READ-INTENT-EARLY-EXIT`，技能点错人见 `BUG-20261027-WEIBO-SKILL-MISS`。 |
+| S3 | 不过 | `m-mvqcmhw8-pohvi` close=done | raw 原句。查了百度「今天微博热搜」，结果页没有具体条目。技能第 2 步 `click requires ref or selector`。阅读页 `read-2026-10-27T07-14-43.html` 写明「自动填入未完成」。没有点发送。见 `BUG-20261027-WEIBO-SKILL-MISS`。 |
 | S4 | 未跑 | — | 发布框里没有 S3 草稿。不在未确认时发公开微博。 |
 | S5 | 不过 | `m-mvqcri4j-jv5vi` close=incomplete | 意图写了「不自动发送」。findings 里没有点发送，只打开了两次微博首页，然后说正文未知。计划步「读取上一条热搜微博草稿」没执行。没点发送这一条守住了；「确认草稿已填好」没有。见同一张微博技能单。 |
 | S6 ★ | 不过 | `m-mvqct1j9-80d5w` close=incomplete | 侧栏给出了天气：北京今天（10/27）晴，1～16°C，15:15 约 15°C。搜索 URL 已打开。关单却说「搜今天北京天气并读取结果」没执行。缺口与事实不符。见 `BUG-20261027-CLOSE-SAYS-STEP-SKIPPED`。 |
@@ -121,9 +121,9 @@ S4 未发。S3 没有把草稿填进微博发布框。公开帖等用户点头�
 
 | # | 结论 | 底账 | 证据 |
 |---|---|---|---|
-| S2 ★ | 过 | `m-mvqjiobt-eeei8` close=incomplete | raw 原句。findings=8，全是 read_page / navigate / act，没有妙招去点「王海林0516」。文档 `reports/goal-2026-10-27T10-30-39.html`：人民日报 1 条可见微博，其余写「未知」。收尾是「当前页不是目标站点，不能当这单做完。」不是「已打开 weibo.com。」 |
-| S3 | 不过 | `m-mvqjr1zb-tf641` close=done | raw 原句。妙招第 2 步 `click requires ref or selector`。阅读页写「正文：未知」「未生成可发布内容」。没点发送。关单却是 done，侧栏说阅读页已打开。见 `BUG-20261027-S3-READING-PAGE-DONE.md`。 |
-| S5 | 过 | `m-mvqjw49z-0773g` close=incomplete | 没点发送，页面仍是微博首页，发布框里有热搜草稿（外交部回应姆巴佩、能源绿色转型等）。发现写明「草稿已经填进微博发布框，没有点发送」。妙招第 2 步同样 `click requires ref or selector`。收尾另有一句「确认发……按当前版本发送」，同时写「读取当前微博页面」没执行；发送动作没有发生。 |
+| S2 ★ | 过 | `m-mvqjiobt-eeei8` close=incomplete | raw 原句。findings=8，全是 read_page / navigate / act，没有技能去点「王海林0516」。文档 `reports/goal-2026-10-27T10-30-39.html`：人民日报 1 条可见微博，其余写「未知」。收尾是「当前页不是目标站点，不能当这单做完。」不是「已打开 weibo.com。」 |
+| S3 | 不过 | `m-mvqjr1zb-tf641` close=done | raw 原句。技能第 2 步 `click requires ref or selector`。阅读页写「正文：未知」「未生成可发布内容」。没点发送。关单却是 done，侧栏说阅读页已打开。见 `BUG-20261027-S3-READING-PAGE-DONE.md`。 |
+| S5 | 过 | `m-mvqjw49z-0773g` close=incomplete | 没点发送，页面仍是微博首页，发布框里有热搜草稿（外交部回应姆巴佩、能源绿色转型等）。发现写明「草稿已经填进微博发布框，没有点发送」。技能第 2 步同样 `click requires ref or selector`。收尾另有一句「确认发……按当前版本发送」，同时写「读取当前微博页面」没执行；发送动作没有发生。 |
 | S6 ★ | 不过 | `m-mvqjzpdf-74cup` close=incomplete | 侧栏：今天北京晴，10°C（18:35），1～16°C。搜索 URL 已打开。计划步 `搜今天北京天气` 仍 pending。收尾含「没执行」。见 `BUG-20261027-S6-CLOSE-STILL-SKIPS.md`。 |
 | S7 ★ | 不过 | `m-mvqk186v-2ymra` close=incomplete | raw 为替换后的日期原句。`known.start=2026-11-07`。酒店列表 URL 的入住/退房是 11月7–8日。两步 `train_search` 一直 pending，没有 12306 URL，对不上「去程必须是 2026-11-06」。没有「没有对应的手」，也没有再问打开 ctrip.com。约 50 秒关单，侧栏「还缺：车票」。见 `BUG-20261027-S7-TRAINS-NOT-RUN.md`。日期回落单仍开着。 |
 | S9 | 过 | `m-mvqex65j-kk7i6` 原单 close=done | 回「继续」后没有新 open。18:19:10 之后同一单新增发现（5 → 14），是 act / navigate / run_skill，不是再问「要我先打开 weibo.com 吗？」。18:24:17 close=done。 |
@@ -155,7 +155,7 @@ S3 / S5 / S6 / S7 没有再拉回。18:29:25 的 `sparo=True` 是 TRAE 窗口标
 
 | # | 结论 | 底账 | 证据 |
 |---|---|---|---|
-| S3 | 过 | `m-mvqolkh3-w1smh` close=done | raw 原句。妙招第 2 步仍是 `click requires ref or selector`。随后发布框回读确认 148 字，页面上 textarea（占位「有什么新鲜事想分享给大家？」）实有 146 字，开头是「#姆巴佩道歉#」。没点发送，URL 仍是微博首页。空框假 done 这次没有发生。 |
+| S3 | 过 | `m-mvqolkh3-w1smh` close=done | raw 原句。技能第 2 步仍是 `click requires ref or selector`。随后发布框回读确认 148 字，页面上 textarea（占位「有什么新鲜事想分享给大家？」）实有 146 字，开头是「#姆巴佩道歉#」。没点发送，URL 仍是微博首页。空框假 done 这次没有发生。 |
 | S6 ★ | 过 | `m-mvqori4u-dylw1` close=done | 侧栏：今天北京晴，1～16°C，20:50 更新 7°C。搜索 URL `wd=%E4%BB%8A%E5%A4%A9%E5%8C%97%E4%BA%AC%E5%A4%A9%E6%B0%94`。底账全文无「没执行」。 |
 | S7 ★ | 过 | `m-mvqp0yds-sh0u5` close=done | 酒店 `hotels.ctrip.com` checkin=2026-11-07 checkout=2026-11-08。去程 12306 `date=2026-11-06`（北京→南京），没有回落入住日。返程没有第二段 12306 URL。阅读页 `reports/read-2026-10-27T13-01-28.html` 写明「8日晚返程未提供查询结果」，并单列「8日晚南京→北京返程车票，链接未知」。三段都有交代，没有静默 pending，没有「没有对应的手」。 |
 
@@ -190,7 +190,7 @@ S7（21:00:13–21:01:28，酒店、12306 去程、出阅读页）期间 0 次�
 
 | 结论 | 底账 | 证据 |
 |---|---|---|
-| 过 | `m-mvqqni57-krn65` close=incomplete | 妙招「高铁往返加酒店」第 2 步失败，没有 12306 URL。关单前卡片上两步 `train_search` 仍是 pending，没有涂 done。侧栏：「还缺：去程车票、返程车票」。 |
+| 过 | `m-mvqqni57-krn65` close=incomplete | 技能「高铁往返加酒店」第 2 步失败，没有 12306 URL。关单前卡片上两步 `train_search` 仍是 pending，没有涂 done。侧栏：「还缺：去程车票、返程车票」。 |
 
 ### F2 抢焦
 

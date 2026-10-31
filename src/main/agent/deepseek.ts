@@ -333,7 +333,7 @@ const TOOLS = [
     function: {
       name: "run_skill",
       description:
-        "Run a saved 妙招 by id, or by a phrase the user already remembered. Natural-language intent: match_skill first for a candidate id, then run_skill({ id, params }). A bare query does not execute.",
+        "Run a saved skill by id, or by a phrase the user already remembered. Natural-language intent: match_skill first for a candidate id, then run_skill({ id, params }). A bare query does not execute.",
       parameters: {
         type: "object",
         properties: {

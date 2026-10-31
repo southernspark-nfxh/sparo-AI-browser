@@ -1,5 +1,5 @@
 /**
- * Turn a successful agent tool trace into a saved 妙招 so the next similar goal is faster.
+ * Turn a successful agent tool trace into a saved skill so the next similar goal is faster.
  */
 import type { Skill, SkillStep } from "../skills/store.js";
 import { createSkillFromTrace, listSkills, saveSkill } from "../skills/store.js";

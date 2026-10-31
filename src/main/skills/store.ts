@@ -124,7 +124,7 @@ export function createSkillFromTrace(input: {
   const now = new Date().toISOString();
   const skill: Skill = {
     id,
-    title: input.title.trim() || "未命名妙招",
+    title: input.title.trim() || "未命名技能",
     intent: input.task || input.title.trim() || "未命名",
     source: input.source || "taught",
     createdAt: now,

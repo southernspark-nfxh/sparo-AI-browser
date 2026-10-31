@@ -75,7 +75,7 @@ describe("resolveSkillStrict via runSkill", () => {
     writeTrigger(dir, "今天北京天气怎么样", "qa-gate-demo", false);
     const off = await runSkill(browser, dir, { query: "今天北京天气怎么样", dryRun: true });
     expect(off.ok).toBe(false);
-    expect(off.message).toContain("未找到妙招");
+    expect(off.message).toContain("未找到技能");
   });
 
   it("does not execute a title or a builtin alias", async () => {
@@ -84,12 +84,12 @@ describe("resolveSkillStrict via runSkill", () => {
     writeSkill(dir, "qa-gate-demo", "QA门岗演示");
     const byTitle = await runSkill(browser, dir, { query: "QA门岗演示", dryRun: true });
     expect(byTitle.ok).toBe(false);
-    expect(byTitle.message).toBe("未找到妙招「QA门岗演示」");
+    expect(byTitle.message).toBe("未找到技能「QA门岗演示」");
     const titleIds = ((byTitle.data as { suggestions?: Array<{ id: string }> }).suggestions || []).map((s) => s.id);
     expect(titleIds).toContain("qa-gate-demo");
     const byAlias = await runSkill(browser, dir, { query: "比价", dryRun: true });
     expect(byAlias.ok).toBe(false);
-    expect(byAlias.message).toContain("未找到妙招");
+    expect(byAlias.message).toContain("未找到技能");
     const aliasIds = ((byAlias.data as { suggestions?: Array<{ id: string }> }).suggestions || []).map((s) => s.id);
     expect(aliasIds).toContain("life-compare-shop");
   });
@@ -99,10 +99,10 @@ describe("resolveSkillStrict via runSkill", () => {
     writeSkill(dir, "qa-gate-demo", "QA门岗演示");
     const r = await runSkill(browser, dir, { query: "QA门岗演示2", dryRun: true });
     expect(r.ok).toBe(false);
-    expect(r.message).toContain("未找到妙招");
+    expect(r.message).toContain("未找到技能");
   });
 
-  it("停用记错关键文本的妙招，下次不再执行", async () => {
+  it("停用记错关键文本的技能，下次不再执行", async () => {
     const dir = tmp();
     writeFileSync(
       join(dir, "skills", "bad-name.json"),
@@ -131,10 +131,10 @@ describe("resolveSkillStrict via runSkill", () => {
     expect(saved.enabled).toBe(false);
     expect(saved.retiredReason).toContain("王海林0516");
     const again = await runSkill(fake, dir, { id: "bad-name" });
-    expect(again.message).toContain("未找到妙招");
+    expect(again.message).toContain("未找到技能");
   });
 
-  it("停用后，仍启用但要点同一段错名的妙招也不再被选中", async () => {
+  it("停用后，仍启用但要点同一段错名的技能也不再被选中", async () => {
     const dir = tmp();
     const retired = {
       id: "bad-name",
