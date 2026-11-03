@@ -224,7 +224,7 @@ export function looksLikeSubmitAction(text: string): boolean {
 }
 
 /** 新核心的确认在模型层 request_confirm。执行中不再套店小秘闸门。 */
-export function submitClickNeedsGate(piCoreRunning: boolean, label: string): boolean {
-  if (piCoreRunning) return false;
+export function submitClickNeedsGate(freeSoulRunning: boolean, label: string): boolean {
+  if (freeSoulRunning) return false;
   return looksLikeSubmitAction(label);
 }

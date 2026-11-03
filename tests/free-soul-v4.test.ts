@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { PiAgentCore } from "../src/main/agent/pi-core.js";
+import { FreeSoul } from "../src/main/agent/free-soul.js";
 import { gateClickText } from "../src/main/agent/publish-gate.js";
 import { inspectUploadPath } from "../src/main/agent/set-file.js";
 
@@ -57,7 +57,7 @@ describe("模型请求超时", () => {
         headers: { "Content-Type": "application/json" },
       });
     };
-    const agent = new PiAgentCore(config(fetchImpl, 30), async () => ({ ok: true, message: "不会执行" }));
+    const agent = new FreeSoul(config(fetchImpl, 30), async () => ({ ok: true, message: "不会执行" }));
     const result = await agent.run({ input: "看一下", url: "https://example.com", title: "例", locale: "zh" });
     expect(calls).toBe(2);
     expect(result).toEqual({ ok: true, text: "好的。" });
@@ -69,7 +69,7 @@ describe("模型请求超时", () => {
       calls += 1;
       return abortOnSignal(init);
     };
-    const agent = new PiAgentCore(config(fetchImpl, 30), async () => ({ ok: true, message: "不会执行" }));
+    const agent = new FreeSoul(config(fetchImpl, 30), async () => ({ ok: true, message: "不会执行" }));
     const result = await agent.run({ input: "看一下", url: "https://example.com", title: "例", locale: "zh" });
     expect(calls).toBe(2);
     expect(result.ok).toBe(false);
@@ -106,7 +106,7 @@ describe("set_file", () => {
         headers: { "Content-Type": "application/json" },
       });
     };
-    const agent = new PiAgentCore(config(fetchImpl), async (name, args) => {
+    const agent = new FreeSoul(config(fetchImpl), async (name, args) => {
       seen.push({ name, args });
       return { ok: true, message: "已放入", data: { path: args.path, sizeMB: 1.2 } };
     });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PiAgentCore } from "../src/main/agent/pi-core.js";
+import { FreeSoul } from "../src/main/agent/free-soul.js";
 
 const INTERRUPTED = "（任务被用户打断，未完成的步骤不做宣称。已做的操作以工具记录为准。）";
 
@@ -37,7 +37,7 @@ describe("随时可打断", () => {
         if (init?.signal?.aborted) fail();
         else init?.signal?.addEventListener("abort", fail, { once: true });
       });
-    const agent = new PiAgentCore(config(fetchImpl), async () => ({ ok: true, message: "不会执行" }));
+    const agent = new FreeSoul(config(fetchImpl), async () => ({ ok: true, message: "不会执行" }));
     const controller = new AbortController();
     const started = Date.now();
     const pending = agent.run({
@@ -67,7 +67,7 @@ describe("随时可打断", () => {
         headers: { "Content-Type": "application/json" },
       });
     };
-    const agent = new PiAgentCore(config(fetchImpl), async () => {
+    const agent = new FreeSoul(config(fetchImpl), async () => {
       controller.abort();
       return { ok: true, message: "标题" };
     });

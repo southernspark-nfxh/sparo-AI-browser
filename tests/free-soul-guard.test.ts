@@ -31,7 +31,7 @@ vi.mock("electron", () => ({
 }));
 
 import { SparkBrowser } from "../src/main/browser.js";
-import { PiAgentCore } from "../src/main/agent/pi-core.js";
+import { FreeSoul } from "../src/main/agent/free-soul.js";
 import { appendMissionEvent, recoveryLine, replayMissions, sidebarOffersRecovery } from "../src/main/agent/mission-journal.js";
 import type { ActiveMission } from "../src/main/agent/runtime.js";
 import { questionFor } from "../src/main/learning/help.js";
@@ -48,7 +48,7 @@ function tmp(): string {
 }
 
 type Harness = SparkBrowser & {
-  piCoreRunning: boolean;
+  freeSoulRunning: boolean;
   chatLog: Array<{ role: string; text: string }>;
   fallbackHelpAsk: ReturnType<typeof questionFor> | null;
   recentLearned: unknown[];
@@ -78,7 +78,7 @@ function harness(): Harness {
   browser.fallbackHelpAsk = null;
   browser.recentLearned = [];
   browser.paused = false;
-  browser.piCoreRunning = false;
+  browser.freeSoulRunning = false;
   browser.pendingRecovery = null;
   browser.settings = { locale: "zh-CN" };
   browser.pushSidebarState = () => undefined;
@@ -94,7 +94,7 @@ function click(browser: Harness) {
 describe("新核心运行时旧学习系统不插话", () => {
   it("连续 3 次同指纹点击且页面不变时，不写 chatLog、不产生 helpAsk", async () => {
     const browser = harness();
-    browser.piCoreRunning = true;
+    browser.freeSoulRunning = true;
     const before = browser.chatLog.length;
     await click(browser);
     await click(browser);
@@ -105,7 +105,7 @@ describe("新核心运行时旧学习系统不插话", () => {
 
   it("helpAsk 已经开着时，第一次点击不说「好，先继续」，也不暂停", async () => {
     const browser = harness();
-    browser.piCoreRunning = true;
+    browser.freeSoulRunning = true;
     browser.paused = true;
     browser.fallbackHelpAsk = questionFor(
       { kind: "dead_click", host: "weibo.com", target: "send", count: 2 },
@@ -124,7 +124,7 @@ describe("新核心运行时旧学习系统不插话", () => {
 
   it("新核心没在跑时，连点无变化仍会开口", async () => {
     const browser = harness();
-    browser.piCoreRunning = false;
+    browser.freeSoulRunning = false;
     await click(browser);
     await click(browser);
     expect(browser.chatLog.some((turn) => turn.text.includes("点了没反应"))).toBe(true);
@@ -154,7 +154,7 @@ describe("运行中的新消息打断当前执行", () => {
         }));
       });
     const browser = harness();
-    (browser as unknown as { piCore: PiAgentCore }).piCore = new PiAgentCore(
+    (browser as unknown as { freeSoul: FreeSoul }).freeSoul = new FreeSoul(
       {
         apiKey: "test",
         baseUrl: "https://example.test/v1",
@@ -241,7 +241,7 @@ describe("执行中的新消息排队", () => {
       releaseFirst = resolve;
     });
     let calls = 0;
-    (browser as unknown as { piCore: { run: (input: { input: string }) => Promise<{ ok: boolean; text: string }> } }).piCore = {
+    (browser as unknown as { freeSoul: { run: (input: { input: string }) => Promise<{ ok: boolean; text: string }> } }).freeSoul = {
       run: async (input) => {
         calls += 1;
         ran.push(input.input);

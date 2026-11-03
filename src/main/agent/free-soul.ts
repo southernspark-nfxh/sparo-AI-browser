@@ -3,7 +3,7 @@ import { CAPTURE_PROMPT, CAPTURE_RUN_LIMIT, RUN_CAPTURE_FULL } from "../captures
 import { pageTextGrowthNote } from "./deepseek.js";
 import { chatCompletionsUrl } from "../settings/llm-url.js";
 
-export type PiToolName =
+export type FreeSoulToolName =
   | "navigate"
   | "get_url"
   | "get_title"
@@ -23,12 +23,12 @@ export type PiToolName =
   | "save_image"
   | "list_captures";
 
-export type PiToolRunner = (
-  name: PiToolName,
+export type FreeSoulToolRunner = (
+  name: FreeSoulToolName,
   args: Record<string, unknown>,
 ) => Promise<ToolResult>;
 
-export type PiCoreConfig = {
+export type freeSoulConfig = {
   apiKey: string;
   baseUrl: string;
   model: string;
@@ -105,7 +105,7 @@ function normalizeToolCall(
 }
 
 const tool = (
-  name: PiToolName,
+  name: FreeSoulToolName,
   description: string,
   properties: Record<string, unknown> = {},
   required: string[] = [],
@@ -326,13 +326,13 @@ function serializeResult(result: ToolResult): string {
   return `${text.slice(0, 16000)}\n…[工具结果过长，中间已省略]…\n${text.slice(-7000)}`;
 }
 
-export class PiAgentCore {
+export class FreeSoul {
   constructor(
-    private config: PiCoreConfig,
-    private runTool: PiToolRunner,
+    private config: freeSoulConfig,
+    private runTool: FreeSoulToolRunner,
   ) {}
 
-  updateConfig(config: PiCoreConfig): void {
+  updateConfig(config: freeSoulConfig): void {
     this.config = config;
   }
 
@@ -376,18 +376,18 @@ export class PiAgentCore {
     let samePageCount = 0;
     let budgetSent = false;
     let savedCaptures = 0;
-    console.log(`[pi-core] run start input=${input.input.slice(0, 80)}`);
+    console.log(`[free-soul] run start input=${input.input.slice(0, 80)}`);
     for (let round = 1; round <= maxRounds; round += 1) {
       if (input.signal?.aborted) return interruptedResult();
       if (!budgetSent && round >= budgetAt) {
         budgetSent = true;
-        console.log(`[pi-core] r${round} BUDGET_HINT ${budgetAt}/${maxRounds}`);
+        console.log(`[free-soul] r${round} BUDGET_HINT ${budgetAt}/${maxRounds}`);
         messages.push({
           role: "user",
           content: `已执行 ${budgetAt}/${maxRounds} 轮。已有信息足够回答用户就立即汇总汇报；不够就明确说还缺什么、卡在哪。不要再开新路径。`,
         });
       }
-      let data: Awaited<ReturnType<PiAgentCore["completion"]>>;
+      let data: Awaited<ReturnType<FreeSoul["completion"]>>;
       try {
         data = await this.completion(messages, input.signal);
       } catch (error) {
@@ -413,7 +413,7 @@ export class PiAgentCore {
 
       const pendingHints: string[] = [];
       for (const call of calls) {
-        const name = call.function.name as PiToolName;
+        const name = call.function.name as FreeSoulToolName;
         let args: Record<string, unknown> = {};
         let parseError = "";
         try {
@@ -457,7 +457,7 @@ export class PiAgentCore {
           }
         }
         console.log(
-          `[pi-core] r${round} ${name} ok=${reported.ok} ${(reported.message || "").slice(0, 120).replace(/\s+/g, " ")}`,
+          `[free-soul] r${round} ${name} ok=${reported.ok} ${(reported.message || "").slice(0, 120).replace(/\s+/g, " ")}`,
         );
         messages.push({
           role: "tool",
@@ -467,7 +467,7 @@ export class PiAgentCore {
         });
         if (input.signal?.aborted) return interruptedResult();
         if (name === "page_text" && result.ok && samePageCount >= 3) {
-          console.log(`[pi-core] r${round} PAGE_SAME_HINT`);
+          console.log(`[free-soul] r${round} PAGE_SAME_HINT`);
           pendingHints.push(PAGE_SAME_HINT);
           samePageCount = 0;
         }
@@ -485,7 +485,7 @@ export class PiAgentCore {
           streak = 1;
         }
         if (streak >= 3) {
-          console.log(`[pi-core] r${round} STUCK_HINT ${name}`);
+          console.log(`[free-soul] r${round} STUCK_HINT ${name}`);
           pendingHints.push(STUCK_HINT);
           streak = 0;
           lastFinger = "";
@@ -504,7 +504,7 @@ export class PiAgentCore {
     };
   }
 
-  private async safeRun(name: PiToolName, args: Record<string, unknown>): Promise<ToolResult> {
+  private async safeRun(name: FreeSoulToolName, args: Record<string, unknown>): Promise<ToolResult> {
     if (!TOOL_NAMES.has(name)) return { ok: false, message: `未知工具：${name}` };
     try {
       return await this.runTool(name, args);
@@ -571,7 +571,7 @@ export class PiAgentCore {
       } catch (error) {
         if (signal?.aborted) throw error;
         lastError = error;
-        console.log(`[pi-core] request failed attempt=${attempt + 1} ${requestErrorDetail(error)}`);
+        console.log(`[free-soul] request failed attempt=${attempt + 1} ${requestErrorDetail(error)}`);
       } finally {
         clearTimeout(timer);
         signal?.removeEventListener("abort", onAbort);
