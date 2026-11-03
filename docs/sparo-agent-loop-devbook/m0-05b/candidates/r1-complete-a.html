@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>小米15、iPhone 16、华为Mate 70 对照报告</title>
+  <style>
+    :root { color-scheme: light; font-family: "Microsoft YaHei", "PingFang SC", sans-serif; color: #172033; background: #f4f6fa; }
+    body { margin: 0; }
+    main { max-width: 1080px; margin: 0 auto; padding: 36px 24px 56px; }
+    h1 { margin: 0 0 10px; font-size: 30px; }
+    h2 { margin-top: 30px; font-size: 21px; }
+    p, li { line-height: 1.75; }
+    .meta, .note { color: #536078; }
+    .verdict { background: #172033; color: #fff; padding: 20px 22px; border-radius: 12px; }
+    .verdict p { margin: 8px 0 0; }
+    .scroll { overflow-x: auto; background: #fff; border-radius: 12px; }
+    table { width: 100%; border-collapse: collapse; background: #fff; }
+    th, td { padding: 13px 14px; border: 1px solid #dfe4ec; text-align: left; vertical-align: top; line-height: 1.55; }
+    th { background: #e9edf5; }
+    code { background: #edf0f5; padding: 1px 4px; border-radius: 4px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+    .card { background: #fff; border-radius: 12px; padding: 18px; }
+    .card h3 { margin-top: 0; }
+    a { color: #1859b7; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>小米15、iPhone 16、华为Mate 70 对照报告</h1>
+  <p class="meta">问题：帮我对比三款 小米15、iPhone 16、华为Mate 70 哪个值得买</p>
+  <p class="meta">样本：3 款手机、4 份公开页面 Artifact。小米与华为采集于 2026-10-30；苹果价格采集于 2026-10-29，规格采集于 2026-10-30。只读对比，未购买、未付款。</p>
+
+  <section class="verdict">
+    <strong>结论：如果只按本次页面标价与已展示配置做选择，默认优先小米15 12GB+256GB。</strong>
+    <p>理由是其页面标价为￥3599，低于本次华为参考报价￥5499和苹果 RMB 5999 起，同时给出骁龙8至尊版、5400mAh、6.36英寸屏和三颗5000万像素摄像头。这个结论有两个前提：接受 Android／小米页面所列配置，并且实际购买时能确认库存和价格。本次小米页面明确显示该地区暂时缺货，所以不能把它写成“现在一定能买到”。</p>
+    <p>如果更重视 6.7 英寸大屏，改看华为Mate 70；如果明确想要 iPhone，并接受 128GB 与 RMB 5999 起，再选 iPhone 16。价格来源性质和采集日期并不完全相同，以上不是全网最低价或实测性能排名。</p>
+  </section>
+
+  <h2>一、配置与价格口径</h2>
+  <p>小米和华为都是 12GB+256GB；苹果为 iPhone 16 128GB。存储不一致，不能把三者当作完全同配置比较。小米页面是所选配置的商品标价；苹果是官网“起”价；华为是 ZOL 产品页的参考报价，不是成交价。</p>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>维度</th><th>小米15</th><th>iPhone 16</th><th>华为Mate 70</th></tr></thead>
+      <tbody>
+        <tr><td>本次精确对象</td><td>Xiaomi 15，已选 12GB+256GB 黑色<br><code>e-r1-xiaomi15</code></td><td>iPhone 16，128GB<br><code>e-r1-iphone16-price</code><br><code>e-r1-iphone16-specs</code></td><td>HUAWEI Mate 70(12GB/256GB)<br><code>e-r1-mate70</code></td></tr>
+        <tr><td>页面价格</td><td>￥3599；该地区暂时缺货<br><code>e-r1-xiaomi15</code></td><td>RMB 5999 起，或 RMB 250/月（24期）起<br><code>e-r1-iphone16-price</code></td><td>ZOL 参考报价￥5499；同页另列天猫¥4199，但未直开或核验该店铺，不以其替代参考报价<br><code>e-r1-mate70</code></td></tr>
+        <tr><td>芯片</td><td>骁龙8至尊版<br><code>e-r1-xiaomi15</code></td><td>A18；6核中央处理器、5核图形处理器、16核神经网络引擎<br><code>e-r1-iphone16-specs</code></td><td>本次冻结核心区间未展示，不补猜<br><code>e-r1-mate70</code></td></tr>
+        <tr><td>屏幕</td><td>6.36英寸；2670×1200<br><code>e-r1-xiaomi15</code></td><td>6.1英寸 OLED；2556 x 1179，460 ppi<br><code>e-r1-iphone16-specs</code></td><td>6.7英寸；2688x1216px<br><code>e-r1-mate70</code></td></tr>
+        <tr><td>摄像头（页面原字段）</td><td>三摄像头：5000万+5000万+5000万像素；本区间未展示前摄参数<br><code>e-r1-xiaomi15</code></td><td>4800万像素融合式主摄、1200万像素超广角，并支持1200万像素2倍长焦；原深感前摄1200万像素<br><code>e-r1-iphone16-specs</code></td><td>后置5000万像素；前置1300万像素<br><code>e-r1-mate70</code></td></tr>
+        <tr><td>电池／续航</td><td>5400mAh<br><code>e-r1-xiaomi15</code></td><td>视频播放最长22小时、流媒体视频最长18小时、音频最长80小时；未展示mAh<br><code>e-r1-iphone16-specs</code></td><td>5300mAh<br><code>e-r1-mate70</code></td></tr>
+        <tr><td>其他可比信息</td><td>5G全网通、双卡双待；玻璃版8.08mm<br><code>e-r1-xiaomi15</code></td><td>170克、7.80mm；IP68；Apple 智能推出时间依监管审批情况而定<br><code>e-r1-iphone16-specs</code></td><td>12GB内存；云杉绿、曜石黑、雪域白、风信紫<br><code>e-r1-mate70</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>二、优缺点与适用人群</h2>
+  <div class="cards">
+    <section class="card">
+      <h3>小米15：价格优先的默认选择</h3>
+      <ul>
+        <li>优点：本次页面标价最低，同时列出骁龙8至尊版、5400mAh和三颗5000万像素摄像头；6.36英寸适合不想要6.7英寸大屏的人。</li>
+        <li>缺点：页面显示该地区暂时缺货；本区间没有前摄参数。没有实测，不能仅凭像素数断言拍照最好。</li>
+        <li>适合：看重页面价格与所列硬件、能接受页面缺货需要先确认库存的人。</li>
+      </ul>
+    </section>
+    <section class="card">
+      <h3>iPhone 16：明确想要 iPhone 时选择</h3>
+      <ul>
+        <li>优点：A18、6.1英寸 OLED、4800万像素主摄；官网给出视频播放最长22小时，170克、7.80mm。</li>
+        <li>缺点：本次为128GB，RMB 5999 起；未展示mAh，不能与另外两款按电池容量直接换算。Apple 智能推出时间仍依监管审批。</li>
+        <li>适合：明确想要 iPhone、重视上述苹果规格，并能接受128GB和官网起价的人。</li>
+      </ul>
+    </section>
+    <section class="card">
+      <h3>华为Mate 70：大屏优先的替代</h3>
+      <ul>
+        <li>优点：6.7英寸为三款中最大，配5300mAh；12GB+256GB，后置5000万、前置1300万像素。</li>
+        <li>缺点：本次价格来自 ZOL 参考报价而非华为官方成交页；核心区间未展示芯片，不做性能补猜。</li>
+        <li>适合：优先大屏、希望选择12GB+256GB，并理解参考报价口径的人。</li>
+      </ul>
+    </section>
+  </div>
+
+  <h2>三、来源与证据绑定</h2>
+  <table>
+    <thead><tr><th>证据ID／Artifact</th><th>公开来源</th><th>采集时间</th><th>用途</th></tr></thead>
+    <tbody>
+      <tr><td><code>e-r1-xiaomi15</code><br><code>art-m005a-r1-mi-xiaomi15-mobile-20261030</code></td><td><a href="https://m.mi.com/commodity/detail/20618">小米移动商城商品页</a></td><td>2026-10-30</td><td>精确已选配置、标价、缺货状态与核心规格</td></tr>
+      <tr><td><code>e-r1-iphone16-price</code><br><code>art-m005a-r1-apple-iphone16</code></td><td><a href="https://www.apple.com.cn/shop/buy-iphone/iphone-16">Apple 购买页</a></td><td>2026-10-29</td><td>128GB与 RMB 5999 起</td></tr>
+      <tr><td><code>e-r1-iphone16-specs</code><br><code>art-m005a-r1-apple-iphone16-specs-20261030</code></td><td><a href="https://www.apple.com.cn/iphone-16/specs/">Apple 技术规格页</a></td><td>2026-10-30</td><td>芯片、屏幕、摄像头、尺寸重量与续航</td></tr>
+      <tr><td><code>e-r1-mate70</code><br><code>art-m005a-r1-huawei-mate70-zol-20261030</code></td><td><a href="https://detail.zol.com.cn/cell_phone/index2114263.shtml">ZOL Mate 70 精确配置产品页</a></td><td>2026-10-30</td><td>精确配置、参考报价与核心规格</td></tr>
+    </tbody>
+  </table>
+
+  <h2>四、样本缺口与购买前检查</h2>
+  <ul>
+    <li>实际样本只有这三款和上述页面，没有实测性能、拍照、发热、信号、系统体验或售后，也没有查询全网价格。</li>
+    <li>配置未完全对齐：苹果为128GB，另外两款为256GB；苹果价格带“起”，华为为第三方参考报价，小米有地区缺货提示。</li>
+    <li>未展示字段不做等价推断：苹果mAh、华为芯片、小米前摄参数均按上述来源缺口保留。</li>
+    <li>下单前需要重新确认所选配置、实际成交价、库存与交付；本报告不发起购买或付款。</li>
+  </ul>
+</main>
+</body>
+</html>

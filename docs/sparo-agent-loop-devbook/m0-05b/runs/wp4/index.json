@@ -1,0 +1,299 @@
+{
+  "versions": {
+    "evaluationMode": "offline_replay",
+    "facilityVersion": "m0-05b-facility-1",
+    "rubricVersion": "verifier-rubric-1",
+    "promptVersion": "verifier-prompt-1",
+    "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+    "manifestSampleSetId": "m0-05a-2026-10-29",
+    "modelVersion": "deepseek-flash",
+    "provider": "deepseek",
+    "llmMode": "byok",
+    "priceVersion": "[TBD]",
+    "productionV2": false
+  },
+  "rows": [
+    {
+      "caseId": "G1-budget",
+      "scene": "G1",
+      "resultClass": "budget_exhausted",
+      "covered": true,
+      "observedClass": "budget_exhausted",
+      "modelCalls": 0
+    },
+    {
+      "caseId": "G1-cancel",
+      "scene": "G1",
+      "resultClass": "cancelled",
+      "covered": true,
+      "observedClass": "cancelled",
+      "modelCalls": 0
+    },
+    {
+      "caseId": "G1-false-reject-control",
+      "scene": "G1",
+      "resultClass": "false_reject_then_pass",
+      "covered": true,
+      "observedClass": "false_reject_then_pass",
+      "modelCalls": 2
+    },
+    {
+      "caseId": "G1-gap",
+      "scene": "G1",
+      "resultClass": "continuous_reject",
+      "covered": true,
+      "observedClass": "continuous_reject",
+      "modelCalls": 2
+    },
+    {
+      "caseId": "G1-pass",
+      "scene": "G1",
+      "resultClass": "pass",
+      "covered": true,
+      "observedClass": "pass",
+      "modelCalls": 0
+    },
+    {
+      "caseId": "G2-budget",
+      "scene": "G2",
+      "resultClass": "budget_exhausted",
+      "covered": true,
+      "observedClass": "budget_exhausted",
+      "modelCalls": 0
+    },
+    {
+      "caseId": "G2-cancel",
+      "scene": "G2",
+      "resultClass": "cancelled",
+      "covered": true,
+      "observedClass": "cancelled",
+      "modelCalls": 0
+    },
+    {
+      "caseId": "G2-gap",
+      "scene": "G2",
+      "resultClass": "continuous_reject",
+      "covered": true,
+      "observedClass": "continuous_reject",
+      "modelCalls": 2
+    },
+    {
+      "caseId": "G2-incomplete",
+      "scene": "G2",
+      "resultClass": "incomplete",
+      "covered": true,
+      "observedClass": "incomplete",
+      "modelCalls": 0
+    },
+    {
+      "caseId": "G2-probe",
+      "scene": "G2",
+      "resultClass": "probe",
+      "covered": false,
+      "observedClass": "uncovered",
+      "modelCalls": 1
+    },
+    {
+      "caseId": "G4-budget",
+      "scene": "G4",
+      "resultClass": "budget_exhausted",
+      "covered": true,
+      "observedClass": "budget_exhausted",
+      "modelCalls": 0
+    },
+    {
+      "caseId": "G4-cancel",
+      "scene": "G4",
+      "resultClass": "cancelled",
+      "covered": true,
+      "observedClass": "cancelled",
+      "modelCalls": 0
+    },
+    {
+      "caseId": "G4-gap",
+      "scene": "G4",
+      "resultClass": "continuous_reject",
+      "covered": true,
+      "observedClass": "continuous_reject",
+      "modelCalls": 2
+    },
+    {
+      "caseId": "G4-probe",
+      "scene": "G4",
+      "resultClass": "probe",
+      "covered": false,
+      "observedClass": "uncovered",
+      "modelCalls": 1
+    },
+    {
+      "caseId": "G6-budget",
+      "scene": "G6",
+      "resultClass": "budget_exhausted",
+      "covered": true,
+      "observedClass": "budget_exhausted",
+      "modelCalls": 0
+    },
+    {
+      "caseId": "G6-cancel",
+      "scene": "G6",
+      "resultClass": "cancelled",
+      "covered": true,
+      "observedClass": "cancelled",
+      "modelCalls": 0
+    },
+    {
+      "caseId": "G6-gap",
+      "scene": "G6",
+      "resultClass": "continuous_reject",
+      "covered": true,
+      "observedClass": "continuous_reject",
+      "modelCalls": 2
+    },
+    {
+      "caseId": "G6-pass-or-false-reject",
+      "scene": "G6",
+      "resultClass": "pass",
+      "covered": true,
+      "observedClass": "pass",
+      "modelCalls": 1
+    },
+    {
+      "caseId": "G8-budget",
+      "scene": "G8",
+      "resultClass": "budget_exhausted",
+      "covered": true,
+      "observedClass": "budget_exhausted",
+      "modelCalls": 0
+    },
+    {
+      "caseId": "G8-cancel",
+      "scene": "G8",
+      "resultClass": "cancelled",
+      "covered": true,
+      "observedClass": "cancelled",
+      "modelCalls": 0
+    },
+    {
+      "caseId": "G8-gap",
+      "scene": "G8",
+      "resultClass": "continuous_reject",
+      "covered": true,
+      "observedClass": "continuous_reject",
+      "modelCalls": 2
+    },
+    {
+      "caseId": "G8-pass-or-false-reject",
+      "scene": "G8",
+      "resultClass": "pass",
+      "covered": false,
+      "observedClass": "false_reject_then_pass",
+      "modelCalls": 2
+    },
+    {
+      "caseId": "P1-budget",
+      "scene": "P1",
+      "resultClass": "budget_exhausted",
+      "covered": true,
+      "observedClass": "budget_exhausted",
+      "modelCalls": 0
+    },
+    {
+      "caseId": "P1-cancel",
+      "scene": "P1",
+      "resultClass": "cancelled",
+      "covered": true,
+      "observedClass": "cancelled",
+      "modelCalls": 0
+    },
+    {
+      "caseId": "P1-gap",
+      "scene": "P1",
+      "resultClass": "continuous_reject",
+      "covered": true,
+      "observedClass": "continuous_reject",
+      "modelCalls": 2
+    },
+    {
+      "caseId": "P1-pass-or-false-reject",
+      "scene": "P1",
+      "resultClass": "pass",
+      "covered": true,
+      "observedClass": "false_reject_then_pass",
+      "modelCalls": 2
+    },
+    {
+      "caseId": "R1-budget",
+      "scene": "R1",
+      "resultClass": "budget_exhausted",
+      "covered": true,
+      "observedClass": "budget_exhausted",
+      "modelCalls": 0
+    },
+    {
+      "caseId": "R1-cancel",
+      "scene": "R1",
+      "resultClass": "cancelled",
+      "covered": true,
+      "observedClass": "cancelled",
+      "modelCalls": 0
+    },
+    {
+      "caseId": "R1-gap",
+      "scene": "R1",
+      "resultClass": "continuous_reject",
+      "covered": true,
+      "observedClass": "continuous_reject",
+      "modelCalls": 2
+    },
+    {
+      "caseId": "R1-probe",
+      "scene": "R1",
+      "resultClass": "probe",
+      "covered": false,
+      "observedClass": "uncovered",
+      "modelCalls": 1
+    },
+    {
+      "caseId": "T1-budget",
+      "scene": "T1",
+      "resultClass": "budget_exhausted",
+      "covered": true,
+      "observedClass": "budget_exhausted",
+      "modelCalls": 0
+    },
+    {
+      "caseId": "T1-cancel",
+      "scene": "T1",
+      "resultClass": "cancelled",
+      "covered": true,
+      "observedClass": "cancelled",
+      "modelCalls": 0
+    },
+    {
+      "caseId": "T1-gap",
+      "scene": "T1",
+      "resultClass": "continuous_reject",
+      "covered": true,
+      "observedClass": "continuous_reject",
+      "modelCalls": 2
+    },
+    {
+      "caseId": "T1-probe",
+      "scene": "T1",
+      "resultClass": "probe",
+      "covered": false,
+      "observedClass": "uncovered",
+      "modelCalls": 1
+    },
+    {
+      "caseId": "T1-rollback",
+      "scene": "T1",
+      "resultClass": "runtime_rollback",
+      "covered": true,
+      "observedClass": "runtime_rollback",
+      "modelCalls": 0
+    }
+  ],
+  "o01": "[TBD]",
+  "journalUnchanged": true
+}

@@ -1,0 +1,296 @@
+{
+  "caseId": "G4-portrait-read",
+  "scene": "G4",
+  "resultClass": "pass",
+  "costBucket": "independent",
+  "preJudgedValid": true,
+  "covered": true,
+  "observedClass": "false_reject_then_pass",
+  "reason": "",
+  "modelCalls": 2,
+  "versions": {
+    "evaluationMode": "offline_replay",
+    "facilityVersion": "m0-05b-facility-3",
+    "rubricVersion": "verifier-rubric-1",
+    "promptVersion": "verifier-prompt-1",
+    "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+    "manifestSampleSetId": "m0-05a-2026-10-29",
+    "modelVersion": "deepseek-flash",
+    "provider": "deepseek",
+    "llmMode": "byok",
+    "priceVersion": "[TBD]",
+    "productionV2": false
+  },
+  "trace": [
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G4-portrait-read-e001",
+      "missionId": "eval-G4-portrait-read",
+      "time": "2026-10-30T04:17:05.192Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.opened",
+      "scene": "G4",
+      "resultClass": "pass",
+      "raw": "研究博主 人民日报 画像，最好上百条",
+      "versions": {
+        "evaluationMode": "offline_replay",
+        "facilityVersion": "m0-05b-facility-3",
+        "rubricVersion": "verifier-rubric-1",
+        "promptVersion": "verifier-prompt-1",
+        "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+        "manifestSampleSetId": "m0-05a-2026-10-29",
+        "modelVersion": "deepseek-flash",
+        "provider": "deepseek",
+        "llmMode": "byok",
+        "priceVersion": "[TBD]",
+        "productionV2": false
+      },
+      "costBucket": "independent"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G4-portrait-read-e002",
+      "missionId": "eval-G4-portrait-read",
+      "time": "2026-10-30T04:17:05.193Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "artifact.created",
+      "artifactId": "g4-portrait.txt",
+      "kind": "report_opened",
+      "contentHash": "5dbf4550897010391a403aaac20c047fb565f8f57d07f37817653c4bc314b7ef",
+      "length": 788,
+      "unit": "chars"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G4-portrait-read-e003",
+      "missionId": "eval-G4-portrait-read",
+      "time": "2026-10-30T04:17:05.194Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 1,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash",
+      "candidateDeliverable": {
+        "artifactId": "g4-portrait.txt",
+        "contentHash": "5dbf4550897010391a403aaac20c047fb565f8f57d07f37817653c4bc314b7ef",
+        "textLength": 788,
+        "notEvidence": true
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G4-portrait-read-e004",
+      "missionId": "eval-G4-portrait-read",
+      "time": "2026-10-30T04:17:35.502Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 1,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 1131,
+      "uncachedInputTokens": 1131,
+      "cachedInputTokens": 0,
+      "outputTokens": 5296,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": []
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G4-portrait-read-e005",
+      "missionId": "eval-G4-portrait-read",
+      "time": "2026-10-30T04:17:35.502Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-G4-portrait-read-r1",
+        "missionId": "eval-G4-portrait-read",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": false,
+        "rawGoalSatisfied": false,
+        "confidence": "low",
+        "rationale": "报告文本可见，确实给出了基于移动页可见10条的三类画像，并明确上百条只是偏好、未完成。但证据索引只给出 e-g4-mobile 的 artifactId，rangeReads 为空，未提供来源页正文或可读区间。候选摘要和报告自述都不能替代来源页证据，因此无法核实画像是否从可见正文读出，也无法核实10条内容。关键交付因来源证据不可读而不能通过。",
+        "deliverables": [
+          {
+            "deliverableId": "g4-report",
+            "status": "partial",
+            "evidenceIds": [
+              "e-g4-mobile"
+            ],
+            "notes": "报告存在，且自述覆盖移动页10条、明确未完成上百条；但来源页正文未在给定区间中展示，无法验证画像依据。"
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": [
+          "提供移动页可见10条的原文区间或摘录，作为 e-g4-mobile 的可读证据。",
+          "在报告中逐条区分观察到的10条与由此归纳的画像判断，避免把推断写成已观察事实。",
+          "确认上百条仅为偏好而非硬性完成量；若需满足偏好，应补充更多条目来源。"
+        ]
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G4-portrait-read-e006",
+      "missionId": "eval-G4-portrait-read",
+      "time": "2026-10-30T04:17:35.502Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "artifact.created",
+      "artifactId": "art-m005a-g2-rmrb-mobile",
+      "frozenVersion": "sha256:7ac80ba0870ccb64ca42163db4b3cd19079ead86859f43177fd93a049fd240a7",
+      "contentRange": {
+        "start": 0,
+        "end": 1830,
+        "unit": "chars",
+        "length": 1830
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G4-portrait-read-e007",
+      "missionId": "eval-G4-portrait-read",
+      "time": "2026-10-30T04:17:35.502Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 2,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash",
+      "candidateDeliverable": {
+        "artifactId": "g4-portrait.txt",
+        "contentHash": "5dbf4550897010391a403aaac20c047fb565f8f57d07f37817653c4bc314b7ef",
+        "textLength": 788,
+        "notEvidence": true
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G4-portrait-read-e008",
+      "missionId": "eval-G4-portrait-read",
+      "time": "2026-10-30T04:17:44.946Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 2,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 2332,
+      "uncachedInputTokens": 2204,
+      "cachedInputTokens": 128,
+      "outputTokens": 1509,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": [
+        {
+          "artifactId": "art-m005a-g2-rmrb-mobile",
+          "start": 0,
+          "end": 1830,
+          "unit": "chars",
+          "length": 1830,
+          "frozenVersion": "sha256:7ac80ba0870ccb64ca42163db4b3cd19079ead86859f43177fd93a049fd240a7",
+          "textLength": 1830
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G4-portrait-read-e009",
+      "missionId": "eval-G4-portrait-read",
+      "time": "2026-10-30T04:17:44.946Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-G4-portrait-read-r2",
+        "missionId": "eval-G4-portrait-read",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": true,
+        "rawGoalSatisfied": true,
+        "confidence": "medium",
+        "rationale": "候选报告是报告交付而非证据，且明确限定为移动页可见的 10 条；画像的三类特征——官方机构回应、民生说明、用具体人物讲历史——都能从所列 10 条正文读出。原句“最好上百条”是偏好，报告没有伪称已完成上百条，符合约束。唯一明显瑕疵是报告写入 uid 2803301701，但给定可见正文未出现该信息，应修正或补证；这不影响核心画像成立。",
+        "deliverables": [
+          {
+            "deliverableId": "g4-report",
+            "artifactId": "g4-portrait.txt",
+            "status": "satisfied",
+            "evidenceIds": [
+              "e-g4-mobile"
+            ],
+            "notes": "报告以移动页 10 条为限，三类画像均有可见正文依据；报告本身未当作证据。"
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": [
+          "删除报告中未见于给定正文的 uid 2803301701，或补充其来源页证据。",
+          "若必须贴近“最好上百条”的偏好，应扩展更多来源页；当前报告已正确声明仅覆盖 10 条。"
+        ]
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G4-portrait-read-e010",
+      "missionId": "eval-G4-portrait-read",
+      "time": "2026-10-30T04:17:44.946Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.closed",
+      "close": {
+        "reason": "done",
+        "summary": "",
+        "gaps": []
+      },
+      "closeGuard": {
+        "passed": true,
+        "checks": [
+          {
+            "name": "artifact_exists",
+            "passed": true
+          },
+          {
+            "name": "report_opened",
+            "passed": true
+          },
+          {
+            "name": "plan_observed",
+            "passed": true
+          },
+          {
+            "name": "permission_and_idempotency",
+            "passed": true
+          },
+          {
+            "name": "budget_and_state",
+            "passed": true
+          }
+        ]
+      }
+    }
+  ]
+}

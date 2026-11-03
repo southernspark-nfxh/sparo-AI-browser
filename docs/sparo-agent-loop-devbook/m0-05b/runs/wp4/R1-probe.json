@@ -1,0 +1,152 @@
+{
+  "caseId": "R1-probe",
+  "scene": "R1",
+  "resultClass": "probe",
+  "costBucket": "independent",
+  "preJudgedValid": false,
+  "covered": false,
+  "observedClass": "uncovered",
+  "reason": "候选未预先判定为有效，拒绝也不记成误拒",
+  "modelCalls": 1,
+  "versions": {
+    "evaluationMode": "offline_replay",
+    "facilityVersion": "m0-05b-facility-1",
+    "rubricVersion": "verifier-rubric-1",
+    "promptVersion": "verifier-prompt-1",
+    "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+    "manifestSampleSetId": "m0-05a-2026-10-29",
+    "modelVersion": "deepseek-flash",
+    "provider": "deepseek",
+    "llmMode": "byok",
+    "priceVersion": "[TBD]",
+    "productionV2": false
+  },
+  "trace": [
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-probe-e001",
+      "missionId": "eval-R1-probe",
+      "time": "2026-10-29T11:31:45.465Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.opened",
+      "scene": "R1",
+      "resultClass": "probe",
+      "raw": "帮我对比三款 小米15、iPhone 16、华为Mate 70 哪个值得买",
+      "versions": {
+        "evaluationMode": "offline_replay",
+        "facilityVersion": "m0-05b-facility-1",
+        "rubricVersion": "verifier-rubric-1",
+        "promptVersion": "verifier-prompt-1",
+        "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+        "manifestSampleSetId": "m0-05a-2026-10-29",
+        "modelVersion": "deepseek-flash",
+        "provider": "deepseek",
+        "llmMode": "byok",
+        "priceVersion": "[TBD]",
+        "productionV2": false
+      },
+      "costBucket": "independent"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-probe-e002",
+      "missionId": "eval-R1-probe",
+      "time": "2026-10-29T11:31:45.465Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 1,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-probe-e003",
+      "missionId": "eval-R1-probe",
+      "time": "2026-10-29T11:31:49.515Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 1,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 528,
+      "uncachedInputTokens": 400,
+      "cachedInputTokens": 128,
+      "outputTokens": 676,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": []
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-probe-e004",
+      "missionId": "eval-R1-probe",
+      "time": "2026-10-29T11:31:49.515Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-R1-probe-r1",
+        "missionId": "eval-R1-probe",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": false,
+        "rawGoalSatisfied": false,
+        "confidence": "high",
+        "rationale": "必交付 r1-report 未满足：证据索引仅有搜索页状态和苹果 iPhone 16 购买页，候选摘要也明确没有小米 15、华为 Mate 70 的同等正文，也没有三款对照报告。现有观察只能支持 iPhone 16 起售价，无法完成三款手机的对比与购买建议。",
+        "deliverables": [
+          {
+            "deliverableId": "r1-report",
+            "kind": "report",
+            "required": true,
+            "satisfied": false,
+            "evidenceIds": [],
+            "reason": "未观察到对照报告；缺少小米 15 和华为 Mate 70 的可比信息，无法支撑三款对比结论。"
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": [
+          "补充小米 15、iPhone 16、华为 Mate 70 的可比官方信息（价格、核心规格、适用人群等），且遵守不打开京东、淘宝、点评的约束。",
+          "基于可核验证据生成三款手机对照报告，明确各维度对比和“哪个值得买”的结论及适用场景。",
+          "为最终报告补充可追溯的证据引用，不能仅依赖搜索入口或单一机型的购买页。"
+        ]
+      },
+      "closeGuard": {
+        "passed": false,
+        "checks": [
+          {
+            "name": "artifact_exists",
+            "passed": true
+          },
+          {
+            "name": "report_opened",
+            "passed": false
+          },
+          {
+            "name": "plan_observed",
+            "passed": true
+          },
+          {
+            "name": "permission_and_idempotency",
+            "passed": true
+          },
+          {
+            "name": "budget_and_state",
+            "passed": true
+          }
+        ]
+      }
+    }
+  ]
+}

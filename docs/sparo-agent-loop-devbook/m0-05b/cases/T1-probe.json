@@ -1,0 +1,64 @@
+{
+  "frozen": true,
+  "frozenAt": "2026-10-29T19:21:00+08:00",
+  "facilityVersion": "m0-05b-facility-1",
+  "rubricVersion": "verifier-rubric-1",
+  "promptVersion": "verifier-prompt-1",
+  "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+  "manifestSampleSetId": "m0-05a-2026-10-29",
+  "allowedTools": [],
+  "sendTool": false,
+  "payTool": false,
+  "evalBudget": {
+    "verifierTurns": 1,
+    "notO01": true,
+    "label": "evalBudget"
+  },
+  "costBucket": "independent",
+  "caseId": "T1-probe",
+  "scene": "T1",
+  "raw": "帮我搜一下 11月12日和11月13日南京的酒店 11月11日北京到南京高铁时间和价格 11月13日晚返回北京",
+  "candidateSummary": "去程页实际查询日是 2026-10-30，北京到南京，含 G531 的时刻和席别价格。返程和单店酒店价格不在这份正文里。不订票。",
+  "planSummary": "查询去程、酒店和返程。不登录，不订票。",
+  "deliverables": [
+    {
+      "deliverableId": "t1-plan",
+      "kind": "answer",
+      "required": true
+    }
+  ],
+  "evidenceIndex": [
+    {
+      "evidenceId": "e-t1-train",
+      "kind": "page_state",
+      "artifactId": "art-m005a-t1-ctrip-train"
+    }
+  ],
+  "artifactPins": [
+    {
+      "artifactId": "art-m005a-t1-ctrip-train",
+      "contentHash": "909d5f0eb6d670cfa9b483e3102ddc4d966a58862609588d4d6cf8b8841ebb9f",
+      "frozenVersion": "sha256:909d5f0eb6d670cfa9b483e3102ddc4d966a58862609588d4d6cf8b8841ebb9f"
+    }
+  ],
+  "known": "页上日期不是 11 月 11 日，且缺返程和酒店价格",
+  "resultClass": "probe",
+  "preJudgedValid": false,
+  "candidateKind": "partial_note",
+  "guardFacts": {
+    "requiredArtifactsExist": true,
+    "reportRequired": false,
+    "requiredStepsObserved": true,
+    "permissionOk": true,
+    "idempotentOk": true,
+    "budgetLegal": true,
+    "stateLegal": true
+  },
+  "expected": {
+    "structural": [
+      "页上日期不是 11 月 11 日，且缺返程和酒店价格"
+    ],
+    "termination": "不因为这份部分候选记通过或误拒",
+    "passFail": "未预先判定有效"
+  }
+}

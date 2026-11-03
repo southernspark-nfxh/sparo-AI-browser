@@ -1,0 +1,261 @@
+{
+  "caseId": "G1-false-reject-control",
+  "scene": "G1",
+  "resultClass": "false_reject_then_pass",
+  "costBucket": "control-experiment",
+  "preJudgedValid": true,
+  "covered": true,
+  "observedClass": "false_reject_then_pass",
+  "reason": "",
+  "modelCalls": 2,
+  "versions": {
+    "evaluationMode": "offline_replay",
+    "facilityVersion": "m0-05b-facility-1",
+    "rubricVersion": "verifier-rubric-1",
+    "promptVersion": "verifier-prompt-1",
+    "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+    "manifestSampleSetId": "m0-05a-2026-10-29",
+    "modelVersion": "deepseek-flash",
+    "provider": "deepseek",
+    "llmMode": "byok",
+    "priceVersion": "[TBD]",
+    "productionV2": false
+  },
+  "trace": [
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G1-false-reject-control-e001",
+      "missionId": "eval-G1-false-reject-control",
+      "time": "2026-10-29T11:28:46.276Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.opened",
+      "scene": "G1",
+      "resultClass": "false_reject_then_pass",
+      "raw": "打开微博",
+      "versions": {
+        "evaluationMode": "offline_replay",
+        "facilityVersion": "m0-05b-facility-1",
+        "rubricVersion": "verifier-rubric-1",
+        "promptVersion": "verifier-prompt-1",
+        "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+        "manifestSampleSetId": "m0-05a-2026-10-29",
+        "modelVersion": "deepseek-flash",
+        "provider": "deepseek",
+        "llmMode": "byok",
+        "priceVersion": "[TBD]",
+        "productionV2": false
+      },
+      "costBucket": "control-experiment"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G1-false-reject-control-e002",
+      "missionId": "eval-G1-false-reject-control",
+      "time": "2026-10-29T11:28:46.276Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 1,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G1-false-reject-control-e003",
+      "missionId": "eval-G1-false-reject-control",
+      "time": "2026-10-29T11:28:56.849Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 1,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 467,
+      "uncachedInputTokens": 467,
+      "cachedInputTokens": 0,
+      "outputTokens": 2144,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": []
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G1-false-reject-control-e004",
+      "missionId": "eval-G1-false-reject-control",
+      "time": "2026-10-29T11:28:56.849Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-G1-false-reject-control-r1",
+        "missionId": "eval-G1-false-reject-control",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": false,
+        "rawGoalSatisfied": false,
+        "confidence": "low",
+        "rationale": "候选摘要声称已打开微博首页，但候选摘要不是证据。证据索引仅列出 e-g1-home 指向 page_state 工件 art-m005a-g1-weibo-home；没有给出该工件的正文或已读取区间，因此无法确认页面确实打开、URL/标题及页面状态。必交付 g1-open 无法验证。",
+        "deliverables": [
+          {
+            "deliverableId": "g1-open",
+            "required": true,
+            "status": "unverified",
+            "evidenceIds": []
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": [
+          "读取并核验 art-m005a-g1-weibo-home 的 page_state 观察正文，确认微博首页已打开及对应 URL/标题；不能仅凭 candidateSummary 或 evidenceIndex 条目通过。"
+        ]
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G1-false-reject-control-e005",
+      "missionId": "eval-G1-false-reject-control",
+      "time": "2026-10-29T11:28:56.850Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "artifact.created",
+      "artifactId": "art-m005a-g1-weibo-home",
+      "frozenVersion": "sha256:b8b6dc0a89ba217412f949b43b73b5871aeffac9da69cb19fde7f089733c8e2c",
+      "contentRange": {
+        "start": 0,
+        "end": 80,
+        "unit": "chars",
+        "length": 80
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G1-false-reject-control-e006",
+      "missionId": "eval-G1-false-reject-control",
+      "time": "2026-10-29T11:28:56.850Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 2,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G1-false-reject-control-e007",
+      "missionId": "eval-G1-false-reject-control",
+      "time": "2026-10-29T11:29:07.513Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 2,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 489,
+      "uncachedInputTokens": 361,
+      "cachedInputTokens": 128,
+      "outputTokens": 2220,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": [
+        {
+          "artifactId": "art-m005a-g1-weibo-home",
+          "start": 0,
+          "end": 80,
+          "unit": "chars",
+          "length": 80,
+          "frozenVersion": "sha256:b8b6dc0a89ba217412f949b43b73b5871aeffac9da69cb19fde7f089733c8e2c"
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G1-false-reject-control-e008",
+      "missionId": "eval-G1-false-reject-control",
+      "time": "2026-10-29T11:29:07.513Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-G1-false-reject-control-r2",
+        "missionId": "eval-G1-false-reject-control",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": true,
+        "rawGoalSatisfied": true,
+        "confidence": "high",
+        "rationale": "计划步为打开微博首页；证据索引中 e-g1-home 为 page_state，指向 art-m005a-g1-weibo-home，且该 Artifact 有 0-80 字符区间读取记录，可支持页面身份为微博首页。候选摘要仅作线索，未作为证据。",
+        "deliverables": [
+          {
+            "deliverableId": "g1-open",
+            "status": "satisfied",
+            "evidenceIds": [
+              "e-g1-home"
+            ]
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": []
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G1-false-reject-control-e009",
+      "missionId": "eval-G1-false-reject-control",
+      "time": "2026-10-29T11:33:30.506Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.closed",
+      "close": {
+        "reason": "done",
+        "summary": "",
+        "gaps": []
+      },
+      "closeGuard": {
+        "passed": true,
+        "checks": [
+          {
+            "name": "artifact_exists",
+            "passed": true
+          },
+          {
+            "name": "report_opened",
+            "passed": true
+          },
+          {
+            "name": "plan_observed",
+            "passed": true
+          },
+          {
+            "name": "permission_and_idempotency",
+            "passed": true
+          },
+          {
+            "name": "budget_and_state",
+            "passed": true
+          }
+        ]
+      },
+      "appendedWithoutModelCall": true,
+      "note": "runner omitted the close after a recorded gated pass; appended from that verification and the frozen guard facts"
+    }
+  ]
+}

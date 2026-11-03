@@ -1,0 +1,240 @@
+{
+  "caseId": "G6-gap",
+  "scene": "G6",
+  "resultClass": "continuous_reject",
+  "costBucket": "independent",
+  "preJudgedValid": false,
+  "covered": true,
+  "observedClass": "continuous_reject",
+  "reason": "",
+  "modelCalls": 2,
+  "versions": {
+    "evaluationMode": "offline_replay",
+    "facilityVersion": "m0-05b-facility-1",
+    "rubricVersion": "verifier-rubric-1",
+    "promptVersion": "verifier-prompt-1",
+    "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+    "manifestSampleSetId": "m0-05a-2026-10-29",
+    "modelVersion": "deepseek-flash",
+    "provider": "deepseek",
+    "llmMode": "byok",
+    "priceVersion": "[TBD]",
+    "productionV2": false
+  },
+  "trace": [
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G6-gap-e001",
+      "missionId": "eval-G6-gap",
+      "time": "2026-10-29T11:30:12.135Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.opened",
+      "scene": "G6",
+      "resultClass": "continuous_reject",
+      "raw": "帮我写一首诗",
+      "versions": {
+        "evaluationMode": "offline_replay",
+        "facilityVersion": "m0-05b-facility-1",
+        "rubricVersion": "verifier-rubric-1",
+        "promptVersion": "verifier-prompt-1",
+        "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+        "manifestSampleSetId": "m0-05a-2026-10-29",
+        "modelVersion": "deepseek-flash",
+        "provider": "deepseek",
+        "llmMode": "byok",
+        "priceVersion": "[TBD]",
+        "productionV2": false
+      },
+      "costBucket": "independent"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G6-gap-e002",
+      "missionId": "eval-G6-gap",
+      "time": "2026-10-29T11:30:12.135Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 1,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G6-gap-e003",
+      "missionId": "eval-G6-gap",
+      "time": "2026-10-29T11:30:17.443Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 1,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 427,
+      "uncachedInputTokens": 171,
+      "cachedInputTokens": 256,
+      "outputTokens": 921,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": []
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G6-gap-e004",
+      "missionId": "eval-G6-gap",
+      "time": "2026-10-29T11:30:17.443Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-G6-gap-r1",
+        "missionId": "eval-G6-gap",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": false,
+        "rawGoalSatisfied": false,
+        "confidence": "high",
+        "rationale": "唯一必交付物是一首诗文档，但 evidenceIndex 为空、rangeReads 未提供任何正文，无法验证交付物存在或符合要求；候选摘要声称从网页原文复制，既不是证据，也与“离线写诗、不打开网页”的计划相矛盾，因此不能通过。",
+        "deliverables": [
+          {
+            "deliverableId": "g6-poem-doc",
+            "status": "unsatisfied",
+            "evidenceIds": []
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": [
+          "提供实际诗作正文或可验证文档，而不仅是候选摘要",
+          "提供与 g6-poem-doc 对应的 evidenceId",
+          "说明并纠正“从网页原文复制”与离线不打开网页计划之间的冲突"
+        ]
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G6-gap-e005",
+      "missionId": "eval-G6-gap",
+      "time": "2026-10-29T11:30:17.443Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 2,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G6-gap-e006",
+      "missionId": "eval-G6-gap",
+      "time": "2026-10-29T11:30:20.253Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 2,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 427,
+      "uncachedInputTokens": 171,
+      "cachedInputTokens": 256,
+      "outputTokens": 495,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": []
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G6-gap-e007",
+      "missionId": "eval-G6-gap",
+      "time": "2026-10-29T11:30:20.253Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-G6-gap-r2",
+        "missionId": "eval-G6-gap",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": false,
+        "rawGoalSatisfied": false,
+        "confidence": "high",
+        "rationale": "必交付物 g6-poem-doc 没有任何 evidenceId，证据索引为空，且候选摘要自述“从网页原文复制”，既不能证明离线原创写诗，也不是可验收的交付证据。未读到任何诗作正文，不能认定交付完成。",
+        "deliverables": [
+          {
+            "deliverableId": "g6-poem-doc",
+            "status": "unsatisfied",
+            "evidenceIds": [],
+            "notes": "缺少诗作正文与可核验证据；候选摘要反而表明内容来自网页复制。"
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": [
+          "提供 g6-poem-doc 的实际诗作内容或可核验文件。",
+          "提供证据证明该诗为离线原创撰写，而非从网页复制。",
+          "为必交付物补充至少一个有效 evidenceId。"
+        ]
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G6-gap-e008",
+      "missionId": "eval-G6-gap",
+      "time": "2026-10-29T11:30:20.253Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.suspended",
+      "reason": "verification_exhausted",
+      "gaps": [
+        "虚构网页来源"
+      ],
+      "closeGuard": {
+        "passed": false,
+        "checks": [
+          {
+            "name": "artifact_exists",
+            "passed": false
+          },
+          {
+            "name": "report_opened",
+            "passed": true
+          },
+          {
+            "name": "plan_observed",
+            "passed": true
+          },
+          {
+            "name": "permission_and_idempotency",
+            "passed": true
+          },
+          {
+            "name": "budget_and_state",
+            "passed": true
+          }
+        ]
+      },
+      "evalBudget": {
+        "verifierTurns": 2,
+        "notO01": true,
+        "label": "evalBudget"
+      }
+    }
+  ]
+}

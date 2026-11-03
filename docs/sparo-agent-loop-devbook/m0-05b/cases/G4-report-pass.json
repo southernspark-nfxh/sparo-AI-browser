@@ -1,0 +1,76 @@
+{
+  "frozen": true,
+  "frozenAt": "2026-10-29T19:50:00+08:00",
+  "facilityVersion": "m0-05b-facility-1",
+  "rubricVersion": "verifier-rubric-1",
+  "promptVersion": "verifier-prompt-1",
+  "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+  "manifestSampleSetId": "m0-05a-2026-10-29",
+  "allowedTools": [],
+  "sendTool": false,
+  "payTool": false,
+  "evalBudget": {
+    "verifierTurns": 2,
+    "notO01": true,
+    "label": "evalBudget"
+  },
+  "costBucket": "independent",
+  "preJudgedValid": true,
+  "caseId": "G4-report-pass",
+  "scene": "G4",
+  "resultClass": "pass",
+  "raw": "研究博主 人民日报 画像，最好上百条",
+  "candidateKind": "report",
+  "candidateFile": "g4-report.txt",
+  "candidateHash": "faa872577e48bc1df590ba5b04b6056b829dbb82756fbb133c0638d34ef2e798",
+  "candidateSummary": "来源是人民日报 2803301701 的移动页，抓取时间 2026-10-29。\n页面用相对时间列出 10 条，不是上百条。上百条只是偏好。\n画像只依据这 10 条标题：西班牙列车慰问电；人民空军 77 周年；国防部回应日方；三丽鸥取消 Vivant 联名；成品油价格上调；红军战士；全面从严治党；南方短袖与东北棉袄；商务部回应涉疆实体清单；中风前兆。\n没有把没看到的条目写成已经采到。\n",
+  "followUpSummary": "同一份已打开的报告，补读移动页区间后复验。\n来源是人民日报 2803301701 的移动页，抓取时间 2026-10-29。\n页面用相对时间列出 10 条，不是上百条。上百条只是偏好。\n画像只依据这 10 条标题：西班牙列车慰问电；人民空军 77 周年；国防部回应日方；三丽鸥取消 Vivant 联名；成品油价格上调；红军战士；全面从严治党；南方短袖与东北棉袄；商务部回应涉疆实体清单；中风前兆。\n没有把没看到的条目写成已经采到。\n",
+  "followUpRanges": [
+    {
+      "artifactId": "art-m005a-g2-rmrb-mobile",
+      "start": 200,
+      "end": 500
+    }
+  ],
+  "planSummary": "根据移动页可见的 10 条写画像。上百条是偏好，不是已完成数量。",
+  "deliverables": [
+    {
+      "deliverableId": "g4-report",
+      "kind": "report",
+      "required": true
+    }
+  ],
+  "evidenceIndex": [
+    {
+      "evidenceId": "e-g4-mobile",
+      "kind": "content_item",
+      "artifactId": "art-m005a-g2-rmrb-mobile"
+    }
+  ],
+  "artifactPins": [
+    {
+      "artifactId": "art-m005a-g2-rmrb-mobile",
+      "contentHash": "7ac80ba0870ccb64ca42163db4b3cd19079ead86859f43177fd93a049fd240a7",
+      "frozenVersion": "sha256:7ac80ba0870ccb64ca42163db4b3cd19079ead86859f43177fd93a049fd240a7"
+    }
+  ],
+  "guardFacts": {
+    "requiredArtifactsExist": true,
+    "reportRequired": true,
+    "requiredStepsObserved": true,
+    "permissionOk": true,
+    "idempotentOk": true,
+    "budgetLegal": true,
+    "stateLegal": true,
+    "reportOpened": true
+  },
+  "expected": {
+    "structural": [
+      "报告文件先被读开",
+      "只写移动页可见的 10 条",
+      "不把上百条写成已完成"
+    ],
+    "termination": "done only if verifier and guard pass",
+    "passFail": "首轮通过只记通过；误拒必须是原始 goalSatisfied false"
+  }
+}

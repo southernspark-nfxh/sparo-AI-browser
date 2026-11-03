@@ -1,0 +1,67 @@
+{
+  "frozen": true,
+  "frozenAt": "2026-10-29T19:21:00+08:00",
+  "facilityVersion": "m0-05b-facility-1",
+  "rubricVersion": "verifier-rubric-1",
+  "promptVersion": "verifier-prompt-1",
+  "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+  "manifestSampleSetId": "m0-05a-2026-10-29",
+  "allowedTools": [],
+  "sendTool": false,
+  "payTool": false,
+  "evalBudget": {
+    "verifierTurns": 2,
+    "notO01": true,
+    "label": "evalBudget"
+  },
+  "costBucket": "control-experiment",
+  "resultClass": "continuous_reject",
+  "continuousReject": true,
+  "preJudgedValid": false,
+  "candidateKind": "known_gap",
+  "guardFacts": {
+    "requiredArtifactsExist": false,
+    "reportRequired": false,
+    "requiredStepsObserved": true,
+    "permissionOk": true,
+    "idempotentOk": true,
+    "budgetLegal": true,
+    "stateLegal": true
+  },
+  "expected": {
+    "structural": [
+      "URL 不是微博"
+    ],
+    "termination": "verification_exhausted only if every round is a real reject",
+    "passFail": "任一回合通过则该格未覆盖"
+  },
+  "caseId": "G1-gap",
+  "scene": "G1",
+  "raw": "打开微博",
+  "candidateSummary": "已打开 https://example.com/ ，不是微博。",
+  "knownGaps": [
+    "URL 不是微博"
+  ],
+  "artifactPins": [
+    {
+      "artifactId": "art-m005a-g1-weibo-home",
+      "contentHash": "b8b6dc0a89ba217412f949b43b73b5871aeffac9da69cb19fde7f089733c8e2c",
+      "frozenVersion": "sha256:b8b6dc0a89ba217412f949b43b73b5871aeffac9da69cb19fde7f089733c8e2c"
+    }
+  ],
+  "planSummary": "打开微博首页。",
+  "deliverables": [
+    {
+      "deliverableId": "g1-open",
+      "kind": "page_action",
+      "required": true
+    }
+  ],
+  "evidenceIndex": [
+    {
+      "evidenceId": "e-g1-home",
+      "kind": "page_state",
+      "artifactId": "art-m005a-g1-weibo-home"
+    }
+  ]
+}

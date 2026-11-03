@@ -334,6 +334,11 @@ export function journalTurn(before: ActiveMission | null | undefined, after: Act
   }
 }
 
+/** 新核心侧栏不再追问旧工作单。问句函数和日志都保留。 */
+export function sidebarOffersRecovery(): boolean {
+  return false;
+}
+
 export function recoveryLine(item: RestoredMission, now = Date.now()): string {
   const mission = item.mission;
   const title = (mission.goal?.intent || mission.raw || "上次的任务").replace(/\s+/g, " ").slice(0, 42);

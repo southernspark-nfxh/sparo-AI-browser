@@ -1,0 +1,99 @@
+{
+  "frozen": true,
+  "frozenAt": "2026-10-30T12:20:00+08:00",
+  "prejudgedBeforeModelCall": true,
+  "supersedes": "G4-report-artifact",
+  "facilityVersion": "m0-05b-facility-2",
+  "rubricVersion": "verifier-rubric-1",
+  "promptVersion": "verifier-prompt-1",
+  "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+  "manifestSampleSetId": "m0-05a-2026-10-29",
+  "allowedTools": [],
+  "sendTool": false,
+  "payTool": false,
+  "evalBudget": {
+    "verifierTurns": 2,
+    "notO01": true,
+    "label": "evalBudget"
+  },
+  "preJudgedValid": true,
+  "caseId": "G4-portrait-body",
+  "scene": "G4",
+  "resultClass": "pass",
+  "costBucket": "independent",
+  "raw": "研究博主 人民日报 画像，最好上百条",
+  "candidateKind": "report",
+  "candidateFile": "g4-portrait.txt",
+  "candidateHash": "5dbf4550897010391a403aaac20c047fb565f8f57d07f37817653c4bc314b7ef",
+  "candidateDeliverable": {
+    "artifactId": "g4-portrait.txt",
+    "kind": "report",
+    "contentHash": "5dbf4550897010391a403aaac20c047fb565f8f57d07f37817653c4bc314b7ef",
+    "range": {
+      "start": 0,
+      "end": 788,
+      "unit": "chars",
+      "length": 788
+    },
+    "role": "candidate-deliverable",
+    "notEvidence": true,
+    "deliverableId": "g4-report"
+  },
+  "candidateSummary": "候选正文在 candidateDeliverable.text，不是证据。这一页的画像是官方回应、民生说明和人物历史交替出现，只覆盖移动页可见的 10 条。",
+  "followUpSummary": "同一份报告正文仍在候选通道。补读只带来源页边界，不把报告写成证据。",
+  "followUpRanges": [
+    {
+      "artifactId": "art-m005a-g2-rmrb-mobile",
+      "start": 200,
+      "end": 500
+    }
+  ],
+  "planSummary": "报告依据移动页可见的 10 条作出画像。上百条是偏好。",
+  "deliverables": [
+    {
+      "deliverableId": "g4-report",
+      "kind": "report",
+      "required": true,
+      "artifactId": "g4-portrait.txt"
+    }
+  ],
+  "evidenceIndex": [
+    {
+      "evidenceId": "e-g4-mobile",
+      "kind": "content_item",
+      "artifactId": "art-m005a-g2-rmrb-mobile"
+    }
+  ],
+  "artifactPins": [
+    {
+      "artifactId": "art-m005a-g2-rmrb-mobile",
+      "contentHash": "7ac80ba0870ccb64ca42163db4b3cd19079ead86859f43177fd93a049fd240a7",
+      "frozenVersion": "sha256:7ac80ba0870ccb64ca42163db4b3cd19079ead86859f43177fd93a049fd240a7"
+    }
+  ],
+  "guardFacts": {
+    "requiredArtifactsExist": true,
+    "reportRequired": true,
+    "requiredStepsObserved": true,
+    "permissionOk": true,
+    "idempotentOk": true,
+    "budgetLegal": true,
+    "stateLegal": true,
+    "reportOpened": true
+  },
+  "constraints": [
+    "报告是候选交付，不是证据",
+    "来源页才是证据",
+    "上百条不是已完成数量",
+    "画像必须能从可见正文里读出来"
+  ],
+  "expected": {
+    "structural": [
+      "报告正文进入候选通道",
+      "报告不进入证据索引",
+      "来源区间不含正文"
+    ],
+    "termination": "done only if verifier and guard pass",
+    "passFail": "首轮通过只记通过"
+  }
+}

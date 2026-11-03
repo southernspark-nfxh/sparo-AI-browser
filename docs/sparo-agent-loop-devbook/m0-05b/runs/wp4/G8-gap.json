@@ -1,0 +1,241 @@
+{
+  "caseId": "G8-gap",
+  "scene": "G8",
+  "resultClass": "continuous_reject",
+  "costBucket": "independent",
+  "preJudgedValid": false,
+  "covered": true,
+  "observedClass": "continuous_reject",
+  "reason": "",
+  "modelCalls": 2,
+  "versions": {
+    "evaluationMode": "offline_replay",
+    "facilityVersion": "m0-05b-facility-1",
+    "rubricVersion": "verifier-rubric-1",
+    "promptVersion": "verifier-prompt-1",
+    "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+    "manifestSampleSetId": "m0-05a-2026-10-29",
+    "modelVersion": "deepseek-flash",
+    "provider": "deepseek",
+    "llmMode": "byok",
+    "priceVersion": "[TBD]",
+    "productionV2": false
+  },
+  "trace": [
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-gap-e001",
+      "missionId": "eval-G8-gap",
+      "time": "2026-10-29T11:30:27.429Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.opened",
+      "scene": "G8",
+      "resultClass": "continuous_reject",
+      "raw": "长采集滚动，不单列原句",
+      "versions": {
+        "evaluationMode": "offline_replay",
+        "facilityVersion": "m0-05b-facility-1",
+        "rubricVersion": "verifier-rubric-1",
+        "promptVersion": "verifier-prompt-1",
+        "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+        "manifestSampleSetId": "m0-05a-2026-10-29",
+        "modelVersion": "deepseek-flash",
+        "provider": "deepseek",
+        "llmMode": "byok",
+        "priceVersion": "[TBD]",
+        "productionV2": false
+      },
+      "costBucket": "independent"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-gap-e002",
+      "missionId": "eval-G8-gap",
+      "time": "2026-10-29T11:30:27.429Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 1,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-gap-e003",
+      "missionId": "eval-G8-gap",
+      "time": "2026-10-29T11:30:32.463Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 1,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 472,
+      "uncachedInputTokens": 472,
+      "cachedInputTokens": 0,
+      "outputTokens": 909,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": []
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-gap-e004",
+      "missionId": "eval-G8-gap",
+      "time": "2026-10-29T11:30:32.463Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-G8-gap-r1",
+        "missionId": "eval-G8-gap",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": false,
+        "rawGoalSatisfied": false,
+        "confidence": "high",
+        "rationale": "必交付 g8-note 没有满足：候选摘要只是自述，且明确“较上次不是工具原文”，不能作为证据；evidenceIndex 仅有 page_state 证据 e-g8-settled，rangeReads 为空，无法确认该 artifact 正文或 g8-note 已完成。计划摘要提到“滚动无进展后改看移动页”，但没有给出真实观察或步骤证据；+0 字也不能替代交付物。",
+        "deliverables": [
+          {
+            "deliverableId": "g8-note",
+            "status": "unsatisfied",
+            "evidenceIds": []
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": [
+          "读取并引用 artifact art-m005a-g2-rmrb-settled-1 的实际正文或页面状态，不能只用候选摘要。",
+          "提交 g8-note 的实际内容，并附上可核验的 evidenceId。",
+          "为“滚动无进展后改看移动页”补充真实观察证据，而不是计划摘要或自述。",
+          "若声称工具正文较上次 +0 字，需提供原始工具输出作为依据。"
+        ]
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-gap-e005",
+      "missionId": "eval-G8-gap",
+      "time": "2026-10-29T11:30:32.463Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 2,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-gap-e006",
+      "missionId": "eval-G8-gap",
+      "time": "2026-10-29T11:30:39.387Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 2,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 472,
+      "uncachedInputTokens": 216,
+      "cachedInputTokens": 256,
+      "outputTokens": 1341,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": []
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-gap-e007",
+      "missionId": "eval-G8-gap",
+      "time": "2026-10-29T11:30:39.387Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-G8-gap-r2",
+        "missionId": "eval-G8-gap",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": false,
+        "rawGoalSatisfied": false,
+        "confidence": "low",
+        "rationale": "候选摘要自述“工具正文较上次 +0 字”，但这只是 Actor 的自述，不能作为证据。证据索引中只有一条 page_state（e-g8-settled），没有正文、笔记内容或范围读取记录，无法独立验证 g8-note 已形成且满足“长采集滚动，不单列原句”。",
+        "deliverables": [
+          {
+            "deliverableId": "g8-note",
+            "status": "unsatisfied",
+            "evidenceIds": [],
+            "reason": "没有可核验的笔记正文或采集结果；e-g8-settled 仅为页面状态，不能证明该交付内容已完成。"
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": [
+          "补充 g8-note 的实际内容及对应证据，而不是仅引用候选摘要。",
+          "提供工具原始返回或可读取的 Artifact 区间，证明滚动采集结果与“较上次 +0 字”的来源。",
+          "说明“长采集滚动，不单列原句”如何体现在交付中，并给出可核验的页面状态或采集记录。"
+        ]
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-gap-e008",
+      "missionId": "eval-G8-gap",
+      "time": "2026-10-29T11:30:39.387Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.suspended",
+      "reason": "verification_exhausted",
+      "gaps": [
+        "较上次不是工具正文"
+      ],
+      "closeGuard": {
+        "passed": false,
+        "checks": [
+          {
+            "name": "artifact_exists",
+            "passed": false
+          },
+          {
+            "name": "report_opened",
+            "passed": true
+          },
+          {
+            "name": "plan_observed",
+            "passed": true
+          },
+          {
+            "name": "permission_and_idempotency",
+            "passed": true
+          },
+          {
+            "name": "budget_and_state",
+            "passed": true
+          }
+        ]
+      },
+      "evalBudget": {
+        "verifierTurns": 2,
+        "notO01": true,
+        "label": "evalBudget"
+      }
+    }
+  ]
+}

@@ -1,0 +1,242 @@
+{
+  "caseId": "G4-report-pass",
+  "scene": "G4",
+  "resultClass": "pass",
+  "costBucket": "independent",
+  "preJudgedValid": true,
+  "covered": false,
+  "observedClass": "false_reject_then_pass",
+  "reason": "发生拒绝，但补读后的复验或 Close Guard 没有通过",
+  "modelCalls": 2,
+  "versions": {
+    "evaluationMode": "offline_replay",
+    "facilityVersion": "m0-05b-facility-1",
+    "rubricVersion": "verifier-rubric-1",
+    "promptVersion": "verifier-prompt-1",
+    "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+    "manifestSampleSetId": "m0-05a-2026-10-29",
+    "modelVersion": "deepseek-flash",
+    "provider": "deepseek",
+    "llmMode": "byok",
+    "priceVersion": "[TBD]",
+    "productionV2": false
+  },
+  "trace": [
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G4-report-pass-e001",
+      "missionId": "eval-G4-report-pass",
+      "time": "2026-10-29T11:48:31.284Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.opened",
+      "scene": "G4",
+      "resultClass": "pass",
+      "raw": "研究博主 人民日报 画像，最好上百条",
+      "versions": {
+        "evaluationMode": "offline_replay",
+        "facilityVersion": "m0-05b-facility-1",
+        "rubricVersion": "verifier-rubric-1",
+        "promptVersion": "verifier-prompt-1",
+        "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+        "manifestSampleSetId": "m0-05a-2026-10-29",
+        "modelVersion": "deepseek-flash",
+        "provider": "deepseek",
+        "llmMode": "byok",
+        "priceVersion": "[TBD]",
+        "productionV2": false
+      },
+      "costBucket": "independent"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G4-report-pass-e002",
+      "missionId": "eval-G4-report-pass",
+      "time": "2026-10-29T11:48:31.286Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "artifact.created",
+      "artifactId": "g4-report.txt",
+      "kind": "report_opened",
+      "contentHash": "faa872577e48bc1df590ba5b04b6056b829dbb82756fbb133c0638d34ef2e798",
+      "length": 194,
+      "unit": "chars"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G4-report-pass-e003",
+      "missionId": "eval-G4-report-pass",
+      "time": "2026-10-29T11:48:31.286Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 1,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G4-report-pass-e004",
+      "missionId": "eval-G4-report-pass",
+      "time": "2026-10-29T11:48:38.873Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 1,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 591,
+      "uncachedInputTokens": 591,
+      "cachedInputTokens": 0,
+      "outputTokens": 1045,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": []
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G4-report-pass-e005",
+      "missionId": "eval-G4-report-pass",
+      "time": "2026-10-29T11:48:38.873Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-G4-report-pass-r1",
+        "missionId": "eval-G4-report-pass",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": false,
+        "rawGoalSatisfied": false,
+        "confidence": "high",
+        "rationale": "唯一证据是移动页内容项 e-g4-mobile，能证明来源页面与可见 10 条，但没有任何报告 artifact 作为证据。候选摘要不是证据，不能据此认定必需的 g4-report 已交付；也未提供报告正文区间可供核验画像内容。上百条只是偏好，不作为失败理由。",
+        "deliverables": [
+          {
+            "deliverableId": "g4-report",
+            "required": true,
+            "status": "unsatisfied",
+            "evidenceIds": [],
+            "reason": "未提供实际报告 artifact 或可核验正文；e-g4-mobile 只是来源内容项，不能单独证明报告交付。"
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": [
+          "提交 g4-report 的实际报告 artifact 或完整正文，并给出对应 evidenceId。",
+          "补充报告正文的 Artifact 区间，以便核验画像是否仅基于已观察到的 10 条而非虚构上百条。",
+          "说明画像结论与 10 条标题之间的对应依据；若含推断，需标注 inferred 并给出来源和依据。"
+        ]
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G4-report-pass-e006",
+      "missionId": "eval-G4-report-pass",
+      "time": "2026-10-29T11:48:38.874Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "artifact.created",
+      "artifactId": "art-m005a-g2-rmrb-mobile",
+      "frozenVersion": "sha256:7ac80ba0870ccb64ca42163db4b3cd19079ead86859f43177fd93a049fd240a7",
+      "contentRange": {
+        "start": 200,
+        "end": 500,
+        "unit": "chars",
+        "length": 300
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G4-report-pass-e007",
+      "missionId": "eval-G4-report-pass",
+      "time": "2026-10-29T11:48:38.874Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 2,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G4-report-pass-e008",
+      "missionId": "eval-G4-report-pass",
+      "time": "2026-10-29T11:48:49.708Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 2,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 638,
+      "uncachedInputTokens": 510,
+      "cachedInputTokens": 128,
+      "outputTokens": 1702,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": [
+        {
+          "artifactId": "art-m005a-g2-rmrb-mobile",
+          "start": 200,
+          "end": 500,
+          "unit": "chars",
+          "length": 300,
+          "frozenVersion": "sha256:7ac80ba0870ccb64ca42163db4b3cd19079ead86859f43177fd93a049fd240a7"
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G4-report-pass-e009",
+      "missionId": "eval-G4-report-pass",
+      "time": "2026-10-29T11:48:49.708Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-G4-report-pass-r2",
+        "missionId": "eval-G4-report-pass",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": false,
+        "rawGoalSatisfied": false,
+        "confidence": "high",
+        "rationale": "必交付 g4-report 未在 evidenceIndex 中出现实际报告 artifact，也没有可指向报告产出的 evidenceId；e-g4-mobile 仅是可核验的移动页内容项，不能证明报告已生成。rangeReads 只给出区间元数据，未提供正文，不能据候选摘要确认 10 条标题及画像内容。",
+        "deliverables": [
+          {
+            "deliverableId": "g4-report",
+            "kind": "report",
+            "required": true,
+            "satisfied": false,
+            "status": "not_satisfied",
+            "evidenceIds": []
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": [
+          "提供 g4-report 的实际报告 artifact 及其 evidenceId",
+          "让报告内容可追溯到已读来源区间或逐条引文，而不是仅靠候选摘要",
+          "明确画像基于移动页可见的 10 条标题；上百条只是偏好，不应写成已完成数量"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,187 @@
+{
+  "frozen": true,
+  "frozenAt": "2026-10-30T15:43:56+08:00",
+  "prejudgedBeforeModelCall": true,
+  "facilityVersion": "m0-05b-facility-3",
+  "rubricVersion": "verifier-rubric-1",
+  "promptVersion": "verifier-prompt-1",
+  "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+  "manifestSampleSetId": "m0-05a-2026-10-29",
+  "allowedTools": [],
+  "sendTool": false,
+  "payTool": false,
+  "evalBudget": {
+    "verifierTurns": 2,
+    "notO01": true,
+    "label": "evalBudget"
+  },
+  "preJudgedValid": true,
+  "caseId": "G8-host-observations",
+  "supersedes": "G8-host-read",
+  "scene": "G8",
+  "resultClass": "pass",
+  "costBucket": "g8-embedded",
+  "hostScene": "G2",
+  "doubleCountWithHost": false,
+  "raw": "当前我打开的这个博主 最近三天的微博 帮我复制下来 做成一个文档",
+  "embeddedIn": "G2 桌面页 PageDown 无进展后改看移动页",
+  "candidateKind": "document",
+  "candidateFile": "g2-posts-ids.txt",
+  "candidateHash": "3dcecf16e9a656f1d2db7f3a3dc9bd54f5353412881b1b1c8e3d55e7ad5c5dcc",
+  "candidateDeliverable": {
+    "artifactId": "g2-posts-ids.txt",
+    "kind": "document",
+    "contentHash": "3dcecf16e9a656f1d2db7f3a3dc9bd54f5353412881b1b1c8e3d55e7ad5c5dcc",
+    "range": {
+      "start": 0,
+      "end": 7069,
+      "unit": "chars",
+      "length": 7069
+    },
+    "role": "candidate-deliverable",
+    "notEvidence": true,
+    "deliverableId": "g2-doc"
+  },
+  "candidateSummary": "宿主要求的文档是 candidateDeliverable.text；notEvidence 只禁止候选自证，不取消交付身份。文档只复制三份冻结页实际出现的 30 条，按日期为 8／21／1，不是三页各 10 条，也不含冻结页以外的微博。滚动事实看证据索引和 settled 工具正文。",
+  "followUpSummary": "同一份文档仍在候选交付通道。补读带 settled-0、settled-1、移动页和三份时间线页全文，用来核对离线差 0、换策略及 8／21／1 共 30 条；不要求冻结页以外的微博。",
+  "followUpRanges": [
+    {
+      "artifactId": "art-m005a-g2-rmrb-settled-0",
+      "start": 0,
+      "end": 358
+    },
+    {
+      "artifactId": "art-m005a-g2-rmrb-settled-1",
+      "start": 0,
+      "end": 358
+    },
+    {
+      "artifactId": "art-m005a-g2-rmrb-mobile",
+      "start": 0,
+      "end": 1830
+    },
+    {
+      "artifactId": "art-m005a-g2-rmrb-feed-5358896219684903",
+      "start": 0,
+      "end": 77971
+    },
+    {
+      "artifactId": "art-m005a-g2-rmrb-feed-5359045473210573",
+      "start": 0,
+      "end": 80100
+    },
+    {
+      "artifactId": "art-m005a-g2-rmrb-feed-5359251180487027",
+      "start": 0,
+      "end": 80085
+    }
+  ],
+  "planSummary": "已执行并留痕：G2 桌面页连续 PageDown，page_text 先后产出 settled-0 与 settled-1；settled-1 相对 settled-0 离线字符差 0，工具正文没有「较上次」。下一次动作已改看公开移动页 mobile，没有原样再按 PageDown；随后只从三份冻结时间线页复制微博形成文档。验收宿主文档，并核对上述滚动观察。",
+  "deliverables": [
+    {
+      "deliverableId": "g2-doc",
+      "kind": "document",
+      "required": true,
+      "artifactId": "g2-posts-ids.txt"
+    }
+  ],
+  "evidenceIndex": [
+    {
+      "evidenceId": "e-g8-settled-0",
+      "kind": "page_state",
+      "artifactId": "art-m005a-g2-rmrb-settled-0",
+      "note": "连续 PageDown 的 page_text 基线正文，358 字；用于下一次滚动比较。"
+    },
+    {
+      "evidenceId": "e-g8-settled-1",
+      "kind": "page_state",
+      "artifactId": "art-m005a-g2-rmrb-settled-1",
+      "note": "下一次 PageDown 的 page_text 正文，358 字；与 e-g8-settled-0 的 sha256 相同，离线字符差 0；正文不含「较上次」；下一次动作改看 e-g8-mobile，而不是原样再按 PageDown。"
+    },
+    {
+      "evidenceId": "e-g8-mobile",
+      "kind": "page_state",
+      "artifactId": "art-m005a-g2-rmrb-mobile",
+      "note": "+0 后改看的公开移动页，不是重复 PageDown；page_text 正文没有「较上次」。"
+    },
+    {
+      "evidenceId": "e-g2-oct27",
+      "kind": "content_item",
+      "artifactId": "art-m005a-g2-rmrb-feed-5358896219684903",
+      "note": "本页 10 条中 8 条在 10 月 27 日、2 条在 10 月 28 日；候选只复制实际出现条目。"
+    },
+    {
+      "evidenceId": "e-g2-oct28",
+      "kind": "content_item",
+      "artifactId": "art-m005a-g2-rmrb-feed-5359045473210573",
+      "note": "本页 10 条都在 10 月 28 日；候选只复制实际出现条目。"
+    },
+    {
+      "evidenceId": "e-g2-oct29",
+      "kind": "content_item",
+      "artifactId": "art-m005a-g2-rmrb-feed-5359251180487027",
+      "note": "本页 10 条中 9 条在 10 月 28 日、1 条在 10 月 29 日；候选只复制实际出现条目，不含冻结页以外的微博。"
+    }
+  ],
+  "artifactPins": [
+    {
+      "artifactId": "art-m005a-g2-rmrb-settled-0",
+      "contentHash": "9b41d5440946dff8f7d2c6b7217ec0a970d6043bcb4d890cc8ce2787f693e757",
+      "frozenVersion": "sha256:9b41d5440946dff8f7d2c6b7217ec0a970d6043bcb4d890cc8ce2787f693e757"
+    },
+    {
+      "artifactId": "art-m005a-g2-rmrb-settled-1",
+      "contentHash": "9b41d5440946dff8f7d2c6b7217ec0a970d6043bcb4d890cc8ce2787f693e757",
+      "frozenVersion": "sha256:9b41d5440946dff8f7d2c6b7217ec0a970d6043bcb4d890cc8ce2787f693e757"
+    },
+    {
+      "artifactId": "art-m005a-g2-rmrb-mobile",
+      "contentHash": "7ac80ba0870ccb64ca42163db4b3cd19079ead86859f43177fd93a049fd240a7",
+      "frozenVersion": "sha256:7ac80ba0870ccb64ca42163db4b3cd19079ead86859f43177fd93a049fd240a7"
+    },
+    {
+      "artifactId": "art-m005a-g2-rmrb-feed-5358896219684903",
+      "contentHash": "029b1ee8212a95b9860fcd11bf2d4846ead667be8806089afc67e6e6906ada10",
+      "frozenVersion": "sha256:029b1ee8212a95b9860fcd11bf2d4846ead667be8806089afc67e6e6906ada10"
+    },
+    {
+      "artifactId": "art-m005a-g2-rmrb-feed-5359045473210573",
+      "contentHash": "222d249c71e2d336dc678399ac915956a6255ac0f009109f2d2a09ca0012a526",
+      "frozenVersion": "sha256:222d249c71e2d336dc678399ac915956a6255ac0f009109f2d2a09ca0012a526"
+    },
+    {
+      "artifactId": "art-m005a-g2-rmrb-feed-5359251180487027",
+      "contentHash": "f24f9c37370be735d48eedddd5a69feff73e4651a6654e3c08e793946a9852c4",
+      "frozenVersion": "sha256:f24f9c37370be735d48eedddd5a69feff73e4651a6654e3c08e793946a9852c4"
+    }
+  ],
+  "guardFacts": {
+    "requiredArtifactsExist": true,
+    "reportRequired": false,
+    "requiredStepsObserved": true,
+    "permissionOk": true,
+    "idempotentOk": true,
+    "budgetLegal": true,
+    "stateLegal": true
+  },
+  "constraints": [
+    "不使用占位原句",
+    "滚动笔记不是交付",
+    "必须验收宿主要求的近三天文档",
+    "候选正文不是证据，但仍是候选交付",
+    "只复制三份冻结页实际出现的微博，不要求冻结页以外的条目",
+    "相同 settled 正文在本 case 用于核对离线差 0",
+    "费用不并入 G2"
+  ],
+  "expected": {
+    "structural": [
+      "raw 是 G2 冻结原句",
+      "交付是实际文档正文",
+      "计划与证据索引都含已执行的 +0 和换策略观察",
+      "settled-0 与 settled-1 都有全文区间",
+      "单独计 G8，不重复计入宿主成本"
+    ],
+    "termination": "done only if verifier and guard pass",
+    "passFail": "首轮通过只记通过；首轮拒绝且补读通过才记误拒后通过"
+  }
+}

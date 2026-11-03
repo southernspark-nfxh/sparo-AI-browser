@@ -1,0 +1,243 @@
+{
+  "caseId": "G2-gap",
+  "scene": "G2",
+  "resultClass": "continuous_reject",
+  "costBucket": "independent",
+  "preJudgedValid": false,
+  "covered": true,
+  "observedClass": "continuous_reject",
+  "reason": "",
+  "modelCalls": 2,
+  "versions": {
+    "evaluationMode": "offline_replay",
+    "facilityVersion": "m0-05b-facility-1",
+    "rubricVersion": "verifier-rubric-1",
+    "promptVersion": "verifier-prompt-1",
+    "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+    "manifestSampleSetId": "m0-05a-2026-10-29",
+    "modelVersion": "deepseek-flash",
+    "provider": "deepseek",
+    "llmMode": "byok",
+    "priceVersion": "[TBD]",
+    "productionV2": false
+  },
+  "trace": [
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G2-gap-e001",
+      "missionId": "eval-G2-gap",
+      "time": "2026-10-29T11:29:18.471Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.opened",
+      "scene": "G2",
+      "resultClass": "continuous_reject",
+      "raw": "当前我打开的这个博主 最近三天的微博 帮我复制下来 做成一个文档",
+      "versions": {
+        "evaluationMode": "offline_replay",
+        "facilityVersion": "m0-05b-facility-1",
+        "rubricVersion": "verifier-rubric-1",
+        "promptVersion": "verifier-prompt-1",
+        "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+        "manifestSampleSetId": "m0-05a-2026-10-29",
+        "modelVersion": "deepseek-flash",
+        "provider": "deepseek",
+        "llmMode": "byok",
+        "priceVersion": "[TBD]",
+        "productionV2": false
+      },
+      "costBucket": "independent"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G2-gap-e002",
+      "missionId": "eval-G2-gap",
+      "time": "2026-10-29T11:29:18.471Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 1,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G2-gap-e003",
+      "missionId": "eval-G2-gap",
+      "time": "2026-10-29T11:29:21.379Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 1,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 489,
+      "uncachedInputTokens": 489,
+      "cachedInputTokens": 0,
+      "outputTokens": 607,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": []
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G2-gap-e004",
+      "missionId": "eval-G2-gap",
+      "time": "2026-10-29T11:29:21.379Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-G2-gap-r1",
+        "missionId": "eval-G2-gap",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": false,
+        "rawGoalSatisfied": false,
+        "confidence": "low",
+        "rationale": "唯一证据是内容条目（微博 feed 片段），不能证明已生成包含最近三天微博的文档；候选摘要只是完成自述，且没有可见的文档正文或区间内容可供核验，因此必交付 g2-doc 无法判定为已满足。",
+        "deliverables": [
+          {
+            "deliverableId": "g2-doc",
+            "status": "unsatisfied",
+            "evidenceIds": []
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [
+          "e-g2-a"
+        ],
+        "actionableGaps": [
+          "提供实际文档 artifact 或可见正文，证明已收录该博主最近三天微博并成文",
+          "补充可核验的日期范围、条目数量及其与来源的对应关系",
+          "若 e-g2-a 只是 feed/内容片段，应明确它只能作为来源证据，不能作为成品文档证据"
+        ]
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G2-gap-e005",
+      "missionId": "eval-G2-gap",
+      "time": "2026-10-29T11:29:21.379Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 2,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G2-gap-e006",
+      "missionId": "eval-G2-gap",
+      "time": "2026-10-29T11:29:28.462Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 2,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 489,
+      "uncachedInputTokens": 233,
+      "cachedInputTokens": 256,
+      "outputTokens": 1399,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": []
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G2-gap-e007",
+      "missionId": "eval-G2-gap",
+      "time": "2026-10-29T11:29:28.462Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-G2-gap-r2",
+        "missionId": "eval-G2-gap",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": false,
+        "rawGoalSatisfied": false,
+        "confidence": "high",
+        "rationale": "必交付 g2-doc 是文档，但证据索引仅有一个 content_item（微博 feed 内容），没有文档 artifact、文档内容或导出记录来证明已生成文档。候选摘要只是完成自述，不能作为证据；因此关键交付无法验收。",
+        "deliverables": [
+          {
+            "deliverableId": "g2-doc",
+            "kind": "document",
+            "required": true,
+            "satisfied": false,
+            "evidenceIds": []
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": [
+          "缺少 g2-doc 对应的文档 artifact 或可核验文档内容/导出记录。",
+          "现有证据 e-g2-a 只是 content_item，不能证明文档已创建并包含近三天微博。",
+          "候选摘要称“已写满 100 条，包括 10 月 27 日”，但该自述不是证据，且未明确近三天的完整日期范围。"
+        ]
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G2-gap-e008",
+      "missionId": "eval-G2-gap",
+      "time": "2026-10-29T11:29:28.463Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.suspended",
+      "reason": "verification_exhausted",
+      "gaps": [
+        "声称的 10 月 27 日和 100 条没有证据"
+      ],
+      "closeGuard": {
+        "passed": false,
+        "checks": [
+          {
+            "name": "artifact_exists",
+            "passed": false
+          },
+          {
+            "name": "report_opened",
+            "passed": true
+          },
+          {
+            "name": "plan_observed",
+            "passed": true
+          },
+          {
+            "name": "permission_and_idempotency",
+            "passed": true
+          },
+          {
+            "name": "budget_and_state",
+            "passed": true
+          }
+        ]
+      },
+      "evalBudget": {
+        "verifierTurns": 2,
+        "notO01": true,
+        "label": "evalBudget"
+      }
+    }
+  ]
+}

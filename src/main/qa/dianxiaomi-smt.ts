@@ -222,3 +222,9 @@ export function qaReportToToolResult(report: QaReport): ToolResult {
 export function looksLikeSubmitAction(text: string): boolean {
   return /提交|保存并提交|发布产品|立即发布|确认发布/.test(text || "");
 }
+
+/** 新核心的确认在模型层 request_confirm。执行中不再套店小秘闸门。 */
+export function submitClickNeedsGate(piCoreRunning: boolean, label: string): boolean {
+  if (piCoreRunning) return false;
+  return looksLikeSubmitAction(label);
+}

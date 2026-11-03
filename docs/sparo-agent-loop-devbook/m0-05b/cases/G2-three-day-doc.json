@@ -1,0 +1,115 @@
+{
+  "frozen": true,
+  "frozenAt": "2026-10-30T11:20:00+08:00",
+  "prejudgedBeforeModelCall": true,
+  "facilityVersion": "m0-05b-facility-1",
+  "rubricVersion": "verifier-rubric-1",
+  "promptVersion": "verifier-prompt-1",
+  "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+  "manifestSampleSetId": "m0-05a-2026-10-29",
+  "allowedTools": [],
+  "sendTool": false,
+  "payTool": false,
+  "evalBudget": {
+    "verifierTurns": 2,
+    "notO01": true,
+    "label": "evalBudget"
+  },
+  "preJudgedValid": true,
+  "caseId": "G2-three-day-doc",
+  "scene": "G2",
+  "resultClass": "pass",
+  "costBucket": "independent",
+  "raw": "当前我打开的这个博主 最近三天的微博 帮我复制下来 做成一个文档",
+  "candidateKind": "document",
+  "candidateFile": "g2-three-day.txt",
+  "candidateHash": "c56a7136de0d5594c36cba02cd30ff5c925b8587fe75eadc4f810445326ba90e",
+  "candidateDeliverable": {
+    "artifactId": "g2-three-day.txt",
+    "kind": "document",
+    "contentHash": "c56a7136de0d5594c36cba02cd30ff5c925b8587fe75eadc4f810445326ba90e",
+    "range": {
+      "start": 0,
+      "end": 191,
+      "unit": "chars",
+      "length": 191
+    },
+    "role": "candidate-deliverable",
+    "notEvidence": true,
+    "deliverableId": "g2-doc"
+  },
+  "candidateSummary": "候选交付是文档 Artifact g2-three-day.txt。它不是证据。证据是冻结时间线页。",
+  "followUpSummary": "同一份文档 Artifact。补读的是 10 月 27 日那一页的来源区间。",
+  "followUpRanges": [
+    {
+      "artifactId": "art-m005a-g2-rmrb-feed-5358896219684903",
+      "start": 200,
+      "end": 500
+    }
+  ],
+  "planSummary": "把该账号冻结页里已经出现的 10 月 27 日至 29 日收成文档。",
+  "deliverables": [
+    {
+      "deliverableId": "g2-doc",
+      "kind": "document",
+      "required": true,
+      "artifactId": "g2-three-day.txt"
+    }
+  ],
+  "evidenceIndex": [
+    {
+      "evidenceId": "e-g2-oct27",
+      "kind": "content_item",
+      "artifactId": "art-m005a-g2-rmrb-feed-5358896219684903"
+    },
+    {
+      "evidenceId": "e-g2-oct28",
+      "kind": "content_item",
+      "artifactId": "art-m005a-g2-rmrb-feed-5359045473210573"
+    },
+    {
+      "evidenceId": "e-g2-oct29",
+      "kind": "content_item",
+      "artifactId": "art-m005a-g2-rmrb-feed-5359251180487027"
+    }
+  ],
+  "artifactPins": [
+    {
+      "artifactId": "art-m005a-g2-rmrb-feed-5358896219684903",
+      "contentHash": "029b1ee8212a95b9860fcd11bf2d4846ead667be8806089afc67e6e6906ada10",
+      "frozenVersion": "sha256:029b1ee8212a95b9860fcd11bf2d4846ead667be8806089afc67e6e6906ada10"
+    },
+    {
+      "artifactId": "art-m005a-g2-rmrb-feed-5359045473210573",
+      "contentHash": "222d249c71e2d336dc678399ac915956a6255ac0f009109f2d2a09ca0012a526",
+      "frozenVersion": "sha256:222d249c71e2d336dc678399ac915956a6255ac0f009109f2d2a09ca0012a526"
+    },
+    {
+      "artifactId": "art-m005a-g2-rmrb-feed-5359251180487027",
+      "contentHash": "f24f9c37370be735d48eedddd5a69feff73e4651a6654e3c08e793946a9852c4",
+      "frozenVersion": "sha256:f24f9c37370be735d48eedddd5a69feff73e4651a6654e3c08e793946a9852c4"
+    }
+  ],
+  "guardFacts": {
+    "requiredArtifactsExist": true,
+    "reportRequired": false,
+    "requiredStepsObserved": true,
+    "permissionOk": true,
+    "idempotentOk": true,
+    "budgetLegal": true,
+    "stateLegal": true
+  },
+  "constraints": [
+    "文档不是证据",
+    "只收录冻结页里出现的日期",
+    "不把未出现的条目写成已复制"
+  ],
+  "expected": {
+    "structural": [
+      "10 月 27 日来自新冻结页",
+      "文档不自证"
+    ],
+    "termination": "done only if verifier and guard pass",
+    "passFail": "首轮通过只记通过"
+  }
+}

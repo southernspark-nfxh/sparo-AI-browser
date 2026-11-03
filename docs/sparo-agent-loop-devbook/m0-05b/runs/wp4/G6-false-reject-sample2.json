@@ -1,0 +1,193 @@
+{
+  "caseId": "G6-false-reject-sample2",
+  "scene": "G6",
+  "resultClass": "false_reject_then_pass",
+  "costBucket": "independent",
+  "preJudgedValid": true,
+  "covered": false,
+  "observedClass": "false_reject_then_pass",
+  "reason": "发生拒绝，但补读后的复验或 Close Guard 没有通过",
+  "modelCalls": 2,
+  "versions": {
+    "evaluationMode": "offline_replay",
+    "facilityVersion": "m0-05b-facility-1",
+    "rubricVersion": "verifier-rubric-1",
+    "promptVersion": "verifier-prompt-1",
+    "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+    "manifestSampleSetId": "m0-05a-2026-10-29",
+    "modelVersion": "deepseek-flash",
+    "provider": "deepseek",
+    "llmMode": "byok",
+    "priceVersion": "[TBD]",
+    "productionV2": false
+  },
+  "trace": [
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G6-false-reject-sample2-e001",
+      "missionId": "eval-G6-false-reject-sample2",
+      "time": "2026-10-29T11:48:49.712Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.opened",
+      "scene": "G6",
+      "resultClass": "false_reject_then_pass",
+      "raw": "帮我写一首诗",
+      "versions": {
+        "evaluationMode": "offline_replay",
+        "facilityVersion": "m0-05b-facility-1",
+        "rubricVersion": "verifier-rubric-1",
+        "promptVersion": "verifier-prompt-1",
+        "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+        "manifestSampleSetId": "m0-05a-2026-10-29",
+        "modelVersion": "deepseek-flash",
+        "provider": "deepseek",
+        "llmMode": "byok",
+        "priceVersion": "[TBD]",
+        "productionV2": false
+      },
+      "costBucket": "independent"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G6-false-reject-sample2-e002",
+      "missionId": "eval-G6-false-reject-sample2",
+      "time": "2026-10-29T11:48:49.713Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 1,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G6-false-reject-sample2-e003",
+      "missionId": "eval-G6-false-reject-sample2",
+      "time": "2026-10-29T11:48:55.365Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 1,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 494,
+      "uncachedInputTokens": 238,
+      "cachedInputTokens": 256,
+      "outputTokens": 740,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": []
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G6-false-reject-sample2-e004",
+      "missionId": "eval-G6-false-reject-sample2",
+      "time": "2026-10-29T11:48:55.365Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-G6-false-reject-sample2-r1",
+        "missionId": "eval-G6-false-reject-sample2",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": false,
+        "rawGoalSatisfied": false,
+        "confidence": "low",
+        "rationale": "原句要求写一首诗，计划也是离线创作诗。候选摘要虽包含诗句，但规则明确候选摘要不是证据；证据索引 e-g6-file 只说明存在离线文档、不是网页，未给出文档内容或可读 Artifact 区间，无法验证该文档确实包含诗并满足必交付 g6-poem-doc。因此关键交付无法判断，不能判为已满足。",
+        "deliverables": [
+          {
+            "deliverableId": "g6-poem-doc",
+            "status": "unsatisfied",
+            "evidenceIds": []
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": [
+          "提供 e-g6-file 的正文或对应 Artifact 区间，证明离线文档实际包含所写的诗。",
+          "候选摘要不能替代证据；不要仅凭摘要中的诗句判定文档已交付。"
+        ]
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G6-false-reject-sample2-e005",
+      "missionId": "eval-G6-false-reject-sample2",
+      "time": "2026-10-29T11:48:55.366Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 2,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G6-false-reject-sample2-e006",
+      "missionId": "eval-G6-false-reject-sample2",
+      "time": "2026-10-29T11:49:03.227Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 2,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 496,
+      "uncachedInputTokens": 368,
+      "cachedInputTokens": 128,
+      "outputTokens": 1251,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": []
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G6-false-reject-sample2-e007",
+      "missionId": "eval-G6-false-reject-sample2",
+      "time": "2026-10-29T11:49:03.227Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-G6-false-reject-sample2-r2",
+        "missionId": "eval-G6-false-reject-sample2",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": false,
+        "rawGoalSatisfied": false,
+        "confidence": "low",
+        "rationale": "候选摘要中虽出现诗句，但规则明确候选摘要不是证据；证据索引 e-g6-file 只说明存在一个离线文档，未提供其正文或区间读取，无法确认该文档确实包含符合请求的诗。因此必交付 g6-poem-doc 无法验证为 satisfied。",
+        "deliverables": [
+          {
+            "deliverableId": "g6-poem-doc",
+            "status": "unverified",
+            "evidenceIds": []
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": [
+          "提供 g6-poem-doc 的实际文档正文或可核验的 Artifact 区间读取，以确认其中包含完整诗作。",
+          "确认该离线文档就是所要求的诗作文档，而不仅是文档存在性说明。"
+        ]
+      }
+    }
+  ]
+}

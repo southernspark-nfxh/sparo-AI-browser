@@ -1,0 +1,75 @@
+{
+  "frozen": true,
+  "frozenAt": "2026-10-29T19:21:00+08:00",
+  "facilityVersion": "m0-05b-facility-1",
+  "rubricVersion": "verifier-rubric-1",
+  "promptVersion": "verifier-prompt-1",
+  "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+  "manifestSampleSetId": "m0-05a-2026-10-29",
+  "allowedTools": [],
+  "sendTool": false,
+  "payTool": false,
+  "caseId": "G1-false-reject-control",
+  "scene": "G1",
+  "resultClass": "false_reject_then_pass",
+  "preJudgedValid": true,
+  "raw": "打开微博",
+  "candidateKind": "page_action",
+  "candidateSummary": "已打开 https://weibo.com/ ，标题为微博首页。没有时间线条目。",
+  "followUpSummary": "补读首页正文区间后，页面身份仍是微博首页。",
+  "planSummary": "打开微博首页。",
+  "deliverables": [
+    {
+      "deliverableId": "g1-open",
+      "kind": "page_action",
+      "required": true
+    }
+  ],
+  "evidenceIndex": [
+    {
+      "evidenceId": "e-g1-home",
+      "kind": "page_state",
+      "artifactId": "art-m005a-g1-weibo-home"
+    }
+  ],
+  "followUpRanges": [
+    {
+      "artifactId": "art-m005a-g1-weibo-home",
+      "start": 0,
+      "end": 80
+    }
+  ],
+  "artifactPins": [
+    {
+      "artifactId": "art-m005a-g1-weibo-home",
+      "contentHash": "b8b6dc0a89ba217412f949b43b73b5871aeffac9da69cb19fde7f089733c8e2c",
+      "frozenVersion": "sha256:b8b6dc0a89ba217412f949b43b73b5871aeffac9da69cb19fde7f089733c8e2c"
+    }
+  ],
+  "evalBudget": {
+    "verifierTurns": 2,
+    "notO01": true,
+    "label": "evalBudget"
+  },
+  "costBucket": "control-experiment",
+  "guardFacts": {
+    "requiredArtifactsExist": true,
+    "reportRequired": false,
+    "requiredStepsObserved": true,
+    "permissionOk": true,
+    "idempotentOk": true,
+    "budgetLegal": true,
+    "stateLegal": true
+  },
+  "constraints": [
+    "对照实验，不计入 G1 轻量生产成本"
+  ],
+  "expected": {
+    "structural": [
+      "只有模型原始 goalSatisfied 为 false 才算误拒",
+      "补读后通过才覆盖误拒后通过"
+    ],
+    "termination": "done only after a real reject then a gated pass and guard pass",
+    "passFail": "第一次就通过则误拒格保持未覆盖"
+  }
+}

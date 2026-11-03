@@ -1,0 +1,117 @@
+{
+  "caseId": "R1-budget",
+  "scene": "R1",
+  "resultClass": "budget_exhausted",
+  "costBucket": "controller",
+  "preJudgedValid": false,
+  "covered": true,
+  "observedClass": "budget_exhausted",
+  "reason": "",
+  "modelCalls": 0,
+  "versions": {
+    "evaluationMode": "offline_replay",
+    "facilityVersion": "m0-05b-facility-1",
+    "rubricVersion": "verifier-rubric-1",
+    "promptVersion": "verifier-prompt-1",
+    "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+    "manifestSampleSetId": "m0-05a-2026-10-29",
+    "modelVersion": "deepseek-flash",
+    "provider": "deepseek",
+    "llmMode": "byok",
+    "priceVersion": "[TBD]",
+    "productionV2": false
+  },
+  "trace": [
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-budget-e001",
+      "missionId": "eval-R1-budget",
+      "time": "2026-10-29T11:31:33.777Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.opened",
+      "scene": "R1",
+      "resultClass": "budget_exhausted",
+      "raw": "R1 eval budget",
+      "versions": {
+        "evaluationMode": "offline_replay",
+        "facilityVersion": "m0-05b-facility-1",
+        "rubricVersion": "verifier-rubric-1",
+        "promptVersion": "verifier-prompt-1",
+        "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+        "manifestSampleSetId": "m0-05a-2026-10-29",
+        "modelVersion": "deepseek-flash",
+        "provider": "deepseek",
+        "llmMode": "byok",
+        "priceVersion": "[TBD]",
+        "productionV2": false
+      },
+      "costBucket": "controller"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-budget-e002",
+      "missionId": "eval-R1-budget",
+      "time": "2026-10-29T11:31:33.777Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "budget.updated",
+      "evalBudget": {
+        "actorTurns": 1,
+        "limitActorTurns": 1,
+        "exhausted": true,
+        "notO01": true,
+        "label": "evalBudget"
+      },
+      "notO01": true
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-budget-e003",
+      "missionId": "eval-R1-budget",
+      "time": "2026-10-29T11:31:33.777Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.suspended",
+      "reason": "budget_exhausted",
+      "gaps": [
+        "evalBudget actor turn limit"
+      ],
+      "closeGuard": {
+        "passed": true,
+        "checks": [
+          {
+            "name": "artifact_exists",
+            "passed": true
+          },
+          {
+            "name": "report_opened",
+            "passed": true
+          },
+          {
+            "name": "plan_observed",
+            "passed": true
+          },
+          {
+            "name": "permission_and_idempotency",
+            "passed": true
+          },
+          {
+            "name": "budget_and_state",
+            "passed": true
+          }
+        ]
+      },
+      "evalBudget": {
+        "actorTurns": 1,
+        "limitActorTurns": 1,
+        "exhausted": true,
+        "notO01": true,
+        "label": "evalBudget"
+      }
+    }
+  ]
+}

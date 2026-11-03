@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pageViewCoversChrome, resetChromeCoverBudget, takeChromeCoverFix } from "../src/main/page-bounds.js";
+import { boundsWithinOnePixel, pageViewCoversChrome, resetChromeCoverBudget, takeChromeCoverFix } from "../src/main/page-bounds.js";
 
 const hole = { x: 0, y: 76, width: 1020, height: 780 };
 
@@ -29,6 +29,13 @@ describe("pageViewCoversChrome", () => {
     const afterRestore = takeChromeCoverFix(resetChromeCoverBudget(20_000), 20_000);
     expect(afterRestore.allow).toBe(true);
     expect(afterRestore.state.fixes).toBe(1);
+  });
+
+  it("把 961 和 962 当成同一矩形，整窗盖住仍然要修", () => {
+    const view = { x: 0, y: 76, width: 962, height: 700 };
+    expect(boundsWithinOnePixel(view, { ...view, width: 961 })).toBe(true);
+    expect(boundsWithinOnePixel(view, { ...view, width: 970 })).toBe(false);
+    expect(boundsWithinOnePixel(view, { x: 0, y: 0, width: 1400, height: 900 })).toBe(false);
   });
 
   it("ignores a background tab parked offscreen", () => {

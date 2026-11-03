@@ -1,0 +1,67 @@
+{
+  "frozen": true,
+  "frozenAt": "2026-10-29T19:21:00+08:00",
+  "facilityVersion": "m0-05b-facility-1",
+  "rubricVersion": "verifier-rubric-1",
+  "promptVersion": "verifier-prompt-1",
+  "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+  "manifestSampleSetId": "m0-05a-2026-10-29",
+  "allowedTools": [],
+  "sendTool": false,
+  "payTool": false,
+  "evalBudget": {
+    "verifierTurns": 2,
+    "notO01": true,
+    "label": "evalBudget"
+  },
+  "costBucket": "independent",
+  "resultClass": "continuous_reject",
+  "continuousReject": true,
+  "preJudgedValid": false,
+  "candidateKind": "known_gap",
+  "guardFacts": {
+    "requiredArtifactsExist": false,
+    "reportRequired": false,
+    "requiredStepsObserved": true,
+    "permissionOk": true,
+    "idempotentOk": true,
+    "budgetLegal": true,
+    "stateLegal": true
+  },
+  "expected": {
+    "structural": [
+      "声称的 10 月 27 日和 100 条没有证据"
+    ],
+    "termination": "verification_exhausted only if every round is a real reject",
+    "passFail": "任一回合通过则该格未覆盖"
+  },
+  "caseId": "G2-gap",
+  "scene": "G2",
+  "raw": "当前我打开的这个博主 最近三天的微博 帮我复制下来 做成一个文档",
+  "candidateSummary": "文档已写满近三天共 100 条，包括 10 月 27 日。",
+  "knownGaps": [
+    "声称的 10 月 27 日和 100 条没有证据"
+  ],
+  "artifactPins": [
+    {
+      "artifactId": "art-m005a-g2-rmrb-feed-5359251180487027",
+      "contentHash": "f24f9c37370be735d48eedddd5a69feff73e4651a6654e3c08e793946a9852c4",
+      "frozenVersion": "sha256:f24f9c37370be735d48eedddd5a69feff73e4651a6654e3c08e793946a9852c4"
+    }
+  ],
+  "planSummary": "把该账号近三天微博收成文档。",
+  "deliverables": [
+    {
+      "deliverableId": "g2-doc",
+      "kind": "document",
+      "required": true
+    }
+  ],
+  "evidenceIndex": [
+    {
+      "evidenceId": "e-g2-a",
+      "kind": "content_item",
+      "artifactId": "art-m005a-g2-rmrb-feed-5359251180487027"
+    }
+  ]
+}

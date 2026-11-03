@@ -2,20 +2,28 @@
   "id": "dxm-crawl-prep",
   "title": "店小秘采集箱：上品前编辑",
   "kind": "site",
-  "version": 1,
+  "version": 4,
   "shareable": false,
   "distilled": true,
   "platform": "dianxiaomi",
-  "aliases": ["店小秘上品", "店小秘采集箱", "采集箱编辑", "1688回填", "上品之前"],
+  "aliases": ["店小秘上品", "店小秘采集箱", "采集箱编辑", "1688回填", "上品之前", "数据采集", "店小秘目录", "店小秘首页"],
   "createdAt": "2026-10-31T00:00:00.000Z",
-  "updatedAt": "2026-10-31T00:00:00.000Z",
-  "intent": "人已经停在店小秘采集箱编辑页，要按页面自带功能改文字、尺寸和包装，并对照 1688 来源补字段。不代点保存并认领。",
+  "updatedAt": "2026-10-31T10:40:00.000Z",
+  "intent": "用户说「编辑这个」或「编辑页面」时，立刻做完上品前编辑，不要只打开页面。对照 1688 改文字、库存、重量和主图尺寸。不代点保存并认领。",
   "declared_domains": ["www.dianxiaomi.com", "detail.1688.com"],
   "declared_actions": ["page_text", "click_text", "menu_click", "execute"],
   "human_gates": ["login", "captcha", "pay", "保存并认领"],
   "params": {},
   "steps": [],
   "route": [
+    {
+      "kind": "open",
+      "goal": "听到「编辑这个」或「编辑页面」，立刻做完本路线，不要只打开编辑页。新标签打开来源 1688，回读后再改店小秘草稿。"
+    },
+    {
+      "kind": "open",
+      "goal": "首页 /web/home 是工作台。顶栏：产品（上品目录）、订单、客服、仓库、数据、财务、托管（各平台自己的采集箱、待发布、在线产品）、广告、服务、设置。上品前打开 https://www.dianxiaomi.com/web/productCrawl/dataAcquisition ，点行内「编辑」进入 /web/productCrawl/edit?id= 。数据搬家是 https://www.dianxiaomi.com/web/productCrawl/productBanjia/wish ，用来同步店铺已有商品。"
+    },
     {
       "kind": "open",
       "goal": "确认当前是 /web/productCrawl/edit。不要 reload，不要在编辑页点「访问」（会换掉草稿）。来源页用新标签打开 1688。"
@@ -30,7 +38,7 @@
     },
     {
       "kind": "open",
-      "goal": "批量改尺寸：编辑图片 → 批量改图片尺寸。弹窗标题是「批量图片尺寸」。等比例、图片小边 800，再点生成 JPG。不要点清空图片。"
+      "goal": "批量改尺寸：编辑图片 → 批量改图片尺寸。弹窗标题是「批量图片尺寸」。等比例、图片小边 800。生成 JPG 若真实点击没反应，对按钮本身做 DOM click。不要点清空图片。来源没有单件长宽高就留空，不要沿用上一件商品的尺寸。"
     },
     {
       "kind": "open",
@@ -40,18 +48,22 @@
   "pitfalls": [
     {
       "milestone": 1,
-      "note": "这是采集箱，不是速卖通编辑页。不要套 6 张主图、零售价公式、运费模板、欧盟责任人。"
+      "note": "左侧「采集箱」下面的 Wish、速卖通等是分平台的已认领箱，括号里是数量。账号 LCYC012 看过是空的。上品前编辑走「数据采集」总表，不走数据搬家。"
     },
     {
       "milestone": 2,
-      "note": "来源品牌没有可授权自有品牌时，不要把品牌写成已授权。外箱尺寸不是单件尺寸。"
+      "note": "这是采集箱，不是速卖通编辑页。不要套 6 张主图、零售价公式、运费模板、欧盟责任人。"
     },
     {
       "milestone": 3,
-      "note": "不要 remove .ant-select-dropdown，也不要给 .ant-dropdown 留下 display:none。子菜单要点开一层再点条目。"
+      "note": "来源品牌没有可授权自有品牌时，不要把品牌写成已授权。外箱尺寸不是单件尺寸。"
     },
     {
       "milestone": 4,
+      "note": "不要 remove .ant-select-dropdown，也不要给 .ant-dropdown 留下 display:none。子菜单要点开一层再点条目。"
+    },
+    {
+      "milestone": 5,
       "note": "可见主图变 800 不等于变种图和描述图都变了。看 .img-size，必要时再进「查看更多」。"
     }
   ],
@@ -64,16 +76,29 @@
   "notes": [
     "run_skill 只返回这条路线，不会自己跳转或点保存。",
     "库存按上架规则可封顶 2000。采集箱价格列若已是货源价换汇，不要改成速卖通零售公式。",
-    "包装重量用千克。来源克数要先换算，例如 9 克写成 0.009。"
+    "包装重量用千克。来源克数要先换算，例如 9 克写成 0.009。",
+    "数据采集总表列：图片、标题、描述、货源价格、折扣价、售价(USD)、责任人、创建时间、操作。页上流程是数据采集、认领产品、编辑数据、完成发布。状态有全部、未认领、已认领、采集失败、采集中。",
+    "2026-10-31 已登录账号 LCYC012 看过：总表全部 5495、未认领 1655、已认领 3835。左侧采集箱各平台数量为空。",
+    "变种图和描述图不在采集图片那一次批量尺寸里。变种图有自己的「编辑图片」。描述 HTML 不要整段重写。"
   ],
   "agentPlaybook": [
     "match_skill({ query: \"店小秘上品\" })，再 get_skill({ id: \"dxm-crawl-prep\" }) 读完整规则。",
     "run_skill 不会代为编辑。对照 route 自己调 page_text、execute、menu_click。",
-    "填值不需要把窗口拉回前台。要点菜单时用 click_text，不要自己发负数坐标。"
+    "填值不需要把窗口拉回前台。要点菜单时用 click_text，不要自己发负数坐标。",
+    "要进总表：navigate https://www.dianxiaomi.com/web/productCrawl/dataAcquisition ，再点该行「编辑」。"
+  ],
+  "directory": [
+    {"name": "首页", "url": "https://www.dianxiaomi.com/web/home", "use": "工作台、培训、店铺授权"},
+    {"name": "数据采集", "url": "https://www.dianxiaomi.com/web/productCrawl/dataAcquisition", "use": "上品前总表。行内编辑进入 /web/productCrawl/edit?id="},
+    {"name": "采集箱", "url": "", "use": "数据采集页左侧。Wish、速卖通、eBay、Amazon、Lazada、Shopee、Shopee全球，括号里是该平台已认领数量"},
+    {"name": "数据搬家", "url": "https://www.dianxiaomi.com/web/productCrawl/productBanjia/wish", "use": "同步店铺已有商品，再认领进采集箱"},
+    {"name": "订单", "url": "https://www.dianxiaomi.com/web/order/paid", "use": "已付款订单"},
+    {"name": "Temu全托管采集箱", "url": "https://www.dianxiaomi.com/web/temu/choiceTemuList/draft", "use": "托管菜单里的平台采集箱，待发布和在线产品在同组"},
+    {"name": "速卖通全托管采集箱", "url": "https://www.dianxiaomi.com/web/smtChoice/draft", "use": "托管菜单。上品前的通用编辑仍走数据采集总表"}
   ],
   "contract": {
     "doNotNavigateAway": true,
-    "doNotClick": ["保存并认领", "清空图片", "访问"],
+    "doNotClick": ["保存并认领", "清空图片", "访问", "批量认领", "一键发布", "开始采集"],
     "paidConfirm": ["图片翻译", "图片白底"]
   }
 }

@@ -1,0 +1,44 @@
+{
+  "frozen": true,
+  "frozenAt": "2026-10-29T19:21:00+08:00",
+  "facilityVersion": "m0-05b-facility-1",
+  "rubricVersion": "verifier-rubric-1",
+  "promptVersion": "verifier-prompt-1",
+  "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+  "manifestSampleSetId": "m0-05a-2026-10-29",
+  "allowedTools": [],
+  "sendTool": false,
+  "payTool": false,
+  "controller": true,
+  "modelCalls": 0,
+  "costBucket": "controller",
+  "evalBudget": {
+    "notO01": true,
+    "label": "evalBudget"
+  },
+  "guardFacts": {
+    "requiredArtifactsExist": true,
+    "reportRequired": false,
+    "requiredStepsObserved": true,
+    "permissionOk": true,
+    "idempotentOk": true,
+    "budgetLegal": true,
+    "stateLegal": true
+  },
+  "expected": {
+    "structural": [
+      "运行时回滚"
+    ],
+    "termination": "close.reason=runtime_rollback",
+    "passFail": "不得写成用户取消"
+  },
+  "caseId": "T1-rollback",
+  "scene": "T1",
+  "resultClass": "runtime_rollback",
+  "raw": "帮我搜一下 11月12日和11月13日南京的酒店 11月11日北京到南京高铁时间和价格 11月13日晚返回北京",
+  "terminal": "runtime_rollback",
+  "gaps": [
+    "eval controller rollback"
+  ],
+  "summary": "评估控制器执行运行时回滚"
+}

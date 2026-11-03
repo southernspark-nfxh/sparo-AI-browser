@@ -1,0 +1,262 @@
+{
+  "caseId": "P1-pass-or-false-reject",
+  "scene": "P1",
+  "resultClass": "pass",
+  "costBucket": "independent",
+  "preJudgedValid": true,
+  "covered": true,
+  "observedClass": "false_reject_then_pass",
+  "reason": "",
+  "modelCalls": 2,
+  "versions": {
+    "evaluationMode": "offline_replay",
+    "facilityVersion": "m0-05b-facility-1",
+    "rubricVersion": "verifier-rubric-1",
+    "promptVersion": "verifier-prompt-1",
+    "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+    "manifestSampleSetId": "m0-05a-2026-10-29",
+    "modelVersion": "deepseek-flash",
+    "provider": "deepseek",
+    "llmMode": "byok",
+    "priceVersion": "[TBD]",
+    "productionV2": false
+  },
+  "trace": [
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-P1-pass-or-false-reject-e001",
+      "missionId": "eval-P1-pass-or-false-reject",
+      "time": "2026-10-29T11:31:13.717Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.opened",
+      "scene": "P1",
+      "resultClass": "pass",
+      "raw": "帮我写一条今天热搜相关的微博",
+      "versions": {
+        "evaluationMode": "offline_replay",
+        "facilityVersion": "m0-05b-facility-1",
+        "rubricVersion": "verifier-rubric-1",
+        "promptVersion": "verifier-prompt-1",
+        "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+        "manifestSampleSetId": "m0-05a-2026-10-29",
+        "modelVersion": "deepseek-flash",
+        "provider": "deepseek",
+        "llmMode": "byok",
+        "priceVersion": "[TBD]",
+        "productionV2": false
+      },
+      "costBucket": "independent"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-P1-pass-or-false-reject-e002",
+      "missionId": "eval-P1-pass-or-false-reject",
+      "time": "2026-10-29T11:31:13.717Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 1,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-P1-pass-or-false-reject-e003",
+      "missionId": "eval-P1-pass-or-false-reject",
+      "time": "2026-10-29T11:31:21.213Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 1,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 512,
+      "uncachedInputTokens": 512,
+      "cachedInputTokens": 0,
+      "outputTokens": 1500,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": []
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-P1-pass-or-false-reject-e004",
+      "missionId": "eval-P1-pass-or-false-reject",
+      "time": "2026-10-29T11:31:21.213Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-P1-pass-or-false-reject-r1",
+        "missionId": "eval-P1-pass-or-false-reject",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": false,
+        "rawGoalSatisfied": false,
+        "confidence": "high",
+        "rationale": "必交付 p1-draft 没有可引用的草稿 artifact 或 evidenceId；e-p1-hot 只能证明热搜页面状态，不能证明微博草稿已产出。候选摘要不能作为证据，因此也无法仅凭摘要确认“未发送”状态。",
+        "deliverables": [
+          {
+            "deliverableId": "p1-draft",
+            "status": "unsatisfied",
+            "evidenceIds": [],
+            "gap": "缺少草稿 artifact 或其 evidenceId，无法验证微博草稿内容及未发送状态。"
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": [
+          "提供 p1-draft 草稿 artifact 的 evidenceId，并确保证据能显示草稿内容与今日热搜主题对应。",
+          "补充草稿未发送状态或不存在发送动作的可验证证据，不能只依赖候选摘要自述。"
+        ]
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-P1-pass-or-false-reject-e005",
+      "missionId": "eval-P1-pass-or-false-reject",
+      "time": "2026-10-29T11:31:21.214Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "artifact.created",
+      "artifactId": "art-m005a-p1-weibo-hot",
+      "frozenVersion": "sha256:474b0bb76a2e2cf3af9e8f93e5a2fcf819b091ebfb6eef19e562fe4fcdbae305",
+      "contentRange": {
+        "start": 200,
+        "end": 500,
+        "unit": "chars",
+        "length": 300
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-P1-pass-or-false-reject-e006",
+      "missionId": "eval-P1-pass-or-false-reject",
+      "time": "2026-10-29T11:31:21.214Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 2,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-P1-pass-or-false-reject-e007",
+      "missionId": "eval-P1-pass-or-false-reject",
+      "time": "2026-10-29T11:31:33.773Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 2,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 546,
+      "uncachedInputTokens": 418,
+      "cachedInputTokens": 128,
+      "outputTokens": 2268,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": [
+        {
+          "artifactId": "art-m005a-p1-weibo-hot",
+          "start": 200,
+          "end": 500,
+          "unit": "chars",
+          "length": 300,
+          "frozenVersion": "sha256:474b0bb76a2e2cf3af9e8f93e5a2fcf819b091ebfb6eef19e562fe4fcdbae305"
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-P1-pass-or-false-reject-e008",
+      "missionId": "eval-P1-pass-or-false-reject",
+      "time": "2026-10-29T11:31:33.773Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-P1-pass-or-false-reject-r2",
+        "missionId": "eval-P1-pass-or-false-reject",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": true,
+        "rawGoalSatisfied": true,
+        "confidence": "medium",
+        "rationale": "候选提供了与今日热搜话题相关的微博草稿，并明确标注“这是草稿，不发送”，未发现发送行为，符合未授权发送约束。必交付 p1-draft 为 draft，可判为 satisfied，并以 e-p1-hot 作为热搜 page_state 依据。由于热搜正文内容未直接展示，仅记录了对该 artifact 的区间读取，置信度定为 medium。",
+        "deliverables": [
+          {
+            "deliverableId": "p1-draft",
+            "status": "satisfied",
+            "evidenceIds": [
+              "e-p1-hot"
+            ]
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": []
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-P1-pass-or-false-reject-e009",
+      "missionId": "eval-P1-pass-or-false-reject",
+      "time": "2026-10-29T11:33:30.518Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.closed",
+      "close": {
+        "reason": "done",
+        "summary": "",
+        "gaps": []
+      },
+      "closeGuard": {
+        "passed": true,
+        "checks": [
+          {
+            "name": "artifact_exists",
+            "passed": true
+          },
+          {
+            "name": "report_opened",
+            "passed": true
+          },
+          {
+            "name": "plan_observed",
+            "passed": true
+          },
+          {
+            "name": "permission_and_idempotency",
+            "passed": true
+          },
+          {
+            "name": "budget_and_state",
+            "passed": true
+          }
+        ]
+      },
+      "appendedWithoutModelCall": true,
+      "note": "runner omitted the close after a recorded gated pass; appended from that verification and the frozen guard facts"
+    }
+  ]
+}

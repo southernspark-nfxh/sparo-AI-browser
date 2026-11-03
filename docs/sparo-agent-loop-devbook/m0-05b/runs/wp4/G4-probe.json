@@ -1,0 +1,150 @@
+{
+  "caseId": "G4-probe",
+  "scene": "G4",
+  "resultClass": "probe",
+  "costBucket": "independent",
+  "preJudgedValid": false,
+  "covered": false,
+  "observedClass": "uncovered",
+  "reason": "候选未预先判定为有效，拒绝也不记成误拒",
+  "modelCalls": 1,
+  "versions": {
+    "evaluationMode": "offline_replay",
+    "facilityVersion": "m0-05b-facility-1",
+    "rubricVersion": "verifier-rubric-1",
+    "promptVersion": "verifier-prompt-1",
+    "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+    "manifestSampleSetId": "m0-05a-2026-10-29",
+    "modelVersion": "deepseek-flash",
+    "provider": "deepseek",
+    "llmMode": "byok",
+    "priceVersion": "[TBD]",
+    "productionV2": false
+  },
+  "trace": [
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G4-probe-e001",
+      "missionId": "eval-G4-probe",
+      "time": "2026-10-29T11:30:05.514Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.opened",
+      "scene": "G4",
+      "resultClass": "probe",
+      "raw": "研究博主 人民日报 画像，最好上百条",
+      "versions": {
+        "evaluationMode": "offline_replay",
+        "facilityVersion": "m0-05b-facility-1",
+        "rubricVersion": "verifier-rubric-1",
+        "promptVersion": "verifier-prompt-1",
+        "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+        "manifestSampleSetId": "m0-05a-2026-10-29",
+        "modelVersion": "deepseek-flash",
+        "provider": "deepseek",
+        "llmMode": "byok",
+        "priceVersion": "[TBD]",
+        "productionV2": false
+      },
+      "costBucket": "independent"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G4-probe-e002",
+      "missionId": "eval-G4-probe",
+      "time": "2026-10-29T11:30:05.514Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 1,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G4-probe-e003",
+      "missionId": "eval-G4-probe",
+      "time": "2026-10-29T11:30:12.125Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 1,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 495,
+      "uncachedInputTokens": 367,
+      "cachedInputTokens": 128,
+      "outputTokens": 1284,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": []
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G4-probe-e004",
+      "missionId": "eval-G4-probe",
+      "time": "2026-10-29T11:30:12.125Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-G4-probe-r1",
+        "missionId": "eval-G4-probe",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": false,
+        "rawGoalSatisfied": false,
+        "confidence": "high",
+        "rationale": "唯一的必交付物 g4-report 是报告，但候选摘要明确说明没有单独打开或生成报告文件；证据索引中也只有一条 content_item 类型的移动页证据，不能充当报告交付物。因此关键必交付无法确认已满足。上百条只是偏好，实际约 10 条不单独构成硬性失败，但报告缺失足以判定未完成。",
+        "deliverables": [
+          {
+            "deliverableId": "g4-report",
+            "satisfied": false,
+            "evidenceIds": [],
+            "reason": "候选摘要明确表示没有单独打开的报告文件；现有 e-g4-mobile 是内容条目，不是报告交付物。"
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": [
+          "缺少必交付的 g4-report 报告文件或等价报告产物。",
+          "需要提供可核验的报告 artifact，并在其中呈现对人民日报博主画像的整理。",
+          "当前仅约 10 条，虽“上百条”是偏好而非硬约束，但若希望贴近原始请求，应继续补充公开条目并说明采集范围与数量。"
+        ]
+      },
+      "closeGuard": {
+        "passed": false,
+        "checks": [
+          {
+            "name": "artifact_exists",
+            "passed": true
+          },
+          {
+            "name": "report_opened",
+            "passed": false
+          },
+          {
+            "name": "plan_observed",
+            "passed": true
+          },
+          {
+            "name": "permission_and_idempotency",
+            "passed": true
+          },
+          {
+            "name": "budget_and_state",
+            "passed": true
+          }
+        ]
+      }
+    }
+  ]
+}

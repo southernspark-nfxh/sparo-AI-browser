@@ -1,0 +1,68 @@
+{
+  "frozen": true,
+  "frozenAt": "2026-10-29T19:21:00+08:00",
+  "facilityVersion": "m0-05b-facility-1",
+  "rubricVersion": "verifier-rubric-1",
+  "promptVersion": "verifier-prompt-1",
+  "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+  "manifestSampleSetId": "m0-05a-2026-10-29",
+  "allowedTools": [],
+  "sendTool": false,
+  "payTool": false,
+  "evalBudget": {
+    "verifierTurns": 2,
+    "notO01": true,
+    "label": "evalBudget"
+  },
+  "costBucket": "independent",
+  "resultClass": "continuous_reject",
+  "continuousReject": true,
+  "preJudgedValid": false,
+  "candidateKind": "known_gap",
+  "guardFacts": {
+    "requiredArtifactsExist": false,
+    "reportRequired": false,
+    "requiredStepsObserved": true,
+    "permissionOk": false,
+    "idempotentOk": true,
+    "budgetLegal": true,
+    "stateLegal": true
+  },
+  "expected": {
+    "structural": [
+      "没有打开京东，也没有报告"
+    ],
+    "termination": "verification_exhausted only if every round is a real reject",
+    "passFail": "任一回合通过则该格未覆盖"
+  },
+  "caseId": "R1-gap",
+  "scene": "R1",
+  "raw": "帮我对比三款 小米15、iPhone 16、华为Mate 70 哪个值得买",
+  "candidateSummary": "京东价格已经对比完并写成报告。",
+  "knownGaps": [
+    "没有打开京东，也没有报告"
+  ],
+  "artifactPins": [
+    {
+      "artifactId": "art-m005a-r1-baidu-compare",
+      "contentHash": "379712eef241cca60f4b3bc3251c9c1c167f5bf4cf59b5009bf65ace7913e7fa",
+      "frozenVersion": "sha256:379712eef241cca60f4b3bc3251c9c1c167f5bf4cf59b5009bf65ace7913e7fa"
+    }
+  ],
+  "permissionOk": false,
+  "planSummary": "对比三款手机。不打开京东、淘宝、点评。",
+  "deliverables": [
+    {
+      "deliverableId": "r1-report",
+      "kind": "report",
+      "required": true
+    }
+  ],
+  "evidenceIndex": [
+    {
+      "evidenceId": "e-r1-search",
+      "kind": "page_state",
+      "artifactId": "art-m005a-r1-baidu-compare"
+    }
+  ]
+}

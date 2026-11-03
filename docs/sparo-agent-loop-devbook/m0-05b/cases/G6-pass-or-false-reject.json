@@ -1,0 +1,65 @@
+{
+  "frozen": true,
+  "frozenAt": "2026-10-29T19:21:00+08:00",
+  "facilityVersion": "m0-05b-facility-1",
+  "rubricVersion": "verifier-rubric-1",
+  "promptVersion": "verifier-prompt-1",
+  "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+  "manifestSampleSetId": "m0-05a-2026-10-29",
+  "allowedTools": [],
+  "sendTool": false,
+  "payTool": false,
+  "evalBudget": {
+    "verifierTurns": 2,
+    "notO01": true,
+    "label": "evalBudget"
+  },
+  "costBucket": "independent",
+  "caseId": "G6-pass-or-false-reject",
+  "scene": "G6",
+  "resultClass": "pass",
+  "preJudgedValid": true,
+  "raw": "帮我写一首诗",
+  "candidateKind": "offline_document",
+  "candidateSummary": "离线文档，不是网页。\n夜色把窗沿压低，\n一盏灯还在纸上走。\n没人来问它去哪，\n它就把影子留给手。\n",
+  "followUpSummary": "同一首离线诗，复验。\n夜色把窗沿压低，\n一盏灯还在纸上走。\n没人来问它去哪，\n它就把影子留给手。\n",
+  "planSummary": "离线写一首诗，不打开网页。",
+  "deliverables": [
+    {
+      "deliverableId": "g6-poem-doc",
+      "kind": "document",
+      "required": true
+    }
+  ],
+  "evidenceIndex": [
+    {
+      "evidenceId": "e-g6-file",
+      "kind": "artifact",
+      "note": "offline document, not a web page"
+    }
+  ],
+  "candidateFile": "g6-poem.txt",
+  "candidateHash": "9a873e67fd05c8bf24b9d301ace021ec5a3fe5b7f7045beb423eca0cba76c9f3",
+  "artifactPins": [],
+  "guardFacts": {
+    "requiredArtifactsExist": true,
+    "reportRequired": false,
+    "requiredStepsObserved": true,
+    "permissionOk": true,
+    "idempotentOk": true,
+    "budgetLegal": true,
+    "stateLegal": true
+  },
+  "constraints": [
+    "网页证据 not_applicable",
+    "候选不是网页"
+  ],
+  "expected": {
+    "structural": [
+      "无网页证据",
+      "文档候选在冻结文件里"
+    ],
+    "termination": "done only if verifier and guard pass",
+    "passFail": "误拒必须是模型第一次返回 goalSatisfied false"
+  }
+}

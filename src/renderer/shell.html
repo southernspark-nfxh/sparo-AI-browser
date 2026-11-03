@@ -1190,6 +1190,24 @@ body.side-collapsed .dock { display: none; }
   align-items: center;
   padding-top: 6px;
 }
+.go-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.go-row #execMode {
+  height: 28px;
+  max-width: 8.5em;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-12);
+  padding: 0 8px;
+  cursor: pointer;
+}
 .go-row .icon-btn.ghost {
   width: 32px;
   height: 32px;
@@ -1929,9 +1947,15 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
             <div id="noteMenu" class="note-menu"></div>
             <textarea id="chatInput" data-i18n-placeholder="chat.placeholder" placeholder="说要做什么，也可粘贴截图、拖入文件或直接给文件路径"></textarea>
             <div class="go-row">
+              <div class="go-tools">
               <button type="button" class="icon-btn ghost" id="chatFile" data-i18n-title="chat.file" title="选一个本地文件，或直接把文件拖进来" aria-label="文件">
                 <svg class="ic"><use href="#i-clip"/></svg>
               </button>
+              <select id="execMode" data-i18n-title="chat.execMode.label" title="执行模式">
+                <option value="step" data-i18n="chat.execMode.step">逐步确认</option>
+                <option value="auto" data-i18n="chat.execMode.auto">自动执行</option>
+              </select>
+              </div>
               <button type="button" class="send" id="chatSend" data-i18n-title="chat.send" title="发送 (Ctrl+Enter)" aria-label="发送" disabled>
                 <svg class="ic"><use href="#i-send"/></svg>
               </button>
@@ -3199,6 +3223,10 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           }
           const idleRow = document.getElementById("memIdleRow");
           if (idleRow) idleRow.style.display = ds.memorySaver === false ? "none" : "";
+          const execEl = document.getElementById("execMode");
+          if (execEl && document.activeElement !== execEl) {
+            execEl.value = ds.execMode === "auto" ? "auto" : "step";
+          }
         }
         renderCloudPanel(ds, cloud);
         if (ds && ds.configured && dsEl) {
@@ -3447,10 +3475,10 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         const send = document.getElementById("chatSend");
         const input = document.getElementById("chatInput");
         if (!send) return;
-        if (send.dataset.sending === "1") {
-          send.disabled = true;
-          return;
-        }
+        const sending = send.dataset.sending === "1";
+        send.title = t(sending ? "chat.sendInterrupt" : "chat.send");
+        send.setAttribute("aria-label", send.title);
+        if (input) input.placeholder = t(sending ? "chat.sendInterrupt" : "chat.placeholder");
         const locked = Boolean(input && input.disabled);
         const text = input ? input.value.trim() : "";
         send.disabled = locked || !text;
@@ -4153,10 +4181,10 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           const send = document.getElementById("chatSend");
           const input = document.getElementById("chatInput");
           if (!send) return;
-          if (send.dataset.sending === "1") {
-            send.disabled = true;
-            return;
-          }
+          const sending = send.dataset.sending === "1";
+          send.title = t(sending ? "chat.sendInterrupt" : "chat.send");
+          send.setAttribute("aria-label", send.title);
+          if (input) input.placeholder = t(sending ? "chat.sendInterrupt" : "chat.placeholder");
           const locked = Boolean(input && input.disabled);
           const text = input ? input.value.trim() : "";
           send.disabled = locked || !(text || pendingImages.length || pendingQuotes.length);
@@ -4246,6 +4274,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
             favicon: active.favIcon || "",
           };
         }
+        let sendDepth = 0;
         async function sendChat() {
           const input = document.getElementById("chatInput");
           const text = input.value.trim();
@@ -4263,8 +4292,9 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           renderPendingImages();
           renderQuoteStrip();
           const sendBtn = document.getElementById("chatSend");
+          sendDepth += 1;
           sendBtn.dataset.sending = "1";
-          sendBtn.disabled = true;
+          syncSendButton();
           const outgoing = text || (images.length ? "请看附图，用中文说明。" : "");
           try {
             await window.sparkShell.chat(outgoing, images, quotes);
@@ -4274,7 +4304,8 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
             renderQuoteStrip();
             toast(t("toast.fail"));
           } finally {
-            delete sendBtn.dataset.sending;
+            sendDepth = Math.max(0, sendDepth - 1);
+            if (sendDepth === 0) delete sendBtn.dataset.sending;
             syncSendButton();
             input.focus();
             scrollChatToEnd();
@@ -4448,6 +4479,19 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           paintNoteMenu();
         }
         document.getElementById("chatSend").onclick = sendChat;
+        const execModeEl = document.getElementById("execMode");
+        if (execModeEl) {
+          execModeEl.onchange = async () => {
+            const execMode = execModeEl.value === "auto" ? "auto" : "step";
+            try {
+              if (window.sparkShell && window.sparkShell.saveSettings) {
+                await window.sparkShell.saveSettings({ execMode });
+              }
+            } catch (err) {
+              console.error(err);
+            }
+          };
+        }
         const fileBtn = document.getElementById("chatFile");
         if (fileBtn) {
           fileBtn.onclick = async () => {

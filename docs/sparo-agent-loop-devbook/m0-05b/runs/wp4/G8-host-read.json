@@ -1,0 +1,392 @@
+{
+  "caseId": "G8-host-read",
+  "scene": "G8",
+  "resultClass": "pass",
+  "costBucket": "g8-embedded",
+  "hostScene": "G2",
+  "doubleCountWithHost": false,
+  "preJudgedValid": true,
+  "covered": false,
+  "observedClass": "false_reject_then_pass",
+  "reason": "发生拒绝，但补读后的复验或 Close Guard 没有通过",
+  "modelCalls": 2,
+  "versions": {
+    "evaluationMode": "offline_replay",
+    "facilityVersion": "m0-05b-facility-3",
+    "rubricVersion": "verifier-rubric-1",
+    "promptVersion": "verifier-prompt-1",
+    "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+    "manifestSampleSetId": "m0-05a-2026-10-29",
+    "modelVersion": "deepseek-flash",
+    "provider": "deepseek",
+    "llmMode": "byok",
+    "priceVersion": "[TBD]",
+    "productionV2": false
+  },
+  "trace": [
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-host-read-e001",
+      "missionId": "eval-G8-host-read",
+      "time": "2026-10-30T04:18:11.338Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.opened",
+      "scene": "G8",
+      "resultClass": "pass",
+      "raw": "当前我打开的这个博主 最近三天的微博 帮我复制下来 做成一个文档",
+      "versions": {
+        "evaluationMode": "offline_replay",
+        "facilityVersion": "m0-05b-facility-3",
+        "rubricVersion": "verifier-rubric-1",
+        "promptVersion": "verifier-prompt-1",
+        "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+        "manifestSampleSetId": "m0-05a-2026-10-29",
+        "modelVersion": "deepseek-flash",
+        "provider": "deepseek",
+        "llmMode": "byok",
+        "priceVersion": "[TBD]",
+        "productionV2": false
+      },
+      "costBucket": "g8-embedded"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-host-read-e002",
+      "missionId": "eval-G8-host-read",
+      "time": "2026-10-30T04:18:11.338Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 1,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash",
+      "candidateDeliverable": {
+        "artifactId": "g2-posts-ids.txt",
+        "contentHash": "3dcecf16e9a656f1d2db7f3a3dc9bd54f5353412881b1b1c8e3d55e7ad5c5dcc",
+        "textLength": 7069,
+        "notEvidence": true
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-host-read-e003",
+      "missionId": "eval-G8-host-read",
+      "time": "2026-10-30T04:18:23.424Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 1,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 5023,
+      "uncachedInputTokens": 5023,
+      "cachedInputTokens": 0,
+      "outputTokens": 1834,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": []
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-host-read-e004",
+      "missionId": "eval-G8-host-read",
+      "time": "2026-10-30T04:18:23.424Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-G8-host-read-r1",
+        "missionId": "eval-G8-host-read",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": false,
+        "rawGoalSatisfied": false,
+        "confidence": "low",
+        "rationale": "候选文档正文被明确标注为 notEvidence，不能作为完成证据。rangeReads 为空，未读取任何 Artifact 正文；settled-0 与 settled-1 的工具正文未在区间中列出，无法核对滚动观察，也无法核实 g2-doc 是否确实复制了最近三天微博、是否完整且无占位。因此关键交付无法判断。",
+        "deliverables": [
+          {
+            "deliverableId": "g2-doc",
+            "kind": "document",
+            "required": true,
+            "status": "unsatisfied",
+            "evidenceIds": [],
+            "notes": "仅有候选正文，不是证据；未读取 content_item 或 settled 页正文，无法验证文档内容与近三天微博一致。"
+          }
+        ],
+        "unexecutedStepIds": [
+          "对照 settled-0 与 settled-1 的工具正文",
+          "验收近三天文档正文"
+        ],
+        "invalidEvidenceIds": [],
+        "actionableGaps": [
+          "读取并核对 art-m005a-g2-rmrb-settled-0 与 art-m005a-g2-rmrb-settled-1 的工具正文，确认滚动无进展及三天范围。",
+          "读取 e-g2-oct27、e-g2-oct28、e-g2-oct29 对应的 content_item 正文，逐条核对文档中的微博是否实际存在、是否属于最近三天、是否完整复制且无占位原句。",
+          "为文档中 [15]、[29] 的数字 id 还原提供 scheme 或未打码 mblogid 的可见依据；否则不能把还原 id 当作 observed。"
+        ]
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-host-read-e005",
+      "missionId": "eval-G8-host-read",
+      "time": "2026-10-30T04:18:23.425Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "artifact.created",
+      "artifactId": "art-m005a-g2-rmrb-settled-0",
+      "frozenVersion": "sha256:9b41d5440946dff8f7d2c6b7217ec0a970d6043bcb4d890cc8ce2787f693e757",
+      "contentRange": {
+        "start": 0,
+        "end": 358,
+        "unit": "chars",
+        "length": 358
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-host-read-e006",
+      "missionId": "eval-G8-host-read",
+      "time": "2026-10-30T04:18:23.425Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "artifact.created",
+      "artifactId": "art-m005a-g2-rmrb-settled-1",
+      "frozenVersion": "sha256:9b41d5440946dff8f7d2c6b7217ec0a970d6043bcb4d890cc8ce2787f693e757",
+      "contentRange": {
+        "start": 0,
+        "end": 358,
+        "unit": "chars",
+        "length": 358
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-host-read-e007",
+      "missionId": "eval-G8-host-read",
+      "time": "2026-10-30T04:18:23.425Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "artifact.created",
+      "artifactId": "art-m005a-g2-rmrb-mobile",
+      "frozenVersion": "sha256:7ac80ba0870ccb64ca42163db4b3cd19079ead86859f43177fd93a049fd240a7",
+      "contentRange": {
+        "start": 0,
+        "end": 1830,
+        "unit": "chars",
+        "length": 1830
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-host-read-e008",
+      "missionId": "eval-G8-host-read",
+      "time": "2026-10-30T04:18:23.427Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "artifact.created",
+      "artifactId": "art-m005a-g2-rmrb-feed-5358896219684903",
+      "frozenVersion": "sha256:029b1ee8212a95b9860fcd11bf2d4846ead667be8806089afc67e6e6906ada10",
+      "contentRange": {
+        "start": 0,
+        "end": 77971,
+        "unit": "chars",
+        "length": 77971
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-host-read-e009",
+      "missionId": "eval-G8-host-read",
+      "time": "2026-10-30T04:18:23.428Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "artifact.created",
+      "artifactId": "art-m005a-g2-rmrb-feed-5359045473210573",
+      "frozenVersion": "sha256:222d249c71e2d336dc678399ac915956a6255ac0f009109f2d2a09ca0012a526",
+      "contentRange": {
+        "start": 0,
+        "end": 80100,
+        "unit": "chars",
+        "length": 80100
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-host-read-e010",
+      "missionId": "eval-G8-host-read",
+      "time": "2026-10-30T04:18:23.429Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "artifact.created",
+      "artifactId": "art-m005a-g2-rmrb-feed-5359251180487027",
+      "frozenVersion": "sha256:f24f9c37370be735d48eedddd5a69feff73e4651a6654e3c08e793946a9852c4",
+      "contentRange": {
+        "start": 0,
+        "end": 80085,
+        "unit": "chars",
+        "length": 80085
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-host-read-e011",
+      "missionId": "eval-G8-host-read",
+      "time": "2026-10-30T04:18:23.430Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 2,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash",
+      "candidateDeliverable": {
+        "artifactId": "g2-posts-ids.txt",
+        "contentHash": "3dcecf16e9a656f1d2db7f3a3dc9bd54f5353412881b1b1c8e3d55e7ad5c5dcc",
+        "textLength": 7069,
+        "notEvidence": true
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-host-read-e012",
+      "missionId": "eval-G8-host-read",
+      "time": "2026-10-30T04:18:58.673Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 2,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 138448,
+      "uncachedInputTokens": 138064,
+      "cachedInputTokens": 384,
+      "outputTokens": 6312,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": [
+        {
+          "artifactId": "art-m005a-g2-rmrb-settled-0",
+          "start": 0,
+          "end": 358,
+          "unit": "chars",
+          "length": 358,
+          "frozenVersion": "sha256:9b41d5440946dff8f7d2c6b7217ec0a970d6043bcb4d890cc8ce2787f693e757",
+          "textLength": 358
+        },
+        {
+          "artifactId": "art-m005a-g2-rmrb-settled-1",
+          "start": 0,
+          "end": 358,
+          "unit": "chars",
+          "length": 358,
+          "frozenVersion": "sha256:9b41d5440946dff8f7d2c6b7217ec0a970d6043bcb4d890cc8ce2787f693e757",
+          "textLength": 358
+        },
+        {
+          "artifactId": "art-m005a-g2-rmrb-mobile",
+          "start": 0,
+          "end": 1830,
+          "unit": "chars",
+          "length": 1830,
+          "frozenVersion": "sha256:7ac80ba0870ccb64ca42163db4b3cd19079ead86859f43177fd93a049fd240a7",
+          "textLength": 1830
+        },
+        {
+          "artifactId": "art-m005a-g2-rmrb-feed-5358896219684903",
+          "start": 0,
+          "end": 77971,
+          "unit": "chars",
+          "length": 77971,
+          "frozenVersion": "sha256:029b1ee8212a95b9860fcd11bf2d4846ead667be8806089afc67e6e6906ada10",
+          "textLength": 77971
+        },
+        {
+          "artifactId": "art-m005a-g2-rmrb-feed-5359045473210573",
+          "start": 0,
+          "end": 80100,
+          "unit": "chars",
+          "length": 80100,
+          "frozenVersion": "sha256:222d249c71e2d336dc678399ac915956a6255ac0f009109f2d2a09ca0012a526",
+          "textLength": 80100
+        },
+        {
+          "artifactId": "art-m005a-g2-rmrb-feed-5359251180487027",
+          "start": 0,
+          "end": 80085,
+          "unit": "chars",
+          "length": 80085,
+          "frozenVersion": "sha256:f24f9c37370be735d48eedddd5a69feff73e4651a6654e3c08e793946a9852c4",
+          "textLength": 80085
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-host-read-e013",
+      "missionId": "eval-G8-host-read",
+      "time": "2026-10-30T04:18:58.673Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-G8-host-read-r2",
+        "missionId": "eval-G8-host-read",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": false,
+        "rawGoalSatisfied": false,
+        "confidence": "high",
+        "rationale": "必交付 g2-doc 没有可验收的文档证据：g2-posts-ids.txt 仍是 notEvidence 的候选正文，候选正文不能替代交付物。即使查看候选内容，也只覆盖三份冻结时间线页各10条，时间从 2026-10-27 19:53 到 2026-10-29 07:01；移动页显示 10-29 更晚的微博未纳入，未证明覆盖“最近三天”。settled-0 与 settled-1 正文和 frozenVersion 完全相同，无法核对连续 PageDown 后的滚动观察。",
+        "deliverables": [
+          {
+            "deliverableId": "g2-doc",
+            "status": "unsatisfied",
+            "evidenceIds": [
+              "e-g2-oct27",
+              "e-g2-oct28",
+              "e-g2-oct29",
+              "e-g8-mobile"
+            ],
+            "gaps": [
+              "文档本体只有候选通道内容（notEvidence），没有可验收的正式文档证据。",
+              "仅复制三份时间线页各10条，未覆盖最近三天全量；缺少2026-10-27 19:53之前及2026-10-29 07:01之后移动页可见微博。",
+              "未提供连续滚动后的两份不同页面状态来核对覆盖范围。"
+            ]
+          }
+        ],
+        "unexecutedStepIds": [
+          "desktop-page-pagedown"
+        ],
+        "invalidEvidenceIds": [
+          "e-g8-settled-1"
+        ],
+        "actionableGaps": [
+          "将 g2-posts-ids.txt 从候选通道转为可验收的正式交付物，并附全文证据。",
+          "补抓最近三天完整微博（含移动页显示的10月29日更晚微博），按日期去重后写入文档。",
+          "执行桌面页连续 PageDown，保存 settled-0 与 settled-1 不同的工具正文快照，以证明滚动观察。"
+        ]
+      }
+    }
+  ]
+}

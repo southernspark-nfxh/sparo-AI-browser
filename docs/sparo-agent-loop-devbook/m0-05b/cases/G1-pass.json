@@ -1,0 +1,47 @@
+{
+  "frozen": true,
+  "frozenAt": "2026-10-29T19:21:00+08:00",
+  "facilityVersion": "m0-05b-facility-1",
+  "rubricVersion": "verifier-rubric-1",
+  "promptVersion": "verifier-prompt-1",
+  "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+  "manifestSampleSetId": "m0-05a-2026-10-29",
+  "allowedTools": [],
+  "sendTool": false,
+  "payTool": false,
+  "caseId": "G1-pass",
+  "scene": "G1",
+  "resultClass": "pass",
+  "controller": false,
+  "lightweight": true,
+  "preJudgedValid": true,
+  "raw": "打开微博",
+  "candidateKind": "page_action",
+  "candidateSummary": "已打开 https://weibo.com/ ，标题为微博首页。没有时间线条目。",
+  "artifactPins": [
+    {
+      "artifactId": "art-m005a-g1-weibo-home",
+      "contentHash": "b8b6dc0a89ba217412f949b43b73b5871aeffac9da69cb19fde7f089733c8e2c",
+      "frozenVersion": "sha256:b8b6dc0a89ba217412f949b43b73b5871aeffac9da69cb19fde7f089733c8e2c"
+    }
+  ],
+  "costBucket": "lightweight-production",
+  "guardFacts": {
+    "requiredArtifactsExist": true,
+    "reportRequired": false,
+    "requiredStepsObserved": true,
+    "permissionOk": true,
+    "idempotentOk": true,
+    "budgetLegal": true,
+    "stateLegal": true
+  },
+  "expected": {
+    "structural": [
+      "不调用独立 Verifier",
+      "Close Guard 通过才可以 done"
+    ],
+    "termination": "done",
+    "passFail": "轻量结构校验通过且 Guard 通过"
+  },
+  "summary": "轻量打开微博"
+}

@@ -1,0 +1,111 @@
+{
+  "frozen": true,
+  "frozenAt": "2026-10-30T11:20:00+08:00",
+  "prejudgedBeforeModelCall": true,
+  "facilityVersion": "m0-05b-facility-1",
+  "rubricVersion": "verifier-rubric-1",
+  "promptVersion": "verifier-prompt-1",
+  "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+  "manifestSampleSetId": "m0-05a-2026-10-29",
+  "allowedTools": [],
+  "sendTool": false,
+  "payTool": false,
+  "evalBudget": {
+    "verifierTurns": 2,
+    "notO01": true,
+    "label": "evalBudget"
+  },
+  "preJudgedValid": true,
+  "caseId": "G8-host-g2",
+  "scene": "G8",
+  "resultClass": "pass",
+  "costBucket": "g8-embedded",
+  "hostScene": "G2",
+  "doubleCountWithHost": false,
+  "raw": "当前我打开的这个博主 最近三天的微博 帮我复制下来 做成一个文档",
+  "embeddedIn": "G2 桌面页 PageDown 无进展后改看移动页",
+  "candidateKind": "observation_note",
+  "candidateFile": "g8-note.txt",
+  "candidateHash": "2b7aa23762c5cf26d04b25152fc24a0887e7d1207c1b02fd7dd870371a7620f0",
+  "candidateDeliverable": {
+    "artifactId": "g8-note.txt",
+    "kind": "answer",
+    "contentHash": "2b7aa23762c5cf26d04b25152fc24a0887e7d1207c1b02fd7dd870371a7620f0",
+    "range": {
+      "start": 0,
+      "end": 56,
+      "unit": "chars",
+      "length": 56
+    },
+    "role": "candidate-deliverable",
+    "notEvidence": true,
+    "deliverableId": "g8-note"
+  },
+  "candidateSummary": "候选交付是观察 Artifact g8-note.txt。它不是证据。本 case 只验收 G2 里的滚动段，费用不计入 G2。",
+  "followUpSummary": "同一份观察 Artifact。补读的是移动页来源区间。",
+  "followUpRanges": [
+    {
+      "artifactId": "art-m005a-g2-rmrb-mobile",
+      "start": 200,
+      "end": 500
+    }
+  ],
+  "planSummary": "宿主是 G2。滚动无进展后改看移动页。较上次不是工具原文。",
+  "deliverables": [
+    {
+      "deliverableId": "g8-note",
+      "kind": "answer",
+      "required": true,
+      "artifactId": "g8-note.txt"
+    }
+  ],
+  "evidenceIndex": [
+    {
+      "evidenceId": "e-g8-settled",
+      "kind": "page_state",
+      "artifactId": "art-m005a-g2-rmrb-settled-1",
+      "note": "hash equals settled-0; offline delta 0"
+    },
+    {
+      "evidenceId": "e-g8-mobile",
+      "kind": "page_state",
+      "artifactId": "art-m005a-g2-rmrb-mobile",
+      "note": "strategy change page"
+    }
+  ],
+  "artifactPins": [
+    {
+      "artifactId": "art-m005a-g2-rmrb-settled-1",
+      "contentHash": "9b41d5440946dff8f7d2c6b7217ec0a970d6043bcb4d890cc8ce2787f693e757",
+      "frozenVersion": "sha256:9b41d5440946dff8f7d2c6b7217ec0a970d6043bcb4d890cc8ce2787f693e757"
+    },
+    {
+      "artifactId": "art-m005a-g2-rmrb-mobile",
+      "contentHash": "7ac80ba0870ccb64ca42163db4b3cd19079ead86859f43177fd93a049fd240a7",
+      "frozenVersion": "sha256:7ac80ba0870ccb64ca42163db4b3cd19079ead86859f43177fd93a049fd240a7"
+    }
+  ],
+  "guardFacts": {
+    "requiredArtifactsExist": true,
+    "reportRequired": false,
+    "requiredStepsObserved": true,
+    "permissionOk": true,
+    "idempotentOk": true,
+    "budgetLegal": true,
+    "stateLegal": true
+  },
+  "constraints": [
+    "不使用占位原句",
+    "观察不是证据",
+    "费用不并入 G2",
+    "不验收近三天文档"
+  ],
+  "expected": {
+    "structural": [
+      "raw 是 G2 冻结原句",
+      "单独计 G8，不重复计入宿主成本"
+    ],
+    "termination": "done only if verifier and guard pass",
+    "passFail": "首轮通过只记通过"
+  }
+}

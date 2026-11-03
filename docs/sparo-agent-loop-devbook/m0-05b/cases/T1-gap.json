@@ -1,0 +1,68 @@
+{
+  "frozen": true,
+  "frozenAt": "2026-10-29T19:21:00+08:00",
+  "facilityVersion": "m0-05b-facility-1",
+  "rubricVersion": "verifier-rubric-1",
+  "promptVersion": "verifier-prompt-1",
+  "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+  "manifestSampleSetId": "m0-05a-2026-10-29",
+  "allowedTools": [],
+  "sendTool": false,
+  "payTool": false,
+  "evalBudget": {
+    "verifierTurns": 2,
+    "notO01": true,
+    "label": "evalBudget"
+  },
+  "costBucket": "independent",
+  "resultClass": "continuous_reject",
+  "continuousReject": true,
+  "preJudgedValid": false,
+  "candidateKind": "known_gap",
+  "guardFacts": {
+    "requiredArtifactsExist": false,
+    "reportRequired": false,
+    "requiredStepsObserved": true,
+    "permissionOk": false,
+    "idempotentOk": true,
+    "budgetLegal": true,
+    "stateLegal": true
+  },
+  "expected": {
+    "structural": [
+      "没有订票，也没有返程和酒店价格证据"
+    ],
+    "termination": "verification_exhausted only if every round is a real reject",
+    "passFail": "任一回合通过则该格未覆盖"
+  },
+  "caseId": "T1-gap",
+  "scene": "T1",
+  "raw": "帮我搜一下 11月12日和11月13日南京的酒店 11月11日北京到南京高铁时间和价格 11月13日晚返回北京",
+  "candidateSummary": "返程票和酒店都已订好。",
+  "knownGaps": [
+    "没有订票，也没有返程和酒店价格证据"
+  ],
+  "artifactPins": [
+    {
+      "artifactId": "art-m005a-t1-ctrip-train",
+      "contentHash": "909d5f0eb6d670cfa9b483e3102ddc4d966a58862609588d4d6cf8b8841ebb9f",
+      "frozenVersion": "sha256:909d5f0eb6d670cfa9b483e3102ddc4d966a58862609588d4d6cf8b8841ebb9f"
+    }
+  ],
+  "permissionOk": false,
+  "planSummary": "查询去程、酒店和返程。不登录，不订票。",
+  "deliverables": [
+    {
+      "deliverableId": "t1-plan",
+      "kind": "answer",
+      "required": true
+    }
+  ],
+  "evidenceIndex": [
+    {
+      "evidenceId": "e-t1-train",
+      "kind": "page_state",
+      "artifactId": "art-m005a-t1-ctrip-train"
+    }
+  ]
+}

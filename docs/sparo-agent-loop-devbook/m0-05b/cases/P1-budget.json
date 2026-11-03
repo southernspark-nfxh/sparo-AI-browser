@@ -1,0 +1,47 @@
+{
+  "frozen": true,
+  "frozenAt": "2026-10-29T19:21:00+08:00",
+  "facilityVersion": "m0-05b-facility-1",
+  "rubricVersion": "verifier-rubric-1",
+  "promptVersion": "verifier-prompt-1",
+  "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+  "manifestSampleSetId": "m0-05a-2026-10-29",
+  "allowedTools": [],
+  "sendTool": false,
+  "payTool": false,
+  "controller": true,
+  "modelCalls": 0,
+  "costBucket": "controller",
+  "evalBudget": {
+    "actorTurns": 1,
+    "limitActorTurns": 1,
+    "exhausted": true,
+    "notO01": true,
+    "label": "evalBudget"
+  },
+  "guardFacts": {
+    "requiredArtifactsExist": true,
+    "reportRequired": false,
+    "requiredStepsObserved": true,
+    "permissionOk": true,
+    "idempotentOk": true,
+    "budgetLegal": true,
+    "stateLegal": true
+  },
+  "expected": {
+    "structural": [
+      "测试预算耗尽"
+    ],
+    "termination": "blocked budget_exhausted，不写 close",
+    "passFail": "不得把 evalBudget 写成 O-01"
+  },
+  "caseId": "P1-budget",
+  "scene": "P1",
+  "resultClass": "budget_exhausted",
+  "raw": "P1 eval budget",
+  "terminal": "blocked",
+  "blockedReason": "budget_exhausted",
+  "gaps": [
+    "evalBudget actor turn limit"
+  ]
+}

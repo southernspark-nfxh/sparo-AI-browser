@@ -1,0 +1,128 @@
+{
+  "frozen": true,
+  "frozenAt": "2026-10-30T12:04:35+08:00",
+  "prejudgedBeforeModelCall": true,
+  "facilityVersion": "m0-05b-facility-3",
+  "rubricVersion": "verifier-rubric-1",
+  "promptVersion": "verifier-prompt-1",
+  "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+  "manifestSampleSetId": "m0-05a-2026-10-29",
+  "allowedTools": [],
+  "sendTool": false,
+  "payTool": false,
+  "evalBudget": {
+    "verifierTurns": 2,
+    "notO01": true,
+    "label": "evalBudget"
+  },
+  "preJudgedValid": true,
+  "caseId": "G2-posts-ids",
+  "supersedes": "G2-posts-doc",
+  "scene": "G2",
+  "resultClass": "pass",
+  "costBucket": "independent",
+  "raw": "当前我打开的这个博主 最近三天的微博 帮我复制下来 做成一个文档",
+  "candidateKind": "document",
+  "candidateFile": "g2-posts-ids.txt",
+  "candidateHash": "3dcecf16e9a656f1d2db7f3a3dc9bd54f5353412881b1b1c8e3d55e7ad5c5dcc",
+  "candidateDeliverable": {
+    "artifactId": "g2-posts-ids.txt",
+    "kind": "document",
+    "contentHash": "3dcecf16e9a656f1d2db7f3a3dc9bd54f5353412881b1b1c8e3d55e7ad5c5dcc",
+    "range": {
+      "start": 0,
+      "end": 7069,
+      "unit": "chars",
+      "length": 7069
+    },
+    "role": "candidate-deliverable",
+    "notEvidence": true,
+    "deliverableId": "g2-doc"
+  },
+  "candidateSummary": "候选正文在 candidateDeliverable.text，不是证据。文档复制冻结页里的 30 条微博：10 月 27 日 8 条、10 月 28 日 21 条、10 月 29 日 1 条。30 个 id 都是数字。页面截断处没有补写。",
+  "followUpSummary": "同一份文档正文仍在候选通道。补读带上三份时间线页的全文，用来核对 30 条是否复制准确。",
+  "followUpRanges": [
+    {
+      "artifactId": "art-m005a-g2-rmrb-feed-5358896219684903",
+      "start": 0,
+      "end": 77971
+    },
+    {
+      "artifactId": "art-m005a-g2-rmrb-feed-5359045473210573",
+      "start": 0,
+      "end": 80100
+    },
+    {
+      "artifactId": "art-m005a-g2-rmrb-feed-5359251180487027",
+      "start": 0,
+      "end": 80085
+    }
+  ],
+  "planSummary": "把三份冻结时间线页里实际出现的微博复制成文档。",
+  "deliverables": [
+    {
+      "deliverableId": "g2-doc",
+      "kind": "document",
+      "required": true,
+      "artifactId": "g2-posts-ids.txt"
+    }
+  ],
+  "evidenceIndex": [
+    {
+      "evidenceId": "e-g2-oct27",
+      "kind": "content_item",
+      "artifactId": "art-m005a-g2-rmrb-feed-5358896219684903"
+    },
+    {
+      "evidenceId": "e-g2-oct28",
+      "kind": "content_item",
+      "artifactId": "art-m005a-g2-rmrb-feed-5359045473210573"
+    },
+    {
+      "evidenceId": "e-g2-oct29",
+      "kind": "content_item",
+      "artifactId": "art-m005a-g2-rmrb-feed-5359251180487027"
+    }
+  ],
+  "artifactPins": [
+    {
+      "artifactId": "art-m005a-g2-rmrb-feed-5358896219684903",
+      "contentHash": "029b1ee8212a95b9860fcd11bf2d4846ead667be8806089afc67e6e6906ada10",
+      "frozenVersion": "sha256:029b1ee8212a95b9860fcd11bf2d4846ead667be8806089afc67e6e6906ada10"
+    },
+    {
+      "artifactId": "art-m005a-g2-rmrb-feed-5359045473210573",
+      "contentHash": "222d249c71e2d336dc678399ac915956a6255ac0f009109f2d2a09ca0012a526",
+      "frozenVersion": "sha256:222d249c71e2d336dc678399ac915956a6255ac0f009109f2d2a09ca0012a526"
+    },
+    {
+      "artifactId": "art-m005a-g2-rmrb-feed-5359251180487027",
+      "contentHash": "f24f9c37370be735d48eedddd5a69feff73e4651a6654e3c08e793946a9852c4",
+      "frozenVersion": "sha256:f24f9c37370be735d48eedddd5a69feff73e4651a6654e3c08e793946a9852c4"
+    }
+  ],
+  "guardFacts": {
+    "requiredArtifactsExist": true,
+    "reportRequired": false,
+    "requiredStepsObserved": true,
+    "permissionOk": true,
+    "idempotentOk": true,
+    "budgetLegal": true,
+    "stateLegal": true
+  },
+  "constraints": [
+    "文档不是证据",
+    "只复制冻结页里出现的正文",
+    "不把未出现的条目写成已复制",
+    "不把 G8-host-read 的费用加进来"
+  ],
+  "expected": {
+    "structural": [
+      "文档含微博正文和 30 个数字 id",
+      "正文进入候选通道",
+      "补读带上三份时间线页全文"
+    ],
+    "termination": "done only if verifier and guard pass",
+    "passFail": "首轮通过只记通过"
+  }
+}
