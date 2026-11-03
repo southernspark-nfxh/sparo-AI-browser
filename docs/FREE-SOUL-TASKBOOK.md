@@ -17,10 +17,10 @@
 
 ## 1. 现状（已存在，不要重做）
 
-- `src/main/agent/FREE-SOUL.ts` — 新核心。完整连续 messages、OpenAI 兼容 function calling、11 个浏览原语工具、默认 24 轮上限（到顶如实报"未完成"）。
+- `src/main/agent/free-soul.ts` — 新核心。完整连续 messages、OpenAI 兼容 function calling、11 个浏览原语工具、默认 24 轮上限（到顶如实报"未完成"）。
 - `src/main/browser.ts` `handleChat()`（~6205 行）— 侧栏 `spark:chat` 直接进 `freeSoul.run`，不再走旧分诊。
 - `src/main/browser.ts` `runCoreTool()`（~4549 行）— 新核心工具入口：`scroll` 本地实现、`go_back`、其余委托 `runAgentTool()`。
-- `tests/FREE-SOUL.test.ts` — 已有 2 个测试（上下文完整性 + 轮次上限），TDD 风格参考它。
+- `tests/free-soul.test.ts` — 已有 2 个测试（上下文完整性 + 轮次上限），TDD 风格参考它。
 
 ## 2. 本轮要修的问题（来自 2026-10-31 真人测试，聊天底账在 `%APPDATA%\sparo-store\chat-memory.json`）
 
@@ -58,7 +58,7 @@
 ### T2（P0）防卡死提示注入
 
 **要求：**
-1. `FREE-SOUL.ts` 的 `run()` 内跟踪工具调用指纹（工具名 + 关键参数 + 执行前后页面指纹——页面指纹由工具结果或传入的 url/title 判断，若拿不到就以工具结果 message 判断）。
+1. `free-soul.ts` 的 `run()` 内跟踪工具调用指纹（工具名 + 关键参数 + 执行前后页面指纹——页面指纹由工具结果或传入的 url/title 判断，若拿不到就以工具结果 message 判断）。
 2. **同一指纹连续 3 次、页面无变化** → 向 `messages` 注入一条 `user` 角色 hint：「同一操作已连续 3 次无效果。这条路径大概率没反应：换入口、直接构造结果 URL、换选择器，或如实向用户汇报当前障碍。禁止继续重复同一操作。」注入后清空指纹计数，让模型继续（不终止、不关单）。
 3. 这是改变任务走向的本地判断 → 先在 `docs/DECISION-POINTS.md` 登记 **#27**，写明：只注入提示，不替模型决定，不伪造完成。**#27 只管新核心，不许改动旧决策点 #9**（那是旧大脑里的连点掐断，两套互不影响）。
 4. 层级说明：T3 的「连点两次就换」写在系统提示里、由模型自觉执行；T2 的「第三次注入」是本地护栏兜底。**两层各管各的，不许把数字统一成一个。**
@@ -71,7 +71,7 @@
 
 ### T3（P1）系统提示加反卡死规则
 
-**要求：** `FREE-SOUL.ts` `systemPrompt()` 增加三条：
+**要求：** `free-soul.ts` `systemPrompt()` 增加三条：
 1. 「同一元素或同一路径连续两次没有引起页面变化就换策略：换入口、直接构造结果 URL、换交互方式；禁止对同一目标连点超过两次。」
 2. 「页面需要登录或出现验证码时，如实告知用户并停在该处等用户处理，不要反复尝试绕过。」
 3. 「无法完成时如实汇报卡在哪一步，不要空转。」
@@ -85,7 +85,7 @@
 **产品语义豁免（先读再动手）：** `docs/PRODUCT.md` 现行语义是「草稿进框，发送和提交仍由人点」。本轮变更为「经过一次确认往返后，模型可以代点发送」。**豁免范围仅限发布、发送、支付、删除四类不可逆动作**；客服（CS）回复仍然只填草稿、发送由人点，不变。完成记录里注明 PRODUCT.md 需要同步改这一句（改文档本身留给规划方）。
 
 **要求：**
-1. `FREE-SOUL.ts` 新增工具 `request_confirm`：参数 `{ action: string, detail: string }`。模型在执行发布/发送/支付/删除等不可逆动作**之前**必须调用。
+1. `free-soul.ts` 新增工具 `request_confirm`：参数 `{ action: string, detail: string }`。模型在执行发布/发送/支付/删除等不可逆动作**之前**必须调用。
 2. freeSoul 收到 `request_confirm` 后：立即结束本次 run，返回 `{ ok: true, text: 确认问句, awaitingConfirm: true }`（如「我准备执行：{action}。{detail} 确认吗？」）。这是**中断等待用户**，必须用成功态返回——`ok: false` 留给真失败，否则侧栏会把确认问句当执行失败处理。`handleChat` 照常把 text 进 chatLog，`awaitingConfirm` 标记透传（界面暂不需要专门渲染）。
 3. 用户在下一条消息里答复（确认或拒绝），答复进入 history，下一次 run 模型可见。
 4. `systemPrompt` 里把「核心版不执行发布、发送、支付、删除等不可逆最终动作」**替换**为：「发布、发送、支付、删除等不可逆动作：先用 request_confirm 向用户确认，得到用户明确同意后才执行。用户此前下过的命令不算同意，必须经过一次确认往返。」
@@ -134,7 +134,7 @@
 
 ## 5. 工程要求
 
-- **TDD**：改 `FREE-SOUL.ts` 的每个任务（T2/T3/T4/T5）先写失败测试再实现。测试放 `tests/`，风格照 `tests/FREE-SOUL.test.ts`。
+- **TDD**：改 `free-soul.ts` 的每个任务（T2/T3/T4/T5）先写失败测试再实现。测试放 `tests/`，风格照 `tests/free-soul.test.ts`。
 - 每完成一个任务跑：`npm test`（全量必须全绿）、`npm run typecheck`。
 - 全部完成后跑 `npm run build`，然后按 §6 真机自测。
 
@@ -164,7 +164,7 @@ Cursor 完成后在本文件末尾追加「完成记录」：每个任务列出�
 ### T1
 
 - 改动：`src/main/browser.ts`（`freeSoulRunning`，`handleChat` 在 `freeSoul.run` 期间置位并在 finally 复位；`watchPageTool` 只加这一处布尔短路；`openHelpAsk` / `answerLearning` / `applyHostLessons` 在此期间不写 chatLog、不 `setPaused`）
-- 测试：`tests/FREE-SOUL-guard.test.ts`
+- 测试：`tests/free-soul-guard.test.ts`
   - 「连续 3 次同指纹点击且页面不变时，不写 chatLog、不产生 helpAsk」
   - 「helpAsk 已经开着时，第一次点击不说「好，先继续」，也不暂停」
   - 「新核心没在跑时，连点无变化仍会开口」（确认旧路径还在）
@@ -173,23 +173,23 @@ Cursor 完成后在本文件末尾追加「完成记录」：每个任务列出�
 
 ### T2
 
-- 改动：`src/main/agent/FREE-SOUL.ts`（同一指纹连续 3 次且页面无变化时注入 user hint，然后清空计数，不结束循环）
-- 测试：`tests/FREE-SOUL.test.ts`「同一点击连续 3 次无变化后注入换策略提示，仍按轮次上限结束」
+- 改动：`src/main/agent/free-soul.ts`（同一指纹连续 3 次且页面无变化时注入 user hint，然后清空计数，不结束循环）
+- 测试：`tests/free-soul.test.ts`「同一点击连续 3 次无变化后注入换策略提示，仍按轮次上限结束」
 - 决策点：**#27**（`docs/DECISION-POINTS.md`）。没有改 #9
 - 真机：未跑
 
 ### T3
 
-- 改动：`src/main/agent/FREE-SOUL.ts` `systemPrompt()` 增加连点两次换路、验证码如实停、无法完成就汇报。与 T2 的「第 3 次注入」没有并成同一个数字
-- 测试：`tests/FREE-SOUL.test.ts`「系统提示要求两次就换路，并带上确认门和结果页通道」（断言含「连点」「验证码」，且系统提示里没有 T2 那句「已连续 3 次无效果」）
+- 改动：`src/main/agent/free-soul.ts` `systemPrompt()` 增加连点两次换路、验证码如实停、无法完成就汇报。与 T2 的「第 3 次注入」没有并成同一个数字
+- 测试：`tests/free-soul.test.ts`「系统提示要求两次就换路，并带上确认门和结果页通道」（断言含「连点」「验证码」，且系统提示里没有 T2 那句「已连续 3 次无效果」）
 - 决策点：无（提示词，不新增本地判断）
 - 真机：未跑
 
 ### T4
 
-- 改动：`src/main/agent/FREE-SOUL.ts` 新增 `request_confirm`，命中后立刻返回 `{ ok: true, awaitingConfirm: true, text }`。`handleChat` 把 text 推进 chatLog，并把 `awaitingConfirm` 放进返回值 `data`。没有接 `requestApproval`
+- 改动：`src/main/agent/free-soul.ts` 新增 `request_confirm`，命中后立刻返回 `{ ok: true, awaitingConfirm: true, text }`。`handleChat` 把 text 推进 chatLog，并把 `awaitingConfirm` 放进返回值 `data`。没有接 `requestApproval`
 - 系统提示替换了「核心版不执行发布…」。另加了一句：客服回复只填草稿，发送仍由用户在页面上点
-- 测试：`tests/FREE-SOUL.test.ts`
+- 测试：`tests/free-soul.test.ts`
   - 「request_confirm 用成功态结束本轮，不执行后续工具」
   - 「用户确认后，模型再点发送时工具会执行」
 - 决策点：**#28**
@@ -199,7 +199,7 @@ Cursor 完成后在本文件末尾追加「完成记录」：每个任务列出�
 
 - 改动：
   - `src/main/agent/travel.ts`：`TRAIN_CODE` 补临汾 `LFV`；`searchSite` / `resolveSearchDate`（明天按北京时间）；`parse12306TicketQuery` / `landedDropped12306Params`
-  - `src/main/agent/FREE-SOUL.ts`：工具 `search_site`，系统提示优先走结果页
+  - `src/main/agent/free-soul.ts`：工具 `search_site`，系统提示优先走结果页
   - `src/main/browser.ts`：`runCoreTool` 执行 `search_site`；navigate 落地后若 12306 丢掉日期参数，`repair12306QueryOnce` 补一次表单（内部会点一次查询）
 - 测试：`tests/travel.test.ts`
   - 「临汾到北京的明天按北京时间拼出带日期的 12306 结果页」
@@ -210,7 +210,7 @@ Cursor 完成后在本文件末尾追加「完成记录」：每个任务列出�
 ### T6
 
 - 改动：`src/main/agent/mission-journal.ts` 增加 `sidebarOffersRecovery()`（返回 false）；`offerMissionRecovery()` 在此为 false 时不 push、不设置 `pendingRecovery`。`recoveryLine` 和 `missions.jsonl` 都还在
-- 测试：`tests/FREE-SOUL-guard.test.ts`「重启回放时不追加继续问句，已有问句和日志原样留着」
+- 测试：`tests/free-soul-guard.test.ts`「重启回放时不追加继续问句，已有问句和日志原样留着」
 - 决策点：无
 - 真机：未跑
 
@@ -227,7 +227,7 @@ Cursor 完成后在本文件末尾追加「完成记录」：每个任务列出�
 
 # 第二轮（v2）— 真机复测后的修复
 
-> 2026-11-02 规划方复测结论：**Q2 通过**（10 个车次 + 票价表，携程与 12306 交叉核对，`search_site` 通道完整走通）；**Q3 通过**（确认门全链路正常）；**Q4 通过**（重启无新问句）。**Q1 失败**：微博总结仍烧完 24 轮无汇报。Q1 失败的完整轨迹已由规划方加的 `[FREE-SOUL]` 轮次日志捕获（`FREE-SOUL.ts` 里 `console.log` 那几行是**永久诊断能力，不许删**），根因如下，本轮只修这些。
+> 2026-11-02 规划方复测结论：**Q2 通过**（10 个车次 + 票价表，携程与 12306 交叉核对，`search_site` 通道完整走通）；**Q3 通过**（确认门全链路正常）；**Q4 通过**（重启无新问句）。**Q1 失败**：微博总结仍烧完 24 轮无汇报。Q1 失败的完整轨迹已由规划方加的 `[free-soul]` 轮次日志捕获（`free-soul.ts` 里 `console.log` 那几行是**永久诊断能力，不许删**），根因如下，本轮只修这些。
 
 ## Q1 轨迹与根因（已核实）
 
@@ -235,14 +235,14 @@ Cursor 完成后在本文件末尾追加「完成记录」：每个任务列出�
 
 三个具体缺口：
 
-1. **新核心 page_text 丢了旧版的「较上次 +N 字」增量标记**。旧实现还在 `src/main/agent/deepseek.ts:432`（`deltaText` 函数）和 `590`（应用处），旧工具描述（`deepseek.ts:116`）教过模型「+0 字表示没有新内容：换策略，不要连按同一个键」。新核心 `FREE-SOUL.ts` 的 page_text 消息只有 `page_text N chars`，系统提示也没这条规则。
+1. **新核心 page_text 丢了旧版的「较上次 +N 字」增量标记**。旧实现还在 `src/main/agent/deepseek.ts:432`（`deltaText` 函数）和 `590`（应用处），旧工具描述（`deepseek.ts:116`）教过模型「+0 字表示没有新内容：换策略，不要连按同一个键」。新核心 `free-soul.ts` 的 page_text 消息只有 `page_text N chars`，系统提示也没这条规则。
 2. **指纹卡死检测对「scroll→read 交替」失明**。`noteStuck` 按「工具名+参数+前后页面指纹」比较，scroll 和 page_text 交替出现时每个指纹只隔轮重复，永远凑不满连续 3 次。本轮两个任务 **STUCK_HINT 一次都没触发**（轨迹里零条）。
 3. **没有轮次预算感知**。模型不知道自己快没轮了，也不被鼓励「信息够就收工」。它在 r13 就该汇报了。
 
 ## T7（P0）page_text 增量标记移植 + 教模型用法
 
 **要求：**
-1. `FREE-SOUL.ts` 的 run 内维护「上次 page_text 正文」状态（每次 run 开始时清空）。工具结果为 page_text 且 ok 时，计算本次与上次的字数差，把消息从 `page_text N chars` 改为 `page_text N chars（较上次 +M 字）`——负数写 `较上次 -M 字`，首次不附加。格式与旧版 `deepseek.ts:432` 一致。
+1. `free-soul.ts` 的 run 内维护「上次 page_text 正文」状态（每次 run 开始时清空）。工具结果为 page_text 且 ok 时，计算本次与上次的字数差，把消息从 `page_text N chars` 改为 `page_text N chars（较上次 +M 字）`——负数写 `较上次 -M 字`，首次不附加。格式与旧版 `deepseek.ts:432` 一致。
 2. `systemPrompt()` 的 page_text 规则后追加一句（对照旧版 `deepseek.ts:116` 的成熟文案改写）：「滚动翻页采集时注意 page_text 消息里的「较上次 +N 字」：+0 表示这一屏没有新内容，立即基于已读内容汇报或换浏览方式，不要继续滚动。」
 3. 增量计算只是给模型的观察信息，不算路线判断，无需登记决策点。
 
@@ -275,7 +275,7 @@ Cursor 完成后在本文件末尾追加「完成记录」：每个任务列出�
 
 ## 本轮禁区
 
-1. `[FREE-SOUL]` 轮次日志不许删（已并入 §5 工程要求）。
+1. `[free-soul]` 轮次日志不许删（已并入 §5 工程要求）。
 2. T8 的两个 hint 只注入、不终止——模型仍是唯一决定者。
 3. 不动 T1–T6 已交付的行为；Q2/Q3/Q4 的通过不许回退。
 4. 全部完成后跑 `npm test`（全量）、`npm run typecheck`、`npm run build`，真机 Q1/Q2 自测后如实写「通过/未过/未跑」。
@@ -299,12 +299,12 @@ Cursor 完成后在本文件末尾追加「完成记录」：每个任务列出�
 
 ## 完成记录（v2，2026-11-02，Cursor）
 
-全量 `npm test`：70 个文件、577 项通过。`npm run typecheck` 通过。`npm run build` 通过。未打包，未提交 git。`[FREE-SOUL]` 原有 `run start` / 每轮工具 / `STUCK_HINT` 日志都还在，并补了 `PAGE_SAME_HINT` 和 `BUDGET_HINT`。
+全量 `npm test`：70 个文件、577 项通过。`npm run typecheck` 通过。`npm run build` 通过。未打包，未提交 git。`[free-soul]` 原有 `run start` / 每轮工具 / `STUCK_HINT` 日志都还在，并补了 `PAGE_SAME_HINT` 和 `BUDGET_HINT`。
 
 ### T7
 
-- 改动：`src/main/agent/FREE-SOUL.ts`。每次 run 清空上次正文。`page_text` 成功时用 `pageTextGrowthNote`（`deepseek.ts`）把工具消息改成 `page_text N chars（较上次 +M 字）`，变短写 `较上次 -M 字`，第一次不附加。系统提示增加「+0 就停」
-- 测试：`tests/FREE-SOUL.test.ts`
+- 改动：`src/main/agent/free-soul.ts`。每次 run 清空上次正文。`page_text` 成功时用 `pageTextGrowthNote`（`deepseek.ts`）把工具消息改成 `page_text N chars（较上次 +M 字）`，变短写 `较上次 -M 字`，第一次不附加。系统提示增加「+0 就停」
+- 测试：`tests/free-soul.test.ts`
   - 「page_text 从第二次起标注较上次字数，下一次 run 重新计数」
   - 「正文变短时写成较上次负数」
   - 「系统提示要求两次就换路，并带上确认门和结果页通道」里增加了对「较上次 +N 字」的断言
@@ -313,8 +313,8 @@ Cursor 完成后在本文件末尾追加「完成记录」：每个任务列出�
 
 ### T8
 
-- 改动：`src/main/agent/FREE-SOUL.ts`。连续 3 次相同 `page_text` 正文（中间可以夹 scroll）注入正文提示并清零计数。轮次到达 `floor(maxRounds * 0.75)`（默认 18/24）时注入一次预算提示。系统提示增加「够用即报」。两处都不结束循环
-- 测试：`tests/FREE-SOUL.test.ts`
+- 改动：`src/main/agent/free-soul.ts`。连续 3 次相同 `page_text` 正文（中间可以夹 scroll）注入正文提示并清零计数。轮次到达 `floor(maxRounds * 0.75)`（默认 18/24）时注入一次预算提示。系统提示增加「够用即报」。两处都不结束循环
+- 测试：`tests/free-soul.test.ts`
   - 「三次相同 page_text 中间夹滚动仍注入正文提示，并且继续执行」
   - 「第 18/24 轮注入一次预算提示，不伪造最终回复」
 - 决策点：**#29**、**#30**（`docs/DECISION-POINTS.md`）。没有改 #27
@@ -481,7 +481,7 @@ Cursor 完成后在本文件末尾追加「完成记录」：每个任务列出�
 
 **根因：** 用户原话：「当前你写的文章中标点符号太多了 一看就是ai从md文档里转化的 不干净 不像是人写的」。微博正文也带 1️⃣ 序号 emoji。这是提示注入类干预，允许且必要。
 
-**要求：** `FREE-SOUL.ts` `systemPrompt()` 增加一条：
+**要求：** `free-soul.ts` `systemPrompt()` 增加一条：
 「发布到微博、知乎、小红书等社交平台的正文要用自然的口语段落：不用 markdown 标题、加粗、编号列表、分割线和序号 emoji（如 1️⃣）；需要分点时用『一、二、三』或自然过渡衔接。在侧栏里直接回复用户的总结不受此限。」
 
 **验收：** 单测断言 systemPrompt 含「口语段落」级别关键词；真机（Q5）：知乎最终发布的正文无 md 痕迹。
@@ -491,7 +491,7 @@ Cursor 完成后在本文件末尾追加「完成记录」：每个任务列出�
 **根因：** 知乎「高质量回答」任务合理地花了 12 轮调研（读 3 个 GitHub 文档），再被 T10-T12 的事故放大，两次烧完 24 轮。修完 T10-T12 后 24 大概率够用，但发布类长任务应留余量。
 
 **要求：**
-1. `FREE-SOUL.ts` `maxRounds` 默认 24 → 32。
+1. `free-soul.ts` `maxRounds` 默认 24 → 32。
 2. BUDGET_HINT 仍按 `floor(maxRounds * 0.75)`（自动变 24/32），到顶仍如实报「未完成」，不许假 done。沿用 #30 口径，不新增决策点。
 
 **验收：** 单测更新默认值断言；真机（Q5）知乎任务 32 轮内完成。
@@ -507,7 +507,7 @@ Cursor 完成后在本文件末尾追加「完成记录」：每个任务列出�
 
 ## 工程要求
 
-TDD：每个任务先写失败测试再实现，风格照 `tests/FREE-SOUL.test.ts`。每完成一个任务跑 `npm test`（全绿）+ `npm run typecheck`。全部完成后 `npm run build`，再按下面场景真机自测。
+TDD：每个任务先写失败测试再实现，风格照 `tests/free-soul.test.ts`。每完成一个任务跑 `npm test`（全绿）+ `npm run typecheck`。全部完成后 `npm run build`，再按下面场景真机自测。
 
 ## 真机验收场景（全部通过才算完成）
 
@@ -524,20 +524,20 @@ TDD：每个任务先写失败测试再实现，风格照 `tests/FREE-SOUL.test.
 
 ## 完成记录（v3，2026-11-02，Cursor）
 
-全量 `npm test`：71 个文件、586 项通过。`npm run typecheck` 通过。`npm run build` 通过。未打包，未提交 git。`[FREE-SOUL]` 的 `run start`、每轮工具、`STUCK_HINT`、`PAGE_SAME_HINT`、`BUDGET_HINT` 都还在。
+全量 `npm test`：71 个文件、586 项通过。`npm run typecheck` 通过。`npm run build` 通过。未打包，未提交 git。`[free-soul]` 的 `run start`、每轮工具、`STUCK_HINT`、`PAGE_SAME_HINT`、`BUDGET_HINT` 都还在。
 
 ### T10
 
 - 改动：`src/main/qa/dianxiaomi-smt.ts` 增加 `submitClickNeedsGate`。`src/main/browser.ts` 点击路径改用它：`freeSoulRunning` 时整段提交闸门跳过，不调 `qaGate`、不弹 `requestApproval`。`looksLikeSubmitAction`、`qaGate`、`requestApproval`、店小秘工作流都还在
 - 现有闸门词仍是「提交 / 保存并提交 / 发布产品 / 立即发布 / 确认发布」。单独的「发布」本来就不进这道闸门，这次没有放宽或收紧词表
-- 测试：`tests/FREE-SOUL-v3.test.ts`「运行中点击发布不触发闸门，旧路径仍拦确认发布」
+- 测试：`tests/free-soul-v3.test.ts`「运行中点击发布不触发闸门，旧路径仍拦确认发布」
 - 决策点：**#31**。#26、#30 只把默认轮次从 24 改成 32（见 T16）
 - 真机 Q5：未跑
 
 ### T11
 
 - 改动：`src/main/snapshot-retry.ts` 的 `recaptureIfEmpty`。`snapshot` 在有地址、不是 `about:blank`、可交互元素为 0 时等待 600ms 再抓一次。消息带 `(retried)`。两次都是 0 仍把 0 写入 `lastSnapshot`
-- 测试：`tests/FREE-SOUL-v3.test.ts`
+- 测试：`tests/free-soul-v3.test.ts`
   - 「第一次 0、第二次有元素时返回第二次并注明重试」
   - 「两次都是 0 时如实返回 0，空白页不重抓」
 - 决策点：无
@@ -546,7 +546,7 @@ TDD：每个任务先写失败测试再实现，风格照 `tests/FREE-SOUL.test.
 ### T12
 
 - 改动：`src/main/fill-retry.ts` 的 `retryShortContentEditable`。`fill` 在 contenteditable 回读为空或不到期望一半时，再做一次 focus、全选清空、`insertText`。失败消息带 `tag=` 和 `contenteditable=`。普通输入框不走这一轮
-- 测试：`tests/FREE-SOUL-v3.test.ts`
+- 测试：`tests/free-soul-v3.test.ts`
   - 「第一次丢字，重试写上后算成功」
   - 「重试仍是空时如实失败，并带上标签」
   - 「普通输入框不重试」
@@ -565,21 +565,21 @@ TDD：每个任务先写失败测试再实现，风格照 `tests/FREE-SOUL.test.
 ### T14
 
 - 改动：`src/main/browser.ts` `handleChat`。执行中的新消息写入 `chatLog`，只保留最新一条为 `pendingChat`。本轮 `finally` 清掉 `chatRunning` 后再自动 `handleChat`。续跑不再写第二条用户气泡，也不塞进当前这一轮的 messages
-- 测试：`tests/FREE-SOUL-guard.test.ts`「两条都留在聊天里，结束后只自动跑最新一条」
+- 测试：`tests/free-soul-guard.test.ts`「两条都留在聊天里，结束后只自动跑最新一条」
 - 决策点：无
 - 真机 Q7：未跑
 
 ### T15
 
-- 改动：`src/main/agent/FREE-SOUL.ts` 系统提示增加社交正文用口语段落、侧栏总结不受限
-- 测试：`tests/FREE-SOUL.test.ts`「系统提示要求两次就换路，并带上确认门和结果页通道」增加「口语段落」
+- 改动：`src/main/agent/free-soul.ts` 系统提示增加社交正文用口语段落、侧栏总结不受限
+- 测试：`tests/free-soul.test.ts`「系统提示要求两次就换路，并带上确认门和结果页通道」增加「口语段落」
 - 决策点：无
 - 真机：未跑
 
 ### T16
 
-- 改动：`src/main/agent/FREE-SOUL.ts` 默认 `maxRounds` 从 24 改为 32，硬顶仍是 40。预算提示仍是 `floor(maxRounds * 0.75)`，默认变成 24/32。到顶仍报未完成
-- 测试：`tests/FREE-SOUL.test.ts`「第 24/32 轮注入一次预算提示，不伪造最终回复」（原 18/24 用例改名）
+- 改动：`src/main/agent/free-soul.ts` 默认 `maxRounds` 从 24 改为 32，硬顶仍是 40。预算提示仍是 `floor(maxRounds * 0.75)`，默认变成 24/32。到顶仍报未完成
+- 测试：`tests/free-soul.test.ts`「第 24/32 轮注入一次预算提示，不伪造最终回复」（原 18/24 用例改名）
 - 决策点：沿用 **#30**，没有新编号。#26 的默认轮次说明同步改成 32
 - 真机 Q5 是否在 32 轮内完成：未跑
 
@@ -621,8 +621,8 @@ TDD：每个任务先写失败测试再实现，风格照 `tests/FREE-SOUL.test.
 
 - **Q8 微博发布回归：通过** ✅。「研究卖点→连续发三条→确认→真发布」全链路成功，三条微博 17:21 全部发出（每条有「发布成功」提示、时间线可见）。T10 的放行没有破坏发布链路。
 - **暴露新问题 1（见 T18）**：r20 `click_text ok=false 草稿已填好。发送留给你，我没有代点。`——`publish-gate`（`agent/publish-gate.ts`）挂在 **click_text 路径**（`browser.ts:8657`），T10 只摘了 click-ref 路径的 QA 闸门，漏了这道。模型靠换 snapshot ref 点击绕过去了，这次没坏事，但它同样是用户已确认后仍在拦截的本地闸门。
-- **暴露新问题 2（见 T17，即用户报的「卡住」）**：知乎长文任务 r5 后模型请求悬死，无任何后续动作，用户追问「为什么没动静了？」也因 chatRunning 被排队（永远等不到执行）。根因：`FREE-SOUL.ts:399` 的模型请求**没有超时**，连接一挂起 run 永不结束。已杀进程重启解卡。
-- **暴露新问题 3（见 T19）**：用户让把本地视频 `D:\download\sparo 发微博 自动.mp4` 发到 B 站（明确要求「先别点发布」）。模型**行为正确**：如实汇报卡点、没假完成、遵守不发布。真正缺口是 FREE-SOUL **没有本地文件上传工具**——浏览器安全限制使 JS 填不进 `<input type=file>`，r9 还试图 `file:///D:/download/` 被拒。
+- **暴露新问题 2（见 T17，即用户报的「卡住」）**：知乎长文任务 r5 后模型请求悬死，无任何后续动作，用户追问「为什么没动静了？」也因 chatRunning 被排队（永远等不到执行）。根因：`free-soul.ts:399` 的模型请求**没有超时**，连接一挂起 run 永不结束。已杀进程重启解卡。
+- **暴露新问题 3（见 T19）**：用户让把本地视频 `D:\download\sparo 发微博 自动.mp4` 发到 B 站（明确要求「先别点发布」）。模型**行为正确**：如实汇报卡点、没假完成、遵守不发布。真正缺口是 free-soul **没有本地文件上传工具**——浏览器安全限制使 JS 填不进 `<input type=file>`，r9 还试图 `file:///D:/download/` 被拒。
 - **暴露新问题 4（见 T20）**：重启后模型看到当前标签页停在百度首页，就向用户自曝「上一轮『三条微博已发布』的说法跟实际状态对不上、是不该给你的」——**用当前页面位置否定历史真实完成的动作**，属于误判（发布证据在历史工具结果里，17:21 的三条微博轨迹和读回都在）。历史工具结果与当前页面状态是两回事，模型把重启后的状态重置当成了历史造假证据，向用户传播了错误结论。
 
 ---
@@ -633,7 +633,7 @@ TDD：每个任务先写失败测试再实现，风格照 `tests/FREE-SOUL.test.
 
 ### T17（P0）模型请求超时护栏
 
-**根因链（已核实）：** `FREE-SOUL.ts:398-403`，`await doFetch(chatCompletionsUrl(...))` 无 AbortController、无超时。模型端点挂起时 run 永远不结束：侧栏一直「思考中」、chatRunning 不复位、T14 排队的消息永远不执行、用户只能重启。2026-11-02 17:15 知乎任务实测悬死。
+**根因链（已核实）：** `free-soul.ts:398-403`，`await doFetch(chatCompletionsUrl(...))` 无 AbortController、无超时。模型端点挂起时 run 永远不结束：侧栏一直「思考中」、chatRunning 不复位、T14 排队的消息永远不执行、用户只能重启。2026-11-02 17:15 知乎任务实测悬死。
 
 **要求：**
 1. 每次 LLM 请求加 AbortController 超时，默认 **120 秒**（config 可配 `requestTimeoutMs`）。到时 abort 后**原样重试一次**（网络抖动一次很常见）；第二次仍失败才算失败。
@@ -661,10 +661,10 @@ TDD：每个任务先写失败测试再实现，风格照 `tests/FREE-SOUL.test.
 
 ### T19（P0）本地文件上传工具 set_file
 
-**根因链（已核实）：** 2026-11-02 17:46 用户实测 B 站投稿：「`D:\download\sparo 发微博 自动.mp4` 帮我把这个视频发布一下」。FREE-SOUL 的 11 个工具没有一个能操作 `<input type=file>`——浏览器安全限制使 JS 填不进文件路径（r4/r8 `fill ok=false Script failed`），模型还被逼着试了 `file:///D:/download/`（r9 被拒）。模型行为正确（如实汇报卡点、遵守「先别点发布」），纯缺执行能力。旧架构已有相关积累可参考：`browser.ts` 顶部 `FIND_FILE_INPUT_SCRIPT`、shell 的 `pickFile` / `filePath` IPC、`agent/files/` 一族。
+**根因链（已核实）：** 2026-11-02 17:46 用户实测 B 站投稿：「`D:\download\sparo 发微博 自动.mp4` 帮我把这个视频发布一下」。free-soul 的 11 个工具没有一个能操作 `<input type=file>`——浏览器安全限制使 JS 填不进文件路径（r4/r8 `fill ok=false Script failed`），模型还被逼着试了 `file:///D:/download/`（r9 被拒）。模型行为正确（如实汇报卡点、遵守「先别点发布」），纯缺执行能力。旧架构已有相关积累可参考：`browser.ts` 顶部 `FIND_FILE_INPUT_SCRIPT`、shell 的 `pickFile` / `filePath` IPC、`agent/files/` 一族。
 
 **要求：**
-1. `FREE-SOUL.ts` 新增工具 `set_file`：参数 `{ path: string, ref?: string, selector?: string }`（ref/selector 二选一，定位 file input，缺省取页面第一个 `<input type=file>`）。
+1. `free-soul.ts` 新增工具 `set_file`：参数 `{ path: string, ref?: string, selector?: string }`（ref/selector 二选一，定位 file input，缺省取页面第一个 `<input type=file>`）。
 2. 执行链（`runCoreTool` 新分支）：主进程先用 `fs` 核实文件存在（不存在→ `{ok:false, message:"文件不存在：<path>"}`，带实际错误）；存在→ 用 `webContents.debugger`（CDP）`DOM.getDocument` → `DOM.querySelector`（或用已有 snapshot 的 ref 定位机制换算成 CSS selector）拿 nodeId，然后 **`DOM.setFileInputFiles`** 注入文件。返回 `{ok:true, data:{ path, sizeMB }}`。
    - CDP attach 已有先例可查（`webContents.debugger.attach` / `sendCommand`，搜主进程里 `debugger` 用法；没有先例就按 Electron 文档写，注意 attach 前判 `isAttached()`）。
    - 注入成功后页面自己的上传逻辑会走（change 事件触发），不要替页面点「开始上传」。
@@ -682,7 +682,7 @@ TDD：每个任务先写失败测试再实现，风格照 `tests/FREE-SOUL.test.
 **根因链（已核实）：** 2026-11-02 17:35 用户实测。重启后模型看到当前标签页停在百度首页，就向用户自曝：「上一轮『三条微博已发布』的说法跟现在浏览器里的实际状态对不上……那些『已发布』的描述是不该给你的」。**用户已确认三条微博 17:21 真实发布成功**——确属误判：发布成功的证据在历史工具结果里（三条微博轨迹 + page_text 读回「发布成功」都在），模型用「现在的标签页在哪」否定了「历史里真实读回的结果」，向用户传播了错误结论，损害的是信任本身。这不是假完成，是假翻供。
 
 **要求：**
-1. `FREE-SOUL.ts` `systemPrompt()` 增加一条：「历史对话里的工具结果都是当时真实读回的，是可信的。浏览器或应用重启后页面状态会重置，当前标签页在哪、显示什么，都不能用来否定历史里已完成的动作。需要核实历史发布是否生效时，去对应平台实际查看（例如打开微博个人主页看时间线），不要凭当前页面状态下结论。」
+1. `free-soul.ts` `systemPrompt()` 增加一条：「历史对话里的工具结果都是当时真实读回的，是可信的。浏览器或应用重启后页面状态会重置，当前标签页在哪、显示什么，都不能用来否定历史里已完成的动作。需要核实历史发布是否生效时，去对应平台实际查看（例如打开微博个人主页看时间线），不要凭当前页面状态下结论。」
 2. 提示注入类干预，无需新决策点。
 
 **验收：**
@@ -710,14 +710,14 @@ TDD：每个任务先写失败测试再实现，风格照 `tests/FREE-SOUL.test.
 
 ## 完成记录（v4，2026-11-02，Cursor）
 
-全量 `npm test`：72 个文件、591 项通过。`npm run typecheck` 通过。`npm run build` 通过。未打包，未提交 git。`[FREE-SOUL]` 原有轮次日志都还在，超时失败时多一行 `request failed`。
+全量 `npm test`：72 个文件、591 项通过。`npm run typecheck` 通过。`npm run build` 通过。未打包，未提交 git。`[free-soul]` 原有轮次日志都还在，超时失败时多一行 `request failed`。
 
 T20 按任务书定性处理：这是假翻供，不是假完成。提示只教模型历史工具结果可信，要核实就去平台实际看。
 
 ### T17
 
-- 改动：`src/main/agent/FREE-SOUL.ts`。每次模型请求默认 120 秒（`requestTimeoutMs` 可配），AbortController 到时 abort，失败原样重试一次。第二次仍失败则 run 返回 `ok: false`，文案是「模型请求超时/失败：……（可重试）」。不把已有工具结果收成答案
-- 测试：`tests/FREE-SOUL-v4.test.ts`
+- 改动：`src/main/agent/free-soul.ts`。每次模型请求默认 120 秒（`requestTimeoutMs` 可配），AbortController 到时 abort，失败原样重试一次。第二次仍失败则 run 返回 `ok: false`，文案是「模型请求超时/失败：……（可重试）」。不把已有工具结果收成答案
+- 测试：`tests/free-soul-v4.test.ts`
   - 「第一次挂起、第二次正常返回时，任务照常完成」
   - 「两次都挂起时如实失败，不把过程说成完成」
 - 决策点：**#32**
@@ -726,17 +726,17 @@ T20 按任务书定性处理：这是假翻供，不是假完成。提示只教�
 ### T18
 
 - 改动：`src/main/agent/publish-gate.ts` 增加 `gateClickText`。`browser.ts` `clickText` 改用它。`freeSoulRunning` 时 send 类不再查 `allowClick`。支付、登录、验证码仍拦。`classifyClick` / `allowClick` 没删没改
-- 测试：`tests/FREE-SOUL-v4.test.ts`「运行中放行发送，支付仍拦，旧路径仍拦发送」。旧的 `tests/publish-gate.test.ts` 仍绿
+- 测试：`tests/free-soul-v4.test.ts`「运行中放行发送，支付仍拦，旧路径仍拦发送」。旧的 `tests/publish-gate.test.ts` 仍绿
 - 决策点：**#33**
 - 真机 Q10：未跑
 
 ### T19
 
 - 改动：
-  - `src/main/agent/FREE-SOUL.ts` 新增工具 `set_file`（path 必填，ref / selector 可选），系统提示写明用它上传，不要 fill 路径或 file://
+  - `src/main/agent/free-soul.ts` 新增工具 `set_file`（path 必填，ref / selector 可选），系统提示写明用它上传，不要 fill 路径或 file://
   - `src/main/agent/set-file.ts` 只核对文件在不在和大小，不读内容
   - `src/main/browser.ts` `runCoreTool` 新分支：不存在就返回「文件不存在：<path>」；存在则走已有 `upload()`（CDP `DOM.setFileInputFiles`）。返回 `{ path, sizeMB }`。不点投稿或发布
-- 测试：`tests/FREE-SOUL-v4.test.ts`
+- 测试：`tests/free-soul-v4.test.ts`
   - 「模型调用时走 set_file 分支，参数带路径、ref 和 selector」
   - 「文件不存在时如实失败，存在时只回报路径和大小」
 - 决策点：无
@@ -744,8 +744,8 @@ T20 按任务书定性处理：这是假翻供，不是假完成。提示只教�
 
 ### T20
 
-- 改动：`src/main/agent/FREE-SOUL.ts` 系统提示增加历史信任口径：历史工具结果是当时真实读回的；重启后页面会重置，不能用来否定已完成的动作；要核实就去对应平台实际查看
-- 测试：`tests/FREE-SOUL.test.ts`「系统提示要求两次就换路，并带上确认门和结果页通道」增加「历史」「重置」「实际查看」
+- 改动：`src/main/agent/free-soul.ts` 系统提示增加历史信任口径：历史工具结果是当时真实读回的；重启后页面会重置，不能用来否定已完成的动作；要核实就去对应平台实际查看
+- 测试：`tests/free-soul.test.ts`「系统提示要求两次就换路，并带上确认门和结果页通道」增加「历史」「重置」「实际查看」
 - 决策点：无
 - 真机 Q12：未跑
 
@@ -766,7 +766,7 @@ T20 按任务书定性处理：这是假翻供，不是假完成。提示只教�
 
 ### Q9 请求超时 — 通过
 
-- 手法：`FREE-SOUL.ts` 超时临时调 3 秒，settings baseUrl 指向本机不响应端口。挂死服务器第一版只 accept 一次就 sleep，触发的是 `fetch failed`（网络错误路径）；重写为持续 accept、永不响应后，触发真正的 AbortError 路径。
+- 手法：`free-soul.ts` 超时临时调 3 秒，settings baseUrl 指向本机不响应端口。挂死服务器第一版只 accept 一次就 sleep，触发的是 `fetch failed`（网络错误路径）；重写为持续 accept、永不响应后，触发真正的 AbortError 路径。
 - 结果：气泡如实报「模型请求超时/失败：请求超时（可重试）」，首条 7.8 秒（3s×2 次尝试 + 开销），主进程日志 `request failed attempt=1/2 请求超时`。第二条消息**立即开跑**、没被排队——chatRunning 复位确认。
 - 「改回配置后正常任务能跑」由 Q10 完整真机流程覆盖（恢复 deepseek 配置后全流程正常）。
 
@@ -788,7 +788,7 @@ T20 按任务书定性处理：这是假翻供，不是假完成。提示只教�
 
 ### 现场清理（全部完成）
 
-- `FREE-SOUL.ts` 超时恢复 120 秒（`requestTimeoutMs` 可配）。
+- `free-soul.ts` 超时恢复 120 秒（`requestTimeoutMs` 可配）。
 - `index.ts` 临时 `SPARO_DEBUG_PORT` 段已删。
 - `settings.json` 从备份恢复（baseUrl 回 `https://api.deepseek.com`、apiKey/model 完好，应用退出后再核对未被改写）。
 - 临时脚本与结果文件（sparo_q9/q10/q12_test.py、sparo_inspect*.py、hang_server.py、各 results.json、settings 备份）全部删除。
@@ -813,7 +813,7 @@ T20 按任务书定性处理：这是假翻供，不是假完成。提示只教�
 
 现象：用户发 B 站指令那一轮，侧栏报「模型请求超时/失败：LLM API: An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'. (insufficient tool messages following tool_calls message)（可重试）」。用户回「重试」后同任务一次跑通——说明坏历史只存在于出错那次 run 的内存里，重开 run 即恢复。
 
-根因（代码级定位，`src/main/agent/FREE-SOUL.ts`）：
+根因（代码级定位，`src/main/agent/free-soul.ts`）：
 
 1. **提示消息插进 tool 消息中间**。run 循环里 `PAGE_SAME_HINT`（348 行）和 `STUCK_HINT`（366 行）是 `user` 角色消息，在工具执行 for 循环**内**入栈。当模型一条 assistant 消息里发了多个并行 tool_calls（如 `[page_text, 其他]`），序列就成了：
    ```
@@ -826,14 +826,14 @@ T17 的失败上报与「可重试」路径这次工作正常，可观测性没�
 
 ### T21（v5）：修 tool_calls 消息序列，保证发给 API 的历史永远合法
 
-改动文件：`src/main/agent/FREE-SOUL.ts`。
+改动文件：`src/main/agent/free-soul.ts`。
 
 1. **提示移位**：`PAGE_SAME_HINT` / `STUCK_HINT` 不再在工具 for 循环内直接 push。循环内只置标记（如 `pendingHints: string[]`），**本轮全部 tool 消息推完之后**再一次性 push（两条都触发时合并或顺序推均可）。判定逻辑（samePageCount、streak/finger）不改动，只改入栈时机。
 2. **id 兜底**：291 行 assistant push 与 340 行 tool push 用同一套归一化 id——`call.id` 缺失时合成 `` `${round}-${index}` ``，两处保持一致。
 3. **发送前兜底校验（防御纵深）**：`completion()` 组装 body 前过一遍 `sanitize`：每个带 `tool_calls` 的 assistant 消息，其后连续 tool 消息必须覆盖全部 tool_call_id；缺的就在连续 tool 段末尾补合成 tool 消息（content 写「（该工具调用未执行）」）。修复在副本上做，不依赖前两条是否漏改。
 4. 不改护栏语义：STUCK/PAGE_SAME/BUDGET 提示文案、触发阈值、轮次上限、request_confirm 行为全部不变。
 
-测试（建议加 `tests/FREE-SOUL-v5.test.ts`，fetchImpl 抓请求 body 断言）：
+测试（建议加 `tests/free-soul-v5.test.ts`，fetchImpl 抓请求 body 断言）：
 
 - 「并行调用触发提示时，user 提示在全部 tool 消息之后、不在中间」：构造 assistant 返回两个 tool_calls，第一个触发 PAGE_SAME_HINT（把 samePageCount 预热到阈值），断言请求 body 中 assistant(tool_calls) 后紧跟连续两个 tool 消息，hint 在其后。
 - 「call.id 缺失时 assistant 与 tool 消息 id 一致且不为空」。
@@ -842,7 +842,7 @@ T17 的失败上报与「可重试」路径这次工作正常，可观测性没�
 验收：
 
 - 全量 `npm test` + `npm run typecheck` 通过。
-- Q13 真机：用户在场重跑一次 Q11 流程（或任何长上传/长轮询任务），确认不再出现该 400；如仍出现，把主进程日志 `[FREE-SOUL]` 轮次记录带回。
+- Q13 真机：用户在场重跑一次 Q11 流程（或任何长上传/长轮询任务），确认不再出现该 400；如仍出现，把主进程日志 `[free-soul]` 轮次记录带回。
 - 决策点：无（不改任务走向，只修消息序列）。
 
 ### Q5 知乎发布 — 仍未真机跑
@@ -855,11 +855,11 @@ T17 的失败上报与「可重试」路径这次工作正常，可观测性没�
 
 ### T21
 
-- 改动：`src/main/agent/FREE-SOUL.ts`
+- 改动：`src/main/agent/free-soul.ts`
   - `PAGE_SAME_HINT` / `STUCK_HINT` 在工具循环里只进 `pendingHints`，本轮全部 tool 消息推完后再入栈。`samePageCount`、streak / finger 的判定没动
   - assistant 与 tool 用同一套 id：`call.id` 为空时合成 `` `${round}-${index}` ``
   - `completion()` 发请求前对副本跑 `sanitize`。带 `tool_calls` 的 assistant 后面，连续 tool 消息缺哪个 id，就在这段末尾补一条「（该工具调用未执行）」
-- 测试：`tests/FREE-SOUL-v5.test.ts`
+- 测试：`tests/free-soul-v5.test.ts`
   - 「并行调用触发提示时，user 提示在全部 tool 消息之后、不在中间」
   - 「call.id 缺失时 assistant 与 tool 消息 id 一致且不为空」
   - 「sanitize 能修坏序列」
@@ -872,7 +872,7 @@ T17 的失败上报与「可重试」路径这次工作正常，可观测性没�
 
 代码审查通过，本机复跑 `npm test` 73 文件 594 项全绿、`npm run typecheck` 通过。三处改动逐条核对：
 
-- **提示移位**：`pendingHints` 在工具循环内置标记、本轮全部 tool 消息推完后再入栈（FREE-SOUL.ts 358、425–427 行）；`samePageCount`/streak/finger 判定与重置时机未动。
+- **提示移位**：`pendingHints` 在工具循环内置标记、本轮全部 tool 消息推完后再入栈（free-soul.ts 358、425–427 行）；`samePageCount`/streak/finger 判定与重置时机未动。
 - **id 兜底**：`normalizeToolCall`（86–100 行）对 `call.id` 空值合成 `` `${round}-${index}` ``，assistant push（344–349 行）与 tool push（396 行）共用同一套归一化结果，两处必然一致。
 - **sanitize**：`completion()` 组 body 时对副本执行（455 行）；只补缺失的 tool_call_id、不改动原数组，防御纵深到位。
 - 测试质量：第一条完整复刻真机触发路径（page_text 预热两轮 → 第三轮并行调用带 page_text → 断言 hint 在全部 tool 消息之后），与 2026-11-02 日志中 r15 的案发现场一致。
@@ -911,7 +911,7 @@ Gmail 勾选全选后会出现「选择与此搜索匹配的所有会话」横�
 
 - 用户说「直接」「以后」「全部」「别让我看了」等全量授权措辞时，同类批量操作（归档、清理、翻页处理）自主连续执行到做完或真卡住，不中途问「要不要继续」；跨到新的操作类型（改账号设置、订阅、付费、删除不可恢复内容）仍必须先确认。
 
-测试：`tests/FREE-SOUL.test.ts` 系统提示断言加「全量授权」「自主连续执行」相关关键词。决策点：无（提示词引导，无本地闸门）。
+测试：`tests/free-soul.test.ts` 系统提示断言加「全量授权」「自主连续执行」相关关键词。决策点：无（提示词引导，无本地闸门）。
 
 ### T23（v6）：批量列表操作的平台通道（只改 systemPrompt）
 
@@ -933,8 +933,8 @@ Gmail 勾选全选后会出现「选择与此搜索匹配的所有会话」横�
 
 ### T22
 
-- 改动：`src/main/agent/FREE-SOUL.ts` 的 `systemPrompt` 加全量授权一句。同类批量操作（归档、清理、翻页）自主连续执行到做完或真卡住，不中途问「要不要继续」。改账号设置、订阅、付费、删除不可恢复内容仍必须先确认
-- 测试：先让 `tests/FREE-SOUL.test.ts`「系统提示要求两次就换路，并带上确认门和结果页通道」因缺少「全量授权」失败，再补提示。断言含「全量授权」「自主连续执行」
+- 改动：`src/main/agent/free-soul.ts` 的 `systemPrompt` 加全量授权一句。同类批量操作（归档、清理、翻页）自主连续执行到做完或真卡住，不中途问「要不要继续」。改账号设置、订阅、付费、删除不可恢复内容仍必须先确认
+- 测试：先让 `tests/free-soul.test.ts`「系统提示要求两次就换路，并带上确认门和结果页通道」因缺少「全量授权」失败，再补提示。断言含「全量授权」「自主连续执行」
 - 决策点：无
 - 真机 Q14：未跑
 
@@ -951,9 +951,9 @@ Gmail 勾选全选后会出现「选择与此搜索匹配的所有会话」横�
 
 代码审查通过，本机复跑 `npm test` 73 文件 594 项全绿、`npm run typecheck` 通过。逐项核对：
 
-- **T22**：systemPrompt 新句（FREE-SOUL.ts 201 行）与任务书逐字一致；授权边界对——「同类批量操作」限归档/清理/翻页处理，「跨操作类型」点名改账号设置、订阅、付费、删除不可恢复内容仍先确认，与确认门不冲突（筛选器属于改账号设置，仍会问，符合 v6 验收预期）。
+- **T22**：systemPrompt 新句（free-soul.ts 201 行）与任务书逐字一致；授权边界对——「同类批量操作」限归档/清理/翻页处理，「跨操作类型」点名改账号设置、订阅、付费、删除不可恢复内容仍先确认，与确认门不冲突（筛选器属于改账号设置，仍会问，符合 v6 验收预期）。
 - **T23**：新句（202 行）四要素齐全：横幅优先、`click_text` 兜底重试、键盘全选 `*`+`a`、批间沿用同一搜索页；未改任何工具，符合「提示词教用、不动工具层」的决定。
-- **护栏原样**：`FREE-SOUL.ts` 是未跟踪新文件，无法用 git diff 隔离本轮改动，改按 v5 基线逐个核对——轮次上限 `Math.min(40, maxRounds || 32)`、`STUCK_HINT` / `PAGE_SAME_HINT` 文案、预算提示、`request_confirm` 工具描述与成功态中断语义均未动；T1–T21 的提示句（拒绝编造、连点两次换路、验证码停等）一句没删。
+- **护栏原样**：`free-soul.ts` 是未跟踪新文件，无法用 git diff 隔离本轮改动，改按 v5 基线逐个核对——轮次上限 `Math.min(40, maxRounds || 32)`、`STUCK_HINT` / `PAGE_SAME_HINT` 文案、预算提示、`request_confirm` 工具描述与成功态中断语义均未动；T1–T21 的提示句（拒绝编造、连点两次换路、验证码停等）一句没删。
 - **测试质量**：断言补「全量授权」「自主连续执行」「全部匹配」「连按」四关键词；原有反向断言（不含「已连续 3 次无效果」「核心版不执行发布」）保留。
 - **决策点**：无，与任务书预期一致。
 
@@ -984,12 +984,12 @@ T22/T23 修复版（12:34 启动的实例，构建产物已验证含新系统提
 
 ### 对照实验记录（T24 的证据）
 
-第二轮起模型所有导航均为 Gmail 同文档 hash 跳转（`#search` ↔ `#settings`），页面文档从未重载。规划方用 MCP `reload` 强刷当前标签后，「创建新的过滤器」表单立刻能弹开——**身份验证弹窗残留的透明遮罩吸掉了全部点按**，且 FREE-SOUL 工具集里没有任何 reload 通道，模型无法自愈。11-02 上午同表单能填写提交、同环境今天点按全失效，时间线与遮罩出现吻合。
+第二轮起模型所有导航均为 Gmail 同文档 hash 跳转（`#search` ↔ `#settings`），页面文档从未重载。规划方用 MCP `reload` 强刷当前标签后，「创建新的过滤器」表单立刻能弹开——**身份验证弹窗残留的透明遮罩吸掉了全部点按**，且 free-soul 工具集里没有任何 reload 通道，模型无法自愈。11-02 上午同表单能填写提交、同环境今天点按全失效，时间线与遮罩出现吻合。
 
-### T24（v7）：FREE-SOUL 补 reload 通道（遮罩自愈）
+### T24（v7）：free-soul 补 reload 通道（遮罩自愈）
 
 **要求：**
-1. `PiToolName` 加 `reload`，TOOLS 加工具描述（「重载当前标签。页面点按全部失效、疑似弹窗残留遮罩时用它恢复交互。」）；`runCoreTool` 委托既有 reload 能力实现（`browser.ts` reload / MCP `handlers.reload` 已存在，纯接线）。
+1. `FreeSoulToolName` 加 `reload`，TOOLS 加工具描述（「重载当前标签。页面点按全部失效、疑似弹窗残留遮罩时用它恢复交互。」）；`runCoreTool` 委托既有 reload 能力实现（`browser.ts` reload / MCP `handlers.reload` 已存在，纯接线）。
 2. `STUCK_HINT` 末尾加一句：「也可以整页重载（reload 工具）后重试一次再下结论。」系统提示的反卡死条目同步提一句。与「两次换路 / 三次注入」两个既有层级不合并、数字不动。
 
 **验收：**
@@ -1020,9 +1020,9 @@ Q13（B 站上传重跑验 T21 长轮询）、Q5（知乎发布）仍未跑，�
 ### T24
 
 - 改动：
-  - `src/main/agent/FREE-SOUL.ts`：`PiToolName` 与工具表增加 `reload`，描述是「重载当前标签。页面点按全部失效、疑似弹窗残留遮罩时用它恢复交互。」`STUCK_HINT` 末尾加「也可以整页重载（reload 工具）后重试一次再下结论。」系统提示的反卡死条目另加一句整页重载，没有并进「两次换路 / 三次注入」，数字没动
+  - `src/main/agent/free-soul.ts`：`FreeSoulToolName` 与工具表增加 `reload`，描述是「重载当前标签。页面点按全部失效、疑似弹窗残留遮罩时用它恢复交互。」`STUCK_HINT` 末尾加「也可以整页重载（reload 工具）后重试一次再下结论。」系统提示的反卡死条目另加一句整页重载，没有并进「两次换路 / 三次注入」，数字没动
   - `src/main/browser.ts`：`runCoreTool` 把 `reload` 接到已有 `this.reload({ asHuman: true, tabId })`
-- 测试：先失败再补。`tests/FREE-SOUL.test.ts`
+- 测试：先失败再补。`tests/free-soul.test.ts`
   - 「系统提示要求两次就换路，并带上确认门和结果页通道」断言「重载」，工具表含 `reload`
   - 「模型调用 reload 会真执行一次」
   - 「同一点击连续 3 次无变化后注入换策略提示，仍按轮次上限结束」断言提示里有「整页重载」
@@ -1057,7 +1057,7 @@ Q13、Q5 仍未跑。
 
 代码审查通过，本机复跑 `npm test` 73 文件 595 项全绿、`npm run typecheck` 通过。逐项核对：
 
-- **T24**：`reload` 进 `PiToolName`、工具表、`runCoreTool` 纯接 `this.reload({ asHuman: true, tabId })`（browser.ts 4611 行），与任务书一致。`STUCK_HINT` 原句保留、末尾追加整页重载一句（FREE-SOUL.ts 182 行）；系统提示新句（200 行）插在反卡死条目之后，与「两次换路 / 三次注入」两个既有层级未合并、数字未动；确认门、T22/T23、验证码停等等原句逐条比对无删改。测试覆盖三个点（工具表注册、真执行一次、提示含「重载」），另有既有 STUCK_HINT 断言同步更新，符合「先失败再补」。
+- **T24**：`reload` 进 `FreeSoulToolName`、工具表、`runCoreTool` 纯接 `this.reload({ asHuman: true, tabId })`（browser.ts 4611 行），与任务书一致。`STUCK_HINT` 原句保留、末尾追加整页重载一句（free-soul.ts 182 行）；系统提示新句（200 行）插在反卡死条目之后，与「两次换路 / 三次注入」两个既有层级未合并、数字未动；确认门、T22/T23、验证码停等等原句逐条比对无删改。测试覆盖三个点（工具表注册、真执行一次、提示含「重载」），另有既有 STUCK_HINT 断言同步更新，符合「先失败再补」。
 - **T25**：按任务书走「未复现」分支，处置正确——没动 snapshot/fill/T23 原句，审查结论具体（`collectFromDocument` 不进 shadow root；`inDialog` 标记表不含 Gmail 弹层；`recaptureIfEmpty` 只在整页 0 元素时等 600ms；`expected=155 actual=0` 是 fill 如实回读）。真机记录如实（这次是另一种卡法：snapshot 看得见链接、点不开表单，刷新后依旧），没有把没验证的键盘快捷键猜测写进提示，纪律好。
 - **决策点**：无，与任务书预期一致。
 
@@ -1081,10 +1081,10 @@ Q13、Q5 仍未跑。
 - `browser.ts` `handleChat`（约 6277 行）：`chatRunning` 为真时新消息进 `pendingChat`，回复「已记下，当前任务汇报后接着做」；run 的 finally（6345–6347）会自动接续 `pendingChat`。这条续跑链保留，打断要复用它。
 - `browser.ts` 2094 行 `stopLoading()`：只调 `livePage().stop()`。
 - `shell.html` 4152–4163 行 `syncSendButton`：`dataset.sending === "1"` 时发送按钮禁用；4266 行发送时置位，await `sparkShell.chat` 直到整个 run 结束才清除。
-- `FREE-SOUL.ts` `run()`：轮次循环无取消检查，`completion()` 的 fetch 无 AbortSignal。
+- `free-soul.ts` `run()`：轮次循环无取消检查，`completion()` 的 fetch 无 AbortSignal。
 - `awaitingConfirm` 时 run 已结束、`chatRunning` 已复位，确认答复不受影响，不用动。
 
-## T26（P0）FREE-SOUL 支持中断
+## T26（P0）free-soul 支持中断
 
 **要求：**
 1. `run()` 的 input 增加可选 `signal?: AbortSignal`。
@@ -1092,7 +1092,7 @@ Q13、Q5 仍未跑。
 3. `completion()` 的 fetch 传入同一 `AbortSignal`：正在等的模型响应立即取消，不傻等超时。fetch 抛 AbortError 时按「被打断」返回同上结果，**不**走「模型请求失败」文案；此时本轮 assistant/tool 消息尚未入栈，序列天然干净，不许再推半截。
 4. 工具调用中不硬杀（工具以秒计，等它返回后在下一个检查点退出）。
 
-**验收（TDD，测试进 `tests/FREE-SOUL-v4.test.ts` 或新文件）：**
+**验收（TDD，测试进 `tests/free-soul-v4.test.ts` 或新文件）：**
 - fake fetch 永不 resolve → abort → `run` 在 1 秒内返回 `interrupted: true`、`ok: true`。
 - 正常轮次之间 abort → 同样语义返回，messages 无半截 assistant/tool。
 - 未 abort 的现有测试全部不受影响（`signal` 可选）。
@@ -1102,12 +1102,12 @@ Q13、Q5 仍未跑。
 **要求：**
 1. `SparkBrowser` 加 `activePiAbort: AbortController | null`；`handleChat` 里 `freeSoul.run` 期间持有，finally 置空。
 2. `handleChat` 的 `chatRunning` 分支改为：照常 push 用户气泡、照常写 `pendingChat`，**同时 `this.activePiAbort?.abort()`**。被打断的 run 返回后照旧走 6345–6347 的 finally 续跑链——新消息立即生效，不需要新队列机制。
-3. 中断时 `chatLog` push 的 assistant 文案用 FREE-SOUL 返回的 `interrupted` 文案（6329 行现有 push 已覆盖，不用改）。
+3. 中断时 `chatLog` push 的 assistant 文案用 free-soul 返回的 `interrupted` 文案（6329 行现有 push 已覆盖，不用改）。
 4. `spark:stop` 处理器（2637 行）：在 `stopLoading()` 之外，`chatRunning && activePiAbort` 时也 abort。纯停止（无 pendingChat）时 run 返回「被打断」文案后 finally 不续跑，任务干净结束。
 5. 云计量链路不许破坏：abort 让 `run` **正常返回**（不 throw），6341 行的 `finishCloudTask` 在 finally 里照常执行；`catch` 分支不得因 AbortError 误报「执行失败」。
 6. 边界如实接受：打断只对已进入 freeSoul 循环的 run 生效；云闸门 / `beginCloudTaskIfNeeded` 阶段（毫秒级）到达的新消息仍走排队老路，不用改。
 
-**验收：** FREE-SOUL 层由 T26 测试覆盖；handleChat 接线用 `tests/FREE-SOUL-guard.test.ts` 的既有实例化路径补一条「运行中第二条消息触发 abort 且 pendingChat 续跑」，若该 harness 不适用则如实写「浏览器层未测，交真机 Q15」。
+**验收：** free-soul 层由 T26 测试覆盖；handleChat 接线用 `tests/free-soul-guard.test.ts` 的既有实例化路径补一条「运行中第二条消息触发 abort 且 pendingChat 续跑」，若该 harness 不适用则如实写「浏览器层未测，交真机 Q15」。
 
 ## T28（P1）侧栏输入随时可发
 
@@ -1141,8 +1141,8 @@ Q13、Q5 若场景顺路则一并跑。
 
 ### T26
 
-- 改动：`src/main/agent/FREE-SOUL.ts`。`run()` 接受可选 `signal`。每轮调模型前、每次工具返回后检查；`completion()` 把同一信号接到 fetch，用户中断不重试、不走超时失败文案。命中返回固定文案，带 `interrupted: true`。工具执行中不硬杀
-- 测试：先失败再补。`tests/FREE-SOUL-v8.test.ts`
+- 改动：`src/main/agent/free-soul.ts`。`run()` 接受可选 `signal`。每轮调模型前、每次工具返回后检查；`completion()` 把同一信号接到 fetch，用户中断不重试、不走超时失败文案。命中返回固定文案，带 `interrupted: true`。工具执行中不硬杀
+- 测试：先失败再补。`tests/free-soul-v8.test.ts`
   - 「模型请求一直不返回时，abort 在 1 秒内如实打断」
   - 「正常轮次之间 abort，不把半截 assistant/tool 发给模型」
 - 决策点：无
@@ -1154,7 +1154,7 @@ Q13、Q5 若场景顺路则一并跑。
   - `activePiAbort` 在 `freeSoul.run` 期间持有，finally 里、续跑之前置空
   - `chatRunning` 分支仍写用户气泡和 `pendingChat`，并 `abort()`。finally 里原来的 `pendingChat` 续跑还在
   - `spark:stop` 在 `stopLoading()` 之外，运行中再 abort。没有新消息时不续跑
-- 测试：`tests/FREE-SOUL-guard.test.ts`「运行中第二条消息触发 abort 且 pendingChat 续跑」。停止按钮这条没有单独的界面测试
+- 测试：`tests/free-soul-guard.test.ts`「运行中第二条消息触发 abort 且 pendingChat 续跑」。停止按钮这条没有单独的界面测试
 - 决策点：无
 - 真机 Q15：未跑
 
@@ -1173,10 +1173,10 @@ Q13、Q5 仍未跑。
 
 代码审查通过，本机复跑 `npm test` 74 文件 598 项全绿、`npm run typecheck` 通过。逐项核对：
 
-- **T26**：signal 检查点位置正确——每轮调模型前（FREE-SOUL.ts 333 行）、每次工具返回后（408 行）；关键分支 345–347 行 catch **先查 `aborted`** 再落 `modelRequestFailure`，AbortError 不会误走「执行失败」文案；`completion()` 把同一信号接到 fetch（487–517 行），abort 后不重试；`interruptedResult()` 固定如实文案、`ok: true` + `interrupted: true`。半截消息不会发给模型：fetch 取消时本轮 assistant/tool 尚未入栈；工具返回后打断时 run 立即返回，不再入栈。
-- **T27**：`activePiAbort` 六处接线齐全（browser.ts 785 声明、2640 `spark:stop`、6295 `chatRunning` 分支、6328 创建、6335 传参、6349 finally 置空）；`pendingChat` 续跑链保留在 finally；云计量 `finishCloudTask` 仍在 finally（6350 行）——abort 让 run 正常返回不 throw，计量链路未被绕开。`tests/FREE-SOUL-guard.test.ts` 覆盖「第二条消息触发 abort 且续跑」；停止按钮界面层如实写「未测，交真机 Q15」。
+- **T26**：signal 检查点位置正确——每轮调模型前（free-soul.ts 333 行）、每次工具返回后（408 行）；关键分支 345–347 行 catch **先查 `aborted`** 再落 `modelRequestFailure`，AbortError 不会误走「执行失败」文案；`completion()` 把同一信号接到 fetch（487–517 行），abort 后不重试；`interruptedResult()` 固定如实文案、`ok: true` + `interrupted: true`。半截消息不会发给模型：fetch 取消时本轮 assistant/tool 尚未入栈；工具返回后打断时 run 立即返回，不再入栈。
+- **T27**：`activePiAbort` 六处接线齐全（browser.ts 785 声明、2640 `spark:stop`、6295 `chatRunning` 分支、6328 创建、6335 传参、6349 finally 置空）；`pendingChat` 续跑链保留在 finally；云计量 `finishCloudTask` 仍在 finally（6350 行）——abort 让 run 正常返回不 throw，计量链路未被绕开。`tests/free-soul-guard.test.ts` 覆盖「第二条消息触发 abort 且续跑」；停止按钮界面层如实写「未测，交真机 Q15」。
 - **T28**：两处 `syncSendButton`（shell.html 3450、4156 行）只在 `locked || !text` 时禁用，运行中不再禁用；标题/占位走 `t("chat.sendInterrupt")`，`src/shared/i18n.ts` 中英两键齐全（101、506 行）；重叠发送用 sendDepth 计数（4268、4280 行）防后一次结束清掉前一次状态；锁屏（composerLock / input.disabled）未动。
-- **护栏清点**：确认门（FREE-SOUL.ts 376–377 行 `request_confirm` 分支）原样；T22/T23 提示句未动；假完成禁令未动。决策点：无，与任务书预期一致。
+- **护栏清点**：确认门（free-soul.ts 376–377 行 `request_confirm` 分支）原样；T22/T23 提示句未动；假完成禁令未动。决策点：无，与任务书预期一致。
 - **真机 Q15**：未跑，交回用户。注意当前开着的是改码前进程，主进程和侧栏都要重启才吃到本轮。v9 已立项（见下），Q16-2（auto 打断续跑）会顺带覆盖 Q15-1 的场景。
 
 遗留：Q13（B 站上传）、Q5（知乎发布）、reload 自主调用观察。**v8 收口，代码合格。**
@@ -1192,10 +1192,10 @@ Q13、Q5 仍未跑。
 ## 现状（已核实，不要重查）
 
 - 打断行为来自两处，都在模型侧：
-  1. `FREE-SOUL.ts` `systemPrompt()`（189 行）203 行那条：发布、发送、支付、删除四类必须先 `request_confirm` 走一次确认往返。
+  1. `free-soul.ts` `systemPrompt()`（189 行）203 行那条：发布、发送、支付、删除四类必须先 `request_confirm` 走一次确认往返。
   2. 模型自律习惯：多步任务中途问「要不要继续」、缺信息就问。204 行的「全量授权措辞」只豁免了明确说了「直接/以后/全部」的批量场景。
-- `request_confirm` 工具分支在 `FREE-SOUL.ts` 376 行：中断 run、`ok: true` + `awaitingConfirm: true` 返回确认问句。这套机制**不动**。
-- **字段名警示：** `FREE-SOUL.ts` 31 行 run 的 config 已有 `mode?: "byok" | "cloud"`（计费用）。新模式字段**必须叫别的名字**，建议 `execMode`。
+- `request_confirm` 工具分支在 `free-soul.ts` 376 行：中断 run、`ok: true` + `awaitingConfirm: true` 返回确认问句。这套机制**不动**。
+- **字段名警示：** `free-soul.ts` 31 行 run 的 config 已有 `mode?: "byok" | "cloud"`（计费用）。新模式字段**必须叫别的名字**，建议 `execMode`。
 - `run()` input 定义在 300–307 行（`input` / `url` / `title` / `locale` / `history` / `signal`）。
 - `handleChat` 调 `freeSoul.run` 在 `browser.ts` 6329–6336 行，照这里加传。
 - 设置链路：`src/main/settings/store.ts` —— `loadSettings`（256 行）、`saveSettings`（304 行）、`settingsPublicView`（383 行），`locale` 字段（155 行）是加新设置字段的现成样板。渲染侧走既有 `spark:save-settings`（`browser.ts` 2937 行，收 `Partial<SparkSettings>` patch）。
@@ -1206,7 +1206,7 @@ Q13、Q5 仍未跑。
 **要求：**
 1. `src/main/settings/store.ts`：`SparoSettings` 加 `execMode: "step" | "auto"`，默认 `"step"`。加载/保存时 normalize（非法值回落 `"step"`），`settingsPublicView` 暴露。照 `locale` 的既有写法。
 2. `browser.ts` `handleChat`（6329–6336 行）：调 `freeSoul.run` 时增加 `execMode: this.settings.execMode`。每条消息用当时生效的模式，不做会话级快照。
-3. `FREE-SOUL.ts` `run()` input 加 `execMode?: "step" | "auto"`（缺省按 `"step"`），透传给 `systemPrompt`。
+3. `free-soul.ts` `run()` input 加 `execMode?: "step" | "auto"`（缺省按 `"step"`），透传给 `systemPrompt`。
 
 **验收（TDD）：** 单测：settings 非法 `execMode` 落盘后读回落 `"step"`；`run` 不传 `execMode` 的既有测试全部不受影响（字段可选）。
 
@@ -1240,7 +1240,7 @@ Q13、Q5 仍未跑。
 1. `request_confirm` 工具与其中断机制不删不改语义；不许本地代答确认。
 2. 客服回复只填草稿，两模式一致，不变。
 3. 登录、验证码、安全验证如实停等用户，不绕，两模式一致。
-4. 新字段不许叫 `mode`（`FREE-SOUL.ts` 31 行已被 byok/cloud 占用）。
+4. 新字段不许叫 `mode`（`free-soul.ts` 31 行已被 byok/cloud 占用）。
 5. step 模式的 systemPrompt 与现有行为一字不改——只加分支，不改存量句。
 6. v8 打断机制（`activePiAbort` / `signal` / `interrupted` / `pendingChat` 续跑链）、云计量 `finishCloudTask` finally 链不许动。
 7. 轮次上限 32（#26）照旧：自动模式不是无限模式，到上限如实停。
@@ -1248,7 +1248,7 @@ Q13、Q5 仍未跑。
 
 ## 工程要求
 
-- TDD：T29/T30 先写失败测试再实现，测试放 `tests/FREE-SOUL-v9.test.ts`（或就近既有文件），风格照 `tests/FREE-SOUL-v8.test.ts`。
+- TDD：T29/T30 先写失败测试再实现，测试放 `tests/free-soul-v9.test.ts`（或就近既有文件），风格照 `tests/free-soul-v8.test.ts`。
 - 每完成一个任务跑 `npm test`（全量全绿）、`npm run typecheck`。
 - PRODUCT.md 语义又要动一小句（自动模式下发布免确认），改文档本身留给规划方，完成记录里注明即可。
 
@@ -1281,13 +1281,13 @@ Q13（B 站上传验 T21 长轮询）、Q5（知乎发布）若场景顺路则�
 - 改动：
   - `src/main/settings/store.ts`：`execMode: "step" | "auto"`，缺省 `"step"`。`normalizeExecMode` 把非法值收成 `"step"`。`loadSettings` / `saveSettings` / `settingsPublicView` 都带上。字段不叫 `mode`
   - `src/main/browser.ts` `handleChat`：`freeSoul.run` 增加 `execMode: this.settings.execMode`，每条消息用当时的设置
-  - `src/main/agent/FREE-SOUL.ts`：`run()` input 增加可选 `execMode`，缺省按 step 传给 `systemPrompt`
-- 测试：先失败再补。`tests/FREE-SOUL-v9.test.ts`「非法 execMode 落盘后读回落 step，合法 auto 能暴露」。不传 `execMode` 的既有用例仍绿
+  - `src/main/agent/free-soul.ts`：`run()` input 增加可选 `execMode`，缺省按 step 传给 `systemPrompt`
+- 测试：先失败再补。`tests/free-soul-v9.test.ts`「非法 execMode 落盘后读回落 step，合法 auto 能暴露」。不传 `execMode` 的既有用例仍绿
 
 ### T30
 
 - 改动：`systemPrompt(url, title, execMode)`。step 与不传走原来的句子。auto 把「发布、发送、支付、删除等不可逆动作…」换成「当前是自动执行模式…直接执行…支付、删除仍必须…」，并追加不中途询问、可自决边界两句。全量授权句、客服只填草稿、登录/验证码停等，两模式都还在。工具表里的 `request_confirm` 没删没改
-- 测试：`tests/FREE-SOUL-v9.test.ts`
+- 测试：`tests/free-soul-v9.test.ts`
   - 「不传 execMode 与 step 的系统提示逐字相同，且保留确认门原句」
   - 「auto 系统提示改发布发送为直接执行，支付删除仍必须确认」
   - 「auto 模式下模型仍调用 request_confirm 时本地照常停下，不代答」
@@ -1298,7 +1298,7 @@ Q13（B 站上传验 T21 长轮询）、Q5（知乎发布）若场景顺路则�
 - 改动：
   - `src/renderer/shell.html`：输入框工具行（文件按钮旁边）加 `#execMode` 下拉，选项 step / auto。切换调既有 `spark:save-settings`。侧栏状态回读 `deepseek.execMode`，焦点在选择器上时不覆盖。发送按钮和打断提示没动
   - `src/shared/i18n.ts`：`chat.execMode.label` / `chat.execMode.step` / `chat.execMode.auto`。中文「执行模式 / 逐步确认 / 自动执行」，英文 “Run mode / Confirm each step / Run automatically”。其它语言走已有的英文回落
-- 测试：`tests/FREE-SOUL-v9.test.ts`「侧栏模式文案走中英词条，选择器落盘 execMode」（词条 + 页面里有选择器和 `saveSettings({ execMode`）。没有在真窗口里点过
+- 测试：`tests/free-soul-v9.test.ts`「侧栏模式文案走中英词条，选择器落盘 execMode」（词条 + 页面里有选择器和 `saveSettings({ execMode`）。没有在真窗口里点过
 - 真机 Q16：未跑。当前窗口是改代码前开的，侧栏和主进程都要重启才吃到这轮
 
 Q13、Q5 仍未跑。
@@ -1307,7 +1307,7 @@ Q13、Q5 仍未跑。
 
 代码审查通过，本机复跑 `npm test` 75 文件 603 项全绿、`npm run typecheck` 通过。逐项核对：
 
-- **T29**：`settings/store.ts` 六处齐全——`SparoSettings.execMode`（166 行，注释写明缺省与非法值都是 step）、默认值（228 行）、load normalize（299 行）、save normalize（368 行）、public view（430 行）；`browser.ts` 6336 行显式回落传参；`FREE-SOUL.ts` 320/329 行可选字段、缺省按 step。字段未占用 `mode`。
+- **T29**：`settings/store.ts` 六处齐全——`SparoSettings.execMode`（166 行，注释写明缺省与非法值都是 step）、默认值（228 行）、load normalize（299 行）、save normalize（368 行）、public view（430 行）；`browser.ts` 6336 行显式回落传参；`free-soul.ts` 320/329 行可选字段、缺省按 step。字段未占用 `mode`。
 - **T30**：step 提示 190–213 行与 v8 逐字比对一致，一字未改；auto 分支 214–225 行用前缀 `findIndex` 定位确认门句再 splice 替换——找不到时安全回落 step 语义，这个写法稳。替换句与任务书文本一致（发布/发送直接执行、支付/删除仍必须、客服只填草稿），追加的不中途询问、可自决边界两句在位。`request_confirm` 分支（393–395 行）未动，全代码无本地代答。
 - **T31**：`shell.html` 1954–1956 行选择器（data-i18n 不写死中文）、4482–4488 行 onchange 走既有 `spark:save-settings`、3226–3228 行状态回读带焦点保护；`i18n.ts` 三键中英齐全（102–104 / 510–512 行）。
 - **决策点**：任务书写的 #30 是规划方立项时没查最新登记册的笔误（#30–#33 已被轮次预算、店小秘闸门、请求超时、click_text 放行占用，责任在规划方）。Cursor 改记 **#34** 且条目完整、注明偏差原因，处置正确。#34 语义与任务书一致：用户显式选择的 `execMode`，非本地自主判断。
@@ -1339,9 +1339,9 @@ Q13、Q5 仍未跑。
 
 「存」和「用」两端现状：
 
-- **用（执行端）已齐**：FREE-SOUL 工具集（`FREE-SOUL.ts` 117–179 行，共 15 个）已有 `set_file`（169–177 行）——把本地文件放进页面的文件选择框。素材一旦落盘，微博发图、贴吧/知乎回复贴图的执行通道就是现成的。
+- **用（执行端）已齐**：free-soul 工具集（`free-soul.ts` 117–179 行，共 15 个）已有 `set_file`（169–177 行）——把本地文件放进页面的文件选择框。素材一旦落盘，微博发图、贴吧/知乎回复贴图的执行通道就是现成的。
 - **存（采集端）缺三块**：
-  1. FREE-SOUL **没有截图工具**。browser 层 `screenshot`（`browser.ts` 9518–9583 行）能截屏、能按 selector 裁剪、能整页，且已落盘到 `diag/`——但那是 MCP 层工具，侧栏 Agent 核调不到，且 `diag/` 是诊断目录，语义不对。
+  1. free-soul **没有截图工具**。browser 层 `screenshot`（`browser.ts` 9518–9583 行）能截屏、能按 selector 裁剪、能整页，且已落盘到 `diag/`——但那是 MCP 层工具，侧栏 Agent 核调不到，且 `diag/` 是诊断目录，语义不对。
   2. **没有保存网页图片的工具**（全仓库都没有「按 img 下载到本地」的能力）。
   3. **没有素材库语义**：无专门目录、无清单、模型存完查不回。
 - `diag/` 无自动清理（全仓库只查到 `pruneStaleApprovals`），但素材仍应独立目录，不能混进诊断目录。
@@ -1352,7 +1352,7 @@ Q13、Q5 仍未跑。
 - 素材库目录：`%APPDATA%\sparo-store\captures\`，文件名 `{用途标签}-{时间戳}.png|.jpg`，同目录 `index.json` 清单追加写：`{ file, kind: "shot"|"image", src?, url, title, time }`。清单是审计与「供人审来源」的依据。
 - 模型引用方式：工具返回绝对路径 → 后续步骤 `set_file({ path })`。纯文本链路即可闭环，不依赖多模态。
 
-## T32（P0）FREE-SOUL 新增 `save_shot` 与 `save_image`
+## T32（P0）free-soul 新增 `save_shot` 与 `save_image`
 
 **要求：**
 
@@ -1367,7 +1367,7 @@ Q13、Q5 仍未跑。
 
 **要求：**
 
-1. FREE-SOUL 新增 `list_captures`：返回清单最近 20 条（file、kind、src、来源页、时间），供模型找回已存素材的路径。
+1. free-soul 新增 `list_captures`：返回清单最近 20 条（file、kind、src、来源页、时间），供模型找回已存素材的路径。
 2. systemPrompt **两种模式（step/auto）同样**追加一句，插在工具清单说明之后：「任务中需要留档或后续引用的页面状态、网页图片，用 save_shot / save_image 存进本机素材库；之后要在微博、贴吧等站贴图时，用 set_file 把素材路径放进该站的文件选择框。素材只存本机，不进聊天记录。」
 3. 不新增确认门：存图不是不可逆动作，两模式都不询问。
 
@@ -1385,12 +1385,12 @@ Q13、Q5 仍未跑。
 4. 文件白名单 `image/*`：不存视频、文档等其他格式（用户自己发视频仍走既有 set_file，不经过素材库）。
 5. `save_image` 用页面上下文 fetch（带 cookie/referer），**不额外携带或存储任何凭据**。
 6. 不动 v8/v9 已收口链路：打断链、execMode 分支、确认门、云计量、轮次上限。
-7. 侧栏 `screenshot` 的 MCP 层行为一字不改（`diag/` 用途照旧）；FREE-SOUL 的 `save_shot` 是新通道，不共用输出目录。
+7. 侧栏 `screenshot` 的 MCP 层行为一字不改（`diag/` 用途照旧）；free-soul 的 `save_shot` 是新通道，不共用输出目录。
 8. 不打包、不提交 git、不碰 `docs/listings/`。PRODUCT.md 素材库卖点由规划方同步。
 
 ## 工程要求
 
-- TDD：先写失败测试（建议 `tests/FREE-SOUL-captures.test.ts`，风格照 `tests/FREE-SOUL-v8.test.ts`）。
+- TDD：先写失败测试（建议 `tests/free-soul-captures.test.ts`，风格照 `tests/free-soul-v8.test.ts`）。
 - 每任务完成跑全量 `npm test` + `npm run typecheck`。
 - 微博 compose 的图片按钮/file input 结构以真机为准，不在单测里 mock 站点结构。
 
@@ -1411,8 +1411,8 @@ Q13、Q5 仍未跑。
 
 代码审查通过，本机复跑 `npm test` 76 文件 611 项全绿、`npm run typecheck` 通过。逐项核对：
 
-- **T32**：`browser.ts` `saveShot`（9522–9584 行）复用 `parseScreenshotInput` / `captureVisiblePage` / `captureFullPage`，经 `saveShotBytes` 写 `captures/`，不回 base64；`saveImage`（9586–9619 行）用 `fetchImagePageScript` 在页面上下文取图（天然带 cookie/referer）。护栏全数落实在 `src/main/captures.ts`：`image/*` 双端校验（主进程 + 页面脚本，非图片与超限在页面端就拒）、单张 10MB（157 行）、库容 500MB 报满且文案明确「不自动删除」（7、13 行）、单任务 20 张（`CAPTURE_RUN_LIMIT`，FREE-SOUL 428/438 行工具分发处检查）。清单 `index.json` 追加写。**MCP 侧 `screenshot` 未动**（9630 行起仍写 `diag/`），禁区第 7 条守住。
-- **T33**：FREE-SOUL 三工具定义齐全（184–206 行），描述都注明「素材只存本机」；`list_captures` 空库返回空数组（9621–9628 行）。systemPrompt 通过共享 `CAPTURE_PROMPT` 常量（238 行）对 **step/auto 两模式同时生效**，插在 set_file 提示句之后——比任务书原案更干净的写法；step 存量句、auto splice 逻辑均未动，既有断言不坏。
+- **T32**：`browser.ts` `saveShot`（9522–9584 行）复用 `parseScreenshotInput` / `captureVisiblePage` / `captureFullPage`，经 `saveShotBytes` 写 `captures/`，不回 base64；`saveImage`（9586–9619 行）用 `fetchImagePageScript` 在页面上下文取图（天然带 cookie/referer）。护栏全数落实在 `src/main/captures.ts`：`image/*` 双端校验（主进程 + 页面脚本，非图片与超限在页面端就拒）、单张 10MB（157 行）、库容 500MB 报满且文案明确「不自动删除」（7、13 行）、单任务 20 张（`CAPTURE_RUN_LIMIT`，free-soul 428/438 行工具分发处检查）。清单 `index.json` 追加写。**MCP 侧 `screenshot` 未动**（9630 行起仍写 `diag/`），禁区第 7 条守住。
+- **T33**：free-soul 三工具定义齐全（184–206 行），描述都注明「素材只存本机」；`list_captures` 空库返回空数组（9621–9628 行）。systemPrompt 通过共享 `CAPTURE_PROMPT` 常量（238 行）对 **step/auto 两模式同时生效**，插在 set_file 提示句之后——比任务书原案更干净的写法；step 存量句、auto splice 逻辑均未动，既有断言不坏。
 - **T34**：决策点「无」判断正确——护栏拒绝走 `ok: false`，模型接着做或如实汇报，不结束任务、不改走向，无需登记。
 - **护栏清点**：v8 打断链、v9 execMode 分支、确认门、云计量、轮次上限均未动；无后台定时截屏（全部由模型在任务内按需调用）。
 - **PRODUCT.md**：已由规划方同步素材库卖点（3 处：卖点表新增「素材随手存」行、动作表新增「带图发布 / 贴图回复」行、侧栏说明段补一句）。
@@ -1433,8 +1433,8 @@ Q13、Q5 仍未跑。
 - 改动：
   - `src/main/captures.ts`：落盘、`index.json` 追加 `{ file, kind, src?, url, title, time }`。`image/*` 才收，单张超过 10MB 不落盘。库里已有文件加上这张会超过 500MB 时报满，不删旧文件。页面取图脚本在页面里 `fetch`，`credentials: "include"`，不读 cookie、不写存储
   - `src/main/browser.ts`：`save_shot` 复用可见区 / selector 裁剪 / `fullPage` 整页（`captureVisiblePage`、`captureFullPage`、`parseScreenshotInput`），写入 `captures/`，不回 base64。`captureFullPage` 多了一个可选 tabId，不传时仍是当前标签，MCP 截图路径不变。`save_image` 走页面上下文 fetch 再落盘
-  - `src/main/agent/FREE-SOUL.ts`：工具 `save_shot`、`save_image`。同一次 run 里两工具成功合计满 20 张后，下一张直接报满，不再调用保存
-- 测试：先失败再补。`tests/FREE-SOUL-captures.test.ts`
+  - `src/main/agent/free-soul.ts`：工具 `save_shot`、`save_image`。同一次 run 里两工具成功合计满 20 张后，下一张直接报满，不再调用保存
+- 测试：先失败再补。`tests/free-soul-captures.test.ts`
   - 「截图和网页图片落盘，清单有对应记录」
   - 「Content-Type 不是图片时拒绝且不落盘」
   - 「单张超过 10MB 拒绝且不落盘」
@@ -1445,7 +1445,7 @@ Q13、Q5 仍未跑。
 ### T33
 
 - 改动：`list_captures` 返回清单最近 20 条，空库是空数组。`systemPrompt` 在 set_file 那句后面加了同一句素材提示，step 和 auto 都有。step 的确认门原句、auto 的「直接执行」都还在，没有新的确认门
-- 测试：`tests/FREE-SOUL-captures.test.ts`
+- 测试：`tests/free-soul-captures.test.ts`
   - 「空库 list_captures 返回空数组」
   - 「step 和 auto 的系统提示都要求存本机素材，存量确认句还在」
 - 真机 Q17：未跑
