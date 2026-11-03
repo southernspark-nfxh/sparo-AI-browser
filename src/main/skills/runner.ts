@@ -144,6 +144,9 @@ const BUILTIN_ALIASES: Record<string, string[]> = {
     "采集箱编辑",
     "1688回填",
     "上品之前",
+    "数据采集",
+    "店小秘目录",
+    "店小秘首页",
   ],
   "xhs-longform-publish": [
     "小红书",

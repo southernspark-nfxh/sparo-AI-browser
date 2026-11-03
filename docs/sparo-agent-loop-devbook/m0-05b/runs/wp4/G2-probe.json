@@ -1,0 +1,123 @@
+{
+  "caseId": "G2-probe",
+  "scene": "G2",
+  "resultClass": "probe",
+  "costBucket": "independent",
+  "preJudgedValid": false,
+  "covered": false,
+  "observedClass": "uncovered",
+  "reason": "候选未预先判定为有效，拒绝也不记成误拒",
+  "modelCalls": 1,
+  "versions": {
+    "evaluationMode": "offline_replay",
+    "facilityVersion": "m0-05b-facility-1",
+    "rubricVersion": "verifier-rubric-1",
+    "promptVersion": "verifier-prompt-1",
+    "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+    "manifestSampleSetId": "m0-05a-2026-10-29",
+    "modelVersion": "deepseek-flash",
+    "provider": "deepseek",
+    "llmMode": "byok",
+    "priceVersion": "[TBD]",
+    "productionV2": false
+  },
+  "trace": [
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G2-probe-e001",
+      "missionId": "eval-G2-probe",
+      "time": "2026-10-29T11:29:28.466Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.opened",
+      "scene": "G2",
+      "resultClass": "probe",
+      "raw": "当前我打开的这个博主 最近三天的微博 帮我复制下来 做成一个文档",
+      "versions": {
+        "evaluationMode": "offline_replay",
+        "facilityVersion": "m0-05b-facility-1",
+        "rubricVersion": "verifier-rubric-1",
+        "promptVersion": "verifier-prompt-1",
+        "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+        "manifestSampleSetId": "m0-05a-2026-10-29",
+        "modelVersion": "deepseek-flash",
+        "provider": "deepseek",
+        "llmMode": "byok",
+        "priceVersion": "[TBD]",
+        "productionV2": false
+      },
+      "costBucket": "independent"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G2-probe-e002",
+      "missionId": "eval-G2-probe",
+      "time": "2026-10-29T11:29:28.466Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 1,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G2-probe-e003",
+      "missionId": "eval-G2-probe",
+      "time": "2026-10-29T11:29:31.677Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 1,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 547,
+      "uncachedInputTokens": 419,
+      "cachedInputTokens": 128,
+      "outputTokens": 628,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": []
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G2-probe-e004",
+      "missionId": "eval-G2-probe",
+      "time": "2026-10-29T11:29:31.677Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-G2-probe-r1",
+        "missionId": "eval-G2-probe",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": false,
+        "rawGoalSatisfied": false,
+        "confidence": "high",
+        "rationale": "必交付 g2-doc 是“近三天微博做成文档”。现有证据仅显示冻结样本含 10 月 28 日和 10 月 29 日条目，候选摘要明确承认 10 月 27 日缺失，且这不是已完成的近三天文档；没有看到文档交付物或覆盖完整三天的证据。",
+        "deliverables": [
+          {
+            "deliverableId": "g2-doc",
+            "status": "unsatisfied",
+            "evidenceIds": []
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": [
+          "补齐近三天缺失日期的微博内容，尤其是候选摘要提到的 10 月 27 日。",
+          "生成实际的文档交付物，并确保文档覆盖完整近三天微博，而不只是两天的冻结样本。"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "facilityVersion": "m0-05b-facility-3",
+  "evaluationMode": "offline_replay",
+  "productionV2": false,
+  "modelCalls": 0,
+  "o01": "[TBD]",
+  "checks": [
+    "range",
+    "narrative",
+    "guard-fail",
+    "lightweight-done",
+    "cancel",
+    "candidate-body",
+    "source-body"
+  ]
+}

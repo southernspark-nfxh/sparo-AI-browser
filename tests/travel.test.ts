@@ -20,6 +20,9 @@ import {
   trainSearchUrl,
   trainStationCode,
   travelResultUrl,
+  searchSite,
+  resolveSearchDate,
+  landedDropped12306Params,
 } from "../src/main/agent/travel.js";
 import { expandTripPlan, parseTripPlan } from "../src/main/agent/trip-plan.js";
 
@@ -330,6 +333,50 @@ describe("12306 and ctrip result urls", () => {
         date: "2026-09-16",
       }),
     ).toMatch(/BJP/);
+  });
+
+  it("临汾到北京的明天按北京时间拼出带日期的 12306 结果页", () => {
+    const now = new Date("2026-11-01T03:00:00.000Z");
+    expect(trainStationCode("临汾")).toBe("LFV");
+    const result = searchSite({ site: "train", from: "临汾", to: "北京", date: "明天" }, now);
+    expect(result.ok).toBe(true);
+    expect(result.data?.url).toMatch(/^https:\/\/kyfw\.12306\.cn/);
+    expect(result.data?.url).toContain("date=2026-11-02");
+    expect(result.data?.url).toContain("LFV");
+    expect(landedDropped12306Params(result.data?.url || "", "https://kyfw.12306.cn/otn/leftTicket/init")).toBe(true);
+    expect(landedDropped12306Params(result.data?.url || "", result.data?.url || "")).toBe(false);
+  });
+
+  it("下周三的北京到上海机票拼出带日期的携程结果页", () => {
+    const now = new Date("2026-11-02T04:00:00.000Z");
+    expect(resolveSearchDate("下周三", now)).toBe("2026-11-11");
+    expect(resolveSearchDate("星期五", now)).toBe("2026-11-06");
+    expect(resolveSearchDate("11月3日", now)).toBe("2026-11-03");
+    expect(resolveSearchDate("3月1号", now)).toBe("2027-03-01");
+    expect(resolveSearchDate("11-04", now)).toBe("2026-11-04");
+    expect(resolveSearchDate("02-31", now)).toBe("");
+    expect(resolveSearchDate("随便哪天", now)).toBe("");
+    const result = searchSite({ site: "flight", from: "北京", to: "上海", date: "下周三" }, now);
+    expect(result.ok).toBe(true);
+    expect(result.data?.url).toContain("flights.ctrip.com");
+    expect(result.data?.url).toContain("depdate=2026-11-11");
+  });
+
+  it("后天太原到西安拼出带 TYV 和 XAY 的 12306 结果页", () => {
+    const now = new Date("2026-11-02T04:00:00.000Z");
+    expect(trainStationCode("太原")).toBe("TYV");
+    expect(trainStationCode("西安")).toBe("XAY");
+    const result = searchSite({ site: "train", from: "太原", to: "西安", date: "后天" }, now);
+    expect(result.ok).toBe(true);
+    expect(result.data?.url).toMatch(/^https:\/\/kyfw\.12306\.cn/);
+    expect(result.data?.url).toContain("date=2026-11-04");
+    expect(result.data?.url).toContain("TYV");
+    expect(result.data?.url).toContain("XAY");
+  });
+
+  it("站码拼不出时不返回不带日期的裸地址", () => {
+    const result = searchSite({ site: "train", from: "没有这个站甲", to: "没有这个站乙", date: "2026-11-02" });
+    expect(result).toEqual({ ok: false, message: "该站点结果页通道暂不可用" });
   });
 
   it("携程酒店默认也能拼出东京京都大阪列表 URL", () => {

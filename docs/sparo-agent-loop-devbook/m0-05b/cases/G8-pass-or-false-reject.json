@@ -1,0 +1,85 @@
+{
+  "frozen": true,
+  "frozenAt": "2026-10-29T19:21:00+08:00",
+  "facilityVersion": "m0-05b-facility-1",
+  "rubricVersion": "verifier-rubric-1",
+  "promptVersion": "verifier-prompt-1",
+  "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+  "manifestSampleSetId": "m0-05a-2026-10-29",
+  "allowedTools": [],
+  "sendTool": false,
+  "payTool": false,
+  "evalBudget": {
+    "verifierTurns": 2,
+    "notO01": true,
+    "label": "evalBudget"
+  },
+  "costBucket": "independent",
+  "caseId": "G8-pass-or-false-reject",
+  "scene": "G8",
+  "resultClass": "pass",
+  "preJudgedValid": true,
+  "raw": "长采集滚动，不单列原句",
+  "candidateKind": "observation_note",
+  "candidateSummary": "观察记录。\n桌面页连续 PageDown 的离线字符差是 0。工具正文里没有「较上次」。换到移动页之后才看到更多公开条目。\n",
+  "followUpSummary": "同一观察，补读移动页区间后复验。\n桌面页连续 PageDown 的离线字符差是 0。工具正文里没有「较上次」。换到移动页之后才看到更多公开条目。\n",
+  "planSummary": "滚动无进展后改看移动页。较上次不是工具原文。",
+  "deliverables": [
+    {
+      "deliverableId": "g8-note",
+      "kind": "answer",
+      "required": true
+    }
+  ],
+  "evidenceIndex": [
+    {
+      "evidenceId": "e-g8-settled",
+      "kind": "page_state",
+      "artifactId": "art-m005a-g2-rmrb-settled-1",
+      "note": "offline delta 0"
+    },
+    {
+      "evidenceId": "e-g8-mobile",
+      "kind": "page_state",
+      "artifactId": "art-m005a-g2-rmrb-mobile"
+    }
+  ],
+  "followUpRanges": [
+    {
+      "artifactId": "art-m005a-g2-rmrb-mobile",
+      "start": 200,
+      "end": 500
+    }
+  ],
+  "candidateFile": "g8-note.txt",
+  "candidateHash": "2b7aa23762c5cf26d04b25152fc24a0887e7d1207c1b02fd7dd870371a7620f0",
+  "artifactPins": [
+    {
+      "artifactId": "art-m005a-g2-rmrb-settled-1",
+      "contentHash": "9b41d5440946dff8f7d2c6b7217ec0a970d6043bcb4d890cc8ce2787f693e757",
+      "frozenVersion": "sha256:9b41d5440946dff8f7d2c6b7217ec0a970d6043bcb4d890cc8ce2787f693e757"
+    },
+    {
+      "artifactId": "art-m005a-g2-rmrb-mobile",
+      "contentHash": "7ac80ba0870ccb64ca42163db4b3cd19079ead86859f43177fd93a049fd240a7",
+      "frozenVersion": "sha256:7ac80ba0870ccb64ca42163db4b3cd19079ead86859f43177fd93a049fd240a7"
+    }
+  ],
+  "guardFacts": {
+    "requiredArtifactsExist": true,
+    "reportRequired": false,
+    "requiredStepsObserved": true,
+    "permissionOk": true,
+    "idempotentOk": true,
+    "budgetLegal": true,
+    "stateLegal": true
+  },
+  "expected": {
+    "structural": [
+      "字符差是离线计算",
+      "不把较上次写成工具原文"
+    ],
+    "termination": "done only if verifier and guard pass",
+    "passFail": "误拒必须是模型第一次返回 goalSatisfied false"
+  }
+}

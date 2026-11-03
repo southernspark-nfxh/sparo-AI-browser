@@ -1,0 +1,13 @@
+{
+  "evaluationMode": "offline_replay",
+  "facilityVersion": "m0-05b-facility-1",
+  "rubricVersion": "verifier-rubric-1",
+  "promptVersion": "verifier-prompt-1",
+  "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+  "manifestSampleSetId": "m0-05a-2026-10-29",
+  "modelVersion": "deepseek-flash",
+  "provider": "deepseek",
+  "llmMode": "byok",
+  "priceVersion": "[TBD]",
+  "productionV2": false
+}

@@ -1,0 +1,65 @@
+{
+  "frozen": true,
+  "frozenAt": "2026-10-29T19:21:00+08:00",
+  "facilityVersion": "m0-05b-facility-1",
+  "rubricVersion": "verifier-rubric-1",
+  "promptVersion": "verifier-prompt-1",
+  "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+  "manifestSampleSetId": "m0-05a-2026-10-29",
+  "allowedTools": [],
+  "sendTool": false,
+  "payTool": false,
+  "evalBudget": {
+    "verifierTurns": 1,
+    "notO01": true,
+    "label": "evalBudget"
+  },
+  "costBucket": "independent",
+  "caseId": "G4-probe",
+  "scene": "G4",
+  "raw": "研究博主 人民日报 画像，最好上百条",
+  "candidateSummary": "来源是人民日报 2803301701 的移动页，实际约 10 条。上百条只是偏好，这里不写成已经采满。没有单独打开的报告文件。",
+  "planSummary": "根据公开条目写画像。上百条是偏好，不是已完成数量。",
+  "deliverables": [
+    {
+      "deliverableId": "g4-report",
+      "kind": "report",
+      "required": true
+    }
+  ],
+  "evidenceIndex": [
+    {
+      "evidenceId": "e-g4-mobile",
+      "kind": "content_item",
+      "artifactId": "art-m005a-g2-rmrb-mobile"
+    }
+  ],
+  "artifactPins": [
+    {
+      "artifactId": "art-m005a-g2-rmrb-mobile",
+      "contentHash": "7ac80ba0870ccb64ca42163db4b3cd19079ead86859f43177fd93a049fd240a7",
+      "frozenVersion": "sha256:7ac80ba0870ccb64ca42163db4b3cd19079ead86859f43177fd93a049fd240a7"
+    }
+  ],
+  "guardFacts": {
+    "requiredArtifactsExist": true,
+    "reportRequired": true,
+    "requiredStepsObserved": true,
+    "permissionOk": true,
+    "idempotentOk": true,
+    "budgetLegal": true,
+    "stateLegal": true,
+    "reportOpened": false
+  },
+  "known": "没有打开报告，Guard 不应放行 done",
+  "resultClass": "probe",
+  "preJudgedValid": false,
+  "candidateKind": "partial_note",
+  "expected": {
+    "structural": [
+      "没有打开报告，Guard 不应放行 done"
+    ],
+    "termination": "不因为这份部分候选记通过或误拒",
+    "passFail": "未预先判定有效"
+  }
+}

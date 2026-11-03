@@ -1,0 +1,173 @@
+{
+  "frozen": true,
+  "frozenAt": "2026-10-30T15:34:23.733Z",
+  "prejudgedBeforeModelCall": true,
+  "facilityVersion": "m0-05b-facility-3",
+  "rubricVersion": "verifier-rubric-1",
+  "promptVersion": "verifier-prompt-1",
+  "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+  "manifestSampleSetId": "m0-05a-2026-10-29",
+  "allowedTools": [],
+  "sendTool": false,
+  "payTool": false,
+  "evalBudget": {
+    "verifierTurns": 2,
+    "notO01": true,
+    "label": "evalBudget"
+  },
+  "preJudgedValid": true,
+  "caseId": "R1-complete-a",
+  "scene": "R1",
+  "resultClass": "pass",
+  "costBucket": "independent",
+  "raw": "帮我对比三款 小米15、iPhone 16、华为Mate 70 哪个值得买",
+  "candidateKind": "report",
+  "candidateFile": "r1-complete-a.html",
+  "candidateHash": "28c95bbe4ef51705515ebf757013af39bbfe0406e52a33eb7dca6f96ed461e5f",
+  "candidateDeliverable": {
+    "artifactId": "r1-complete-a.html",
+    "kind": "report",
+    "contentHash": "28c95bbe4ef51705515ebf757013af39bbfe0406e52a33eb7dca6f96ed461e5f",
+    "range": {
+      "start": 0,
+      "end": 6278,
+      "unit": "chars",
+      "length": 6278
+    },
+    "role": "candidate-deliverable",
+    "notEvidence": true,
+    "deliverableId": "r1-report"
+  },
+  "candidateSummary": "完整对照报告在 candidateDeliverable.text，notEvidence 只禁止候选自证，不取消交付身份。报告覆盖三款精确配置、页面价格口径、核心规格、优缺点、适用人群、带条件的默认推荐及样本缺口；真实打开观察为 obs-m005a-r1-report-open-20261030。",
+  "followUpSummary": "同一份完整报告仍在候选交付通道。第二轮只补读小米商品页、苹果价格区间、苹果规格区间和华为精确配置页核心区间，核对价格、配置与规格；不引入新候选或新任务。",
+  "followUpRanges": [
+    {
+      "artifactId": "art-m005a-r1-mi-xiaomi15-mobile-20261030",
+      "start": 0,
+      "end": 866
+    },
+    {
+      "artifactId": "art-m005a-r1-apple-iphone16",
+      "start": 0,
+      "end": 320
+    },
+    {
+      "artifactId": "art-m005a-r1-apple-iphone16-specs-20261030",
+      "start": 0,
+      "end": 2197
+    },
+    {
+      "artifactId": "art-m005a-r1-huawei-mate70-zol-20261030",
+      "start": 0,
+      "end": 889
+    }
+  ],
+  "planSummary": "已执行 research_mission 等价只读评测计划，不写生产 Mission：分别观察小米移动商城商品页、Apple 购买页与规格页、ZOL 的 HUAWEI Mate 70 精确配置页，形成完整对照报告；随后用只读 navigate 实际打开 r1-complete-a.html，get_url、get_title 与 page_text 读回一致，reportOpened 观察为 obs-m005a-r1-report-open-20261030。",
+  "deliverables": [
+    {
+      "deliverableId": "r1-report",
+      "kind": "report",
+      "required": true,
+      "artifactId": "r1-complete-a.html"
+    }
+  ],
+  "evidenceIndex": [
+    {
+      "evidenceId": "e-r1-xiaomi15",
+      "kind": "content_item",
+      "artifactId": "art-m005a-r1-mi-xiaomi15-mobile-20261030",
+      "contentRange": {
+        "start": 0,
+        "end": 866,
+        "unit": "chars"
+      },
+      "note": "小米移动商城公开商品页：已选 Xiaomi 15 12GB+256GB 黑色、￥3599、核心规格及该地区暂时缺货；标价不是成交价。"
+    },
+    {
+      "evidenceId": "e-r1-iphone16-price",
+      "kind": "content_item",
+      "artifactId": "art-m005a-r1-apple-iphone16",
+      "contentRange": {
+        "start": 0,
+        "end": 320,
+        "unit": "chars"
+      },
+      "note": "Apple 公开购买页价格区间：iPhone 16、128GB、RMB 5999 起及 24 期价格；不是历史最低价。"
+    },
+    {
+      "evidenceId": "e-r1-iphone16-specs",
+      "kind": "content_item",
+      "artifactId": "art-m005a-r1-apple-iphone16-specs-20261030",
+      "contentRange": {
+        "start": 0,
+        "end": 2197,
+        "unit": "chars"
+      },
+      "note": "Apple 技术规格核心区间：128GB、A18、屏幕、摄像头、尺寸重量与视频续航；未展示 mAh。"
+    },
+    {
+      "evidenceId": "e-r1-mate70",
+      "kind": "content_item",
+      "artifactId": "art-m005a-r1-huawei-mate70-zol-20261030",
+      "contentRange": {
+        "start": 0,
+        "end": 889,
+        "unit": "chars"
+      },
+      "note": "ZOL 的 HUAWEI Mate 70(12GB/256GB) 公开产品页核心区间：参考报价￥5499与核心规格；参考报价不是官方成交价。"
+    }
+  ],
+  "artifactPins": [
+    {
+      "artifactId": "art-m005a-r1-mi-xiaomi15-mobile-20261030",
+      "contentHash": "8929bc641b344df0c649412313a978ce824c2a3b363700a3b0808210b8fd6542",
+      "frozenVersion": "sha256:8929bc641b344df0c649412313a978ce824c2a3b363700a3b0808210b8fd6542"
+    },
+    {
+      "artifactId": "art-m005a-r1-apple-iphone16",
+      "contentHash": "f325668a9340ce588559328db6fc7e5f0cbe762a57050ce44434d5c64844f077",
+      "frozenVersion": "sha256:f325668a9340ce588559328db6fc7e5f0cbe762a57050ce44434d5c64844f077"
+    },
+    {
+      "artifactId": "art-m005a-r1-apple-iphone16-specs-20261030",
+      "contentHash": "d9f1b5d7a4446832c8b46c83a02c929b6f790e1e04e4348dadd3aa8ad9b16ef7",
+      "frozenVersion": "sha256:d9f1b5d7a4446832c8b46c83a02c929b6f790e1e04e4348dadd3aa8ad9b16ef7"
+    },
+    {
+      "artifactId": "art-m005a-r1-huawei-mate70-zol-20261030",
+      "contentHash": "cebd998c19d248436638f0be5ac376dd034f4636d0e496ac3c53b80c184a33b5",
+      "frozenVersion": "sha256:cebd998c19d248436638f0be5ac376dd034f4636d0e496ac3c53b80c184a33b5"
+    }
+  ],
+  "guardFacts": {
+    "requiredArtifactsExist": true,
+    "reportRequired": true,
+    "reportOpened": true,
+    "requiredStepsObserved": true,
+    "permissionOk": true,
+    "idempotentOk": true,
+    "budgetLegal": true,
+    "stateLegal": true
+  },
+  "constraints": [
+    "不使用占位原句",
+    "候选报告是交付，不是自己的来源证据",
+    "三款配置不完全一致，苹果 128GB 与另外两款 256GB 必须披露",
+    "小米是商品标价、苹果是官网起价、华为是 ZOL 参考报价，均不写成历史最低价或统一成交价",
+    "报告必须有对照、条件结论、样本量与缺口",
+    "reportOpened 只能依据 obs-m005a-r1-report-open-20261030 的真实打开观察",
+    "不自动购买，不发送，不付款，不写生产 Mission"
+  ],
+  "summary": "三款手机对照报告已在窗口实际打开，含价格口径、配置差异、条件推荐和样本缺口。",
+  "expected": {
+    "structural": [
+      "raw 是 R1 冻结原句",
+      "唯一 required 交付是完整报告",
+      "报告不进入证据索引",
+      "三款产品都有独立价格与规格来源",
+      "真实报告打开观察支持 Close Guard"
+    ],
+    "termination": "done only if verifier and guard pass",
+    "passFail": "首轮通过只记通过；首轮拒绝且补读通过才记误拒后通过"
+  }
+}

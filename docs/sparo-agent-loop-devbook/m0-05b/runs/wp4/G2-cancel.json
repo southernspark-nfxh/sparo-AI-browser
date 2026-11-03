@@ -1,0 +1,110 @@
+{
+  "caseId": "G2-cancel",
+  "scene": "G2",
+  "resultClass": "cancelled",
+  "costBucket": "controller",
+  "preJudgedValid": false,
+  "covered": true,
+  "observedClass": "cancelled",
+  "reason": "",
+  "modelCalls": 0,
+  "versions": {
+    "evaluationMode": "offline_replay",
+    "facilityVersion": "m0-05b-facility-1",
+    "rubricVersion": "verifier-rubric-1",
+    "promptVersion": "verifier-prompt-1",
+    "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+    "manifestSampleSetId": "m0-05a-2026-10-29",
+    "modelVersion": "deepseek-flash",
+    "provider": "deepseek",
+    "llmMode": "byok",
+    "priceVersion": "[TBD]",
+    "productionV2": false
+  },
+  "trace": [
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G2-cancel-e001",
+      "missionId": "eval-G2-cancel",
+      "time": "2026-10-29T11:29:18.469Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.opened",
+      "scene": "G2",
+      "resultClass": "cancelled",
+      "raw": "G2 user cancel",
+      "versions": {
+        "evaluationMode": "offline_replay",
+        "facilityVersion": "m0-05b-facility-1",
+        "rubricVersion": "verifier-rubric-1",
+        "promptVersion": "verifier-prompt-1",
+        "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+        "manifestSampleSetId": "m0-05a-2026-10-29",
+        "modelVersion": "deepseek-flash",
+        "provider": "deepseek",
+        "llmMode": "byok",
+        "priceVersion": "[TBD]",
+        "productionV2": false
+      },
+      "costBucket": "controller"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G2-cancel-e002",
+      "missionId": "eval-G2-cancel",
+      "time": "2026-10-29T11:29:18.469Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "budget.updated",
+      "evalBudget": {
+        "notO01": true,
+        "label": "evalBudget"
+      },
+      "notO01": true
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G2-cancel-e003",
+      "missionId": "eval-G2-cancel",
+      "time": "2026-10-29T11:29:18.469Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.closed",
+      "close": {
+        "reason": "cancelled",
+        "summary": "",
+        "gaps": [
+          "user cancel"
+        ]
+      },
+      "closeGuard": {
+        "passed": false,
+        "checks": [
+          {
+            "name": "artifact_exists",
+            "passed": false
+          },
+          {
+            "name": "report_opened",
+            "passed": true
+          },
+          {
+            "name": "plan_observed",
+            "passed": false
+          },
+          {
+            "name": "permission_and_idempotency",
+            "passed": true
+          },
+          {
+            "name": "budget_and_state",
+            "passed": true
+          }
+        ]
+      }
+    }
+  ]
+}

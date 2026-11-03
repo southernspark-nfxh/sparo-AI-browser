@@ -1,0 +1,171 @@
+{
+  "caseId": "G2-posts-ids",
+  "scene": "G2",
+  "resultClass": "pass",
+  "costBucket": "independent",
+  "preJudgedValid": true,
+  "covered": true,
+  "observedClass": "pass",
+  "reason": "预先判定有效的候选没有被拒绝，误拒格未覆盖",
+  "modelCalls": 1,
+  "versions": {
+    "evaluationMode": "offline_replay",
+    "facilityVersion": "m0-05b-facility-3",
+    "rubricVersion": "verifier-rubric-1",
+    "promptVersion": "verifier-prompt-1",
+    "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+    "manifestSampleSetId": "m0-05a-2026-10-29",
+    "modelVersion": "deepseek-flash",
+    "provider": "deepseek",
+    "llmMode": "byok",
+    "priceVersion": "[TBD]",
+    "productionV2": false
+  },
+  "trace": [
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G2-posts-ids-e001",
+      "missionId": "eval-G2-posts-ids",
+      "time": "2026-10-30T04:17:44.949Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.opened",
+      "scene": "G2",
+      "resultClass": "pass",
+      "raw": "当前我打开的这个博主 最近三天的微博 帮我复制下来 做成一个文档",
+      "versions": {
+        "evaluationMode": "offline_replay",
+        "facilityVersion": "m0-05b-facility-3",
+        "rubricVersion": "verifier-rubric-1",
+        "promptVersion": "verifier-prompt-1",
+        "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+        "manifestSampleSetId": "m0-05a-2026-10-29",
+        "modelVersion": "deepseek-flash",
+        "provider": "deepseek",
+        "llmMode": "byok",
+        "priceVersion": "[TBD]",
+        "productionV2": false
+      },
+      "costBucket": "independent"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G2-posts-ids-e002",
+      "missionId": "eval-G2-posts-ids",
+      "time": "2026-10-30T04:17:44.950Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 1,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash",
+      "candidateDeliverable": {
+        "artifactId": "g2-posts-ids.txt",
+        "contentHash": "3dcecf16e9a656f1d2db7f3a3dc9bd54f5353412881b1b1c8e3d55e7ad5c5dcc",
+        "textLength": 7069,
+        "notEvidence": true
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G2-posts-ids-e003",
+      "missionId": "eval-G2-posts-ids",
+      "time": "2026-10-30T04:18:11.336Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 1,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 4914,
+      "uncachedInputTokens": 4914,
+      "cachedInputTokens": 0,
+      "outputTokens": 4674,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": []
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G2-posts-ids-e004",
+      "missionId": "eval-G2-posts-ids",
+      "time": "2026-10-30T04:18:11.336Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-G2-posts-ids-r1",
+        "missionId": "eval-G2-posts-ids",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": true,
+        "rawGoalSatisfied": true,
+        "confidence": "medium",
+        "rationale": "必交付 g2-posts-ids.txt 存在，内容覆盖三个冻结时间线 artifact 中出现的 30 条微博，并按日期分布为 10 月 27 日 8 条、10 月 28 日 21 条、10 月 29 日 1 条；每条微博都标注了来源，证据索引中的 e-g2-oct27、e-g2-oct28、e-g2-oct29 分别对应三份冻结页。文档未包含 G8-host-read 费用，也未发现把明显未出现的条目写成已复制。由于未直接展开三个源 artifact 的正文区间，无法逐字复核页面截断处和数字 id 还原，故置信度为中等。",
+        "deliverables": [
+          {
+            "deliverableId": "g2-doc",
+            "status": "satisfied",
+            "artifactId": "g2-posts-ids.txt",
+            "evidenceIds": [
+              "e-g2-oct27",
+              "e-g2-oct28",
+              "e-g2-oct29"
+            ]
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": []
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G2-posts-ids-e005",
+      "missionId": "eval-G2-posts-ids",
+      "time": "2026-10-30T04:18:11.336Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.closed",
+      "close": {
+        "reason": "done",
+        "summary": "",
+        "gaps": []
+      },
+      "closeGuard": {
+        "passed": true,
+        "checks": [
+          {
+            "name": "artifact_exists",
+            "passed": true
+          },
+          {
+            "name": "report_opened",
+            "passed": true
+          },
+          {
+            "name": "plan_observed",
+            "passed": true
+          },
+          {
+            "name": "permission_and_idempotency",
+            "passed": true
+          },
+          {
+            "name": "budget_and_state",
+            "passed": true
+          }
+        ]
+      }
+    }
+  ]
+}

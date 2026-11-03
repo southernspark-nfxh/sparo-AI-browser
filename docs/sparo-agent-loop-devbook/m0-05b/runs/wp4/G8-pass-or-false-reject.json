@@ -1,0 +1,226 @@
+{
+  "caseId": "G8-pass-or-false-reject",
+  "scene": "G8",
+  "resultClass": "pass",
+  "costBucket": "independent",
+  "preJudgedValid": true,
+  "covered": false,
+  "observedClass": "false_reject_then_pass",
+  "reason": "发生拒绝，但补读后的复验或 Close Guard 没有通过",
+  "modelCalls": 2,
+  "versions": {
+    "evaluationMode": "offline_replay",
+    "facilityVersion": "m0-05b-facility-1",
+    "rubricVersion": "verifier-rubric-1",
+    "promptVersion": "verifier-prompt-1",
+    "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+    "manifestSampleSetId": "m0-05a-2026-10-29",
+    "modelVersion": "deepseek-flash",
+    "provider": "deepseek",
+    "llmMode": "byok",
+    "priceVersion": "[TBD]",
+    "productionV2": false
+  },
+  "trace": [
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-pass-or-false-reject-e001",
+      "missionId": "eval-G8-pass-or-false-reject",
+      "time": "2026-10-29T11:30:39.390Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.opened",
+      "scene": "G8",
+      "resultClass": "pass",
+      "raw": "长采集滚动，不单列原句",
+      "versions": {
+        "evaluationMode": "offline_replay",
+        "facilityVersion": "m0-05b-facility-1",
+        "rubricVersion": "verifier-rubric-1",
+        "promptVersion": "verifier-prompt-1",
+        "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+        "manifestSampleSetId": "m0-05a-2026-10-29",
+        "modelVersion": "deepseek-flash",
+        "provider": "deepseek",
+        "llmMode": "byok",
+        "priceVersion": "[TBD]",
+        "productionV2": false
+      },
+      "costBucket": "independent"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-pass-or-false-reject-e002",
+      "missionId": "eval-G8-pass-or-false-reject",
+      "time": "2026-10-29T11:30:39.390Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 1,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-pass-or-false-reject-e003",
+      "missionId": "eval-G8-pass-or-false-reject",
+      "time": "2026-10-29T11:30:54.879Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 1,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 538,
+      "uncachedInputTokens": 410,
+      "cachedInputTokens": 128,
+      "outputTokens": 3205,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": []
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-pass-or-false-reject-e004",
+      "missionId": "eval-G8-pass-or-false-reject",
+      "time": "2026-10-29T11:30:54.879Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-G8-pass-or-false-reject-r1",
+        "missionId": "eval-G8-pass-or-false-reject",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": false,
+        "rawGoalSatisfied": false,
+        "confidence": "low",
+        "rationale": "候选摘要只是自述，不能替代观察证据。e-g8-settled 的 note 仅能支持桌面页离线字符差为 0；e-g8-mobile 仅标注 mobile，未提供移动页正文、条目数量或内容，无法验证“换到移动页后看到更多公开条目”。同样，“工具正文里没有『较上次』”这一否定结论缺少可核对证据或读取区间。因此必交付 g8-note 的关键观察未全部被证据支持。",
+        "deliverables": [
+          {
+            "deliverableId": "g8-note",
+            "status": "unsatisfied",
+            "evidenceIds": [
+              "e-g8-settled"
+            ]
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": [
+          "补充 e-g8-mobile 的可核对内容或快照说明（如移动页条目数量/列表），证明其确有更多公开条目。",
+          "补充桌面页正文或读取区间证据，以支持“工具正文里没有『较上次』”的否定判断；否则应降级为未验证。"
+        ]
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-pass-or-false-reject-e005",
+      "missionId": "eval-G8-pass-or-false-reject",
+      "time": "2026-10-29T11:30:54.880Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "artifact.created",
+      "artifactId": "art-m005a-g2-rmrb-mobile",
+      "frozenVersion": "sha256:7ac80ba0870ccb64ca42163db4b3cd19079ead86859f43177fd93a049fd240a7",
+      "contentRange": {
+        "start": 200,
+        "end": 500,
+        "unit": "chars",
+        "length": 300
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-pass-or-false-reject-e006",
+      "missionId": "eval-G8-pass-or-false-reject",
+      "time": "2026-10-29T11:30:54.880Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 2,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-pass-or-false-reject-e007",
+      "missionId": "eval-G8-pass-or-false-reject",
+      "time": "2026-10-29T11:31:03.116Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 2,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 577,
+      "uncachedInputTokens": 449,
+      "cachedInputTokens": 128,
+      "outputTokens": 1568,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": [
+        {
+          "artifactId": "art-m005a-g2-rmrb-mobile",
+          "start": 200,
+          "end": 500,
+          "unit": "chars",
+          "length": 300,
+          "frozenVersion": "sha256:7ac80ba0870ccb64ca42163db4b3cd19079ead86859f43177fd93a049fd240a7"
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-pass-or-false-reject-e008",
+      "missionId": "eval-G8-pass-or-false-reject",
+      "time": "2026-10-29T11:31:03.116Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-G8-pass-or-false-reject-r2",
+        "missionId": "eval-G8-pass-or-false-reject",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": false,
+        "rawGoalSatisfied": false,
+        "confidence": "medium",
+        "rationale": "唯一必交付 g8-note 的核心内容无法全部由可读证据支撑。证据索引仅给出 e-g8-settled 的简短注记「offline delta 0」，可支持桌面页 PageDown 后离线字符差为 0；但「换到移动页后才看到更多公开条目」属于关键正向外推，art-m005a-g2-rmrb-mobile 只标注了区间 200-500/300 chars，正文未提供，无法核对是否真有更多公开条目。候选摘要还出现「工具正文里没有『较上次』」这一否定式断言，证据索引中没有对应来源，属于无来源推断却按观察陈述。候选摘要本身不构成证据，因此不能据此判定必交付 satisfied。",
+        "deliverables": [
+          {
+            "deliverableId": "g8-note",
+            "status": "not_satisfied",
+            "evidenceIds": [
+              "e-g8-settled"
+            ],
+            "note": "桌面页 delta 0 有 e-g8-settled 注记支撑；移动页「更多公开条目」及「工具正文无『较上次』」缺少可核对正文或证据来源，交付不完整。"
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": [
+          "补充 art-m005a-g2-rmrb-mobile 可见区间（或指定区间）的实际正文引用，用于支撑「换到移动页后看到更多公开条目」，并映射到 e-g8-mobile。",
+          "为「工具正文里没有『较上次』」提供检索范围与结果来源，否则改为 inferred 并标注依据，不得写成 observed。",
+          "明确 g8-note 正文与证据的对应关系：哪一句由 e-g8-settled 支撑、哪一句由 e-g8-mobile 支撑，避免以候选摘要代替交付正文。"
+        ]
+      }
+    }
+  ]
+}

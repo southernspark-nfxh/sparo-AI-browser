@@ -236,6 +236,34 @@ const TRAIN_CODE: Record<string, string> = {
   郑州: "ZZF",
   重庆: "CUW",
   南宁: "NFZ",
+  临汾: "LFV",
+  太原: "TYV",
+  沈阳: "SYT",
+  哈尔滨: "HBB",
+  长春: "CCT",
+  呼和浩特: "HHC",
+  石家庄: "SJP",
+  济南: "JNK",
+  兰州: "LZJ",
+  西宁: "XNO",
+  乌鲁木齐: "WAR",
+  拉萨: "LSO",
+  昆明: "KMM",
+  合肥: "HFH",
+  南昌: "NCG",
+  福州: "FZS",
+  海口: "VUQ",
+  银川: "YIJ",
+  大连: "DLT",
+  青岛: "QDK",
+  大同: "DTV",
+  包头: "BTC",
+  桂林: "GLZ",
+  洛阳: "LYF",
+  三亚: "SEQ",
+  珠海: "ZHQ",
+  佛山: "FSQ",
+  东莞: "RTQ",
 };
 
 function pad2(n: number): string {
@@ -996,4 +1024,152 @@ export function travelReadPrompt(q: TravelQuery): string {
     `根据下面地图/路线正文，用中文说明从 ${q.from} 到 ${q.to} 怎么走：耗时、方式、关键换乘。`,
     "只根据正文，不要编造。",
   ].join("\n");
+}
+
+const SITE_UNAVAILABLE = "该站点结果页通道暂不可用";
+
+/** 北京时间的日历日。只用于把「明天」写成 URL 参数。 */
+export function beijingDay(now = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const pick = (type: string) => parts.find((part) => part.type === type)?.value || "";
+  return `${pick("year")}-${pick("month")}-${pick("day")}`;
+}
+
+const WEEKDAY_INDEX: Record<string, number> = {
+  日: 0,
+  天: 0,
+  一: 1,
+  二: 2,
+  三: 3,
+  四: 4,
+  五: 5,
+  六: 6,
+};
+
+function weekdayOfYmd(iso: string): number {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, (m || 1) - 1, d || 1)).getUTCDay();
+}
+
+function calendarYmd(year: number, month: number, day: number): string {
+  const dt = new Date(Date.UTC(year, month - 1, day));
+  if (dt.getUTCFullYear() !== year || dt.getUTCMonth() !== month - 1 || dt.getUTCDate() !== day) return "";
+  return `${year}-${pad2(month)}-${pad2(day)}`;
+}
+
+/** 未来最近的那个周X。当天已经是这个周X时，取下一周。 */
+function nearestFutureWeekday(today: string, target: number): string {
+  const current = weekdayOfYmd(today);
+  let delta = (target - current + 7) % 7;
+  if (delta === 0) delta = 7;
+  return addDays(today, delta);
+}
+
+/** 下周一到下周日：下一周（周一起算）里的那个周X。 */
+function nextWeekWeekday(today: string, target: number): string {
+  const current = weekdayOfYmd(today);
+  const daysToNextMonday = ((1 - current + 7) % 7) || 7;
+  const fromMonday = target === 0 ? 6 : target - 1;
+  return addDays(today, daysToNextMonday + fromMonday);
+}
+
+/** 已是 YYYY-MM-DD 就照用。今天/明天/后天、周X、X月X日、MM-DD 按北京时间换算。认不出就返回空。 */
+export function resolveSearchDate(input: unknown, now = new Date()): string {
+  const raw = String(input || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const today = beijingDay(now);
+  if (!raw || raw === "今天" || /^today$/i.test(raw)) return today;
+  if (raw === "明天" || /^tomorrow$/i.test(raw)) return addDays(today, 1);
+  if (raw === "后天") return addDays(today, 2);
+  const week = raw.match(/^(下)?(?:周|星期)([一二三四五六日天])$/);
+  if (week) {
+    const target = WEEKDAY_INDEX[week[2]];
+    if (target == null) return "";
+    return week[1] ? nextWeekWeekday(today, target) : nearestFutureWeekday(today, target);
+  }
+  const monthDay = raw.match(/^(\d{1,2})月(\d{1,2})(?:日|号)$/);
+  if (monthDay) {
+    const year = Number(today.slice(0, 4));
+    const month = Number(monthDay[1]);
+    const day = Number(monthDay[2]);
+    let ymd = calendarYmd(year, month, day);
+    if (!ymd) return "";
+    if (ymd < today) ymd = calendarYmd(year + 1, month, day);
+    return ymd;
+  }
+  const short = raw.match(/^(\d{1,2})-(\d{1,2})$/);
+  if (short) return calendarYmd(Number(today.slice(0, 4)), Number(short[1]), Number(short[2]));
+  return "";
+}
+
+export function parse12306TicketQuery(url: string): { from: string; to: string; date: string } | null {
+  try {
+    const parsed = new URL(url);
+    if (!/12306\.cn$/i.test(parsed.hostname)) return null;
+    const from = (parsed.searchParams.get("fs") || "").split(",")[0]?.trim();
+    const to = (parsed.searchParams.get("ts") || "").split(",")[0]?.trim();
+    const date = parsed.searchParams.get("date") || "";
+    if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+    return { from, to, date };
+  } catch {
+    return null;
+  }
+}
+
+/** 打开的是带日期的 12306 查询，落地页却把日期参数丢了。 */
+export function landedDropped12306Params(requested: string, landed: string): boolean {
+  if (!parse12306TicketQuery(requested)) return false;
+  try {
+    const parsed = new URL(landed);
+    if (!/12306\.cn$/i.test(parsed.hostname)) return false;
+    return !parsed.searchParams.get("date");
+  } catch {
+    return false;
+  }
+}
+
+/** 只拼结果页 URL。站码或日期拼不出时如实不可用，不造假地址。 */
+export function searchSite(
+  input: { site?: unknown; from?: unknown; to?: unknown; date?: unknown; query?: unknown },
+  now = new Date(),
+): { ok: boolean; message: string; data?: { url: string } } {
+  const site = String(input.site || "").trim();
+  const date = resolveSearchDate(input.date, now);
+  const from = String(input.from || "").trim();
+  const to = String(input.to || "").trim();
+  if (site === "train") {
+    if (!from || !to || !date || !trainStationCode(from) || !trainStationCode(to)) {
+      return { ok: false, message: SITE_UNAVAILABLE };
+    }
+    const url = trainSearchUrl({ kind: "train", site: "12306", from, to, date });
+    if (!/kyfw\.12306\.cn|www\.12306\.cn/.test(url) || !/[?&]date=/.test(url)) {
+      return { ok: false, message: SITE_UNAVAILABLE };
+    }
+    return { ok: true, message: url, data: { url } };
+  }
+  if (site === "flight") {
+    if (!from || !to || !date) return { ok: false, message: SITE_UNAVAILABLE };
+    const url = flightSearchUrl({ kind: "flight", site: "ctrip", from, to, date });
+    if (!url) return { ok: false, message: SITE_UNAVAILABLE };
+    return { ok: true, message: url, data: { url } };
+  }
+  if (site === "hotel") {
+    const city = String(input.query || to || from || "").trim();
+    if (!city || !date) return { ok: false, message: SITE_UNAVAILABLE };
+    const url = hotelSearchUrl({
+      kind: "hotel",
+      site: "ctrip",
+      city,
+      checkin: date,
+      checkout: addDays(date, 1),
+    });
+    if (!url) return { ok: false, message: SITE_UNAVAILABLE };
+    return { ok: true, message: url, data: { url } };
+  }
+  return { ok: false, message: SITE_UNAVAILABLE };
 }

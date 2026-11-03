@@ -1,0 +1,18 @@
+{
+  "kind": "contract_fixture",
+  "notAWebPage": true,
+  "notAProductionRun": true,
+  "scene": "G6",
+  "raw": "帮我写一首诗",
+  "webEvidence": "not_applicable",
+  "deliverable": {
+    "deliverableId": "g6-poem-doc",
+    "kind": "document",
+    "description": "一首诗的文档。确认前没有工具副作用。无浏览器任务时不得虚构网页证据。",
+    "required": true,
+    "acceptedArtifactKinds": ["document"],
+    "evidenceIds": [],
+    "artifactIds": [],
+    "status": "pending"
+  }
+}

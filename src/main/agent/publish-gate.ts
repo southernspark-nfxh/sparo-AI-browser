@@ -23,3 +23,13 @@ export function allowClick(kind: ClickKind, autoSend: boolean): { ok: boolean; m
   }
   return { ok: true };
 }
+
+/** 新核心已在 request_confirm 确认过发送。只放行 send，支付、登录、验证码照旧拦。 */
+export function gateClickText(
+  piCoreRunning: boolean,
+  text: string,
+  autoSend: boolean,
+): { ok: boolean; message?: string } {
+  if (piCoreRunning && classifyClick(text) === "send") return { ok: true };
+  return allowClick(classifyClick(text), autoSend);
+}

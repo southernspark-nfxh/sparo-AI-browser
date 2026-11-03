@@ -53,13 +53,13 @@ https://github.com/southernspark-nfxh/sparo-agent-browser/releases/latest/downlo
 3. 侧栏支持中文、English、日本語、한국어、Español、Português、Deutsch、Français、Italiano  
    The sidebar speaks those languages too.
 
-分寸是这样的：AI 写的回复只进输入框；要发布的内容，提交前停下等你确认。付钱、发送，永远你自己点。
+分寸你自己选：默认**逐步确认**——回复只进输入框，发布、发送前停下等你点头；嫌打断多就切**自动执行**，一口气干完再汇报。支付、删除两种模式都先问你。
 
-The rule is simple: AI drafts go into the input box. Before anything publishes, it stops and waits. Paying and sending — you click.
+Pick your mode: **confirm each step** by default — drafts wait for your nod before anything publishes; or switch to **run automatically** and it finishes the whole task before reporting. Paying and deleting always ask first, in either mode.
 
-更大的活也能一句话交给它——安排出差、订票比价、查资料做调研。它会自己翻页面，把结果整理成一份手册给你。
+更大的活也能一句话交给它——安排出差、订票比价、查资料做调研。它会自己翻页面，把结果整理成一份手册给你。任务跑着的时候你随时可以插话改方向、或点停止叫停；网页图片、页面截图能存进本机素材库，发帖贴图时直接引用。
 
-Bigger jobs work the same way: plan a trip, compare tickets, research a topic. It opens the pages and hands you a handbook.
+Bigger jobs go to it in one sentence too — trips, price checks, research. It flips pages itself and hands you a handbook. Interrupt or stop it any time mid-run; save web images and screenshots to a local library and reuse them when posting.
 
 ## 让 Agent 控制这扇窗 · Let an agent drive this window
 

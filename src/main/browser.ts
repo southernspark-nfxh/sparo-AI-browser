@@ -17,7 +17,7 @@ import { join, resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { pageViewCoversChrome, resetChromeCoverBudget, takeChromeCoverFix, type ChromeCoverBudget } from "./page-bounds.js";
+import { boundsWithinOnePixel, pageViewCoversChrome, resetChromeCoverBudget, takeChromeCoverFix, type ChromeCoverBudget } from "./page-bounds.js";
 import { clickPointUsable, offscreenAgentBounds, viewportTooSmall } from "./agent-viewport.js";
 import { coPresenceMayRestore } from "./shell-focus.js";
 import { traceMainWindow } from "./focus-trace.js";
@@ -71,7 +71,8 @@ import {
 } from "./agent/kernel/index.js";
 import { parseRewriteVerdict, rewriteVerdictPrompt } from "./agent/kernel/read-rewrite.js";
 import { alternateSite, decideStall, NO_PROGRESS_MS } from "./agent/kernel/stall.js";
-import { allowClick, classifyClick } from "./agent/publish-gate.js";
+import { gateClickText } from "./agent/publish-gate.js";
+import { inspectUploadPath } from "./agent/set-file.js";
 import { writeExperience } from "./agent/experience.js";
 import { distillMission, oneShotJudgePrompt, parseOneShotVerdict } from "./agent/distill.js";
 import { distillSkillFromTrace, shouldSkipRemember } from "./agent/remember.js";
@@ -127,6 +128,9 @@ import {
   travelListState,
   travelReadPrompt,
   travelResultUrl,
+  searchSite,
+  landedDropped12306Params,
+  parse12306TicketQuery,
   addDays,
   detectHotelSite,
   detectFlightSite,
@@ -166,6 +170,7 @@ import {
   preferredMission,
   recoveryLine,
   replayMissions,
+  sidebarOffersRecovery,
   type RestoredMission,
 } from "./agent/mission-journal.js";
 import {
@@ -262,6 +267,7 @@ import {
   wantsPageShot,
   type ScreenshotOpts,
 } from "./agent/vision.js";
+import { fetchImagePageScript, listCaptures, saveImageBytes, saveShotBytes } from "./captures.js";
 import { withJsonModel } from "./cloud/request-body.js";
 import {
   cloneEnv,
@@ -276,6 +282,7 @@ import {
   DeepSeekAgentProvider,
   type AgentToolName,
 } from "./agent/deepseek.js";
+import { PiAgentCore, type PiToolName } from "./agent/pi-core.js";
 import {
   createSkillFromTrace,
   deleteSkill,
@@ -333,8 +340,8 @@ import {
 import {
   QA_PROBE_SCRIPT,
   buildSmtQaReport,
-  looksLikeSubmitAction,
   qaReportToToolResult,
+  submitClickNeedsGate,
   type QaReport,
 } from "./qa/dianxiaomi-smt.js";
 import {
@@ -417,6 +424,8 @@ import {
   type IframeMeta,
 } from "./cdp-frames.js";
 import { isMojibake, softFillMatch, sleep } from "./browser-helpers.js";
+import { retryShortContentEditable } from "./fill-retry.js";
+import { recaptureIfEmpty } from "./snapshot-retry.js";
 import { attachPageContextMenu } from "./page-context-menu.js";
 
 /**
@@ -676,6 +685,11 @@ export class SparkBrowser {
   private skillsCache: Skill[] = [];
   private settings!: SparkSettings;
   private deepseek: DeepSeekAgentProvider | null = null;
+  private piCore: PiAgentCore | null = null;
+  /** 新核心 run 期间挡住旧学习系统向侧栏插话、暂停。 */
+  private piCoreRunning = false;
+  /** 同一组 12306 查询参数只补一次表单。 */
+  private repaired12306 = new Set<string>();
   private llmRuntime: "byok" | "cloud" = "byok";
   private cloudQuota: QuotaSnap | null = null;
   private cloudPlans: CloudPlanPublic[] = [];
@@ -688,6 +702,8 @@ export class SparkBrowser {
   // 最近一次正常的窗口客户区尺寸。最小化→恢复瞬间 getContentSize 会短暂返回 0，
   // 不能拿 0 去算页面 bounds（会把视图夹到 100px 并残留）。
   private lastGoodContent = { width: 0, height: 0 };
+  /** 上次真正排过版的客户区。1px 抖动不再重排。 */
+  private lastLayoutContent: { width: number; height: number } | null = null;
   /** 最小化之前，用户真正看见的窗口位置。代理把窗口挪到屏幕外时不覆盖它。 */
   private lastUserWindowBounds: { x: number; y: number; width: number; height: number } | null = null;
   /** 当前窗口是为了保持页面尺寸而放在屏幕外，不是用户拉到前台。 */
@@ -766,6 +782,8 @@ export class SparkBrowser {
   }
 
   private chatRunningFlag = false;
+  private pendingChat: { text: string; images?: string[]; quotes?: unknown } | null = null;
+  private activePiAbort: AbortController | null = null;
 
   private get chatRunning(): boolean {
     const pool = this.taskPool;
@@ -949,6 +967,15 @@ export class SparkBrowser {
     this.window.on("resize", () => {
       this.rememberUserWindowBounds();
       this.chromeCover = resetChromeCoverBudget(Date.now());
+      const [w, h] = this.window.getContentSize();
+      if (
+        this.lastLayoutContent &&
+        Math.abs(w - this.lastLayoutContent.width) <= 1 &&
+        Math.abs(h - this.lastLayoutContent.height) <= 1
+      ) {
+        return;
+      }
+      this.lastLayoutContent = { width: w, height: h };
       this.layout();
     });
     this.window.on("maximize", () => this.layout());
@@ -2164,17 +2191,9 @@ export class SparkBrowser {
     const width = Math.round(Number(raw?.width) || 0);
     const height = Math.round(Number(raw?.height) || 0);
     if (width < 80 || height < 80) return;
-    const prev = this.holeBounds;
-    if (
-      prev &&
-      prev.x === x &&
-      prev.y === y &&
-      prev.width === width &&
-      prev.height === height
-    ) {
-      return;
-    }
-    this.holeBounds = { x, y, width, height };
+    const next = { x, y, width, height };
+    if (this.holeBounds && boundsWithinOnePixel(this.holeBounds, next)) return;
+    this.holeBounds = next;
     this.applyViewBounds();
   }
 
@@ -2335,7 +2354,8 @@ export class SparkBrowser {
     }
     const active = this.getActiveTab();
     if (active?.view === view) {
-      this.logChromeHole("bounds-changed", this.lastActiveBounds, actual);
+      const jitter = this.lastActiveBounds ? boundsWithinOnePixel(this.lastActiveBounds, actual) : false;
+      if (!jitter) this.logChromeHole("bounds-changed", this.lastActiveBounds, actual);
       this.lastActiveBounds = actual;
     }
     if (this.boundsGuard || this.overlay !== "none") return;
@@ -2440,6 +2460,16 @@ export class SparkBrowser {
     nudge: boolean,
   ): void {
     const parent = this.window.contentView;
+    let actual: { x: number; y: number; width: number; height: number } | null = null;
+    try {
+      actual = view.getBounds();
+    } catch {
+      actual = null;
+    }
+    if (parent.children.includes(view) && actual && boundsWithinOnePixel(actual, bounds)) {
+      view.setVisible(true);
+      return;
+    }
     if (!parent.children.includes(view)) {
       view.setBounds(bounds);
       parent.addChildView(view);
@@ -2606,7 +2636,11 @@ export class SparkBrowser {
     handle("spark:reorder-tabs", async (_e, fromId: string, toId: string) =>
       this.reorderTabs(String(fromId || ""), String(toId || "")),
     );
-    handle("spark:stop", async () => this.stopLoading());
+    handle("spark:stop", async () => {
+      const stopped = this.stopLoading();
+      if (this.chatRunning && this.activePiAbort) this.activePiAbort.abort();
+      return stopped;
+    });
     handle("spark:print", async () => {
       this.printPage();
       return { ok: true };
@@ -3684,14 +3718,14 @@ export class SparkBrowser {
     run: () => Promise<ToolResult>,
     tabId?: string,
   ): Promise<ToolResult> {
-    if (this.helpAsk) {
+    if (!this.piCoreRunning && this.helpAsk) {
       // 多站任务不能因为上一站登录墙就冻死。记下「先不管」，问题仍留在侧栏给人改。
       this.skipLearning();
     }
     const before = pageFinger(this.getUrl(tabId), this.getTitle(tabId));
     const result = await run();
     try {
-      this.observePageAction(name, args, before, tabId);
+      if (!this.piCoreRunning) this.observePageAction(name, args, before, tabId);
     } catch (error) {
       console.error("[learn] observe failed", error);
     }
@@ -3716,6 +3750,7 @@ export class SparkBrowser {
   }
 
   private openHelpAsk(hit: ReturnType<typeof detectFailure>): void {
+    if (this.piCoreRunning) return;
     if (!hit || this.helpAsk) return;
     const zh = this.settings.locale.startsWith("zh");
     this.helpAsk = questionFor(hit, zh);
@@ -3724,6 +3759,7 @@ export class SparkBrowser {
   }
 
   private async applyHostLessons(tabId?: string): Promise<boolean> {
+    if (this.piCoreRunning) return false;
     tabId = tabId || this.agentTabId || this.activeTabId;
     const lessons = findLessonsForHost(this.configDir(), this.getUrl(tabId));
     if (!lessons.length) return false;
@@ -3754,6 +3790,7 @@ export class SparkBrowser {
   }
 
   answerLearning(raw: string): ToolResult {
+    if (this.piCoreRunning) return { ok: true, message: "" };
     const ask = this.helpAsk;
     if (!ask) return { ok: false, message: tx(this.settings.locale, "learn.none") };
     const parsed = parseAnswer(ask, raw);
@@ -4411,6 +4448,7 @@ export class SparkBrowser {
       const t = await assertAndStartTask(this.configDir());
       this.cloudTaskId = t.taskId;
       this.deepseek?.setTaskId(t.taskId);
+      this.piCore?.setTaskId(t.taskId);
       this.cloudQuota = {
         ...t.snap,
         email: this.cloudQuota?.email || loadTokens(this.configDir())?.email,
@@ -4435,6 +4473,7 @@ export class SparkBrowser {
     const id = this.cloudTaskId;
     this.cloudTaskId = undefined;
     this.deepseek?.setTaskId(undefined);
+    this.piCore?.setTaskId(undefined);
     if (!id) return null;
     try {
       const s = await settleCloudTask(this.configDir(), id);
@@ -4452,6 +4491,11 @@ export class SparkBrowser {
       this.deepseek = new DeepSeekAgentProvider(cfg, (name, args) =>
         this.runAgentTool(name, args),
       );
+    }
+    if (this.piCore) {
+      this.piCore.updateConfig(cfg);
+    } else {
+      this.piCore = new PiAgentCore(cfg, (name, args) => this.runCoreTool(name, args));
     }
   }
 
@@ -4535,6 +4579,86 @@ export class SparkBrowser {
       headers,
       body: withJsonModel(init.body, model),
     });
+  }
+
+  /** 新核心只暴露通用浏览原语；路线和下一步全由模型决定。 */
+  private async runCoreTool(
+    name: PiToolName,
+    args: Record<string, unknown>,
+  ): Promise<ToolResult> {
+    const tabId = this.agentTabId || this.activeTabId;
+    if (name === "scroll") {
+      const direction = args.direction === "up" ? -1 : 1;
+      const amount = Math.min(3000, Math.max(100, Number(args.amount) || 900));
+      try {
+        const wc = this.viewForTab(tabId).webContents;
+        const position = (await wc.executeJavaScript(
+          `(async () => {
+            window.scrollBy(0, ${direction * amount});
+            await new Promise((resolve) => setTimeout(resolve, 350));
+            return {
+              y: Math.round(window.scrollY || 0),
+              viewportHeight: window.innerHeight,
+              pageHeight: Math.max(document.body?.scrollHeight || 0, document.documentElement?.scrollHeight || 0),
+            };
+          })()`,
+          true,
+        )) as { y: number; viewportHeight: number; pageHeight: number };
+        return {
+          ok: true,
+          message: `已${direction > 0 ? "向下" : "向上"}滚动 ${amount} 像素`,
+          data: position,
+        };
+      } catch (error) {
+        return { ok: false, message: error instanceof Error ? error.message : String(error) };
+      }
+    }
+    if (name === "go_back") return this.goBack({ tabId });
+    if (name === "reload") return this.reload({ asHuman: true, tabId });
+    if (name === "request_confirm") {
+      return { ok: false, message: "确认要由核心循环中断，不应直接执行。" };
+    }
+    if (name === "search_site") return searchSite(args);
+    if (name === "save_shot") return this.saveShot(args, tabId);
+    if (name === "save_image") return this.saveImage(args, tabId);
+    if (name === "list_captures") return this.listCapturesTool();
+    if (name === "set_file") {
+      const inspected = inspectUploadPath(String(args.path || ""));
+      if (!inspected.ok) return inspected;
+      const uploaded = await this.upload(
+        {
+          ref: args.ref ? String(args.ref) : undefined,
+          selector: args.selector ? String(args.selector) : undefined,
+        },
+        [inspected.path],
+        tabId,
+      );
+      if (!uploaded.ok) return uploaded;
+      return {
+        ok: true,
+        message: `已把文件放进选择框：${inspected.path}`,
+        data: { path: inspected.path, sizeMB: inspected.sizeMB },
+      };
+    }
+    if (name === "navigate") {
+      const requested = String(args.url || "");
+      const result = await this.runAgentTool(name, args);
+      if (result.ok) await this.repair12306QueryOnce(requested);
+      return result;
+    }
+    return this.runAgentTool(name, args);
+  }
+
+  /** 12306 丢掉 URL 参数时，补一次查询表单并点一次查询。 */
+  private async repair12306QueryOnce(requested: string): Promise<void> {
+    const landed = this.getUrl(this.agentTabId || this.activeTabId);
+    if (!landedDropped12306Params(requested, landed)) return;
+    const query = parse12306TicketQuery(requested);
+    if (!query) return;
+    const key = `${query.from}|${query.to}|${query.date}`;
+    if (this.repaired12306.has(key)) return;
+    this.repaired12306.add(key);
+    await this.fill12306Form({ kind: "train", site: "12306", ...query });
   }
 
   private async runAgentTool(
@@ -6125,7 +6249,7 @@ export class SparkBrowser {
       return;
     }
     const item = pickInterruptedMission(pending);
-    if (!item) return;
+    if (!item || !sidebarOffersRecovery()) return;
     this.pendingRecovery = item;
     this.chatLog.push({ role: "assistant", text: recoveryLine(item) });
   }
@@ -6159,19 +6283,83 @@ export class SparkBrowser {
     return this.executeMission(mission, jobImages);
   }
 
-  async handleChat(text: string, images?: string[], quotes?: unknown): Promise<ToolResult> {
+  async handleChat(
+    text: string,
+    images?: string[],
+    quotes?: unknown,
+    opts?: { alreadyLogged?: boolean },
+  ): Promise<ToolResult> {
+    const clean = text.trim();
+    if (!clean) return { ok: false, message: "请输入任务" };
     const pics = sanitizeImageDataUrls(images);
     const cleanQuotes = normalizeQuotes(quotes);
-    const waiting = this.matchWaitingResume(text);
-    if (waiting) return this.resumeWaiting(waiting, text, pics, cleanQuotes);
-    // 答复语（「打开 / 好 / 换个入口」）多半在回答挂起任务的问句，不收它的等待卡片。
-    if (!isShortAffirmative(text) && !isHelpAnswerHint(text)) this.dismissAbandonedForegroundWaits();
-    // 「运行技能」必须先到门岗窄路。laneForText 会走 parseMission，
-    // 把「运行技能 比价 / 天气穿衣建议」收成后台工作单，窄路就看不见了。
-    if (!runSkillUtteranceQuery(text) && laneForText(text) === "background") {
-      return this.enqueueBackground(text, pics, cleanQuotes);
+    if (this.chatRunning) {
+      this.chatLog.push(quotedUserTurn(text, cleanQuotes, pics));
+      this.pendingChat = { text: clean, images: pics, quotes: cleanQuotes };
+      this.activePiAbort?.abort();
+      this.pushSidebarState();
+      return { ok: true, message: "已记下，当前任务汇报后接着做。" };
     }
-    return this.enqueueForeground(text, pics, cleanQuotes);
+
+    const previousAgentTab = this.agentTabId;
+    this.agentTabId = this.activeTabId;
+    if (!opts?.alreadyLogged) this.chatLog.push(quotedUserTurn(text, cleanQuotes, pics));
+    this.chatRunning = true;
+    this.pushSidebarState();
+
+    try {
+      if (!this.piCore) {
+        const message = "请先在设置里配置模型。";
+        this.chatLog.push({ role: "assistant", text: message });
+        return { ok: false, message };
+      }
+      const cloudGate = await this.beginCloudTaskIfNeeded({ type: "llm", text: clean }, clean);
+      if (cloudGate === "refused") {
+        const message = this.lastCloudRefuse || this.L("cloud.exhausted");
+        this.chatLog.push({ role: "assistant", text: message });
+        return { ok: false, message };
+      }
+
+      let prompt = cleanQuotes.length
+        ? composeQuotedPrompt(clean, this.materializeNoteQuotes(cleanQuotes))
+        : clean;
+      if (pics.length) prompt += "\n\n用户附了图片；当前核心版尚未接入识图，请不要声称看过图片。";
+      const history = this.chatLog
+        .slice(0, -1)
+        .slice(-12)
+        .map((turn) => ({ role: turn.role, text: turn.text.slice(0, 4000) }));
+      this.piCoreRunning = true;
+      this.activePiAbort = new AbortController();
+      const result = await this.piCore.run({
+        input: prompt,
+        url: this.getUrl(this.agentTabId),
+        title: this.getTitle(this.agentTabId),
+        locale: this.settings.locale,
+        history,
+        signal: this.activePiAbort.signal,
+        execMode: this.settings.execMode === "auto" ? "auto" : "step",
+      });
+      this.chatLog.push({ role: "assistant", text: result.text });
+      return {
+        ok: result.ok,
+        message: result.text,
+        ...(result.awaitingConfirm ? { data: { awaitingConfirm: true } } : {}),
+      };
+    } catch (error) {
+      const message = `执行失败：${error instanceof Error ? error.message : String(error)}`;
+      this.chatLog.push({ role: "assistant", text: message });
+      return { ok: false, message };
+    } finally {
+      this.piCoreRunning = false;
+      this.activePiAbort = null;
+      if (this.cloudTaskId) void this.finishCloudTask();
+      this.agentTabId = previousAgentTab;
+      this.chatRunning = false;
+      this.pushSidebarState();
+      const next = this.pendingChat;
+      this.pendingChat = null;
+      if (next) void this.handleChat(next.text, next.images, next.quotes, { alreadyLogged: true });
+    }
   }
 
   /** 下一句对不上「继续」时，收掉被扔下的前台等待。后台登录墙留着。 */
@@ -8500,7 +8688,7 @@ export class SparkBrowser {
     const tabId = opts?.tabId;
     const blocked = this.assertNotPaused();
     if (blocked) return blocked;
-    const gate = allowClick(classifyClick(text), this.activeMission?.goal?.autoSend === true);
+    const gate = gateClickText(this.piCoreRunning, text, this.activeMission?.goal?.autoSend === true);
     if (!gate.ok) return { ok: false, message: gate.message || "没有代点" };
     try {
       await this.ensureOperableViewport();
@@ -9331,6 +9519,114 @@ export class SparkBrowser {
     return "打不开飞书日志输入框。请你点开汇报或会话后说「继续」。";
   }
 
+  private async saveShot(args: Record<string, unknown>, tabId?: string): Promise<ToolResult> {
+    try {
+      const opts = parseScreenshotInput({
+        label: typeof args.label === "string" ? args.label : undefined,
+        selector: typeof args.selector === "string" ? args.selector : undefined,
+        clip: args.clip && typeof args.clip === "object" ? (args.clip as ScreenshotOpts["clip"]) : undefined,
+        fullPage: args.fullPage === true,
+        format: args.format === "jpeg" ? "jpeg" : args.format === "png" ? "png" : undefined,
+        quality: args.quality != null ? Number(args.quality) : undefined,
+      });
+      const id = tabId || this.activeTabId;
+      const format = opts.format === "jpeg" ? "jpeg" : "png";
+      const quality = Math.min(100, Math.max(30, Number(opts.quality) || 80));
+      const wc = this.viewForTab(id).webContents;
+      let clip = validClip(opts.clip);
+      if (opts.selector && !clip) {
+        const rect = (await wc.executeJavaScript(
+          `(() => {
+            const el = document.querySelector(${JSON.stringify(opts.selector)});
+            if (!el) return null;
+            const r = el.getBoundingClientRect();
+            return { x: r.x, y: r.y, width: r.width, height: r.height };
+          })()`,
+          true,
+        )) as ScreenshotOpts["clip"] | null;
+        clip = validClip(rect || undefined);
+        if (!clip) return { ok: false, message: `找不到元素：${opts.selector}` };
+      }
+      let png: Buffer;
+      let jpeg: Buffer | undefined;
+      if (opts.fullPage) {
+        const grabbed = await this.captureFullPage(format, quality, id);
+        if (!grabbed || !isUsableCaptureBuffer(grabbed.png || grabbed.jpeg)) {
+          return { ok: false, message: this.L("shot.empty") };
+        }
+        png = grabbed.png;
+        jpeg = grabbed.jpeg;
+      } else {
+        const img = await this.captureVisiblePage(wc, clip);
+        if (!img) return { ok: false, message: this.L("shot.hidden") };
+        png = img.toPNG();
+        jpeg = format === "jpeg" ? img.toJPEG(quality) : undefined;
+      }
+      const buf = format === "jpeg" && jpeg ? jpeg : png;
+      if (!isUsableCaptureBuffer(buf)) return { ok: false, message: this.L("shot.empty") };
+      const saved = saveShotBytes({
+        configDir: this.configDir(),
+        label: opts.label,
+        bytes: buf,
+        ext: format === "jpeg" ? "jpg" : "png",
+        url: this.getUrl(id),
+        title: this.getTitle(id),
+      });
+      if (!saved.ok) return { ok: false, message: saved.message };
+      return {
+        ok: true,
+        message: `已存入本机素材库：${saved.file}`,
+        data: { file: saved.file, url: saved.url, title: saved.title },
+      };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  private async saveImage(args: Record<string, unknown>, tabId: string): Promise<ToolResult> {
+    const selector = typeof args.selector === "string" ? args.selector : "";
+    const src = typeof args.src === "string" ? args.src : "";
+    if (!selector.trim() && !src.trim()) {
+      return { ok: false, message: "要给出图片的 selector 或 src。" };
+    }
+    let fetched: { ok?: boolean; message?: string; contentType?: string; base64?: string; src?: string };
+    try {
+      fetched = (await this.viewForTab(tabId).webContents.executeJavaScript(
+        `(${fetchImagePageScript()})(${JSON.stringify({ selector, src })})`,
+        true,
+      )) as typeof fetched;
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    }
+    if (!fetched?.ok || !fetched.base64) {
+      return { ok: false, message: fetched?.message || "页面里取不到这张图，没有保存。" };
+    }
+    const saved = saveImageBytes({
+      configDir: this.configDir(),
+      contentType: fetched.contentType || "",
+      bytes: Buffer.from(fetched.base64, "base64"),
+      label: typeof args.label === "string" ? args.label : undefined,
+      src: fetched.src || src,
+      url: this.getUrl(tabId),
+      title: this.getTitle(tabId),
+    });
+    if (!saved.ok) return { ok: false, message: saved.message };
+    return {
+      ok: true,
+      message: `已存入本机素材库：${saved.file}`,
+      data: { file: saved.file, src: saved.src, url: saved.url, title: saved.title },
+    };
+  }
+
+  private listCapturesTool(): ToolResult {
+    const items = listCaptures(this.configDir());
+    return {
+      ok: true,
+      message: items.length ? `本机素材最近 ${items.length} 条` : "素材库是空的。",
+      data: { items },
+    };
+  }
+
   async screenshot(labelOrOpts?: string | ScreenshotOpts): Promise<ToolResult> {
     try {
       const opts = parseScreenshotInput(labelOrOpts);
@@ -9441,8 +9737,9 @@ export class SparkBrowser {
   private async captureFullPage(
     format: "png" | "jpeg",
     quality: number,
+    tabId?: string,
   ): Promise<{ png: Buffer; jpeg?: Buffer } | null> {
-    const wc = this.viewForTab(this.activeTabId).webContents;
+    const wc = this.viewForTab(tabId || this.activeTabId).webContents;
     try {
       const dbg = wc.debugger;
       if (!dbg.isAttached()) await dbg.attach("1.3");
@@ -9789,6 +10086,7 @@ export class SparkBrowser {
 
   async snapshot(selector?: string, tabId?: string): Promise<ToolResult & { data?: PageSnapshot }> {
     try {
+      const collect = async () => {
       await this.ensureOperableViewport();
       const wc = this.viewForTab(tabId || this.activeTabId).webContents;
       const raw = (await wc.executeJavaScript(SNAPSHOT_SCRIPT, true)) as PageSnapshot & {
@@ -9839,16 +10137,20 @@ export class SparkBrowser {
             (el.placeholder || "").includes(selector),
         );
       }
-      this.lastSnapshot = {
+      return {
         ...raw,
         elements,
         iframeCount: iframeMeta.length || raw.iframeCount,
       };
+      };
+      const { snap, retried } = await recaptureIfEmpty(collect, sleep);
+      this.lastSnapshot = snap;
       this.pushStatus();
       return {
         ok: true,
         message:
-          `Snapshot: ${elements.length} interactive elements @ ${raw.url}` +
+          `Snapshot: ${(snap.elements || []).length} interactive elements @ ${snap.url || ""}` +
+          (retried ? " (retried)" : "") +
           (this.cdpFrames.length ? ` (${this.cdpFrames.length} CDP frames)` : ""),
         data: this.lastSnapshot,
       };
@@ -9977,7 +10279,7 @@ export class SparkBrowser {
         })()`,
         true,
       ).catch(() => "")) as string;
-      if (looksLikeSubmitAction(label || String(hit.target || ""))) {
+      if (submitClickNeedsGate(this.piCoreRunning, label || String(hit.target || ""))) {
         const gate = await this.qaGate();
         if (!gate.ok) return gate as ToolResult;
         const appr = await this.requestApproval({
@@ -10281,6 +10583,64 @@ export class SparkBrowser {
             kind: result.kind,
             target: result.target,
             method: `Input.insertText:${FIX}`,
+          };
+        }
+      }
+
+      if (!result.matched) {
+        const again = await retryShortContentEditable({
+          kind: String(result.kind || ""),
+          expected: value,
+          actual: result.actual || "",
+          retry: async () => {
+            const cleared = (await wc.executeJavaScript(
+              `(() => {
+                const __v = ${cdpUtf8Expr(value)};
+                const sel = ${JSON.stringify(target.selector ?? null)};
+                const ref = ${JSON.stringify(target.ref ?? null)};
+                let el = null;
+                if (ref) el = document.querySelector('[data-spark-ref="' + CSS.escape(ref) + '"]');
+                if (!el && sel) {
+                  el = Array.from(document.querySelectorAll(sel)).find((n) => {
+                    const b = n.getBoundingClientRect();
+                    return b.width > 0 && b.height > 0;
+                  }) || document.querySelector(sel);
+                }
+                if (!el) return { actual: '', tag: '', contentEditable: false };
+                const nested = el.querySelector('[contenteditable="true"],[contenteditable=""]');
+                if (nested) el = nested;
+                el.focus();
+                try {
+                  const selApi = window.getSelection();
+                  const range = document.createRange();
+                  range.selectNodeContents(el);
+                  selApi && selApi.removeAllRanges();
+                  selApi && selApi.addRange(range);
+                  document.execCommand('selectAll', false, undefined);
+                  document.execCommand('delete', false, undefined);
+                } catch (_) {}
+                try { el.textContent = ''; } catch (_) {}
+                document.execCommand('insertText', false, __v);
+                const actualNow = String(el.innerText || el.textContent || '').trim();
+                return { actual: actualNow, tag: String(el.tagName || ''), contentEditable: Boolean(el.isContentEditable) };
+              })()`,
+              true,
+            )) as { actual?: string; tag?: string; contentEditable?: boolean };
+            return {
+              actual: cleared?.actual || "",
+              tag: cleared?.tag || "",
+              contentEditable: Boolean(cleared?.contentEditable),
+            };
+          },
+        });
+        if (again.retried) {
+          result = {
+            ...result,
+            ok: again.matched,
+            actual: again.actual,
+            matched: again.matched,
+            message: again.message,
+            method: again.matched ? `contenteditable-retry:${FIX}` : result.method,
           };
         }
       }

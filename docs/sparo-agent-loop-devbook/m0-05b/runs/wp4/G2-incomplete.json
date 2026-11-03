@@ -1,0 +1,110 @@
+{
+  "caseId": "G2-incomplete",
+  "scene": "G2",
+  "resultClass": "incomplete",
+  "costBucket": "controller",
+  "preJudgedValid": false,
+  "covered": true,
+  "observedClass": "incomplete",
+  "reason": "",
+  "modelCalls": 0,
+  "versions": {
+    "evaluationMode": "offline_replay",
+    "facilityVersion": "m0-05b-facility-1",
+    "rubricVersion": "verifier-rubric-1",
+    "promptVersion": "verifier-prompt-1",
+    "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+    "manifestSampleSetId": "m0-05a-2026-10-29",
+    "modelVersion": "deepseek-flash",
+    "provider": "deepseek",
+    "llmMode": "byok",
+    "priceVersion": "[TBD]",
+    "productionV2": false
+  },
+  "trace": [
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G2-incomplete-e001",
+      "missionId": "eval-G2-incomplete",
+      "time": "2026-10-29T11:29:28.465Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.opened",
+      "scene": "G2",
+      "resultClass": "incomplete",
+      "raw": "当前我打开的这个博主 最近三天的微博 帮我复制下来 做成一个文档",
+      "versions": {
+        "evaluationMode": "offline_replay",
+        "facilityVersion": "m0-05b-facility-1",
+        "rubricVersion": "verifier-rubric-1",
+        "promptVersion": "verifier-prompt-1",
+        "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+        "manifestSampleSetId": "m0-05a-2026-10-29",
+        "modelVersion": "deepseek-flash",
+        "provider": "deepseek",
+        "llmMode": "byok",
+        "priceVersion": "[TBD]",
+        "productionV2": false
+      },
+      "costBucket": "controller"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G2-incomplete-e002",
+      "missionId": "eval-G2-incomplete",
+      "time": "2026-10-29T11:29:28.465Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "budget.updated",
+      "evalBudget": {
+        "notO01": true,
+        "label": "evalBudget"
+      },
+      "notO01": true
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G2-incomplete-e003",
+      "missionId": "eval-G2-incomplete",
+      "time": "2026-10-29T11:29:28.465Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.closed",
+      "close": {
+        "reason": "incomplete",
+        "summary": "用户看过缺口后按现状结束",
+        "gaps": [
+          "10 月 27 日不在冻结样本中"
+        ]
+      },
+      "closeGuard": {
+        "passed": true,
+        "checks": [
+          {
+            "name": "artifact_exists",
+            "passed": true
+          },
+          {
+            "name": "report_opened",
+            "passed": true
+          },
+          {
+            "name": "plan_observed",
+            "passed": true
+          },
+          {
+            "name": "permission_and_idempotency",
+            "passed": true
+          },
+          {
+            "name": "budget_and_state",
+            "passed": true
+          }
+        ]
+      }
+    }
+  ]
+}

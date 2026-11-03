@@ -30,6 +30,16 @@ export function takeChromeCoverFix(
   };
 }
 
+/** DPI 取整会让宽高在相邻两像素间来回跳。1px 以内视为同一矩形，避免重排回路。 */
+export function boundsWithinOnePixel(a: PageRect, b: PageRect): boolean {
+  return (
+    Math.abs(a.x - b.x) <= 1 &&
+    Math.abs(a.y - b.y) <= 1 &&
+    Math.abs(a.width - b.width) <= 1 &&
+    Math.abs(a.height - b.height) <= 1
+  );
+}
+
 export function pageViewCoversChrome(actual: PageRect, hole: PageRect): boolean {
   if (actual.x < -100) return false;
   if (actual.width < 50 || actual.height < 50) return false;

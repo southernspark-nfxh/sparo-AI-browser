@@ -1,0 +1,227 @@
+{
+  "caseId": "G8-pass-sample2",
+  "scene": "G8",
+  "resultClass": "pass",
+  "costBucket": "independent",
+  "preJudgedValid": true,
+  "covered": false,
+  "observedClass": "false_reject_then_pass",
+  "reason": "发生拒绝，但补读后的复验或 Close Guard 没有通过",
+  "modelCalls": 2,
+  "versions": {
+    "evaluationMode": "offline_replay",
+    "facilityVersion": "m0-05b-facility-1",
+    "rubricVersion": "verifier-rubric-1",
+    "promptVersion": "verifier-prompt-1",
+    "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+    "manifestSampleSetId": "m0-05a-2026-10-29",
+    "modelVersion": "deepseek-flash",
+    "provider": "deepseek",
+    "llmMode": "byok",
+    "priceVersion": "[TBD]",
+    "productionV2": false
+  },
+  "trace": [
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-pass-sample2-e001",
+      "missionId": "eval-G8-pass-sample2",
+      "time": "2026-10-29T11:49:03.229Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.opened",
+      "scene": "G8",
+      "resultClass": "pass",
+      "raw": "长采集滚动，不单列原句",
+      "versions": {
+        "evaluationMode": "offline_replay",
+        "facilityVersion": "m0-05b-facility-1",
+        "rubricVersion": "verifier-rubric-1",
+        "promptVersion": "verifier-prompt-1",
+        "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+        "manifestSampleSetId": "m0-05a-2026-10-29",
+        "modelVersion": "deepseek-flash",
+        "provider": "deepseek",
+        "llmMode": "byok",
+        "priceVersion": "[TBD]",
+        "productionV2": false
+      },
+      "costBucket": "independent"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-pass-sample2-e002",
+      "missionId": "eval-G8-pass-sample2",
+      "time": "2026-10-29T11:49:03.229Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 1,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-pass-sample2-e003",
+      "missionId": "eval-G8-pass-sample2",
+      "time": "2026-10-29T11:49:27.952Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 1,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 538,
+      "uncachedInputTokens": 154,
+      "cachedInputTokens": 384,
+      "outputTokens": 4048,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": []
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-pass-sample2-e004",
+      "missionId": "eval-G8-pass-sample2",
+      "time": "2026-10-29T11:49:27.952Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-G8-pass-sample2-r1",
+        "missionId": "eval-G8-pass-sample2",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": false,
+        "rawGoalSatisfied": false,
+        "confidence": "medium",
+        "rationale": "e-g8-settled 仅支持桌面页离线字符差为 0；e-g8-mobile 只标注为 page_state，证据索引没有记录移动页出现“更多公开条目”，也没有工具正文范围可核验“较上次”不是工具原文。候选摘要不能作为这些断言的证据，因此必交付 g8-note 未被充分证实。",
+        "deliverables": [
+          {
+            "deliverableId": "g8-note",
+            "status": "partial",
+            "evidenceIds": [
+              "e-g8-settled",
+              "e-g8-mobile"
+            ]
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": [
+          "补充移动页出现更多公开条目的可核验证据，例如 artifact 摘录或 page_state 说明。",
+          "补充工具正文范围或摘录以核验“较上次不是工具原文”；否则删除该断言。"
+        ]
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-pass-sample2-e005",
+      "missionId": "eval-G8-pass-sample2",
+      "time": "2026-10-29T11:49:27.952Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "artifact.created",
+      "artifactId": "art-m005a-g2-rmrb-mobile",
+      "frozenVersion": "sha256:7ac80ba0870ccb64ca42163db4b3cd19079ead86859f43177fd93a049fd240a7",
+      "contentRange": {
+        "start": 200,
+        "end": 500,
+        "unit": "chars",
+        "length": 300
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-pass-sample2-e006",
+      "missionId": "eval-G8-pass-sample2",
+      "time": "2026-10-29T11:49:27.952Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 2,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-pass-sample2-e007",
+      "missionId": "eval-G8-pass-sample2",
+      "time": "2026-10-29T11:49:46.680Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 2,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 577,
+      "uncachedInputTokens": 193,
+      "cachedInputTokens": 384,
+      "outputTokens": 3098,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": [
+        {
+          "artifactId": "art-m005a-g2-rmrb-mobile",
+          "start": 200,
+          "end": 500,
+          "unit": "chars",
+          "length": 300,
+          "frozenVersion": "sha256:7ac80ba0870ccb64ca42163db4b3cd19079ead86859f43177fd93a049fd240a7"
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G8-pass-sample2-e008",
+      "missionId": "eval-G8-pass-sample2",
+      "time": "2026-10-29T11:49:46.680Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-G8-pass-sample2-r2",
+        "missionId": "eval-G8-pass-sample2",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": false,
+        "rawGoalSatisfied": false,
+        "confidence": "medium",
+        "rationale": "e-g8-settled 只能支持桌面页连续 PageDown 的离线字符差为 0；它不能证明移动页 200-500 区间中出现了更多公开条目。该区间的正文没有提供，因此无法核对候选摘要中的“看到更多公开条目”。候选摘要还声称“工具正文里没有「较上次」”，但没有给出可核对的工具原文。必交付 g8-note 因此未达到可验证完成。",
+        "deliverables": [
+          {
+            "deliverableId": "g8-note",
+            "status": "not_satisfied",
+            "evidenceIds": [
+              "e-g8-settled",
+              "e-g8-mobile"
+            ]
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": [
+          "提供 art-m005a-g2-rmrb-mobile 在 200-500 字符区间的实际正文或可核对摘要，以证明其中确有更多公开条目。",
+          "提供可核对来源，说明“较上次”并非工具原文，不能只靠候选摘要自述。",
+          "提交独立的 g8-note 交付物，或明确候选摘要就是交付物，并让每条结论与证据逐条对应。"
+        ]
+      }
+    }
+  ]
+}

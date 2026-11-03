@@ -117,6 +117,13 @@ export const PROVIDER_PRESETS = {
 export type LlmProvider = keyof typeof PROVIDER_PRESETS;
 export type LlmMode = "byok" | "cloud";
 
+/** step = 关键环节确认；auto = 发布/发送直接执行，支付/删除仍确认。与计费 mode 无关。 */
+export type ExecMode = "step" | "auto";
+
+export function normalizeExecMode(value: unknown): ExecMode {
+  return value === "auto" ? "auto" : "step";
+}
+
 export const PROVIDER_ORDER: LlmProvider[] = [
   "deepseek",
   "dashscope",
@@ -155,6 +162,8 @@ export type SparoSettings = {
   locale: AppLocale;
   /** byok = 用户自己的 key；cloud = 走 sparo-pay 代理（key 不进本机） */
   llmMode: LlmMode;
+  /** 侧栏执行模式。缺省与非法值都是逐步确认。 */
+  execMode: ExecMode;
   /** 关掉首次用法引导后不再全屏挡住。未就绪时侧栏仍留一条入口。 */
   onboardingDismissed: boolean;
   /** 配好后的「先做一件事」提示已关掉。 */
@@ -216,6 +225,7 @@ const DEFAULTS: SparoSettings = {
   model: PROVIDER_PRESETS.deepseek.model,
   locale: "en",
   llmMode: "byok",
+  execMode: "step",
   onboardingDismissed: false,
   firstJobHintDismissed: false,
   memorySaver: true,
@@ -286,6 +296,7 @@ export function loadSettings(configDir: string, fallbackLocale?: string): SparoS
     model,
     locale,
     llmMode: normalizeMode(file.llmMode),
+    execMode: normalizeExecMode(file.execMode),
     onboardingDismissed: Boolean(file.onboardingDismissed),
     firstJobHintDismissed: Boolean(file.firstJobHintDismissed),
     memorySaver: file.memorySaver !== false,
@@ -354,6 +365,9 @@ export function saveSettings(
     llmMode: normalizeMode(
       patch.llmMode !== undefined ? patch.llmMode : file.llmMode || current.llmMode,
     ),
+    execMode: normalizeExecMode(
+      patch.execMode !== undefined ? patch.execMode : file.execMode,
+    ),
     onboardingDismissed:
       patch.onboardingDismissed !== undefined
         ? Boolean(patch.onboardingDismissed)
@@ -389,6 +403,7 @@ export function settingsPublicView(settings: SparoSettings): {
   apiKeyMasked: string;
   locale: AppLocale;
   llmMode: LlmMode;
+  execMode: ExecMode;
   onboardingDismissed: boolean;
   firstJobHintDismissed: boolean;
   presets: typeof PROVIDER_PRESETS;
@@ -412,6 +427,7 @@ export function settingsPublicView(settings: SparoSettings): {
     apiKeyMasked,
     locale: settings.locale,
     llmMode: settings.llmMode,
+    execMode: normalizeExecMode(settings.execMode),
     onboardingDismissed: Boolean(settings.onboardingDismissed),
     firstJobHintDismissed: Boolean(settings.firstJobHintDismissed),
     presets: PROVIDER_PRESETS,

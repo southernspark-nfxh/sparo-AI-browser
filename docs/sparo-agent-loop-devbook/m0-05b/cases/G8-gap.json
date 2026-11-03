@@ -1,0 +1,67 @@
+{
+  "frozen": true,
+  "frozenAt": "2026-10-29T19:21:00+08:00",
+  "facilityVersion": "m0-05b-facility-1",
+  "rubricVersion": "verifier-rubric-1",
+  "promptVersion": "verifier-prompt-1",
+  "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+  "manifestSampleSetId": "m0-05a-2026-10-29",
+  "allowedTools": [],
+  "sendTool": false,
+  "payTool": false,
+  "evalBudget": {
+    "verifierTurns": 2,
+    "notO01": true,
+    "label": "evalBudget"
+  },
+  "costBucket": "independent",
+  "resultClass": "continuous_reject",
+  "continuousReject": true,
+  "preJudgedValid": false,
+  "candidateKind": "known_gap",
+  "guardFacts": {
+    "requiredArtifactsExist": false,
+    "reportRequired": false,
+    "requiredStepsObserved": true,
+    "permissionOk": true,
+    "idempotentOk": true,
+    "budgetLegal": true,
+    "stateLegal": true
+  },
+  "expected": {
+    "structural": [
+      "较上次不是工具正文"
+    ],
+    "termination": "verification_exhausted only if every round is a real reject",
+    "passFail": "任一回合通过则该格未覆盖"
+  },
+  "caseId": "G8-gap",
+  "scene": "G8",
+  "raw": "长采集滚动，不单列原句",
+  "candidateSummary": "工具正文已经返回较上次 +0 字。",
+  "knownGaps": [
+    "较上次不是工具正文"
+  ],
+  "artifactPins": [
+    {
+      "artifactId": "art-m005a-g2-rmrb-settled-1",
+      "contentHash": "9b41d5440946dff8f7d2c6b7217ec0a970d6043bcb4d890cc8ce2787f693e757",
+      "frozenVersion": "sha256:9b41d5440946dff8f7d2c6b7217ec0a970d6043bcb4d890cc8ce2787f693e757"
+    }
+  ],
+  "planSummary": "滚动无进展后改看移动页。较上次不是工具原文。",
+  "deliverables": [
+    {
+      "deliverableId": "g8-note",
+      "kind": "answer",
+      "required": true
+    }
+  ],
+  "evidenceIndex": [
+    {
+      "evidenceId": "e-g8-settled",
+      "kind": "page_state",
+      "artifactId": "art-m005a-g2-rmrb-settled-1"
+    }
+  ]
+}

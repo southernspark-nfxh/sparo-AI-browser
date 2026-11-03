@@ -1,0 +1,144 @@
+{
+  "frozen": true,
+  "frozenAt": "2026-10-30T12:20:00+08:00",
+  "prejudgedBeforeModelCall": true,
+  "supersedes": "G8-host-g2",
+  "facilityVersion": "m0-05b-facility-2",
+  "rubricVersion": "verifier-rubric-1",
+  "promptVersion": "verifier-prompt-1",
+  "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+  "manifestSampleSetId": "m0-05a-2026-10-29",
+  "allowedTools": [],
+  "sendTool": false,
+  "payTool": false,
+  "evalBudget": {
+    "verifierTurns": 2,
+    "notO01": true,
+    "label": "evalBudget"
+  },
+  "preJudgedValid": true,
+  "caseId": "G8-host-doc",
+  "scene": "G8",
+  "resultClass": "pass",
+  "costBucket": "g8-embedded",
+  "hostScene": "G2",
+  "doubleCountWithHost": false,
+  "raw": "当前我打开的这个博主 最近三天的微博 帮我复制下来 做成一个文档",
+  "embeddedIn": "G2 桌面页 PageDown 无进展后改看移动页",
+  "candidateKind": "document",
+  "candidateFile": "g2-posts.txt",
+  "candidateHash": "ca7457149fc62882a8f7f058c1212a131f6ec4eb1853c3a968ffbaa7537b61dd",
+  "candidateDeliverable": {
+    "artifactId": "g2-posts.txt",
+    "kind": "document",
+    "contentHash": "ca7457149fc62882a8f7f058c1212a131f6ec4eb1853c3a968ffbaa7537b61dd",
+    "range": {
+      "start": 0,
+      "end": 6965,
+      "unit": "chars",
+      "length": 6965
+    },
+    "role": "candidate-deliverable",
+    "notEvidence": true,
+    "deliverableId": "g2-doc"
+  },
+  "candidateSummary": "宿主要求的近三天文档就是候选正文 candidateDeliverable.text，不是证据。滚动只记录执行，不代替这份文档。费用不并入 G2。",
+  "followUpSummary": "同一份文档正文仍在候选通道。补读只带来源页边界，不把滚动笔记当成交付。",
+  "followUpRanges": [
+    {
+      "artifactId": "art-m005a-g2-rmrb-feed-5358896219684903",
+      "start": 200,
+      "end": 500
+    }
+  ],
+  "planSummary": "宿主原句要求复制近三天微博。桌面页连续 PageDown 后 settled-1 与 settled-0 同哈希，离线差为 0，工具正文没有「较上次」，随后改看移动页。验收对象是文档正文。",
+  "deliverables": [
+    {
+      "deliverableId": "g2-doc",
+      "kind": "document",
+      "required": true,
+      "artifactId": "g2-posts.txt"
+    }
+  ],
+  "evidenceIndex": [
+    {
+      "evidenceId": "e-g8-settled",
+      "kind": "page_state",
+      "artifactId": "art-m005a-g2-rmrb-settled-1",
+      "note": "hash equals settled-0; offline delta 0"
+    },
+    {
+      "evidenceId": "e-g8-mobile",
+      "kind": "page_state",
+      "artifactId": "art-m005a-g2-rmrb-mobile",
+      "note": "strategy change page"
+    },
+    {
+      "evidenceId": "e-g2-oct27",
+      "kind": "content_item",
+      "artifactId": "art-m005a-g2-rmrb-feed-5358896219684903"
+    },
+    {
+      "evidenceId": "e-g2-oct28",
+      "kind": "content_item",
+      "artifactId": "art-m005a-g2-rmrb-feed-5359045473210573"
+    },
+    {
+      "evidenceId": "e-g2-oct29",
+      "kind": "content_item",
+      "artifactId": "art-m005a-g2-rmrb-feed-5359251180487027"
+    }
+  ],
+  "artifactPins": [
+    {
+      "artifactId": "art-m005a-g2-rmrb-settled-1",
+      "contentHash": "9b41d5440946dff8f7d2c6b7217ec0a970d6043bcb4d890cc8ce2787f693e757",
+      "frozenVersion": "sha256:9b41d5440946dff8f7d2c6b7217ec0a970d6043bcb4d890cc8ce2787f693e757"
+    },
+    {
+      "artifactId": "art-m005a-g2-rmrb-mobile",
+      "contentHash": "7ac80ba0870ccb64ca42163db4b3cd19079ead86859f43177fd93a049fd240a7",
+      "frozenVersion": "sha256:7ac80ba0870ccb64ca42163db4b3cd19079ead86859f43177fd93a049fd240a7"
+    },
+    {
+      "artifactId": "art-m005a-g2-rmrb-feed-5358896219684903",
+      "contentHash": "029b1ee8212a95b9860fcd11bf2d4846ead667be8806089afc67e6e6906ada10",
+      "frozenVersion": "sha256:029b1ee8212a95b9860fcd11bf2d4846ead667be8806089afc67e6e6906ada10"
+    },
+    {
+      "artifactId": "art-m005a-g2-rmrb-feed-5359045473210573",
+      "contentHash": "222d249c71e2d336dc678399ac915956a6255ac0f009109f2d2a09ca0012a526",
+      "frozenVersion": "sha256:222d249c71e2d336dc678399ac915956a6255ac0f009109f2d2a09ca0012a526"
+    },
+    {
+      "artifactId": "art-m005a-g2-rmrb-feed-5359251180487027",
+      "contentHash": "f24f9c37370be735d48eedddd5a69feff73e4651a6654e3c08e793946a9852c4",
+      "frozenVersion": "sha256:f24f9c37370be735d48eedddd5a69feff73e4651a6654e3c08e793946a9852c4"
+    }
+  ],
+  "guardFacts": {
+    "requiredArtifactsExist": true,
+    "reportRequired": false,
+    "requiredStepsObserved": true,
+    "permissionOk": true,
+    "idempotentOk": true,
+    "budgetLegal": true,
+    "stateLegal": true
+  },
+  "constraints": [
+    "不使用占位原句",
+    "滚动笔记不是交付",
+    "必须验收宿主要求的近三天文档",
+    "候选正文不是证据",
+    "费用不并入 G2"
+  ],
+  "expected": {
+    "structural": [
+      "raw 是 G2 冻结原句",
+      "交付是实际文档正文",
+      "单独计 G8，不重复计入宿主成本"
+    ],
+    "termination": "done only if verifier and guard pass",
+    "passFail": "首轮通过只记通过"
+  }
+}

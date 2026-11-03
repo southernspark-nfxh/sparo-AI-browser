@@ -1,0 +1,44 @@
+{
+  "frozen": true,
+  "frozenAt": "2026-10-29T19:21:00+08:00",
+  "facilityVersion": "m0-05b-facility-1",
+  "rubricVersion": "verifier-rubric-1",
+  "promptVersion": "verifier-prompt-1",
+  "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+  "manifestSampleSetId": "m0-05a-2026-10-29",
+  "allowedTools": [],
+  "sendTool": false,
+  "payTool": false,
+  "controller": true,
+  "modelCalls": 0,
+  "costBucket": "controller",
+  "evalBudget": {
+    "notO01": true,
+    "label": "evalBudget"
+  },
+  "guardFacts": {
+    "requiredArtifactsExist": true,
+    "reportRequired": false,
+    "requiredStepsObserved": true,
+    "permissionOk": true,
+    "idempotentOk": true,
+    "budgetLegal": true,
+    "stateLegal": true
+  },
+  "expected": {
+    "structural": [
+      "用户明确按现状结束"
+    ],
+    "termination": "close.reason=incomplete",
+    "passFail": "不是用户取消"
+  },
+  "caseId": "G2-incomplete",
+  "scene": "G2",
+  "resultClass": "incomplete",
+  "raw": "当前我打开的这个博主 最近三天的微博 帮我复制下来 做成一个文档",
+  "terminal": "incomplete",
+  "gaps": [
+    "10 月 27 日不在冻结样本中"
+  ],
+  "summary": "用户看过缺口后按现状结束"
+}

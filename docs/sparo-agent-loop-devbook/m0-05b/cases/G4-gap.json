@@ -1,0 +1,67 @@
+{
+  "frozen": true,
+  "frozenAt": "2026-10-29T19:21:00+08:00",
+  "facilityVersion": "m0-05b-facility-1",
+  "rubricVersion": "verifier-rubric-1",
+  "promptVersion": "verifier-prompt-1",
+  "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+  "manifestSampleSetId": "m0-05a-2026-10-29",
+  "allowedTools": [],
+  "sendTool": false,
+  "payTool": false,
+  "evalBudget": {
+    "verifierTurns": 2,
+    "notO01": true,
+    "label": "evalBudget"
+  },
+  "costBucket": "independent",
+  "resultClass": "continuous_reject",
+  "continuousReject": true,
+  "preJudgedValid": false,
+  "candidateKind": "known_gap",
+  "guardFacts": {
+    "requiredArtifactsExist": false,
+    "reportRequired": false,
+    "requiredStepsObserved": true,
+    "permissionOk": true,
+    "idempotentOk": true,
+    "budgetLegal": true,
+    "stateLegal": true
+  },
+  "expected": {
+    "structural": [
+      "没有上百条证据，报告也没有打开"
+    ],
+    "termination": "verification_exhausted only if every round is a real reject",
+    "passFail": "任一回合通过则该格未覆盖"
+  },
+  "caseId": "G4-gap",
+  "scene": "G4",
+  "raw": "研究博主 人民日报 画像，最好上百条",
+  "candidateSummary": "报告已写完上百条并已打开。",
+  "knownGaps": [
+    "没有上百条证据，报告也没有打开"
+  ],
+  "artifactPins": [
+    {
+      "artifactId": "art-m005a-g2-rmrb-mobile",
+      "contentHash": "7ac80ba0870ccb64ca42163db4b3cd19079ead86859f43177fd93a049fd240a7",
+      "frozenVersion": "sha256:7ac80ba0870ccb64ca42163db4b3cd19079ead86859f43177fd93a049fd240a7"
+    }
+  ],
+  "planSummary": "根据公开条目写画像。上百条是偏好，不是已完成数量。",
+  "deliverables": [
+    {
+      "deliverableId": "g4-report",
+      "kind": "report",
+      "required": true
+    }
+  ],
+  "evidenceIndex": [
+    {
+      "evidenceId": "e-g4-mobile",
+      "kind": "content_item",
+      "artifactId": "art-m005a-g2-rmrb-mobile"
+    }
+  ]
+}

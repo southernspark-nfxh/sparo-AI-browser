@@ -1,0 +1,43 @@
+{
+  "frozen": true,
+  "frozenAt": "2026-10-29T19:21:00+08:00",
+  "facilityVersion": "m0-05b-facility-1",
+  "rubricVersion": "verifier-rubric-1",
+  "promptVersion": "verifier-prompt-1",
+  "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+  "manifestSampleSetId": "m0-05a-2026-10-29",
+  "allowedTools": [],
+  "sendTool": false,
+  "payTool": false,
+  "controller": true,
+  "modelCalls": 0,
+  "costBucket": "controller",
+  "evalBudget": {
+    "notO01": true,
+    "label": "evalBudget"
+  },
+  "guardFacts": {
+    "requiredArtifactsExist": false,
+    "reportRequired": false,
+    "requiredStepsObserved": false,
+    "permissionOk": true,
+    "idempotentOk": true,
+    "budgetLegal": true,
+    "stateLegal": true
+  },
+  "expected": {
+    "structural": [
+      "用户取消"
+    ],
+    "termination": "close.reason=cancelled",
+    "passFail": "不得写成预算耗尽或验收耗尽"
+  },
+  "caseId": "G2-cancel",
+  "scene": "G2",
+  "resultClass": "cancelled",
+  "raw": "G2 user cancel",
+  "terminal": "cancelled",
+  "gaps": [
+    "user cancel"
+  ]
+}

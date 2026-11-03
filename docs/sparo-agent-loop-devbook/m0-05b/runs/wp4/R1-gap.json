@@ -1,0 +1,240 @@
+{
+  "caseId": "R1-gap",
+  "scene": "R1",
+  "resultClass": "continuous_reject",
+  "costBucket": "independent",
+  "preJudgedValid": false,
+  "covered": true,
+  "observedClass": "continuous_reject",
+  "reason": "",
+  "modelCalls": 2,
+  "versions": {
+    "evaluationMode": "offline_replay",
+    "facilityVersion": "m0-05b-facility-1",
+    "rubricVersion": "verifier-rubric-1",
+    "promptVersion": "verifier-prompt-1",
+    "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+    "manifestSampleSetId": "m0-05a-2026-10-29",
+    "modelVersion": "deepseek-flash",
+    "provider": "deepseek",
+    "llmMode": "byok",
+    "priceVersion": "[TBD]",
+    "productionV2": false
+  },
+  "trace": [
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-gap-e001",
+      "missionId": "eval-R1-gap",
+      "time": "2026-10-29T11:31:33.780Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.opened",
+      "scene": "R1",
+      "resultClass": "continuous_reject",
+      "raw": "帮我对比三款 小米15、iPhone 16、华为Mate 70 哪个值得买",
+      "versions": {
+        "evaluationMode": "offline_replay",
+        "facilityVersion": "m0-05b-facility-1",
+        "rubricVersion": "verifier-rubric-1",
+        "promptVersion": "verifier-prompt-1",
+        "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+        "manifestSampleSetId": "m0-05a-2026-10-29",
+        "modelVersion": "deepseek-flash",
+        "provider": "deepseek",
+        "llmMode": "byok",
+        "priceVersion": "[TBD]",
+        "productionV2": false
+      },
+      "costBucket": "independent"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-gap-e002",
+      "missionId": "eval-R1-gap",
+      "time": "2026-10-29T11:31:33.780Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 1,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-gap-e003",
+      "missionId": "eval-R1-gap",
+      "time": "2026-10-29T11:31:39.979Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 1,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 473,
+      "uncachedInputTokens": 473,
+      "cachedInputTokens": 0,
+      "outputTokens": 1145,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": []
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-gap-e004",
+      "missionId": "eval-R1-gap",
+      "time": "2026-10-29T11:31:39.979Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-R1-gap-r1",
+        "missionId": "eval-R1-gap",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": false,
+        "rawGoalSatisfied": false,
+        "confidence": "high",
+        "rationale": "唯一证据是百度对比页的 page_state，未提供 r1-report 报告产物或报告正文，无法确认三款手机对比及购买建议已完成；候选摘要自述不能作为证据。且候选摘要声称已完成京东价格对比，与计划中不打开京东、淘宝、点评的要求存在冲突，且无证据证明未违规。",
+        "deliverables": [
+          {
+            "deliverableId": "r1-report",
+            "status": "unsatisfied",
+            "evidenceIds": [],
+            "reason": "无报告 artifact 或报告正文证据；仅有搜索页状态，不能证明报告完成。"
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": [
+          "提交 r1-report 的实际报告 artifact，包含小米15、iPhone 16、华为Mate 70 的对比维度和是否值得买的结论",
+          "提供允许来源的观察证据，并证明未打开京东、淘宝、点评",
+          "澄清候选摘要中“京东价格已经对比完”是否违反计划限制"
+        ]
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-gap-e005",
+      "missionId": "eval-R1-gap",
+      "time": "2026-10-29T11:31:39.979Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 2,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-gap-e006",
+      "missionId": "eval-R1-gap",
+      "time": "2026-10-29T11:31:45.462Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 2,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 473,
+      "uncachedInputTokens": 217,
+      "cachedInputTokens": 256,
+      "outputTokens": 949,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": []
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-gap-e007",
+      "missionId": "eval-R1-gap",
+      "time": "2026-10-29T11:31:45.462Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-R1-gap-r2",
+        "missionId": "eval-R1-gap",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": false,
+        "rawGoalSatisfied": false,
+        "confidence": "high",
+        "rationale": "候选摘要声称已完成京东价格对比并写成报告，但这只是自述，不是证据。证据索引中只有一条百度对比页的 page_state（e-r1-search），没有报告正文、三款机型的完整对比数据或结论，因此必交付报告 r1-report 无法确认已满足。另外，候选摘要提到“京东价格已经对比完”，与计划摘要中“不打开京东、淘宝、点评”的约束存在潜在冲突，且没有可核验的交付物。",
+        "deliverables": [
+          {
+            "deliverableId": "r1-report",
+            "status": "unsatisfied",
+            "evidenceIds": []
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": [
+          "缺少 r1-report 的实际报告内容或可核验交付物，无法确认三款手机的对比和购买建议已形成。",
+          "需要提供覆盖小米15、iPhone 16、华为Mate 70 的对比维度、来源和结论，并附上对应 evidenceId。",
+          "候选摘要声称完成了京东价格对比，但没有证据支持，且需核实是否违反“不打开京东、淘宝、点评”的计划约束。"
+        ]
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-gap-e008",
+      "missionId": "eval-R1-gap",
+      "time": "2026-10-29T11:31:45.462Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.suspended",
+      "reason": "verification_exhausted",
+      "gaps": [
+        "没有打开京东，也没有报告"
+      ],
+      "closeGuard": {
+        "passed": false,
+        "checks": [
+          {
+            "name": "artifact_exists",
+            "passed": false
+          },
+          {
+            "name": "report_opened",
+            "passed": true
+          },
+          {
+            "name": "plan_observed",
+            "passed": true
+          },
+          {
+            "name": "permission_and_idempotency",
+            "passed": false
+          },
+          {
+            "name": "budget_and_state",
+            "passed": true
+          }
+        ]
+      },
+      "evalBudget": {
+        "verifierTurns": 2,
+        "notO01": true,
+        "label": "evalBudget"
+      }
+    }
+  ]
+}

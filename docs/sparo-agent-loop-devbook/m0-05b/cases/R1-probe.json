@@ -1,0 +1,75 @@
+{
+  "frozen": true,
+  "frozenAt": "2026-10-29T19:21:00+08:00",
+  "facilityVersion": "m0-05b-facility-1",
+  "rubricVersion": "verifier-rubric-1",
+  "promptVersion": "verifier-prompt-1",
+  "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+  "manifestSampleSetId": "m0-05a-2026-10-29",
+  "allowedTools": [],
+  "sendTool": false,
+  "payTool": false,
+  "evalBudget": {
+    "verifierTurns": 1,
+    "notO01": true,
+    "label": "evalBudget"
+  },
+  "costBucket": "independent",
+  "caseId": "R1-probe",
+  "scene": "R1",
+  "raw": "帮我对比三款 小米15、iPhone 16、华为Mate 70 哪个值得买",
+  "candidateSummary": "搜索入口之外只有苹果官网购买页，iPhone 16 标价 RMB 5999 起。没有小米和华为的同等正文，也没有对照报告。",
+  "planSummary": "对比三款手机。不打开京东、淘宝、点评。",
+  "deliverables": [
+    {
+      "deliverableId": "r1-report",
+      "kind": "report",
+      "required": true
+    }
+  ],
+  "evidenceIndex": [
+    {
+      "evidenceId": "e-r1-search",
+      "kind": "page_state",
+      "artifactId": "art-m005a-r1-baidu-compare"
+    },
+    {
+      "evidenceId": "e-r1-apple",
+      "kind": "page_state",
+      "artifactId": "art-m005a-r1-apple-iphone16"
+    }
+  ],
+  "artifactPins": [
+    {
+      "artifactId": "art-m005a-r1-baidu-compare",
+      "contentHash": "379712eef241cca60f4b3bc3251c9c1c167f5bf4cf59b5009bf65ace7913e7fa",
+      "frozenVersion": "sha256:379712eef241cca60f4b3bc3251c9c1c167f5bf4cf59b5009bf65ace7913e7fa"
+    },
+    {
+      "artifactId": "art-m005a-r1-apple-iphone16",
+      "contentHash": "f325668a9340ce588559328db6fc7e5f0cbe762a57050ce44434d5c64844f077",
+      "frozenVersion": "sha256:f325668a9340ce588559328db6fc7e5f0cbe762a57050ce44434d5c64844f077"
+    }
+  ],
+  "guardFacts": {
+    "requiredArtifactsExist": true,
+    "reportRequired": true,
+    "requiredStepsObserved": true,
+    "permissionOk": true,
+    "idempotentOk": true,
+    "budgetLegal": true,
+    "stateLegal": true,
+    "reportOpened": false
+  },
+  "known": "只有一个官网来源，没有对照报告",
+  "resultClass": "probe",
+  "preJudgedValid": false,
+  "candidateKind": "partial_note",
+  "expected": {
+    "structural": [
+      "只有一个官网来源，没有对照报告"
+    ],
+    "termination": "不因为这份部分候选记通过或误拒",
+    "passFail": "未预先判定有效"
+  }
+}

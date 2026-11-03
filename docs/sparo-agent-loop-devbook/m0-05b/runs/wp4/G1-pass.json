@@ -1,0 +1,111 @@
+{
+  "caseId": "G1-pass",
+  "scene": "G1",
+  "resultClass": "pass",
+  "costBucket": "lightweight-production",
+  "preJudgedValid": true,
+  "covered": true,
+  "observedClass": "pass",
+  "reason": "lightweight structure and guard passed; independent verifier calls 0",
+  "modelCalls": 0,
+  "versions": {
+    "evaluationMode": "offline_replay",
+    "facilityVersion": "m0-05b-facility-1",
+    "rubricVersion": "verifier-rubric-1",
+    "promptVersion": "verifier-prompt-1",
+    "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+    "manifestSampleSetId": "m0-05a-2026-10-29",
+    "modelVersion": "deepseek-flash",
+    "provider": "deepseek",
+    "llmMode": "byok",
+    "priceVersion": "[TBD]",
+    "productionV2": false
+  },
+  "trace": [
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G1-pass-e001",
+      "missionId": "eval-G1-pass",
+      "time": "2026-10-29T11:29:18.465Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.opened",
+      "scene": "G1",
+      "resultClass": "pass",
+      "raw": "打开微博",
+      "versions": {
+        "evaluationMode": "offline_replay",
+        "facilityVersion": "m0-05b-facility-1",
+        "rubricVersion": "verifier-rubric-1",
+        "promptVersion": "verifier-prompt-1",
+        "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+        "manifestSampleSetId": "m0-05a-2026-10-29",
+        "modelVersion": "deepseek-flash",
+        "provider": "deepseek",
+        "llmMode": "byok",
+        "priceVersion": "[TBD]",
+        "productionV2": false
+      },
+      "costBucket": "lightweight-production"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G1-pass-e002",
+      "missionId": "eval-G1-pass",
+      "time": "2026-10-29T11:29:18.465Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-G1-pass-light",
+        "missionId": "eval-G1-pass",
+        "mode": "lightweight",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": true,
+        "independentVerifierCalls": 0
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G1-pass-e003",
+      "missionId": "eval-G1-pass",
+      "time": "2026-10-29T11:29:18.465Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.closed",
+      "close": {
+        "reason": "done",
+        "summary": "轻量打开微博",
+        "gaps": []
+      },
+      "closeGuard": {
+        "passed": true,
+        "checks": [
+          {
+            "name": "artifact_exists",
+            "passed": true
+          },
+          {
+            "name": "report_opened",
+            "passed": true
+          },
+          {
+            "name": "plan_observed",
+            "passed": true
+          },
+          {
+            "name": "permission_and_idempotency",
+            "passed": true
+          },
+          {
+            "name": "budget_and_state",
+            "passed": true
+          }
+        ]
+      }
+    }
+  ]
+}

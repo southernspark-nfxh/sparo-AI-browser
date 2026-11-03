@@ -1,0 +1,384 @@
+{
+  "caseId": "R1-complete-a",
+  "scene": "R1",
+  "resultClass": "pass",
+  "costBucket": "independent",
+  "preJudgedValid": true,
+  "covered": true,
+  "observedClass": "false_reject_then_pass",
+  "reason": "",
+  "modelCalls": 2,
+  "versions": {
+    "evaluationMode": "offline_replay",
+    "facilityVersion": "m0-05b-facility-3",
+    "rubricVersion": "verifier-rubric-1",
+    "promptVersion": "verifier-prompt-1",
+    "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+    "manifestSampleSetId": "m0-05a-2026-10-29",
+    "modelVersion": "deepseek-flash",
+    "provider": "deepseek",
+    "llmMode": "byok",
+    "priceVersion": "[TBD]",
+    "productionV2": false
+  },
+  "trace": [
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-complete-a-e001",
+      "missionId": "eval-R1-complete-a",
+      "time": "2026-10-30T16:04:00.298Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.opened",
+      "scene": "R1",
+      "resultClass": "pass",
+      "raw": "帮我对比三款 小米15、iPhone 16、华为Mate 70 哪个值得买",
+      "versions": {
+        "evaluationMode": "offline_replay",
+        "facilityVersion": "m0-05b-facility-3",
+        "rubricVersion": "verifier-rubric-1",
+        "promptVersion": "verifier-prompt-1",
+        "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+        "manifestSampleSetId": "m0-05a-2026-10-29",
+        "modelVersion": "deepseek-flash",
+        "provider": "deepseek",
+        "llmMode": "byok",
+        "priceVersion": "[TBD]",
+        "productionV2": false
+      },
+      "costBucket": "independent"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-complete-a-e002",
+      "missionId": "eval-R1-complete-a",
+      "time": "2026-10-30T16:04:00.299Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "artifact.created",
+      "artifactId": "r1-complete-a.html",
+      "kind": "report_opened",
+      "contentHash": "28c95bbe4ef51705515ebf757013af39bbfe0406e52a33eb7dca6f96ed461e5f",
+      "length": 6278,
+      "unit": "chars"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-complete-a-e003",
+      "missionId": "eval-R1-complete-a",
+      "time": "2026-10-30T16:04:00.299Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 1,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash",
+      "candidateDeliverable": {
+        "artifactId": "r1-complete-a.html",
+        "contentHash": "28c95bbe4ef51705515ebf757013af39bbfe0406e52a33eb7dca6f96ed461e5f",
+        "textLength": 6278,
+        "notEvidence": true
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-complete-a-e004",
+      "missionId": "eval-R1-complete-a",
+      "time": "2026-10-30T16:04:40.970Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 1,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 4242,
+      "uncachedInputTokens": 4242,
+      "cachedInputTokens": 0,
+      "outputTokens": 7058,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": []
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-complete-a-e005",
+      "missionId": "eval-R1-complete-a",
+      "time": "2026-10-30T16:04:40.970Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-R1-complete-a-r1",
+        "missionId": "eval-R1-complete-a",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": false,
+        "rawGoalSatisfied": false,
+        "confidence": "high",
+        "rationale": "候选报告正文完整，覆盖三款精确配置、128GB/256GB 差异、三种价格口径、条件结论、样本量与缺口，且引用的四个 evidenceId 均与 evidenceIndex 匹配。但计划中的 reportOpened 没有出现在 evidenceIndex；候选摘要/计划摘要中的 obs-m005a-r1-report-open-20261030 只是自述，不能作为真实打开观察，因此不能判定必跑打开步骤已验证。另华为同页“天猫¥4199”等细节未在证据索引摘要中确认。",
+        "deliverables": [
+          {
+            "deliverableId": "r1-report",
+            "status": "satisfied",
+            "evidenceIds": [
+              "e-r1-xiaomi15",
+              "e-r1-iphone16-price",
+              "e-r1-iphone16-specs",
+              "e-r1-mate70"
+            ],
+            "notes": "报告正文已给出对照、条件结论、样本量与缺口，并明确披露苹果 128GB 与另外两款 256GB 的差异，以及小米标价、苹果官网起价、华为 ZOL 参考报价的不同口径。"
+          }
+        ],
+        "unexecutedStepIds": [
+          "reportOpened"
+        ],
+        "invalidEvidenceIds": [
+          "obs-m005a-r1-report-open-20261030"
+        ],
+        "actionableGaps": [
+          "补充 evidenceIndex 中 obs-m005a-r1-report-open-20261030 的真实打开观察记录，或删除/降级 reportOpened 声明。",
+          "核实或删除华为同页“天猫¥4199”这一未在证据索引摘要中体现的细节。"
+        ]
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-complete-a-e006",
+      "missionId": "eval-R1-complete-a",
+      "time": "2026-10-30T16:04:40.971Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "artifact.created",
+      "artifactId": "art-m005a-r1-mi-xiaomi15-mobile-20261030",
+      "frozenVersion": "sha256:8929bc641b344df0c649412313a978ce824c2a3b363700a3b0808210b8fd6542",
+      "contentRange": {
+        "start": 0,
+        "end": 866,
+        "unit": "chars",
+        "length": 866
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-complete-a-e007",
+      "missionId": "eval-R1-complete-a",
+      "time": "2026-10-30T16:04:40.971Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "artifact.created",
+      "artifactId": "art-m005a-r1-apple-iphone16",
+      "frozenVersion": "sha256:f325668a9340ce588559328db6fc7e5f0cbe762a57050ce44434d5c64844f077",
+      "contentRange": {
+        "start": 0,
+        "end": 320,
+        "unit": "chars",
+        "length": 320
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-complete-a-e008",
+      "missionId": "eval-R1-complete-a",
+      "time": "2026-10-30T16:04:40.972Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "artifact.created",
+      "artifactId": "art-m005a-r1-apple-iphone16-specs-20261030",
+      "frozenVersion": "sha256:d9f1b5d7a4446832c8b46c83a02c929b6f790e1e04e4348dadd3aa8ad9b16ef7",
+      "contentRange": {
+        "start": 0,
+        "end": 2197,
+        "unit": "chars",
+        "length": 2197
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-complete-a-e009",
+      "missionId": "eval-R1-complete-a",
+      "time": "2026-10-30T16:04:40.972Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "artifact.created",
+      "artifactId": "art-m005a-r1-huawei-mate70-zol-20261030",
+      "frozenVersion": "sha256:cebd998c19d248436638f0be5ac376dd034f4636d0e496ac3c53b80c184a33b5",
+      "contentRange": {
+        "start": 0,
+        "end": 889,
+        "unit": "chars",
+        "length": 889
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-complete-a-e010",
+      "missionId": "eval-R1-complete-a",
+      "time": "2026-10-30T16:04:40.972Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 2,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash",
+      "candidateDeliverable": {
+        "artifactId": "r1-complete-a.html",
+        "contentHash": "28c95bbe4ef51705515ebf757013af39bbfe0406e52a33eb7dca6f96ed461e5f",
+        "textLength": 6278,
+        "notEvidence": true
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-complete-a-e011",
+      "missionId": "eval-R1-complete-a",
+      "time": "2026-10-30T16:05:12.708Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 2,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 7446,
+      "uncachedInputTokens": 6806,
+      "cachedInputTokens": 640,
+      "outputTokens": 5546,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": [
+        {
+          "artifactId": "art-m005a-r1-mi-xiaomi15-mobile-20261030",
+          "start": 0,
+          "end": 866,
+          "unit": "chars",
+          "length": 866,
+          "frozenVersion": "sha256:8929bc641b344df0c649412313a978ce824c2a3b363700a3b0808210b8fd6542",
+          "textLength": 866
+        },
+        {
+          "artifactId": "art-m005a-r1-apple-iphone16",
+          "start": 0,
+          "end": 320,
+          "unit": "chars",
+          "length": 320,
+          "frozenVersion": "sha256:f325668a9340ce588559328db6fc7e5f0cbe762a57050ce44434d5c64844f077",
+          "textLength": 320
+        },
+        {
+          "artifactId": "art-m005a-r1-apple-iphone16-specs-20261030",
+          "start": 0,
+          "end": 2197,
+          "unit": "chars",
+          "length": 2197,
+          "frozenVersion": "sha256:d9f1b5d7a4446832c8b46c83a02c929b6f790e1e04e4348dadd3aa8ad9b16ef7",
+          "textLength": 2197
+        },
+        {
+          "artifactId": "art-m005a-r1-huawei-mate70-zol-20261030",
+          "start": 0,
+          "end": 889,
+          "unit": "chars",
+          "length": 889,
+          "frozenVersion": "sha256:cebd998c19d248436638f0be5ac376dd034f4636d0e496ac3c53b80c184a33b5",
+          "textLength": 889
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-complete-a-e012",
+      "missionId": "eval-R1-complete-a",
+      "time": "2026-10-30T16:05:12.708Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-R1-complete-a-r2",
+        "missionId": "eval-R1-complete-a",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": true,
+        "rawGoalSatisfied": true,
+        "confidence": "medium",
+        "rationale": "候选报告完整覆盖三款手机的对照、条件结论、样本量与缺口；明确披露小米12GB+256GB、华为12GB+256GB与苹果128GB的配置差异，并正确区分小米商品标价、苹果官网起价、华为ZOL参考报价。报告中的价格、配置和规格关键事实均能在给定证据区间找到支持，未发现无效证据。唯一核验缺口是reportOpened所依赖的obs-m005a-r1-report-open-20261030未出现在证据索引或给定区间，无法独立确认该打开观察；另有苹果价格采集日期在给定区间未直接显示，但不影响核心比较结论。",
+        "deliverables": [
+          {
+            "deliverableId": "r1-report",
+            "status": "satisfied",
+            "evidenceIds": [
+              "e-r1-xiaomi15",
+              "e-r1-iphone16-price",
+              "e-r1-iphone16-specs",
+              "e-r1-mate70"
+            ]
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": [
+          "补充obs-m005a-r1-report-open-20261030对应的Artifact或证据区间到证据索引；否则reportOpened无法按约束核验。",
+          "苹果价格采集日期2026-10-29未在给定证据区间中显示，建议补充元数据依据或删除该具体日期。"
+        ]
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-R1-complete-a-e013",
+      "missionId": "eval-R1-complete-a",
+      "time": "2026-10-30T16:05:12.708Z",
+      "runtimeVersion": "eval:m0-05b-facility-3",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.closed",
+      "close": {
+        "reason": "done",
+        "summary": "三款手机对照报告已在窗口实际打开，含价格口径、配置差异、条件推荐和样本缺口。",
+        "gaps": []
+      },
+      "closeGuard": {
+        "passed": true,
+        "checks": [
+          {
+            "name": "artifact_exists",
+            "passed": true
+          },
+          {
+            "name": "report_opened",
+            "passed": true
+          },
+          {
+            "name": "plan_observed",
+            "passed": true
+          },
+          {
+            "name": "permission_and_idempotency",
+            "passed": true
+          },
+          {
+            "name": "budget_and_state",
+            "passed": true
+          }
+        ]
+      }
+    }
+  ]
+}

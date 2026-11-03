@@ -1,0 +1,162 @@
+{
+  "caseId": "G6-pass-or-false-reject",
+  "scene": "G6",
+  "resultClass": "pass",
+  "costBucket": "independent",
+  "preJudgedValid": true,
+  "covered": true,
+  "observedClass": "pass",
+  "reason": "预先判定有效的候选没有被拒绝，误拒格未覆盖",
+  "modelCalls": 1,
+  "versions": {
+    "evaluationMode": "offline_replay",
+    "facilityVersion": "m0-05b-facility-1",
+    "rubricVersion": "verifier-rubric-1",
+    "promptVersion": "verifier-prompt-1",
+    "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+    "manifestSampleSetId": "m0-05a-2026-10-29",
+    "modelVersion": "deepseek-flash",
+    "provider": "deepseek",
+    "llmMode": "byok",
+    "priceVersion": "[TBD]",
+    "productionV2": false
+  },
+  "trace": [
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G6-pass-or-false-reject-e001",
+      "missionId": "eval-G6-pass-or-false-reject",
+      "time": "2026-10-29T11:30:20.255Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.opened",
+      "scene": "G6",
+      "resultClass": "pass",
+      "raw": "帮我写一首诗",
+      "versions": {
+        "evaluationMode": "offline_replay",
+        "facilityVersion": "m0-05b-facility-1",
+        "rubricVersion": "verifier-rubric-1",
+        "promptVersion": "verifier-prompt-1",
+        "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+        "manifestSampleSetId": "m0-05a-2026-10-29",
+        "modelVersion": "deepseek-flash",
+        "provider": "deepseek",
+        "llmMode": "byok",
+        "priceVersion": "[TBD]",
+        "productionV2": false
+      },
+      "costBucket": "independent"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G6-pass-or-false-reject-e002",
+      "missionId": "eval-G6-pass-or-false-reject",
+      "time": "2026-10-29T11:30:20.255Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 1,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G6-pass-or-false-reject-e003",
+      "missionId": "eval-G6-pass-or-false-reject",
+      "time": "2026-10-29T11:30:27.419Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 1,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 494,
+      "uncachedInputTokens": 494,
+      "cachedInputTokens": 0,
+      "outputTokens": 1477,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": []
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G6-pass-or-false-reject-e004",
+      "missionId": "eval-G6-pass-or-false-reject",
+      "time": "2026-10-29T11:30:27.419Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-G6-pass-or-false-reject-r1",
+        "missionId": "eval-G6-pass-or-false-reject",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": true,
+        "rawGoalSatisfied": true,
+        "confidence": "high",
+        "rationale": "原始请求是写一首诗；计划明确为离线写作且不打开网页。唯一必交付为诗文档，候选交付了短诗，并对应一个离线文档 artifact。约束说明网页证据不适用，因此该 artifact 作为非网页文档证据有效。",
+        "deliverables": [
+          {
+            "deliverableId": "g6-poem-doc",
+            "status": "satisfied",
+            "evidenceIds": [
+              "e-g6-file"
+            ]
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": []
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-G6-pass-or-false-reject-e005",
+      "missionId": "eval-G6-pass-or-false-reject",
+      "time": "2026-10-29T11:30:27.419Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.closed",
+      "close": {
+        "reason": "done",
+        "summary": "",
+        "gaps": []
+      },
+      "closeGuard": {
+        "passed": true,
+        "checks": [
+          {
+            "name": "artifact_exists",
+            "passed": true
+          },
+          {
+            "name": "report_opened",
+            "passed": true
+          },
+          {
+            "name": "plan_observed",
+            "passed": true
+          },
+          {
+            "name": "permission_and_idempotency",
+            "passed": true
+          },
+          {
+            "name": "budget_and_state",
+            "passed": true
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,128 @@
+{
+  "caseId": "T1-probe",
+  "scene": "T1",
+  "resultClass": "probe",
+  "costBucket": "independent",
+  "preJudgedValid": false,
+  "covered": false,
+  "observedClass": "uncovered",
+  "reason": "候选未预先判定为有效，拒绝也不记成误拒",
+  "modelCalls": 1,
+  "versions": {
+    "evaluationMode": "offline_replay",
+    "facilityVersion": "m0-05b-facility-1",
+    "rubricVersion": "verifier-rubric-1",
+    "promptVersion": "verifier-prompt-1",
+    "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+    "manifestSampleSetId": "m0-05a-2026-10-29",
+    "modelVersion": "deepseek-flash",
+    "provider": "deepseek",
+    "llmMode": "byok",
+    "priceVersion": "[TBD]",
+    "productionV2": false
+  },
+  "trace": [
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-T1-probe-e001",
+      "missionId": "eval-T1-probe",
+      "time": "2026-10-29T11:32:02.761Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "mission.opened",
+      "scene": "T1",
+      "resultClass": "probe",
+      "raw": "帮我搜一下 11月12日和11月13日南京的酒店 11月11日北京到南京高铁时间和价格 11月13日晚返回北京",
+      "versions": {
+        "evaluationMode": "offline_replay",
+        "facilityVersion": "m0-05b-facility-1",
+        "rubricVersion": "verifier-rubric-1",
+        "promptVersion": "verifier-prompt-1",
+        "promptHash": "f997b6ebbd024053075f84ef9aa3cb01aa160be7ac6721cfea2043c60d24f110",
+        "manifestSampleSetId": "m0-05a-2026-10-29",
+        "modelVersion": "deepseek-flash",
+        "provider": "deepseek",
+        "llmMode": "byok",
+        "priceVersion": "[TBD]",
+        "productionV2": false
+      },
+      "costBucket": "independent"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-T1-probe-e002",
+      "missionId": "eval-T1-probe",
+      "time": "2026-10-29T11:32:02.761Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.requested",
+      "role": "verifier",
+      "round": 1,
+      "rubricVersion": "verifier-rubric-1",
+      "promptVersion": "verifier-prompt-1",
+      "modelVersion": "deepseek-flash"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-T1-probe-e003",
+      "missionId": "eval-T1-probe",
+      "time": "2026-10-29T11:32:13.968Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "model.completed",
+      "role": "verifier",
+      "round": 1,
+      "modelVersion": "deepseek-flash",
+      "promptVersion": "verifier-prompt-1",
+      "reportedPromptTokens": 526,
+      "uncachedInputTokens": 398,
+      "cachedInputTokens": 128,
+      "outputTokens": 1993,
+      "priceVersion": "[TBD]",
+      "cost": "[TBD]",
+      "parsed": true,
+      "artifactRanges": []
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "eval-T1-probe-e004",
+      "missionId": "eval-T1-probe",
+      "time": "2026-10-29T11:32:13.968Z",
+      "runtimeVersion": "eval:m0-05b-facility-1",
+      "evaluationMode": "offline_replay",
+      "productionV2": false,
+      "name": "verification.completed",
+      "verification": {
+        "verificationId": "eval-T1-probe-r1",
+        "missionId": "eval-T1-probe",
+        "mode": "independent",
+        "rubricVersion": "verifier-rubric-1",
+        "goalSatisfied": false,
+        "rawGoalSatisfied": false,
+        "confidence": "high",
+        "rationale": "原句要求同时给出南京11月12日和13日酒店、11月11日北京到南京高铁时刻与价格、11月13日晚返京方案。交付契约中唯一必交付 t1-plan 目前只有去程高铁相关证据 e-t1-train；没有酒店或返程的可核验证据，候选摘要还自述返程和酒店价格不在该正文中。候选摘要不是证据，不能补足缺失，也没有证据证明这些查询日期确为11月11日、12日、13日。",
+        "deliverables": [
+          {
+            "deliverableId": "t1-plan",
+            "status": "unsatisfied",
+            "evidenceIds": [
+              "e-t1-train"
+            ],
+            "notes": "仅有去程高铁相关页状态；未以证据覆盖南京酒店查询和11月13日晚返程，也未证明查询日期与11月11日、12日、13日匹配。"
+          }
+        ],
+        "unexecutedStepIds": [],
+        "invalidEvidenceIds": [],
+        "actionableGaps": [
+          "补充并核验11月11日北京到南京高铁的时刻、车次和票价，且确认查询对应11月11日。",
+          "补充并核验11月12日和11月13日南京酒店的查询结果、价格或可订状态，并提供可引用证据。",
+          "补充并核验11月13日晚南京返回北京的高铁时刻与价格，并提供可引用证据。",
+          "基于真实观察给出完整的 t1-plan 答案；未实际观察到的酒店或返程信息不得写成 observed。"
+        ]
+      }
+    }
+  ]
+}
