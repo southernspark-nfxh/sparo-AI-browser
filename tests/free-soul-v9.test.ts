@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, afterEach } from "vitest";
-import { PiAgentCore } from "../src/main/agent/pi-core.js";
+import { FreeSoul } from "../src/main/agent/free-soul.js";
 import { loadSettings, saveSettings, settingsPublicView } from "../src/main/settings/store.js";
 import { tx } from "../src/shared/i18n.js";
 
@@ -65,7 +65,7 @@ function scripted(messages: Array<Record<string, unknown>>, sent: Array<Record<s
 
 async function systemOf(execMode?: "step" | "auto"): Promise<string> {
   const sent: Array<{ messages?: Array<{ content?: string }> }> = [];
-  const agent = new PiAgentCore(
+  const agent = new FreeSoul(
     config(scripted([{ content: "好的。" }], sent)),
     async () => ({ ok: true, message: "不会执行" }),
   );
@@ -120,7 +120,7 @@ describe("执行模式", () => {
 
   it("auto 模式下模型仍调用 request_confirm 时本地照常停下，不代答", async () => {
     const seen: string[] = [];
-    const agent = new PiAgentCore(
+    const agent = new FreeSoul(
       config(scripted([toolCall("c1", "request_confirm", { action: "删除这封邮件", detail: "不可恢复" })], [])),
       async (name) => {
         seen.push(name);

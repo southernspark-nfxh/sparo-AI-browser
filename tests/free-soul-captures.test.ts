@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { PiAgentCore } from "../src/main/agent/pi-core.js";
+import { FreeSoul } from "../src/main/agent/free-soul.js";
 import {
   CAPTURE_IMAGE_MAX_BYTES,
   CAPTURE_LIBRARY_MAX_BYTES,
@@ -67,7 +67,7 @@ function scripted(messages: Array<Record<string, unknown>>, sent: Array<Record<s
 
 async function systemOf(execMode?: "step" | "auto"): Promise<string> {
   const sent: Array<{ messages?: Array<{ content?: string }> }> = [];
-  const agent = new PiAgentCore(
+  const agent = new FreeSoul(
     config(scripted([{ content: "好的。" }], sent)),
     async () => ({ ok: true, message: "不会执行" }),
   );
@@ -187,7 +187,7 @@ describe("素材库", () => {
     const callsInOneRound = Array.from({ length: 21 }, (_, index) =>
       toolCall(`c${index}`, index % 2 === 0 ? "save_shot" : "save_image", { label: "n" }),
     );
-    const agent = new PiAgentCore(
+    const agent = new FreeSoul(
       config(scripted([
         { content: null, tool_calls: callsInOneRound },
         { content: "停了。" },
@@ -216,7 +216,7 @@ describe("素材库", () => {
     const dir = tmpDir();
     expect(listCaptures(dir)).toEqual([]);
     const seen: string[] = [];
-    const agent = new PiAgentCore(
+    const agent = new FreeSoul(
       config(scripted([
         { content: null, tool_calls: [toolCall("c1", "list_captures")] },
         { content: "没有素材。" },

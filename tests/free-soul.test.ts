@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PiAgentCore } from "../src/main/agent/pi-core.js";
+import { FreeSoul } from "../src/main/agent/free-soul.js";
 
 type SentBody = {
   messages?: Array<{
@@ -16,7 +16,7 @@ describe("Pi Agent 核心循环", () => {
     const calls: string[] = [];
     const tail = "来源尾句：这是模型汇报必须能看到的证据。";
     const pageText = "搜索结果正文".padEnd(5000, "甲") + tail;
-    const agent = new PiAgentCore(
+    const agent = new FreeSoul(
       config(scripted([
         toolCall("nav-1", "navigate", { url: "https://www.bing.com/search?q=Sparo" }),
         toolCall("read-1", "page_text"),
@@ -63,7 +63,7 @@ describe("Pi Agent 核心循环", () => {
   });
 
   it("达到模型轮次上限时如实停止，不伪造任务完成", async () => {
-    const agent = new PiAgentCore(
+    const agent = new FreeSoul(
       {
         ...config(scripted([
           toolCall("nav-1", "navigate", { url: "https://example.com/" }),
@@ -83,7 +83,7 @@ describe("Pi Agent 核心循环", () => {
 
   it("系统提示要求两次就换路，并带上确认门和结果页通道", async () => {
     const sent: SentBody[] = [];
-    const agent = new PiAgentCore(
+    const agent = new FreeSoul(
       config(scripted([{ content: "好的。" }], sent)),
       async () => ({ ok: true, message: "不会执行" }),
     );
@@ -116,7 +116,7 @@ describe("Pi Agent 核心循环", () => {
 
   it("模型调用 reload 会真执行一次", async () => {
     const seen: string[] = [];
-    const agent = new PiAgentCore(
+    const agent = new FreeSoul(
       config(scripted([
         toolCall("r1", "reload"),
         { content: "页面已重载。" },
@@ -133,7 +133,7 @@ describe("Pi Agent 核心循环", () => {
 
   it("同一点击连续 3 次无变化后注入换策略提示，仍按轮次上限结束", async () => {
     const sent: SentBody[] = [];
-    const agent = new PiAgentCore(
+    const agent = new FreeSoul(
       { ...config(alwaysSameClick(sent)), maxRounds: 4 },
       async () => ({ ok: true, message: "点了但页面没变" }),
     );
@@ -157,7 +157,7 @@ describe("Pi Agent 核心循环", () => {
 
   it("request_confirm 用成功态结束本轮，不执行后续工具", async () => {
     const ran: string[] = [];
-    const agent = new PiAgentCore(
+    const agent = new FreeSoul(
       config(scripted([
         toolCall("ask-1", "request_confirm", { action: "发送微博", detail: "内容是吐槽股市" }),
         toolCall("click-1", "click", { ref: "send" }),
@@ -183,7 +183,7 @@ describe("Pi Agent 核心循环", () => {
 
   it("用户确认后，模型再点发送时工具会执行", async () => {
     const ran: string[] = [];
-    const agent = new PiAgentCore(
+    const agent = new FreeSoul(
       config(scripted([
         toolCall("click-1", "click", { ref: "send" }),
         { content: "已发送。" },
@@ -211,7 +211,7 @@ describe("Pi Agent 核心循环", () => {
     const sent: SentBody[] = [];
     const texts = ["微博甲", "微博甲", "微博甲新增一条", "甲"];
     let read = 0;
-    const agent = new PiAgentCore(
+    const agent = new FreeSoul(
       config(scripted([
         toolCall("p1", "page_text"),
         toolCall("p2", "page_text"),
@@ -252,7 +252,7 @@ describe("Pi Agent 核心循环", () => {
     const sent: SentBody[] = [];
     const texts = ["微博甲乙丙", "甲"];
     let read = 0;
-    const agent = new PiAgentCore(
+    const agent = new FreeSoul(
       config(scripted([
         toolCall("p1", "page_text"),
         toolCall("p2", "page_text"),
@@ -280,7 +280,7 @@ describe("Pi Agent 核心循环", () => {
       toolCall("s3", "scroll", { direction: "down" }),
       { content: "截至目前读到 2 条。" },
     ];
-    const agent = new PiAgentCore(
+    const agent = new FreeSoul(
       { ...config(scripted(steps, sent)), maxRounds: 24 },
       async (name) => {
         ran.push(name);
@@ -305,7 +305,7 @@ describe("Pi Agent 核心循环", () => {
       ...Array.from({ length: 23 }, (_, index) => toolCall(`s${index}`, "scroll", { direction: "down" })),
       { content: "信息够了，先汇报。" },
     ];
-    const agent = new PiAgentCore(
+    const agent = new FreeSoul(
       config(scripted(steps, sent)),
       async () => ({ ok: true, message: "已滚动" }),
     );

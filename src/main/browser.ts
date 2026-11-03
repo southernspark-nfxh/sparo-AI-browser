@@ -282,7 +282,7 @@ import {
   DeepSeekAgentProvider,
   type AgentToolName,
 } from "./agent/deepseek.js";
-import { PiAgentCore, type PiToolName } from "./agent/pi-core.js";
+import { FreeSoul, type FreeSoulToolName } from "./agent/free-soul.js";
 import {
   createSkillFromTrace,
   deleteSkill,
@@ -685,9 +685,9 @@ export class SparkBrowser {
   private skillsCache: Skill[] = [];
   private settings!: SparkSettings;
   private deepseek: DeepSeekAgentProvider | null = null;
-  private piCore: PiAgentCore | null = null;
+  private freeSoul: FreeSoul | null = null;
   /** 新核心 run 期间挡住旧学习系统向侧栏插话、暂停。 */
-  private piCoreRunning = false;
+  private freeSoulRunning = false;
   /** 同一组 12306 查询参数只补一次表单。 */
   private repaired12306 = new Set<string>();
   private llmRuntime: "byok" | "cloud" = "byok";
@@ -3718,14 +3718,14 @@ export class SparkBrowser {
     run: () => Promise<ToolResult>,
     tabId?: string,
   ): Promise<ToolResult> {
-    if (!this.piCoreRunning && this.helpAsk) {
+    if (!this.freeSoulRunning && this.helpAsk) {
       // 多站任务不能因为上一站登录墙就冻死。记下「先不管」，问题仍留在侧栏给人改。
       this.skipLearning();
     }
     const before = pageFinger(this.getUrl(tabId), this.getTitle(tabId));
     const result = await run();
     try {
-      if (!this.piCoreRunning) this.observePageAction(name, args, before, tabId);
+      if (!this.freeSoulRunning) this.observePageAction(name, args, before, tabId);
     } catch (error) {
       console.error("[learn] observe failed", error);
     }
@@ -3750,7 +3750,7 @@ export class SparkBrowser {
   }
 
   private openHelpAsk(hit: ReturnType<typeof detectFailure>): void {
-    if (this.piCoreRunning) return;
+    if (this.freeSoulRunning) return;
     if (!hit || this.helpAsk) return;
     const zh = this.settings.locale.startsWith("zh");
     this.helpAsk = questionFor(hit, zh);
@@ -3759,7 +3759,7 @@ export class SparkBrowser {
   }
 
   private async applyHostLessons(tabId?: string): Promise<boolean> {
-    if (this.piCoreRunning) return false;
+    if (this.freeSoulRunning) return false;
     tabId = tabId || this.agentTabId || this.activeTabId;
     const lessons = findLessonsForHost(this.configDir(), this.getUrl(tabId));
     if (!lessons.length) return false;
@@ -3790,7 +3790,7 @@ export class SparkBrowser {
   }
 
   answerLearning(raw: string): ToolResult {
-    if (this.piCoreRunning) return { ok: true, message: "" };
+    if (this.freeSoulRunning) return { ok: true, message: "" };
     const ask = this.helpAsk;
     if (!ask) return { ok: false, message: tx(this.settings.locale, "learn.none") };
     const parsed = parseAnswer(ask, raw);
@@ -4448,7 +4448,7 @@ export class SparkBrowser {
       const t = await assertAndStartTask(this.configDir());
       this.cloudTaskId = t.taskId;
       this.deepseek?.setTaskId(t.taskId);
-      this.piCore?.setTaskId(t.taskId);
+      this.freeSoul?.setTaskId(t.taskId);
       this.cloudQuota = {
         ...t.snap,
         email: this.cloudQuota?.email || loadTokens(this.configDir())?.email,
@@ -4473,7 +4473,7 @@ export class SparkBrowser {
     const id = this.cloudTaskId;
     this.cloudTaskId = undefined;
     this.deepseek?.setTaskId(undefined);
-    this.piCore?.setTaskId(undefined);
+    this.freeSoul?.setTaskId(undefined);
     if (!id) return null;
     try {
       const s = await settleCloudTask(this.configDir(), id);
@@ -4492,10 +4492,10 @@ export class SparkBrowser {
         this.runAgentTool(name, args),
       );
     }
-    if (this.piCore) {
-      this.piCore.updateConfig(cfg);
+    if (this.freeSoul) {
+      this.freeSoul.updateConfig(cfg);
     } else {
-      this.piCore = new PiAgentCore(cfg, (name, args) => this.runCoreTool(name, args));
+      this.freeSoul = new FreeSoul(cfg, (name, args) => this.runCoreTool(name, args));
     }
   }
 
@@ -4583,7 +4583,7 @@ export class SparkBrowser {
 
   /** 新核心只暴露通用浏览原语；路线和下一步全由模型决定。 */
   private async runCoreTool(
-    name: PiToolName,
+    name: FreeSoulToolName,
     args: Record<string, unknown>,
   ): Promise<ToolResult> {
     const tabId = this.agentTabId || this.activeTabId;
@@ -6308,7 +6308,7 @@ export class SparkBrowser {
     this.pushSidebarState();
 
     try {
-      if (!this.piCore) {
+      if (!this.freeSoul) {
         const message = "请先在设置里配置模型。";
         this.chatLog.push({ role: "assistant", text: message });
         return { ok: false, message };
@@ -6328,9 +6328,9 @@ export class SparkBrowser {
         .slice(0, -1)
         .slice(-12)
         .map((turn) => ({ role: turn.role, text: turn.text.slice(0, 4000) }));
-      this.piCoreRunning = true;
+      this.freeSoulRunning = true;
       this.activePiAbort = new AbortController();
-      const result = await this.piCore.run({
+      const result = await this.freeSoul.run({
         input: prompt,
         url: this.getUrl(this.agentTabId),
         title: this.getTitle(this.agentTabId),
@@ -6350,7 +6350,7 @@ export class SparkBrowser {
       this.chatLog.push({ role: "assistant", text: message });
       return { ok: false, message };
     } finally {
-      this.piCoreRunning = false;
+      this.freeSoulRunning = false;
       this.activePiAbort = null;
       if (this.cloudTaskId) void this.finishCloudTask();
       this.agentTabId = previousAgentTab;
@@ -8688,7 +8688,7 @@ export class SparkBrowser {
     const tabId = opts?.tabId;
     const blocked = this.assertNotPaused();
     if (blocked) return blocked;
-    const gate = gateClickText(this.piCoreRunning, text, this.activeMission?.goal?.autoSend === true);
+    const gate = gateClickText(this.freeSoulRunning, text, this.activeMission?.goal?.autoSend === true);
     if (!gate.ok) return { ok: false, message: gate.message || "没有代点" };
     try {
       await this.ensureOperableViewport();
@@ -10279,7 +10279,7 @@ export class SparkBrowser {
         })()`,
         true,
       ).catch(() => "")) as string;
-      if (submitClickNeedsGate(this.piCoreRunning, label || String(hit.target || ""))) {
+      if (submitClickNeedsGate(this.freeSoulRunning, label || String(hit.target || ""))) {
         const gate = await this.qaGate();
         if (!gate.ok) return gate as ToolResult;
         const appr = await this.requestApproval({

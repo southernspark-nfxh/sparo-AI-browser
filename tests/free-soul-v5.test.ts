@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PiAgentCore, sanitize } from "../src/main/agent/pi-core.js";
+import { FreeSoul, sanitize } from "../src/main/agent/free-soul.js";
 
 type SentMessage = {
   role: string;
@@ -75,7 +75,7 @@ describe("tool_calls 消息序列", () => {
       },
       { content: "进度停住了，先汇报。" },
     ];
-    const agent = new PiAgentCore(config(scripted(steps, sent)), async (name) => {
+    const agent = new FreeSoul(config(scripted(steps, sent)), async (name) => {
       if (name === "page_text") return pageText();
       return { ok: true, message: "标题仍是投稿" };
     });
@@ -112,7 +112,7 @@ describe("tool_calls 消息序列", () => {
       },
       { content: "看过了。" },
     ];
-    const agent = new PiAgentCore(config(scripted(steps, sent)), async () => ({
+    const agent = new FreeSoul(config(scripted(steps, sent)), async () => ({
       ok: true,
       message: "已读",
     }));
