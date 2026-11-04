@@ -1850,3 +1850,49 @@ Q16、Q13、Q5 仍未跑。
 ## 完成交付
 
 照旧：改动文件、测试名、决策点、真机未跑如实写。
+
+## 复核结论（v15+v16，2026-11-04，规划方）
+
+**代码合格，收口。**
+
+- **T44 审码通过**：`trustedClickAt` 去掉 `focusPageForInput` 依赖、后台直接注入（坐标保真）；diag `click-*.json` 记录窗口三态/期望坐标/注入坐标/`elementFromPoint` 落点/前后正文长度（归因三件套落地）；最小化后台任务用 `showInactive()` 恢复渲染、持有计数归零后 `minimize()` 还原用户状态——「永不置前永不夺焦」红线守住；截图 `wc.capturePage` 优先、CDP 兜底、「窗口不可见」仅双败时抛出。
+- **T45 审码通过**：`get_task` 每条含 `window` 三态，未知 id 也带。
+- **T46 审码通过**：`FreeSoulToolName` +2 工具、TOOLS 表登记（`match_skill` 明示「不要自己编技能 id」、`run_skill` 明示「失败不停改走通用工具」——回落语义进了工具描述）；step/auto 双模式系统提示同加技能句；`sparo_agent_guide` 同步；技能文件零改动。
+- **复跑验证**：`npm test` 81 文件全绿（exit 0）、typecheck 通过，与自报一致。
+- **决策点**：无，符合预期。
+- **越界警告（待用户裁决）**：工作区另含两个**不在 v15/v16 任务书**的文档改动——`docs/SKILL-COMMUNITY-M2.md`（原 81 行「社区 M2 方案」被重写为 672 行「技能广场长期方案」）与新建 `docs/PAGE-AS-ARTIFACT-v2.md`（「网页即产物」方案，自称基于「方沫 v0.1 构想」）。本次提交**不包含**这两个文件，留在工作区等用户确认来源与去留。
+- **未跑如实**：Q21/Q22 未跑（微博账号安全验证未解除——用户手机验证后才能跑）。未打包。
+
+遗留清单：① 微博手机验证（用户）；② Q21（最小化后台发布）+ Q22（技能命中发布对比）；③ 四个本地 commit（9720c51、9912712、934a961 及本轮）待推送——网络不稳；④ 两个越界文档去留；⑤ G1–G3、Q16/Q17/Q19、Q13、Q5。
+
+## 完成记录（v15 + v16，2026-11-04，Cursor）
+
+决策点：无。没有新增提前结束任务的判断，没有登记 #35。没有改技能文件，没有碰 `docs/listings/`，没有价格和付款。确认门、打断链、轮次软提示、素材库护栏、`sidebar_chat` 同步语义未改。窗口路径只有 `restore()` + `showInactive()`，没有 `show()`、没有 `focus()`。
+
+### T44
+
+- 改动：`src/main/browser.ts`
+- `trustedClickAt` 不再走 `focusPageForInput`。后台未聚焦时直接对目标 webContents `sendInputEvent`，注入坐标保持调用方给出的点。无效坐标仍在注入前拒绝。
+- 每次点击写 `diag/click-*.json`：`isMinimized` / `isVisible` / `isFocused`、期望坐标、实际注入坐标、`elementFromPoint` 落点、注入前后 `bodyLen`。
+- 带 `clientId` 的后台池任务开始时，若窗口已最小化，`restore()` + `showInactive()` 恢复渲染。任务结束持有计数归零后 `minimize()`，把用户原先最小化的窗口还回去。重叠的 agent 任务共享一次持有，最后一个结束才还原。
+- `focusPageForInput` 本身未改：最小化时仍不 `restore`、不聚焦。按键路径仍走它。
+- 可见区域截图先 `wc.capturePage`，空图或「窗口不可见」再走调试器 `Page.captureScreenshot`。两条都因窗口不可见失败才把该异常抛出。空图文案改为 `shot.empty`，不再提示把 Sparo 亮出来。
+
+### T45
+
+- `getTask` 每条结果都带 `window`：`minimized` / `background` / `foreground`，按当前主窗口的 `isMinimized`、`isFocused` 判断。未知 id 同样带这个字段。MCP `get_task` 原样返回该对象。
+
+### T46
+
+- 改动：`src/main/agent/free-soul.ts`、`src/main/agent/agent-guide.ts`
+- `FreeSoulToolName` 与工具表增加 `match_skill`、`run_skill`。执行仍进 `browser.ts` 里已有的 `matchSkillTool` / `runSkillTool`，没有重写匹配或剧本。技能目录未动。
+- step 与 auto 共用的 systemPrompt 增加：「带站点语义的多步任务（发布、上品、采集、生活规划）先 match_skill；命中即优先 run_skill 按剧本走，未命中或剧本执行失败自动回落通用工具路径，不因技能问题中断任务。」step 提示仍不含自动执行模式那句。
+- `sparo_agent_guide` 技能条补一句：`submit_task 的 text 用自然指令即可，命中技能会自动走剧本。`
+
+### 测试
+
+- `tests/background-exec.test.ts`：后台点击不聚焦、注入点保持 (765,190)、诊断日志记下落点 (1,1)；`capturePage` 报窗口不可见时改走内核截图且不 `show`/`focus`；最小化的 agent 任务 `restore` + `showInactive`，执行中窗口状态为 background，结束后回到 minimized。
+- `tests/free-soul-v16.test.ts`：step 与 auto 都含技能句；`match_skill` 后 `run_skill` 失败仍回到通用收尾，不中断。
+- 回归：`tests/minimized-focus.test.ts`、`tests/mcp-agent.test.ts` 仍绿。
+- 全量：`npm test` 81 文件 / 632 通过。`npm run typecheck` 通过。
+- Q21、Q22：需用户在场，且微博账号安全验证未在本轮做。未跑。没有把窗口拉到前台。

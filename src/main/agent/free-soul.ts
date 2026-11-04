@@ -21,7 +21,9 @@ export type FreeSoulToolName =
   | "reload"
   | "save_shot"
   | "save_image"
-  | "list_captures";
+  | "list_captures"
+  | "match_skill"
+  | "run_skill";
 
 export type FreeSoulToolRunner = (
   name: FreeSoulToolName,
@@ -205,6 +207,21 @@ const TOOLS = [
     "list_captures",
     "列出本机素材库最近保存的图片路径（file、kind、src、来源页、时间），供 set_file 引用。素材只存本机。",
   ),
+  tool(
+    "match_skill",
+    "按自然语言匹配本机已有技能，返回候选 id。带站点语义的任务先调用它，不要自己编技能 id。",
+    { query: { type: "string" } },
+    ["query"],
+  ),
+  tool(
+    "run_skill",
+    "按技能 id 执行已有剧本。参数用 params 传入。失败时不要停，改用通用工具继续。",
+    {
+      id: { type: "string" },
+      query: { type: "string" },
+      params: { type: "object" },
+    },
+  ),
 ];
 
 const STUCK_HINT =
@@ -236,6 +253,7 @@ function systemPrompt(url: string, title: string, execMode?: "step" | "auto"): s
     "发布到微博、知乎、小红书等社交平台的正文要用自然的口语段落：不用 markdown 标题、加粗、编号列表、分割线和序号 emoji（如 1️⃣）；需要分点时用『一、二、三』或自然过渡衔接。在侧栏里直接回复用户的总结不受此限。",
     "用户给出本地文件路径让你上传（视频、图片、附件）时，用 set_file 把文件放进文件选择框，不要试图用 fill 填路径或用 file:// 打开本地目录。",
     CAPTURE_PROMPT,
+    "带站点语义的多步任务（发布、上品、采集、生活规划）先 match_skill；命中即优先 run_skill 按剧本走，未命中或剧本执行失败自动回落通用工具路径，不因技能问题中断任务。",
     "历史对话里的工具结果都是当时真实读回的，是可信的。浏览器或应用重启后页面状态会重置，当前标签页在哪、显示什么，都不能用来否定历史里已完成的动作。需要核实历史发布是否生效时，去对应平台实际查看（例如打开微博个人主页看时间线），不要凭当前页面状态下结论。",
     "使用用户最新一条消息的语言回复。",
     `当前页面标题：${title || "（无）"}`,
@@ -435,6 +453,9 @@ export class FreeSoul {
           : overCaptureBudget
             ? { ok: false, message: RUN_CAPTURE_FULL }
             : await this.safeRun(name, args);
+        if (name === "match_skill" || name === "run_skill") {
+          console.log(`[free-soul] ${name} ok=${result.ok} ${String(result.message || "").slice(0, 160)}`);
+        }
         if (
           !parseError &&
           !overCaptureBudget &&

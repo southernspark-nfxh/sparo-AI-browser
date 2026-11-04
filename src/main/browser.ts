@@ -9,6 +9,7 @@ import {
   clipboard,
   shell,
   screen,
+  nativeImage,
   type MenuItemConstructorOptions,
   type WebContents,
 } from "electron";
@@ -802,6 +803,8 @@ export class SparkBrowser {
   private activeMcpTaskId: string | null = null;
   private agentPoolIds = new Set<string>();
   private agentAborts = new Set<AbortController>();
+  private renderHoldCount = 0;
+  private wasMinimizedForTask = false;
 
   private get chatRunning(): boolean {
     const pool = this.taskPool;
@@ -6420,6 +6423,7 @@ export class SparkBrowser {
     rounds: number;
     lastAssistant: string;
     elapsedMs: number;
+    window: "minimized" | "background" | "foreground";
     result?: {
       closeReason: LedgerClose;
       finalUrl: string;
@@ -6429,12 +6433,13 @@ export class SparkBrowser {
     };
   } {
     const task = this.mcpTaskList().find((item) => item.taskId === taskId);
-    if (!task) return { status: "unknown", rounds: 0, lastAssistant: "", elapsedMs: 0 };
+    if (!task) return { status: "unknown", rounds: 0, lastAssistant: "", elapsedMs: 0, window: this.mainWindowMode() };
     const view = {
       status: task.status,
       rounds: task.rounds,
       lastAssistant: task.lastAssistant,
       elapsedMs: Date.now() - task.startedAt,
+      window: this.mainWindowMode(),
     };
     if (task.status !== "done" || !task.closeReason) return view;
     return {
@@ -6476,6 +6481,65 @@ export class SparkBrowser {
     this.activeMcpTaskId = null;
     if (!task || task.status !== "running") return;
     this.settleMcpTask(task, result);
+  }
+
+  private mainWindowMode(): "minimized" | "background" | "foreground" {
+    const win = this.window as {
+      isDestroyed?: () => boolean;
+      isMinimized?: () => boolean;
+      isFocused?: () => boolean;
+    } | undefined;
+    if (!win || win.isDestroyed?.()) return "background";
+    try {
+      if (win.isMinimized?.()) return "minimized";
+      if (win.isFocused?.()) return "foreground";
+      return "background";
+    } catch {
+      return "background";
+    }
+  }
+
+  /** 任务执行期：最小化窗口只恢复渲染，不置前、不夺焦。结束时回到最小化。 */
+  private engageBackgroundRender(): void {
+    this.renderHoldCount = (this.renderHoldCount || 0) + 1;
+    if (this.renderHoldCount > 1) return;
+    const win = this.window as {
+      isDestroyed?: () => boolean;
+      isMinimized?: () => boolean;
+      restore?: () => void;
+      showInactive?: () => void;
+    } | undefined;
+    if (!win || win.isDestroyed?.()) return;
+    let minimized = false;
+    try {
+      minimized = Boolean(win.isMinimized?.());
+    } catch {
+      return;
+    }
+    if (!minimized) return;
+    this.wasMinimizedForTask = true;
+    try { win.restore?.(); } catch { /* 不因窗口状态中断任务 */ }
+    try { win.showInactive?.(); } catch { /* showInactive 才是后台恢复 */ }
+  }
+
+  private releaseBackgroundRender(): void {
+    this.renderHoldCount = Math.max(0, (this.renderHoldCount || 0) - 1);
+    if (this.renderHoldCount > 0) return;
+    if (!this.wasMinimizedForTask) return;
+    this.wasMinimizedForTask = false;
+    const win = this.window as { isDestroyed?: () => boolean; minimize?: () => void } | undefined;
+    if (!win || win.isDestroyed?.()) return;
+    try { win.minimize?.(); } catch { /* 用户原来就是最小化 */ }
+  }
+
+  private writeClickDiag(record: Record<string, unknown>): void {
+    try {
+      const dir = join(this.configDir(), "diag");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, `click-${Date.now()}.json`), JSON.stringify(record));
+    } catch {
+      /* 诊断写失败不挡点击 */
+    }
   }
 
   abortAgentRuns(): void {
@@ -6545,6 +6609,7 @@ export class SparkBrowser {
     if (!this.agentAborts) this.agentAborts = new Set();
     this.agentAborts.add(controller);
     this.freeSoulRunning = true;
+    this.engageBackgroundRender();
     try {
       if (!this.freeSoul) {
         this.settleMcpTask(task, { ok: false, text: "请先在设置里配置模型。" });
@@ -6583,6 +6648,7 @@ export class SparkBrowser {
       this.chatLog.push({ role: "assistant", text: message });
       this.settleMcpTask(task, { ok: false, text: message });
     } finally {
+      this.releaseBackgroundRender();
       this.agentAborts.delete(controller);
       this.freeSoulRunning = this.chatRunningFlag || this.agentAborts.size > 0;
       if (this.cloudTaskId) void this.finishCloudTask();
@@ -8915,27 +8981,80 @@ export class SparkBrowser {
     }
     const tabId = opts?.tabId;
     const wc = this.viewForTab(tabId || this.activeTabId).webContents;
-    this.focusPageForInput(wc);
+    const win = this.window as {
+      isDestroyed?: () => boolean;
+      isMinimized?: () => boolean;
+      isVisible?: () => boolean;
+      isFocused?: () => boolean;
+    };
+    let isMinimized = false;
+    let isVisible = true;
+    let isFocused = false;
+    try {
+      if (!win?.isDestroyed?.()) {
+        isMinimized = Boolean(win?.isMinimized?.());
+        isVisible = win?.isVisible ? Boolean(win.isVisible()) : !isMinimized;
+        isFocused = Boolean(win?.isFocused?.());
+      }
+    } catch {
+      /* 窗口状态读失败仍按给定坐标注入 */
+    }
+    const bodyLen = async () => {
+      try {
+        const n = await wc.executeJavaScript(
+          "document.body ? (document.body.innerText || '').length : 0",
+          true,
+        );
+        return Number(n) || 0;
+      } catch {
+        return -1;
+      }
+    };
+    const bodyLenBefore = await bodyLen();
     const button = opts?.button || "left";
     const clickCount = opts?.doubleClick ? 2 : 1;
     const downDelayMs = opts?.downDelayMs ?? 30;
     wc.sendInputEvent({ type: "mouseMove", x: cx, y: cy } as Electron.MouseInputEvent);
-    if (opts?.hoverOnly) return;
-    wc.sendInputEvent({
-      type: "mouseDown",
-      x: cx,
-      y: cy,
-      button,
-      clickCount,
-    } as Electron.MouseInputEvent);
-    if (downDelayMs > 0) await sleep(downDelayMs);
-    wc.sendInputEvent({
-      type: "mouseUp",
-      x: cx,
-      y: cy,
-      button,
-      clickCount,
-    } as Electron.MouseInputEvent);
+    if (!opts?.hoverOnly) {
+      wc.sendInputEvent({
+        type: "mouseDown",
+        x: cx,
+        y: cy,
+        button,
+        clickCount,
+      } as Electron.MouseInputEvent);
+      if (downDelayMs > 0) await sleep(downDelayMs);
+      wc.sendInputEvent({
+        type: "mouseUp",
+        x: cx,
+        y: cy,
+        button,
+        clickCount,
+      } as Electron.MouseInputEvent);
+    }
+    let landed = { x: cx, y: cy };
+    try {
+      const hit = (await wc.executeJavaScript(
+        `(() => { const el = document.elementFromPoint(${cx}, ${cy}); if (!el || !el.getBoundingClientRect) return null; const r = el.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y) }; })()`,
+        true,
+      )) as { x?: number; y?: number } | null;
+      if (hit && Number.isFinite(hit.x) && Number.isFinite(hit.y)) {
+        landed = { x: Number(hit.x), y: Number(hit.y) };
+      }
+    } catch {
+      /* 页面没报落点时，注入坐标就是记录 */
+    }
+    const bodyLenAfter = await bodyLen();
+    this.writeClickDiag({
+      isMinimized,
+      isVisible,
+      isFocused,
+      expected: { x: cx, y: cy },
+      injected: { x: cx, y: cy },
+      landed,
+      bodyLenBefore,
+      bodyLenAfter,
+    });
   }
 
   /** Click by visible text — trusted mouse. Use withinPortal for menu items. */
@@ -9816,7 +9935,7 @@ export class SparkBrowser {
         jpeg = grabbed.jpeg;
       } else {
         const img = await this.captureVisiblePage(wc, clip);
-        if (!img) return { ok: false, message: this.L("shot.hidden") };
+        if (!img) return { ok: false, message: this.L("shot.empty") };
         png = img.toPNG();
         jpeg = format === "jpeg" ? img.toJPEG(quality) : undefined;
       }
@@ -9916,7 +10035,7 @@ export class SparkBrowser {
         jpeg = grabbed.jpeg;
       } else {
         const img = await this.captureVisiblePage(wc, clip);
-        if (!img) return { ok: false, message: this.L("shot.hidden") };
+        if (!img) return { ok: false, message: this.L("shot.empty") };
         png = img.toPNG();
         jpeg = format === "jpeg" ? img.toJPEG(quality) : undefined;
       }
@@ -9963,30 +10082,48 @@ export class SparkBrowser {
     wc: Electron.WebContents,
     clip?: { x: number; y: number; width: number; height: number } | null,
   ): Promise<Electron.NativeImage | null> {
-    const grab = () => (clip ? wc.capturePage(clip) : wc.capturePage());
-    const usable = (img: Electron.NativeImage) => {
+    const usable = (img: Electron.NativeImage | null | undefined) => {
       if (!img || img.isEmpty()) return false;
       const size = img.getSize();
       return size.width > 1 && size.height > 1 && isUsableCaptureBuffer(img.toPNG());
     };
+    const grab = () => (clip ? wc.capturePage(clip) : wc.capturePage());
+    const viaDebugger = async () => {
+      const dbg = wc.debugger;
+      const attached = dbg.isAttached();
+      if (!attached) await dbg.attach("1.3");
+      try {
+        const raw = (await dbg.sendCommand("Page.captureScreenshot", {
+          format: "png",
+          ...(clip
+            ? { clip: { x: clip.x, y: clip.y, width: clip.width, height: clip.height, scale: 1 } }
+            : {}),
+        })) as { data?: string };
+        if (!raw?.data) return null;
+        return nativeImage.createFromBuffer(Buffer.from(raw.data, "base64"));
+      } finally {
+        if (!attached) {
+          try { dbg.detach(); } catch { /* 本来就没挂上 */ }
+        }
+      }
+    };
     try {
       let img = await grab();
       if (usable(img)) return img;
-      this.ensureWindowVisibleForCapture();
-      await new Promise((resolve) => setTimeout(resolve, 80));
-      img = await grab();
+      const kernel = await viaDebugger().catch(() => null);
+      if (usable(kernel)) return kernel;
       return usable(img) ? img : null;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      if (/display surface|not available for capture/i.test(msg)) {
-        this.ensureWindowVisibleForCapture();
-        await new Promise((resolve) => setTimeout(resolve, 80));
+      if (/不可见|not visible|display surface|not available for capture/i.test(msg)) {
         try {
-          const retry = await grab();
-          return usable(retry) ? retry : null;
-        } catch {
-          return null;
+          const kernel = await viaDebugger();
+          if (usable(kernel)) return kernel;
+        } catch (again) {
+          const detail = again instanceof Error ? again.message : String(again);
+          if (/不可见|not visible/i.test(detail)) throw again;
         }
+        throw error;
       }
       throw error;
     }
