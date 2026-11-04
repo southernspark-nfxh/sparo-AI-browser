@@ -20,7 +20,7 @@ Tagline: *会动手的 AI 浏览器 — 发送前你确认。*
 | [docs/PRODUCT-TASKBOOK.md](./docs/PRODUCT-TASKBOOK.md) | 现行任务、QA、待办（v0.3.7） |
 | [docs/DECISION-POINTS.md](./docs/DECISION-POINTS.md) | 能提前结束任务的本地判断，先登记再合码 |
 | [docs/QA-GOLDEN-SCENARIOS.md](./docs/QA-GOLDEN-SCENARIOS.md) | 黄金场景，用底账核对，不看侧栏感觉 |
-| [CHANGELOG.md](./CHANGELOG.md) | 对外变更（现 0.3.0） |
+| [CHANGELOG.md](./CHANGELOG.md) | 对外变更（现 0.3.1） |
 | [docs/PRODUCT.md](./docs/PRODUCT.md) | 商店定位，不是任务书 |
 
 **此后主线就在本目录改。** 原版 `D:\download\Sparo`（3920 / `%APPDATA%\sparo`）只同步侧栏能力，不要把云订阅搬过去。
