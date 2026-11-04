@@ -167,7 +167,8 @@ export function createToolHandlers(browser: SparkBrowser) {
     qa_gate: () => browser.qaGate(),
     sidebar_chat: (text: string, hands?: boolean) =>
       browser.sidebarChatTool(text, { hands }),
-    submit_task: (text: string) => browser.submitTask(text),
+    submit_task: (text: string, opts?: { execMode?: "step" | "auto"; clientId?: string }) =>
+      browser.submitTask(text, opts),
     get_task: (taskId: string) => browser.getTask(taskId),
     get_url: async (tabId?: string) => ({
       ok: true,
