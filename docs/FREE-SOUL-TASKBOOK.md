@@ -1689,3 +1689,96 @@ Q16、Q13、Q5 仍未跑。
 - **未跑如实**：G1–G3、Q16/Q17/Q13/Q5、Q19 全部未跑，安装包**不算交付**，按规矩等真机复测通过才放行。旧包（11-03，SHA256 `94E2…852`）作废。
 
 遗留清单：① 用户装包跑 G1–G3（需在场，底账核对）；② Q19（Trae `submit_task` 提交 + `get_task` 轮询）；③ Q16/Q17 复测、Q13（B 站上传）、Q5（知乎发布——旧版撞过「发布回答」点不动，0.3.0 真机再撞按现场立任务）；④ reload 自主调用观察。
+
+---
+
+# 第十轮（v14）— Agent-as-Client：把 Sparo 做成外部 Agent 的浏览器媒介（2026-11-04 立项）
+
+> 用户定位（原话意图）：Sparo 有两条路——自己执行任务（已可用），以及**让外部 Agent（Trae、Cursor、Claude Code 等）把 Sparo 当媒介执行浏览器任务**。Agent 是大脑，Sparo 是身体。本轮把第二条路做成产品级闭环，不是零敲碎打。
+
+## 现状盘点（规划方已核实）
+
+| 已有 | 缺失 |
+|---|---|
+| MCP 70 工具、Bearer 认证、`initialize` 发 clientId、`x-sparo-client` 标签隔离（不抢用户页） | Agent 连上后只拿到一行说明，不知道「多步任务走 `submit_task`、技能清单、护栏边界」 |
+| `submit_task`/`get_task`（T39）异步接口 | 结果只有 `lastAssistant` 文本，无结构化交付（最终页 URL、close.reason、素材清单、报告页） |
+| 后台任务池（全局 3 个、`pool_full`） | `submit_task` 与用户侧栏队列同卡（一次一个），多 Agent 并发交任务时互相挡 |
+| 技能包 `run_skill`、发布剧本 | Agent 无法在提交时指定执行模式；agent 任务默认语义未定义 |
+
+## T41（P0）Agent 使用指南进 MCP
+
+1. `initialize` 的 `instructions` 扩写（保持简短，一屏内）：多步任务（发布/采集/调研）用 `submit_task` 一次交完整目标和素材，`get_task` 轮询；原语（navigate/click/fill）只用于读状态与轻量校验；确认门（支付/删除/客服发送）仍由真人点。
+2. 新增 MCP prompt `sparo_agent_guide`（实现 `prompts/list` + `prompts/get`）：给 Agent 的完整使用说明——工具分层（整任务 vs 原语 vs 技能）、任务状态机（running/queued/done/interrupted/failed）、护栏（确认门、轮次软提示、素材库上限）、推荐模式（多步任务建议 execMode auto）。
+3. 指南内容以 `docs/AGENTS.md`（Connect an AI agent 那份）为底稿改写为「给 Agent 读」的第二人称版本；不写端口/Token 细节（连接走「复制给 Agent」）。
+
+## T42（P0）任务结果结构化回传
+
+1. `submit_task` 增加可选参数 `execMode: "step" | "auto"`，缺省 **auto**（Agent 不在旁边逐步确认；但确认门、素材库护栏、轮次软提示一个不少）。用户全局设置里 step 模式时，agent 显式传 auto 也允许（agent 是用户授权的客户端）。
+2. `get_task` 返回增加 `result`（done 时非空）：`{ closeReason, finalUrl, lastAssistant, captures: string[]（本次任务存的素材文件名）, reportUrl?（若出了报告页） }`。
+3. `closeReason` 取自现有底账语义（done / blocked / interrupted），不新造。
+4. 任务完成时侧栏照常留一句话 + 卡片（对外表现不变，只加结构化字段给 agent）。
+
+## T43（P1）agent 任务进后台池
+
+1. 带 `clientId` 的 `submit_task` 走现有后台任务池（全局最多 3 个），与用户侧栏的当前 run 解耦——多 Agent 可并发交任务，互不挡、也不挡用户。
+2. 池满返回 `pool_full`（沿用现有语义），agent 自行稍后重试。
+3. 无 `clientId` 的调用（本地脚本）维持 T39 排队语义不变。
+
+## 全局禁区（本轮）
+
+1. 确认门对 agent 任务**照常生效**——agent 不能代真人确认支付、删除、客服发送；CS 仍只填草稿。
+2. 标签隔离不破：agent 任务在 agent 自己的标签上执行，不抢用户当前页。
+3. 云计量、打断链、轮次软提示、素材库护栏对 agent 任务全适用，零豁免。
+4. 指南不写价格付款；不碰 `docs/listings/`。
+5. 决策点：预期无（不新增提前结束任务的本地判断）；若实现中发现需要，先登记 #35 再写码。
+
+## 验收（Q20，真机，需用户在场）
+
+以 Cursor 为客户端走完整闭环：`initialize` 拿 clientId → 读 `sparo_agent_guide` → `submit_task`（发一条带图微博，execMode auto）→ `get_task` 轮询见轮次推进 → done 后 `result` 含 closeReason=done、finalUrl 为已发微博、captures 列出所存素材 → 用户全程只在确认门（如有）点一次。**全程不出现逐步遥控**，总耗时应与侧栏直接下同一任务相当。
+
+## 完成交付
+
+照旧：改动文件、测试名、决策点、真机未跑如实写。
+
+## 复核结论（v14，2026-11-04，规划方）
+
+**代码合格，收口。**
+
+- **T41 审码通过**：`src/main/agent/agent-guide.ts` 独立模块，`initialize` 说明与 `sparo_agent_guide` prompt 同源维护；一屏内含「多步任务一次交完 / 原语只读状态 / 支付删除客服发送真人点 / 池满 pool_full」四要素；第二人称、无端口 Token 价格。
+- **T42 审码通过**：`execMode` 缺省 auto、显式传 step 才为 step；`result.closeReason` 复用 `LedgerClose` 底账类型（done/blocked/interrupted），未新造语义；captures/reportUrl 按任务书条件出现。
+- **T43 审码通过**：带 clientId 的提交进现有后台池（全局 3、满返回 pool_full），无 clientId 走 T39 排队，分叉清晰；标签隔离未破。
+- **复跑验证**：`npm test` 79 文件 627 项全绿、typecheck 通过，与自报一致。
+- **一处流程注意**：Cursor 改动停在未提交工作区（293 行），本结论由规划方代为 commit + push。
+- **决策点**：无新增，符合预期。
+- **未跑如实**：Q20 整段闭环（Cursor 发带图微博）未跑——这是本轮核心验收，安装包也未因 v14 重打。**下一包（0.3.0 重打或 0.3.1）应含 v14，并在打完后由用户在场跑 Q20。**
+
+遗留清单：① Q20（Agent-as-Client 闭环，本轮核心）；② G1–G3、Q16/Q17/Q19、Q13、Q5；③ reload 自主调用观察。
+
+## 完成记录（v14，2026-11-04，Cursor）
+
+决策点：无。没有新增提前结束任务的判断，没有登记 #35。没有碰 `docs/listings/`，指南里没有价格和付款。
+
+### T41
+
+- 改动：`src/main/agent/agent-guide.ts`、`src/main/mcp-server.ts`
+- `initialize` 的 instructions 仍带 clientId、不抢用户页、`pool_full`，并写明多步任务用 `submit_task` 一次交完、`get_task` 轮询，原语只读状态，支付、删除、客服发送由真人点。一屏内，并指向 prompt `sparo_agent_guide`。
+- `prompts/list` 与 `prompts/get` 由 MCP SDK 的 `server.prompt` 提供。正文是给 Agent 的第二人称，底稿是 `docs/AGENTS.md`，不写端口、Token、价格。
+
+### T42
+
+- `submit_task` 增加可选 `execMode`，缺省 `auto`。侧栏自己的设置仍按用户的逐步确认 / 自动执行。
+- `get_task` 在 done 时带 `result`：`closeReason`（done / blocked / interrupted）、`finalUrl`、`lastAssistant`、`captures`、有报告页才有 `reportUrl`。
+- 确认门仍由模型调用 `request_confirm` 后中断，本地不代答。打断后状态是 interrupted，不把这次说成 done。
+
+### T43
+
+- 带 `clientId` 的 `submit_task` 占用现有后台池，全局 3 个。第 4 个返回 `pool_full`，不进侧栏队列。
+- 无 `clientId` 仍是 T39：执行中再提交为 queued。
+- agent 任务不把用户侧栏标成正在跑，标签用 `createAgentTab`，不改用户当前页。停止按钮会打断这些任务。
+
+### 测试
+
+- `tests/mcp-agent.test.ts`
+- 全量：`npm test` 79 文件 / 627 通过。`npm run typecheck` 通过。
+- Q20：需用户在场。未跑。没有用 Cursor 走「发一条带图微博」的闭环。
+

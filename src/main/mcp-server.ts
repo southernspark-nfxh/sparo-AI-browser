@@ -7,6 +7,7 @@ import type { ToolHandlers } from "./tools/index.js";
 import { listNotes } from "./agent/notes.js";
 import { laneForText } from "./agent/task-class.js";
 import { backgroundPoolDecision, bindClientTab, issueClientId } from "./agent/mcp-sessions.js";
+import { agentInstructions, registerSparoPrompt } from "./agent/agent-guide.js";
 import {
   applyCors,
   checkRateLimit,
@@ -631,14 +632,20 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
 
   server.tool(
     "submit_task",
-    `Start a sidebar task and return immediately. ${MCP_HANDOFF_HINT}`,
-    { text: z.string().min(1) },
-    async ({ text }) => textResult(handlers.submit_task(text)),
+    `Start a sidebar task and return immediately. execMode defaults to auto. ${MCP_HANDOFF_HINT}`,
+    {
+      text: z.string().min(1),
+      execMode: z.enum(["step", "auto"]).optional(),
+    },
+    async ({ text, execMode }) => textResult(handlers.submit_task(text, {
+      ...(execMode ? { execMode } : {}),
+      ...(scope?.clientId ? { clientId: scope.clientId } : {}),
+    })),
   );
 
   server.tool(
     "get_task",
-    "Read a submit_task record: status, rounds, lastAssistant, elapsedMs. Unknown ids return status unknown.",
+    "Read a submit_task record: status, rounds, lastAssistant, elapsedMs. When done, result has closeReason, finalUrl, lastAssistant, captures, and reportUrl. Unknown ids return status unknown.",
     { taskId: z.string().min(1) },
     async ({ taskId }) => textResult(handlers.get_task(taskId)),
   );
@@ -848,9 +855,10 @@ export async function startMcpServer(handlers: ToolHandlers): Promise<{
     const server = new McpServer(
       { name: "sparo", version: "0.1.0" },
       clientId
-        ? { instructions: `clientId=${clientId}。不带 tabId 的页面操作落在这个 client 自己的标签上，不要抢用户当前页。后台池满返回 pool_full。` }
+        ? { instructions: agentInstructions(clientId) }
         : undefined,
     );
+    registerSparoPrompt(server);
     registerTools(server, handlers, {
       clientId: clientId || undefined,
       tabIds: () => handlers.tab_ids(),

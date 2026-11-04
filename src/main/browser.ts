@@ -23,6 +23,8 @@ import { coPresenceMayRestore } from "./shell-focus.js";
 import { traceMainWindow } from "./focus-trace.js";
 import { laneForText, type TaskLane } from "./agent/task-class.js";
 import { shouldSuspend as poolShouldSuspend, TaskPool, type PoolTask } from "./agent/task-pool.js";
+import { backgroundPoolDecision, bindClientTab } from "./agent/mcp-sessions.js";
+import { capturesSince, ledgerCloseReason, reportSince, type LedgerClose } from "./agent/task-result.js";
 import type {
   ClickConfirm,
   FillConfirm,
@@ -786,17 +788,25 @@ export class SparkBrowser {
   private activePiAbort: AbortController | null = null;
   private mcpTasks: Array<{
     taskId: string;
-    status: "running" | "queued" | "done" | "interrupted" | "failed";
+    status: "running" | "queued" | "done" | "interrupted" | "failed" | "pool_full";
     rounds: number;
     lastAssistant: string;
     startedAt: number;
     text: string;
+    execMode?: "step" | "auto";
+    closeReason?: LedgerClose;
+    finalUrl?: string;
+    captures?: string[];
+    reportUrl?: string;
   }> = [];
   private activeMcpTaskId: string | null = null;
+  private agentPoolIds = new Set<string>();
+  private agentAborts = new Set<AbortController>();
 
   private get chatRunning(): boolean {
     const pool = this.taskPool;
-    if (pool && (pool.foregroundBusy || pool.size > 0)) return true;
+    if (pool && pool.foregroundBusy) return true;
+    if (pool && this.sidebarPoolBusy()) return true;
     return this.chatRunningFlag;
   }
 
@@ -2648,6 +2658,7 @@ export class SparkBrowser {
     handle("spark:stop", async () => {
       const stopped = this.stopLoading();
       if (this.chatRunning && this.activePiAbort) this.activePiAbort.abort();
+      this.abortAgentRuns();
       return stopped;
     });
     handle("spark:print", async () => {
@@ -6349,7 +6360,7 @@ export class SparkBrowser {
         locale: this.settings.locale,
         history,
         signal: this.activePiAbort.signal,
-        execMode: this.settings.execMode === "auto" ? "auto" : "step",
+        execMode: this.execModeForActiveTask(),
         onRound: (round) => this.noteMcpRound(round),
         onSidebar: (text) => {
           this.chatLog.push({ role: "assistant", text });
@@ -6370,7 +6381,7 @@ export class SparkBrowser {
       this.finishMcpTask({ ok: false, text: message });
       return { ok: false, message };
     } finally {
-      this.freeSoulRunning = false;
+      this.freeSoulRunning = (this.agentAborts?.size ?? 0) > 0;
       this.activePiAbort = null;
       if (this.cloudTaskId) void this.finishCloudTask();
       this.agentTabId = previousAgentTab;
@@ -6382,37 +6393,59 @@ export class SparkBrowser {
     }
   }
 
-  submitTask(text: string): { taskId: string; status: "running" | "queued" } {
+  submitTask(
+    text: string,
+    opts?: { execMode?: "step" | "auto"; clientId?: string },
+  ): { taskId: string; status: "running" | "queued" | "pool_full"; error?: "pool_full" } {
     const clean = text.trim();
     const task = {
       taskId: randomBytes(8).toString("hex"),
-      status: (this.chatRunning ? "queued" : "running") as "running" | "queued",
+      status: "running" as "running" | "queued" | "pool_full",
       rounds: 0,
       lastAssistant: "",
       startedAt: Date.now(),
       text: clean,
+      execMode: opts?.execMode === "step" ? "step" as const : "auto" as const,
     };
+    if (opts?.clientId) return this.submitAgentTask(task, opts.clientId);
+    task.status = this.chatRunning ? "queued" : "running";
     if (task.status === "running") this.activeMcpTaskId = task.taskId;
-    const list = this.mcpTaskList();
-    list.push(task);
-    while (list.length > 10) list.shift();
+    this.rememberMcpTask(task);
     void this.handleChat(clean);
     return { taskId: task.taskId, status: task.status };
   }
 
   getTask(taskId: string): {
-    status: "running" | "queued" | "done" | "interrupted" | "failed" | "unknown";
+    status: "running" | "queued" | "done" | "interrupted" | "failed" | "pool_full" | "unknown";
     rounds: number;
     lastAssistant: string;
     elapsedMs: number;
+    result?: {
+      closeReason: LedgerClose;
+      finalUrl: string;
+      lastAssistant: string;
+      captures: string[];
+      reportUrl?: string;
+    };
   } {
     const task = this.mcpTaskList().find((item) => item.taskId === taskId);
     if (!task) return { status: "unknown", rounds: 0, lastAssistant: "", elapsedMs: 0 };
-    return {
+    const view = {
       status: task.status,
       rounds: task.rounds,
       lastAssistant: task.lastAssistant,
       elapsedMs: Date.now() - task.startedAt,
+    };
+    if (task.status !== "done" || !task.closeReason) return view;
+    return {
+      ...view,
+      result: {
+        closeReason: task.closeReason,
+        finalUrl: task.finalUrl || "",
+        lastAssistant: task.lastAssistant,
+        captures: task.captures || [],
+        ...(task.reportUrl ? { reportUrl: task.reportUrl } : {}),
+      },
     };
   }
 
@@ -6438,12 +6471,153 @@ export class SparkBrowser {
     if (task && task.status === "running") task.lastAssistant = text;
   }
 
-  private finishMcpTask(result: { ok: boolean; text: string; interrupted?: boolean }): void {
+  private finishMcpTask(result: { ok: boolean; text: string; interrupted?: boolean; awaitingConfirm?: boolean }): void {
     const task = this.mcpTaskList().find((item) => item.taskId === this.activeMcpTaskId);
     this.activeMcpTaskId = null;
     if (!task || task.status !== "running") return;
+    this.settleMcpTask(task, result);
+  }
+
+  abortAgentRuns(): void {
+    for (const controller of this.agentAborts || []) controller.abort();
+  }
+
+  private sidebarPoolBusy(): boolean {
+    const ids = this.agentPoolIds;
+    return this.taskPool.tasks.some((task) => {
+      if (task.state !== "running" && task.state !== "queued" && task.state !== "waiting_human") return false;
+      return !ids?.has(task.id);
+    });
+  }
+
+  private execModeForActiveTask(): "step" | "auto" {
+    const task = this.mcpTaskList().find((item) => item.taskId === this.activeMcpTaskId);
+    if (task?.execMode === "auto" || task?.execMode === "step") return task.execMode;
+    return this.settings.execMode === "auto" ? "auto" : "step";
+  }
+
+  private rememberMcpTask(task: (typeof this.mcpTasks)[number]): void {
+    const list = this.mcpTaskList();
+    list.push(task);
+    while (list.length > 10) list.shift();
+  }
+
+  private submitAgentTask(
+    task: (typeof this.mcpTasks)[number],
+    clientId: string,
+  ): { taskId: string; status: "running" | "pool_full"; error?: "pool_full" } {
+    const running = this.taskPool?.runningBackground?.() ?? 0;
+    if (!backgroundPoolDecision(running).ok) {
+      task.status = "pool_full";
+      this.rememberMcpTask(task);
+      return { taskId: task.taskId, status: "pool_full", error: "pool_full" };
+    }
+    this.rememberMcpTask(task);
+    this.taskPool?.start?.({
+      id: task.taskId,
+      tabId: "",
+      title: task.text.slice(0, 28) || "任务",
+      lane: "background",
+    });
+    if (!this.agentPoolIds) this.agentPoolIds = new Set();
+    this.agentPoolIds.add(task.taskId);
+    void this.runAgentTask(task, clientId);
+    return { taskId: task.taskId, status: "running" };
+  }
+
+  private bindAgentTab(clientId: string): string | undefined {
+    if (typeof this.createAgentTab !== "function") return undefined;
+    const known = this.listTabs?.().tabs?.map((tab) => tab.id) ?? [];
+    return bindClientTab({
+      clientId,
+      knownTabIds: known,
+      createAgentTab: () => this.createAgentTab(),
+    });
+  }
+
+  private async runAgentTask(task: (typeof this.mcpTasks)[number], clientId: string): Promise<void> {
+    const before = this.activeTabId;
+    const tabId = this.bindAgentTab(clientId);
+    if (before && this.activeTabId !== before && typeof this.switchTab === "function") this.switchTab(before);
+    const previousAgentTab = this.agentTabId;
+    if (tabId) this.agentTabId = tabId;
+    const controller = new AbortController();
+    if (!this.agentAborts) this.agentAborts = new Set();
+    this.agentAborts.add(controller);
+    this.freeSoulRunning = true;
+    try {
+      if (!this.freeSoul) {
+        this.settleMcpTask(task, { ok: false, text: "请先在设置里配置模型。" });
+        return;
+      }
+      const cloudGate = await this.beginCloudTaskIfNeeded({ type: "llm", text: task.text }, task.text);
+      if (cloudGate === "refused") {
+        const message = this.lastCloudRefuse || this.L("cloud.exhausted");
+        this.chatLog.push({ role: "assistant", text: message });
+        this.settleMcpTask(task, { ok: false, text: message });
+        return;
+      }
+      this.chatLog.push({ role: "user", text: task.text });
+      const result = await this.freeSoul.run({
+        input: task.text,
+        url: this.getUrl(this.agentTabId),
+        title: this.getTitle(this.agentTabId),
+        locale: this.settings.locale,
+        history: this.chatLog.slice(0, -1).slice(-12).map((turn) => ({ role: turn.role, text: turn.text.slice(0, 4000) })),
+        signal: controller.signal,
+        execMode: task.execMode === "step" ? "step" : "auto",
+        onRound: (round) => {
+          if (task.status === "running") task.rounds = round;
+        },
+        onSidebar: (text) => {
+          this.chatLog.push({ role: "assistant", text });
+          this.pushSidebarState();
+          if (task.status === "running") task.lastAssistant = text;
+        },
+      });
+      this.chatLog.push({ role: "assistant", text: result.text });
+      this.pushSidebarState();
+      this.settleMcpTask(task, result);
+    } catch (error) {
+      const message = `执行失败：${error instanceof Error ? error.message : String(error)}`;
+      this.chatLog.push({ role: "assistant", text: message });
+      this.settleMcpTask(task, { ok: false, text: message });
+    } finally {
+      this.agentAborts.delete(controller);
+      this.freeSoulRunning = this.chatRunningFlag || this.agentAborts.size > 0;
+      if (this.cloudTaskId) void this.finishCloudTask();
+      this.agentTabId = previousAgentTab;
+      this.agentPoolIds?.delete(task.taskId);
+      this.taskPool?.finish?.(task.taskId, task.status === "failed" ? "failed" : "done");
+      this.pushSidebarState();
+    }
+  }
+
+  private settleMcpTask(
+    task: (typeof this.mcpTasks)[number],
+    result: { ok: boolean; text: string; interrupted?: boolean; awaitingConfirm?: boolean },
+  ): void {
+    if (task.status !== "running") return;
     task.lastAssistant = result.text;
-    task.status = result.interrupted ? "interrupted" : result.ok ? "done" : "failed";
+    const reason = ledgerCloseReason(result);
+    if (result.interrupted) {
+      task.status = "interrupted";
+      return;
+    }
+    if (!result.ok || !reason) {
+      task.status = "failed";
+      return;
+    }
+    task.status = "done";
+    task.closeReason = reason;
+    try {
+      task.finalUrl = this.getUrl(this.agentTabId) || "";
+      task.captures = capturesSince(this.configDir(), task.startedAt);
+      task.reportUrl = reportSince(this.configDir(), task.startedAt);
+    } catch {
+      task.finalUrl = task.finalUrl || "";
+      task.captures = task.captures || [];
+    }
   }
 
   /** 下一句对不上「继续」时，收掉被扔下的前台等待。后台登录墙留着。 */
