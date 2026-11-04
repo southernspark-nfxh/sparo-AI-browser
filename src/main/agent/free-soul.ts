@@ -348,6 +348,8 @@ export class FreeSoul {
     history?: Array<{ role: "user" | "assistant"; text: string }>;
     signal?: AbortSignal;
     execMode?: "step" | "auto";
+    onRound?: (round: number) => void;
+    onSidebar?: (text: string) => void;
   }): Promise<{ ok: boolean; text: string; awaitingConfirm?: boolean; interrupted?: boolean }> {
     if (!this.config.apiKey && this.config.mode !== "cloud") {
       return { ok: false, text: "请先在设置里配置模型 Key。" };
@@ -365,8 +367,9 @@ export class FreeSoul {
     }
     messages.push({ role: "user", content: input.input });
 
-    const maxRounds = Math.max(1, Math.min(40, this.config.maxRounds || 32));
-    const budgetAt = Math.max(1, Math.floor(maxRounds * 0.75));
+    const softAt = Math.max(1, Math.min(99, this.config.maxRounds || 32));
+    const safetyCap = 100;
+    const budgetAt = Math.max(1, Math.floor(softAt * 0.75));
     let streak = 0;
     let lastFinger = "";
     let pageUrl = input.url || "";
@@ -377,14 +380,15 @@ export class FreeSoul {
     let budgetSent = false;
     let savedCaptures = 0;
     console.log(`[free-soul] run start input=${input.input.slice(0, 80)}`);
-    for (let round = 1; round <= maxRounds; round += 1) {
+    for (let round = 1; round <= safetyCap; round += 1) {
       if (input.signal?.aborted) return interruptedResult();
+      input.onRound?.(round);
       if (!budgetSent && round >= budgetAt) {
         budgetSent = true;
-        console.log(`[free-soul] r${round} BUDGET_HINT ${budgetAt}/${maxRounds}`);
+        console.log(`[free-soul] r${round} BUDGET_HINT ${budgetAt}/${softAt}`);
         messages.push({
           role: "user",
-          content: `已执行 ${budgetAt}/${maxRounds} 轮。已有信息足够回答用户就立即汇总汇报；不够就明确说还缺什么、卡在哪。不要再开新路径。`,
+          content: `已执行 ${budgetAt}/${softAt} 轮。已有信息足够回答用户就立即汇总汇报；不够就明确说还缺什么、卡在哪。不要再开新路径。`,
         });
       }
       let data: Awaited<ReturnType<FreeSoul["completion"]>>;
@@ -494,13 +498,19 @@ export class FreeSoul {
       for (const hint of pendingHints) {
         messages.push({ role: "user", content: hint });
       }
+      if (round === softAt || (round > softAt && (round - softAt) % 8 === 0)) {
+        const note = input.locale?.startsWith("zh")
+          ? `已执行 ${round} 轮，任务继续中；可随时停止或发新指令调整`
+          : `Executed ${round} rounds; the task continues. You can stop or send a new instruction.`;
+        input.onSidebar?.(note);
+      }
     }
 
     return {
       ok: false,
       text: input.locale?.startsWith("zh")
-        ? `已达到 ${maxRounds} 轮执行上限，任务尚未完成。你可以让我继续，我会根据已有页面接着做。`
-        : `Stopped at the ${maxRounds}-round execution limit. The task is not complete.`,
+        ? "已达 100 轮安全上限，为防失控已停止；回复继续可接着跑"
+        : "Reached the 100-round safety limit and stopped. Reply continue to keep going.",
     };
   }
 

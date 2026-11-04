@@ -16,6 +16,9 @@ import {
 
 const DEFAULT_PORT = Number(process.env.SPARO_MCP_PORT || process.env.SPARK_MCP_PORT || 3921);
 
+export const MCP_HANDOFF_HINT =
+  "多步任务（发布、采集、调研）请把完整目标与素材一次交给侧栏（send one complete instruction），让 Sparo 自主执行；不要用 navigate/click/fill 逐步遥控。原语适合读状态与轻量校验。";
+
 function textResult(payload: unknown) {
   return {
     content: [
@@ -54,7 +57,7 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
 
   server.tool(
     "navigate",
-    "Open a URL and return confirmed {url, title} after load settles. Always check data.confirmed/url before continuing.",
+    `Open a URL and return confirmed {url, title} after load settles. Always check data.confirmed/url before continuing. ${MCP_HANDOFF_HINT}`,
     { url: z.string().min(1).describe("URL to open"), tabId: tabIdField },
     async ({ url, tabId }) => textResult(await handlers.navigate(url, bind(tabId))),
   );
@@ -74,7 +77,7 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
 
   server.tool(
     "click",
-    "Trusted mouse click by ref/selector. For Ant Design Dropdown: do NOT double-click; returns data.portals when menu opens. Use caret=true for split-button right edge.",
+    `Trusted mouse click by ref/selector. For Ant Design Dropdown: do NOT double-click; returns data.portals when menu opens. Use caret=true for split-button right edge. ${MCP_HANDOFF_HINT}`,
     {
       ref: z.string().optional().describe("Element ref from snapshot, e.g. e3"),
       selector: z.string().optional().describe("CSS selector fallback"),
@@ -90,7 +93,7 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
 
   server.tool(
     "fill",
-    "Fill input/textarea/contenteditable, then read back actual value (data.matched must be true).",
+    `Fill input/textarea/contenteditable, then read back actual value (data.matched must be true). ${MCP_HANDOFF_HINT}`,
     {
       ref: z.string().optional(),
       selector: z.string().optional(),
@@ -612,7 +615,7 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
 
   server.tool(
     "sidebar_chat",
-    "Send a line through the Sparo sidebar (Cortex + hands). Shows the window. Set hands=false to judge only and not open pages.",
+    `Send a line through the Sparo sidebar (Cortex + hands). Shows the window. Set hands=false to judge only and not open pages. ${MCP_HANDOFF_HINT}`,
     {
       text: z.string().min(1),
       hands: z.boolean().optional(),
@@ -624,6 +627,20 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
       }
       return textResult(await handlers.sidebar_chat(text, hands));
     },
+  );
+
+  server.tool(
+    "submit_task",
+    `Start a sidebar task and return immediately. ${MCP_HANDOFF_HINT}`,
+    { text: z.string().min(1) },
+    async ({ text }) => textResult(handlers.submit_task(text)),
+  );
+
+  server.tool(
+    "get_task",
+    "Read a submit_task record: status, rounds, lastAssistant, elapsedMs. Unknown ids return status unknown.",
+    { taskId: z.string().min(1) },
+    async ({ taskId }) => textResult(handlers.get_task(taskId)),
   );
 
   server.tool("get_url", "Get current page URL", { tabId: tabIdField }, async ({ tabId }) =>

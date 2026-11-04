@@ -62,22 +62,19 @@ describe("Pi Agent 核心循环", () => {
     expect(finalMessages.at(-1)?.content).toContain(tail);
   });
 
-  it("达到模型轮次上限时如实停止，不伪造任务完成", async () => {
+  it("模型一直要工具时停在 100 轮安全网，不伪造任务完成", async () => {
     const agent = new FreeSoul(
-      {
-        ...config(scripted([
-          toolCall("nav-1", "navigate", { url: "https://example.com/" }),
-          toolCall("read-1", "page_text"),
-        ], [])),
-        maxRounds: 2,
-      },
+      config(async () => new Response(JSON.stringify({
+        choices: [{ message: toolCall("nav-1", "navigate", { url: "https://example.com/" }) }],
+      }), { status: 200, headers: { "Content-Type": "application/json" } })),
       async () => ({ ok: true, message: "执行成功" }),
     );
 
     const result = await agent.run({ input: "持续浏览", url: "", title: "", locale: "zh" });
 
     expect(result.ok).toBe(false);
-    expect(result.text).toContain("执行上限");
+    expect(result.text).toContain("安全上限");
+    expect(result.text).toContain("回复继续");
     expect(result.text).not.toContain("已完成");
   });
 
@@ -149,7 +146,7 @@ describe("Pi Agent 核心循环", () => {
     expect(JSON.stringify(sent[3]?.messages || [])).toContain("整页重载");
     expect(JSON.stringify(sent[3]?.messages || [])).toContain("禁止继续重复同一操作");
     expect(result.ok).toBe(false);
-    expect(result.text).toContain("执行上限");
+    expect(result.text).toContain("安全上限");
     expect(result.text).not.toContain("已完成");
     expect(result.text).not.toContain("已放弃");
     expect(result.awaitingConfirm).toBeUndefined();
