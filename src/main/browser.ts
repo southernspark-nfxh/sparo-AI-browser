@@ -784,6 +784,15 @@ export class SparkBrowser {
   private chatRunningFlag = false;
   private pendingChat: { text: string; images?: string[]; quotes?: unknown } | null = null;
   private activePiAbort: AbortController | null = null;
+  private mcpTasks: Array<{
+    taskId: string;
+    status: "running" | "queued" | "done" | "interrupted" | "failed";
+    rounds: number;
+    lastAssistant: string;
+    startedAt: number;
+    text: string;
+  }> = [];
+  private activeMcpTaskId: string | null = null;
 
   private get chatRunning(): boolean {
     const pool = this.taskPool;
@@ -6305,18 +6314,21 @@ export class SparkBrowser {
     this.agentTabId = this.activeTabId;
     if (!opts?.alreadyLogged) this.chatLog.push(quotedUserTurn(text, cleanQuotes, pics));
     this.chatRunning = true;
+    this.claimQueuedMcpTask(clean);
     this.pushSidebarState();
 
     try {
       if (!this.freeSoul) {
         const message = "请先在设置里配置模型。";
         this.chatLog.push({ role: "assistant", text: message });
+        this.finishMcpTask({ ok: false, text: message });
         return { ok: false, message };
       }
       const cloudGate = await this.beginCloudTaskIfNeeded({ type: "llm", text: clean }, clean);
       if (cloudGate === "refused") {
         const message = this.lastCloudRefuse || this.L("cloud.exhausted");
         this.chatLog.push({ role: "assistant", text: message });
+        this.finishMcpTask({ ok: false, text: message });
         return { ok: false, message };
       }
 
@@ -6338,8 +6350,15 @@ export class SparkBrowser {
         history,
         signal: this.activePiAbort.signal,
         execMode: this.settings.execMode === "auto" ? "auto" : "step",
+        onRound: (round) => this.noteMcpRound(round),
+        onSidebar: (text) => {
+          this.chatLog.push({ role: "assistant", text });
+          this.pushSidebarState();
+          this.noteMcpAssistant(text);
+        },
       });
       this.chatLog.push({ role: "assistant", text: result.text });
+      this.finishMcpTask(result);
       return {
         ok: result.ok,
         message: result.text,
@@ -6348,6 +6367,7 @@ export class SparkBrowser {
     } catch (error) {
       const message = `执行失败：${error instanceof Error ? error.message : String(error)}`;
       this.chatLog.push({ role: "assistant", text: message });
+      this.finishMcpTask({ ok: false, text: message });
       return { ok: false, message };
     } finally {
       this.freeSoulRunning = false;
@@ -6360,6 +6380,70 @@ export class SparkBrowser {
       this.pendingChat = null;
       if (next) void this.handleChat(next.text, next.images, next.quotes, { alreadyLogged: true });
     }
+  }
+
+  submitTask(text: string): { taskId: string; status: "running" | "queued" } {
+    const clean = text.trim();
+    const task = {
+      taskId: randomBytes(8).toString("hex"),
+      status: (this.chatRunning ? "queued" : "running") as "running" | "queued",
+      rounds: 0,
+      lastAssistant: "",
+      startedAt: Date.now(),
+      text: clean,
+    };
+    if (task.status === "running") this.activeMcpTaskId = task.taskId;
+    const list = this.mcpTaskList();
+    list.push(task);
+    while (list.length > 10) list.shift();
+    void this.handleChat(clean);
+    return { taskId: task.taskId, status: task.status };
+  }
+
+  getTask(taskId: string): {
+    status: "running" | "queued" | "done" | "interrupted" | "failed" | "unknown";
+    rounds: number;
+    lastAssistant: string;
+    elapsedMs: number;
+  } {
+    const task = this.mcpTaskList().find((item) => item.taskId === taskId);
+    if (!task) return { status: "unknown", rounds: 0, lastAssistant: "", elapsedMs: 0 };
+    return {
+      status: task.status,
+      rounds: task.rounds,
+      lastAssistant: task.lastAssistant,
+      elapsedMs: Date.now() - task.startedAt,
+    };
+  }
+
+  private mcpTaskList() {
+    if (!this.mcpTasks) this.mcpTasks = [];
+    return this.mcpTasks;
+  }
+
+  private claimQueuedMcpTask(text: string): void {
+    const queued = [...this.mcpTaskList()].reverse().find((task) => task.status === "queued" && task.text === text);
+    if (!queued) return;
+    queued.status = "running";
+    this.activeMcpTaskId = queued.taskId;
+  }
+
+  private noteMcpRound(round: number): void {
+    const task = this.mcpTaskList().find((item) => item.taskId === this.activeMcpTaskId);
+    if (task && task.status === "running") task.rounds = round;
+  }
+
+  private noteMcpAssistant(text: string): void {
+    const task = this.mcpTaskList().find((item) => item.taskId === this.activeMcpTaskId);
+    if (task && task.status === "running") task.lastAssistant = text;
+  }
+
+  private finishMcpTask(result: { ok: boolean; text: string; interrupted?: boolean }): void {
+    const task = this.mcpTaskList().find((item) => item.taskId === this.activeMcpTaskId);
+    this.activeMcpTaskId = null;
+    if (!task || task.status !== "running") return;
+    task.lastAssistant = result.text;
+    task.status = result.interrupted ? "interrupted" : result.ok ? "done" : "failed";
   }
 
   /** 下一句对不上「继续」时，收掉被扔下的前台等待。后台登录墙留着。 */
