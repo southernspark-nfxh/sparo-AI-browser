@@ -14,6 +14,13 @@ import { stopAll as stopAllEnvProxy } from "./envs/singbox-runner.js";
 import { storeConfigDir } from "./paths.js";
 import { crashLogFileName, formatDiagEvent, formatErrorDetail, formatMemLine } from "./diag-log.js";
 
+type DiagBrowser = {
+  diagCrashContext: (details: { reason: string; exitCode: number }) => string;
+  diagShellMemLine: () => Promise<string>;
+  takePushStatsLine: () => string;
+  diagSnapshot: () => { tabs: number; running: number };
+};
+
 /** Reuse mcp-auth.json token unless SPARO_MCP_TOKEN_TTL (seconds) says rotate. */
 function resolveMcpToken(configDir: string): { token: string; createdAt: number } {
   const envToken = (process.env.SPARO_MCP_TOKEN || process.env.SPARK_MCP_TOKEN || "").trim();
@@ -127,6 +134,7 @@ async function main(): Promise<void> {
       }
     }
   });
+  let liveBrowser: DiagBrowser | null = null;
   app.on("render-process-gone", (_e, wc, details) => {
     let url = "";
     try {
@@ -138,6 +146,12 @@ async function main(): Promise<void> {
       "render-process-gone",
       `reason=${details.reason} exitCode=${details.exitCode} url=${url}`,
     );
+    try {
+      const extra = liveBrowser?.diagCrashContext({ reason: details.reason, exitCode: details.exitCode });
+      if (extra) appendCrash("render-process-context", extra);
+    } catch {
+      /* 现场拿不到就算了 */
+    }
   });
   if (process.env.SPARO_DIAG_PROBE === "1") {
     setTimeout(() => {
@@ -193,8 +207,20 @@ async function main(): Promise<void> {
   process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = "true";
 
   const browser = createBrowser();
+  liveBrowser = browser;
   browser.attachShell();
   browser.presentWindow();
+
+  const writePush = () => {
+    try {
+      const line = browser.takePushStatsLine();
+      appendFileSync(stampedCrash, `${new Date().toISOString()} ${line}\n`, "utf8");
+      console.log(line);
+    } catch {
+      /* 采样失败不影响浏览 */
+    }
+  };
+  setInterval(writePush, 60_000);
 
   if (!app.isPackaged) {
     const writeMem = () => {
@@ -223,8 +249,20 @@ async function main(): Promise<void> {
       }
       console.log(line);
     };
+    const writeShellMem = () => {
+      void browser.diagShellMemLine().then((line) => {
+        try {
+          appendFileSync(stampedCrash, `${new Date().toISOString()} ${line}\n`, "utf8");
+        } catch {
+          /* ignore */
+        }
+        console.log(line);
+      });
+    };
     writeMem();
+    writeShellMem();
     setInterval(writeMem, 30_000);
+    setInterval(writeShellMem, 30_000);
   }
 
   try {

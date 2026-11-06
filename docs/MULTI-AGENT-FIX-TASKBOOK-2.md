@@ -1,6 +1,6 @@
 # 多 Agent 并行缺陷修复任务书 二期（T70–T72）
 
-状态：执行中（T70、T71 已改，T72 未做）。来源：2026-11-06 T66（工位横幅+机器人）真机验收。T66 本体验收通过（运行态/下班态横幅、勿扰胶囊、工位号、色点、用户页面零改动均过），本文件只处理验收暴露的 3 个缺陷。
+状态：代码与取证已交。T70 / T71 真机还没跑，不算验收通过。T72 短任务没有复现崩溃。来源：2026-11-06 T66（工位横幅+机器人）真机验收。T66 本体验收通过（运行态/下班态横幅、勿扰胶囊、工位号、色点、用户页面零改动均过），本文件只处理验收暴露的 3 个缺陷。
 
 **执行顺序：T70 → T71 → T72。** T72 是取证任务，不做完调查不许改渲染层代码。
 
@@ -168,3 +168,28 @@ agent 任务运行中，侧栏看不到「使用中 N」行和 agent 按钮（�
 - `.agent-roster` 增加 `position: sticky; top: 0; z-index: 1; background: var(--side)`，并加了下内边距和一条 `var(--line)` 分隔线。`[hidden]` 仍是 `display: none`，没有 agent 时不留线。没有改 `renderAgentRoster`。
 - 测试：「使用中行贴在侧栏滚动区顶部」
 - 真机未跑。没有用 10 轮以上的长对话确认滚到底时顶部仍固定，也没有收起再展开侧栏。
+
+### T72（2026-11-06，只取证）
+
+- 改动：`src/main/diag-log.ts`、`src/main/browser.ts`、`src/main/index.ts`、`tests/diag-log.test.ts`、`tests/shell-diag.test.ts`、`scripts/repro-shell-gone.mjs`
+- 没改 `shell.html`，没改横幅、roster、节流间隔和崩溃后的 `reload()`。只加日志。
+- 崩溃现场写入 `render-process-context` / `shell-render-gone`：窗口 bounds、标签数、各会话条数、任务状态、距上次假死的毫秒、这一分钟还没清零的推送计数。
+- `[shell-unresponsive]` 现在带 `sidebar bytes=`。
+- dev 每 30 秒写 `[mem]` 和 `[mem-shell]`。这份 Electron 里 `webContents.getProcessMemoryInfo` 不是函数，改成用壳层 OS pid 去对 `app.getAppMetrics()`。启动瞬间 pid 还没有，第一条会是 `note=no-pid`，约 30 秒后才有数。
+- 每 60 秒写一行 `[push]`：chrome 的请求次数、真正 flush 次数和平均字节；sidebar 同样。sidebar 目前没有 100ms 节流，所以 req 和 flush 一样。
+- 测试：
+  - `tests/diag-log.test.ts`「壳层内存、推送计数和崩溃现场都是一行」「还没假死过就写 none」
+  - `tests/shell-diag.test.ts`「记下标签、对话条数、任务状态和推送计数，取走后清零」
+- 复现：临时配置目录，MCP `3922`，vite 落在 `5174`（`5173` 已被占用）。没有打用户正在用的 `3921`。脚本 `node scripts/repro-shell-gone.mjs`，5 轮「打开百度首页，用一句话说出页面标题」，做完立刻下一轮。
+  - 5/5 `status=done`，每轮约 4.0–4.1 秒（`e12ac944b1ed09dc`、`20e1a793029bcf3b`、`b0c4ecce17c1bbfc`、`9eb0ae480ecaaba3`、`7049178b4c1912e5`）。
+  - 日志里没有 `render-process-gone`、`shell-render-gone`、`shell-unresponsive`。
+  - 第一分钟：`[push] chrome req=55 flush=28 avgBytes=922 sidebar req=26 flush=26 avgBytes=10470`。chrome 的 100ms 节流在合并；侧栏每次都整包推，大约 10KB。
+  - 同时 `[mem] rss=175 heapUsed=24`，稍后回落到 `rss=173 heapUsed=17`。`[mem-shell]` 当时还对不上壳层进程（`private=0`，`rendererMb=423`，3 个 Tab）。
+  - 修正采样后再开一次空窗，30 秒时：`resident=116 type=Tab pid=40904`，页面渲染合计 `rendererMb=263`（2 个 Tab）。主进程 `rss=165 heapUsed=16`。
+- 没有复现，所以没打安装包，也没有比较「dev 特有」还是「安装包也会」。这 5 轮是 4 秒就结束的短任务，不是当初那次长对话做完立刻再交。
+- 修复方向（另立项，这次没改）：
+  1. 先给 `pushSidebarState` 加和 chrome 一样的节流，或不要每次把整段 chat 重绘。侧栏没有节流，平均已经 10KB，对话一长会先顶满渲染进程。
+  2. chrome 节流是有效的（55 次请求只发出 28 次），不要先动它。
+  3. 还没有 OOM 或 GPU 崩溃的新证据。先不要关硬件加速。
+- 全量：`npm test` 97 文件 / 687 通过，`npm run typecheck` 通过。
+- T70、T71 真机仍未跑。T72 只跑了上面这次短循环。
