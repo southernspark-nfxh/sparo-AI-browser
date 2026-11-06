@@ -324,11 +324,11 @@ export function matchSkills(
         score += 8;
       }
     }
-    // Prefer distilled / tool-based skills over raw traces
-    if ((s as { distilled?: boolean }).distilled || (s as { cleanSkillId?: string }).cleanSkillId) {
-      score += 5;
-    }
     if (score > 0) {
+      // Prefer distilled / tool-based skills over raw traces——只给已有命中的加权，不单独构成入池资格
+      if ((s as { distilled?: boolean }).distilled || (s as { cleanSkillId?: string }).cleanSkillId) {
+        score += 5;
+      }
       scored.push({
         id: s.id,
         title: s.title,
@@ -340,7 +340,8 @@ export function matchSkills(
     }
   }
   scored.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));
-  return scored.slice(0, limit);
+  // 低分候选不返回：单 token 弱命中不该进入模型视野
+  return scored.filter((row) => row.score >= 15).slice(0, limit);
 }
 
 export function resolveSkill(
