@@ -880,7 +880,7 @@ export class SparkBrowser {
     }
   }
 
-  private sessionViews(): Array<{ key: string; label: string; color: string; running: number }> {
+  private sessionViews(): Array<{ key: string; label: string; color: string; running: number; seat?: number }> {
     this.pruneDeadAgentChats();
     const keys = new Set<string>(["user"]);
     const pool = this.taskPool?.tasks || [];
@@ -904,6 +904,7 @@ export class SparkBrowser {
         label: key === "user" ? "我" : session?.name || key.replace(/^agent:/, "Agent "),
         color: session?.color || "",
         running,
+        ...(session?.seat ? { seat: session.seat } : {}),
       };
     });
   }
@@ -1589,6 +1590,7 @@ export class SparkBrowser {
       owner?: "user" | `agent:${string}`;
       agentName?: string;
       agentColor?: string;
+      agentSeat?: number;
       agentState?: "running" | "waiting_human" | "queued" | "done" | "idle";
       lastLine?: string;
       agentStep?: string;
@@ -1642,6 +1644,7 @@ export class SparkBrowser {
             ? {
                 agentName: session?.name || poolTask?.agentName,
                 agentColor: session?.color || poolTask?.color,
+                agentSeat: session?.seat,
                 agentState,
                 lastLine: poolTask?.lastLine,
                 agentStep: poolTask?.step,

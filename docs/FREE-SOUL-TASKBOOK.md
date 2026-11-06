@@ -2177,3 +2177,32 @@ y 从 76 到 108，横幅占 32px。任务结束后 `list_tabs` 该标签 `agent
 - 全量：`npm test` 94 文件 / 668 通过，`npm run typecheck` 通过。
 - 真机 Q28：未跑。单测覆盖了侧栏入口的两段式落盘、脱敏和「成功后不自动沉淀」，没有开着 Sparo 去微博热搜页走一遍。
 
+## 复核结论（v17，2026-11-06，规划方）
+
+**代码合格，收口。**
+
+- **T64 审码通过**：轨迹收集在 `safeRun` 之后，parseError 与超素材预算的工具调用不计入；`end()` 包装全部出口，`ok 且非 awaitingConfirm 且非 interrupted` 才回传 `onTrace`——确认门、打断、失败、100 轮上限全部不覆盖 `lastRunTrace`；轨迹只存内存（`browser.ts` 实例字段，无落盘、不进聊天记忆）。侧栏 `handleChat` 与后台 `runAgentTask` 两个入口都接了 `onTrace`。
+- **T65 审码通过**：两段式落地——无 `route` 返回格式化轨迹（含脱敏 args 摘要），带 `route` 走 `asRoute`/`cleanArgs` 校验后 `saveDistilledSkill` 落盘（taught + distilled）。拒绝分支齐全：无轨迹、走既有技能（解析出技能名回给模型）、重名（四向比对带回已有 id）、route 全灭（提示重试一次），全部返回原因不静默、不中断轮次。
+- **红线核验**：系统提示与 `save_skill` 工具描述双落地「任务成功后不要主动建议沉淀」；`traceArgs` 白名单字段 + 密钥名正则 + `stripSecretQuery` + 200 字截断四层脱敏，测试断言文件里无选择器和 token；提交未碰 `package.json`、`docs/listings/`、技能种子文件、`lessons.json`；无新增 DECISION-POINTS（用户点名才触发的工具，不构成提前结束任务的本地判断）。
+- **commit 边界**：`c991170` 含脑区（free-soul.ts、distill.ts）与 browser.ts 接线。browser.ts 的 22 行全部是 `save_skill` 分发与 `onTrace` 接线，无夹带，与 T46 先例一致，判合规。
+- **复跑验证**：`npm test` 94 文件 / 668 项全绿（exit 0），`npm run typecheck` exit 0，与自报一致。
+- **未跑如实**：Q28 真机（微博热搜走一遍 + 反向验收）待用户在场执行。未打包。
+
+遗留：① Q28 真机验收（含第 5 条反向验收：任务成功后不说话，日志无 save_skill 调用）；② 上轮遗留的 Q21/Q22、G1–G3、两个越界文档去留。
+
+## 完成记录（T66 横幅工位化，2026-11-06，Cursor）
+
+决策点：无。横幅仍只在 agent 页、且状态不是空闲时出现。没有提前结束任务的本地判断。版本号没动。
+
+- 改动：`src/renderer/shell.html`、`src/main/browser.ts`、`src/main/agent/mcp-sessions.ts`
+- 横幅左侧 6px 色点换成 16×16 内联机器人（圆角方头、天线、两眼、侧耳），`fill` 用 `var(--agent-color)`。标签栏 6px 色点没动。横幅高度仍是 32px。
+- 文案走 `agentBannerText`：`N号工位正在办公 / 等你拍板 / 排队候场 / 已下班`，名字保留。`lastLine` 有值时替换「正在读页」。`agentBannerShowsQuiet` 只在 `running` 为真，壳层右侧「勿扰」胶囊（11px，同色 15% 底 + 同色描边）。
+- `seatForClient` 读已有工位，从 1 起，同一 client 不改号。`listTabs` 的 agent 标签带 `agentSeat`，用户标签没有这个字段。`sessionViews` 的 agent 行带 `seat`。侧栏「使用中」每个 agent 名前有 12px 同色机器人，用户那一行没有。
+- 测试：`tests/agent-banner-seat.test.ts`
+  - 「五种状态的文案都带工位号和名字，勿扰只在办公时出现」
+  - 「agent 标签带工位号，用户标签没有」
+  - 「同一 client 的工位号不变，后接入的递增」
+  - 旧文案断言改在 `tests/agent-banner.test.ts`「四种状态的横幅文案」
+- 全量：`npm test` 95 文件 / 671 通过，`npm run typecheck` 通过。
+- 真机未跑。没有开 Sparo 看运行中横幅、下班文案、侧栏机器人和用户页（百度）是否逐像素不变。单测绿不能代替这次验收。
+
