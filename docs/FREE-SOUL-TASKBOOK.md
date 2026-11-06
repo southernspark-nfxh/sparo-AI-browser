@@ -2076,3 +2076,15 @@ y 从 76 到 108，横幅占 32px。任务结束后 `list_tabs` 该标签 `agent
 - 真机：没再造 11 个历史 agent 去看侧栏。单测覆盖这条。
 - 未验证：用户那个已经堆了 11 个名字的窗口要重启后才会变短。
 
+### T62 中文 agent 名显示问号
+
+- 改动：只加了 `tests/agent-identity.test.ts`。产品代码没改。
+- 根因：验收时用 PowerShell 5 的 `Invoke-WebRequest -Body` 发含中文的 JSON，PS5 默认不是 UTF-8，问号在进服务之前就已经出现。`readJsonBody` 是 `Buffer.concat` 之后 `toString("utf8")`。`registerClientName` 只做空白整理和 `slice(0, 24)`，按字符而不是字节，没有 ASCII 清洗。
+- 测试：`tests/agent-identity.test.ts`「验收甲原样保留，超长按字符而不是字节截断」。`验收甲` 原样；30 个「审」截成 24 个字符、72 个 UTF-8 字节。全量 93 文件 / 661 通过，typecheck 通过。
+- 真机：用 UTF-8 字节当 body，`curl` 调 `initialize`（名字「视觉验收员」）再 `list_agents`。结果 `name-ok`、`no-question-marks`。更早用 Node `fetch` 提交任务时，横幅日志也是 `[banner] true 视觉验收员 running`。
+- 未验证：没有用带问号的旧请求再打一遍来复现 PS5 的错误发法。那是客户端编码，不是产品缺陷。
+
+### 另立未做
+
+- T63：`page_text` 单次最多 80000 字，送进模型前单条截到约 2.4 万字，但每一轮都追加，旧轮不删。T56 只写了会增长的测试，没有改脑区。
+
