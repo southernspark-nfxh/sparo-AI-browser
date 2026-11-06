@@ -19,6 +19,7 @@ import { pathToFileURL } from "node:url";
 import { randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { boundsWithinOnePixel, chromeCoverDelta, chromeCoverReason, pageViewCoversChrome, resetChromeCoverBudget, takeChromeCoverFix, type ChromeCoverBudget, type CoverReason } from "./page-bounds.js";
+import { formatPushMinute, formatShellCrashContext, formatShellMemLine } from "./diag-log.js";
 import { clickPointUsable, offscreenAgentBounds, viewportTooSmall } from "./agent-viewport.js";
 import { coPresenceMayRestore } from "./shell-focus.js";
 import { traceMainWindow } from "./focus-trace.js";
@@ -1082,7 +1083,7 @@ export class SparkBrowser {
     traceMainWindow(this.window);
     this.window.webContents.on("render-process-gone", (_e, details) => {
       console.error("[shell] render-process-gone", details.reason);
-      noteHang("shell-render-gone", details.reason);
+      noteHang("shell-render-gone", this.diagCrashContext(details));
       if (details.reason !== "clean-exit" && details.reason !== "killed") {
         try {
           this.window.webContents.reload();
@@ -1586,6 +1587,144 @@ export class SparkBrowser {
     return { tabs: this.tabs.size, running };
   }
 
+  private ensurePushMeter(): {
+    chromeReq: number;
+    chromeFlush: number;
+    chromeBytes: number;
+    sidebarReq: number;
+    sidebarFlush: number;
+    sidebarBytes: number;
+  } {
+    if (!this.pushMeter) {
+      this.pushMeter = {
+        chromeReq: 0,
+        chromeFlush: 0,
+        chromeBytes: 0,
+        sidebarReq: 0,
+        sidebarFlush: 0,
+        sidebarBytes: 0,
+      };
+    }
+    return this.pushMeter;
+  }
+
+  /** 渲染进程消失时的现场。只读，不改任务、不改推送。 */
+  diagCrashContext(details?: { reason?: string; exitCode?: number }): string {
+    const meter = this.ensurePushMeter();
+    let bounds = "unknown";
+    try {
+      const box = this.window?.getBounds?.();
+      if (box) bounds = `${box.x},${box.y},${box.width}x${box.height}`;
+    } catch {
+      bounds = "unknown";
+    }
+    let chats = "none";
+    try {
+      const parts: string[] = [];
+      for (const [key, turns] of this.chatBook()) {
+        parts.push(`${key}:${Array.isArray(turns) ? turns.length : 0}`);
+      }
+      chats = parts.join(",") || "none";
+    } catch {
+      chats = "error";
+    }
+    let tasks = "none";
+    try {
+      const counts = new Map<string, number>();
+      for (const task of this.taskPool?.tasks || []) {
+        const state = String(task.state || "unknown");
+        counts.set(state, (counts.get(state) || 0) + 1);
+      }
+      tasks = [...counts.entries()].map(([state, n]) => `${state}:${n}`).join(",") || "none";
+    } catch {
+      tasks = "error";
+    }
+    const since = this.lastShellUnresponsiveAt ? Date.now() - this.lastShellUnresponsiveAt : null;
+    return formatShellCrashContext({
+      reason: details?.reason || "unknown",
+      exitCode: Number(details?.exitCode ?? -1),
+      bounds,
+      tabs: this.tabs?.size || 0,
+      chats,
+      tasks,
+      sinceUnresponsiveMs: since,
+      chromeReq: meter.chromeReq,
+      chromeFlush: meter.chromeFlush,
+      sidebarReq: meter.sidebarReq,
+      sidebarBytes: meter.sidebarBytes,
+    });
+  }
+
+  /** 取出这一分钟的推送计数并清零。没有推送也返回一行，方便确认采样还在。 */
+  takePushStatsLine(): string {
+    const meter = this.ensurePushMeter();
+    const line = formatPushMinute(meter);
+    this.pushMeter = {
+      chromeReq: 0,
+      chromeFlush: 0,
+      chromeBytes: 0,
+      sidebarReq: 0,
+      sidebarFlush: 0,
+      sidebarBytes: 0,
+    };
+    return line;
+  }
+
+  /** 壳层渲染进程内存。dev 采样用，失败就记 0。 */
+  async diagShellMemLine(): Promise<string> {
+    let privateKb = 0;
+    let sharedKb = 0;
+    let residentKb = 0;
+    let note = "ok";
+    let metrics: Array<{ pid?: number; type?: string; memory?: { workingSetSize?: number } }> = [];
+    try {
+      metrics = typeof app.getAppMetrics === "function" ? app.getAppMetrics() : [];
+    } catch {
+      metrics = [];
+    }
+    try {
+      const wc = this.window?.webContents as WebContents & {
+        getOSProcessId?: () => number;
+        getProcessMemoryInfo?: () => Promise<{ private?: number; shared?: number; residentSet?: number }>;
+      };
+      if (!wc) note = "no-wc";
+      else if (wc.isDestroyed()) note = "destroyed";
+      else {
+        const pid = typeof wc.getOSProcessId === "function" ? wc.getOSProcessId() : 0;
+        const mine = pid ? metrics.find((item) => item.pid === pid) : undefined;
+        if (mine) {
+          residentKb = Number(mine.memory?.workingSetSize || 0);
+          note = `pid=${pid} type=${mine.type || "?"}`;
+        } else if (typeof wc.getProcessMemoryInfo === "function") {
+          const info = await wc.getProcessMemoryInfo();
+          privateKb = Number(info?.private || 0);
+          sharedKb = Number(info?.shared || 0);
+          residentKb = Number(info?.residentSet || 0);
+          note = privateKb || residentKb ? "process-memory" : "empty";
+        } else {
+          note = pid ? `pid=${pid} unmatched` : "no-pid";
+        }
+      }
+    } catch (error) {
+      note = String(error instanceof Error ? error.message : error).replace(/\s+/g, " ").slice(0, 80);
+    }
+    let rendererCount = 0;
+    let rendererKb = 0;
+    for (const item of metrics) {
+      if (item.type !== "Tab") continue;
+      rendererCount += 1;
+      rendererKb += Number(item.memory?.workingSetSize || 0);
+    }
+    return formatShellMemLine({
+      privateKb,
+      sharedKb,
+      residentKb,
+      rendererCount,
+      rendererMb: Math.max(0, Math.round(rendererKb / 1024)),
+      note,
+    });
+  }
+
   listTabs(): {
     tabs: Array<{
       id: string;
@@ -1800,7 +1939,14 @@ export class SparkBrowser {
   /** 壳层假死：人正看着窗口才拉回。最小化时只闪任务栏，后台出报告不能靠这条弹窗。 */
   private onShellUnresponsive(): void {
     console.error("[shell] unresponsive");
-    noteHang("shell-unresponsive", "sidebar");
+    let bytes = -1;
+    try {
+      bytes = JSON.stringify(this.getSidebarPayload()).length;
+    } catch {
+      bytes = -1;
+    }
+    this.lastShellUnresponsiveAt = Date.now();
+    noteHang("shell-unresponsive", `sidebar bytes=${bytes}`);
     if (this.windowIsMinimized()) {
       this.flashTaskbarIfHidden();
       return;
@@ -3498,6 +3644,15 @@ export class SparkBrowser {
   }
 
   private chromePushTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastShellUnresponsiveAt = 0;
+  private pushMeter = {
+    chromeReq: 0,
+    chromeFlush: 0,
+    chromeBytes: 0,
+    sidebarReq: 0,
+    sidebarFlush: 0,
+    sidebarBytes: 0,
+  };
 
   /** 100ms 节流。setStep 每轮都推，合并成一次全量重绘，最后一次状态不会丢。 */
   private pushChromeState(): void {
@@ -3505,6 +3660,7 @@ export class SparkBrowser {
       | { isDestroyed?: () => boolean; webContents?: { isDestroyed?: () => boolean } }
       | undefined;
     if (!win || win.isDestroyed?.() || win.webContents?.isDestroyed?.()) return;
+    this.ensurePushMeter().chromeReq += 1;
     if (this.chromePushTimer) return;
     this.chromePushTimer = setTimeout(() => {
       this.chromePushTimer = null;
@@ -3518,11 +3674,18 @@ export class SparkBrowser {
       | undefined;
     if (!win || win.isDestroyed?.() || win.webContents?.isDestroyed?.()) return;
     try {
-      win.webContents?.send?.("spark:chrome-state", {
+      const payload = {
         ...this.listTabs(),
         ...this.chromeBookmarkState(),
         memoryBoard: this.memoryBoardLine(),
-      });
+      };
+      this.ensurePushMeter().chromeFlush += 1;
+      try {
+        this.ensurePushMeter().chromeBytes += JSON.stringify(payload).length;
+      } catch {
+        /* 体积量不到不影响推送 */
+      }
+      win.webContents?.send?.("spark:chrome-state", payload);
     } catch (error) {
       console.error("[shell] pushChromeState failed:", error);
     }
@@ -3537,7 +3700,15 @@ export class SparkBrowser {
   private pushSidebarState(): void {
     if (this.window.isDestroyed() || this.window.webContents.isDestroyed()) return;
     try {
-      this.window.webContents.send("spark:sidebar-state", this.getSidebarPayload());
+      const payload = this.getSidebarPayload();
+      this.ensurePushMeter().sidebarReq += 1;
+      this.ensurePushMeter().sidebarFlush += 1;
+      try {
+        this.ensurePushMeter().sidebarBytes += JSON.stringify(payload).length;
+      } catch {
+        /* 体积量不到不影响推送 */
+      }
+      this.window.webContents.send("spark:sidebar-state", payload);
       saveChatMemory(this.configDir(), this.userTurns());
       this.noteSidebarMessages();
       // handleChat 的 finally 才把 chatRunning 清掉。微任务里再看一眼，任务结束就恢复壳层节流。
