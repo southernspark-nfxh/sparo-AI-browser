@@ -2447,7 +2447,10 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           if (stateEl) stateEl.textContent = parts[1] || "";
           if (lineEl) lineEl.textContent = parts.slice(2).join(" · ");
         }
-        if (wasHidden !== banner.hidden) reportHole();
+        if (wasHidden !== banner.hidden) {
+          console.log("[banner]", show, tab && tab.agentName, tab && tab.agentState);
+          reportHole();
+        }
       }
       function agentStateLabel(state) {
         if (state === "running") return "操作中";

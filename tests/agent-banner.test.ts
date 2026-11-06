@@ -59,5 +59,6 @@ describe("T53 页面归属条", () => {
     expect(browser).toContain("const CHROME_H = 76;");
     expect(shell).toContain("grid-template-rows: env(titlebar-area-height, 36px) 40px 1fr;");
     expect(shell).not.toContain("insertCSS");
+    expect(shell).toContain('console.log("[banner]"');
   });
 });

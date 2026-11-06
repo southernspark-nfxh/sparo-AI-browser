@@ -944,6 +944,7 @@ export class SparkBrowser {
     const task = pool.tasks.find((item) => item.tabId === scope.tabId && item.state === "running");
     if (!task) return;
     pool.setStep(task.id, step);
+    this.syncTaskChrome();
   }
 
   /** Active page view — keeps existing tool code working. */
@@ -3444,10 +3445,28 @@ export class SparkBrowser {
     };
   }
 
+  private chromePushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** 100ms 节流。setStep 每轮都推，合并成一次全量重绘，最后一次状态不会丢。 */
   private pushChromeState(): void {
-    if (this.window.isDestroyed() || this.window.webContents.isDestroyed()) return;
+    const win = this.window as
+      | { isDestroyed?: () => boolean; webContents?: { isDestroyed?: () => boolean } }
+      | undefined;
+    if (!win || win.isDestroyed?.() || win.webContents?.isDestroyed?.()) return;
+    if (this.chromePushTimer) return;
+    this.chromePushTimer = setTimeout(() => {
+      this.chromePushTimer = null;
+      this.flushChromeState();
+    }, 100);
+  }
+
+  private flushChromeState(): void {
+    const win = this.window as
+      | { isDestroyed?: () => boolean; webContents?: { isDestroyed?: () => boolean; send?: (channel: string, payload: unknown) => void } }
+      | undefined;
+    if (!win || win.isDestroyed?.() || win.webContents?.isDestroyed?.()) return;
     try {
-      this.window.webContents.send("spark:chrome-state", {
+      win.webContents?.send?.("spark:chrome-state", {
         ...this.listTabs(),
         ...this.chromeBookmarkState(),
         memoryBoard: this.memoryBoardLine(),
@@ -3455,6 +3474,12 @@ export class SparkBrowser {
     } catch (error) {
       console.error("[shell] pushChromeState failed:", error);
     }
+  }
+
+  /** 任务池状态变了就推壳层，并请壳层重报页面洞。 */
+  private syncTaskChrome(): void {
+    this.pushChromeState();
+    this.requestHoleReport();
   }
 
   private pushSidebarState(): void {
@@ -6774,6 +6799,7 @@ export class SparkBrowser {
       if (!next) break;
       pool.markRunning(next.task.taskId);
       next.task.status = "running";
+      this.syncTaskChrome();
       void this.runAgentTask(next.task, next.clientId);
     }
   }
@@ -6845,11 +6871,14 @@ export class SparkBrowser {
     clientId: string,
   ): { taskId: string; status: "running" | "queued" } {
     task.clientId = clientId;
+    const before = this.activeTabId;
+    const tabId = this.bindAgentTab(clientId) || "";
+    if (before && this.activeTabId !== before && typeof this.switchTab === "function") this.switchTab(before);
     const running = this.taskPool?.runningBackground?.() ?? 0;
     const face = listClientSessions().find((item) => item.clientId === clientId) || registerClientName(clientId, "");
     const card = {
       id: task.taskId,
-      tabId: "",
+      tabId,
       title: task.text.slice(0, 28) || "任务",
       lane: "background" as const,
       clientId,
@@ -6863,9 +6892,11 @@ export class SparkBrowser {
       task.status = "queued";
       this.taskPool?.enqueue?.(card);
       this.agentJobs().push({ task, clientId });
+      this.syncTaskChrome();
       return { taskId: task.taskId, status: "queued" };
     }
     this.taskPool?.start?.(card);
+    this.syncTaskChrome();
     void this.runAgentTask(task, clientId);
     return { taskId: task.taskId, status: "running" };
   }
@@ -6882,18 +6913,20 @@ export class SparkBrowser {
 
   private async runAgentTask(task: (typeof this.mcpTasks)[number], clientId: string): Promise<void> {
     const before = this.activeTabId;
-    const tabId = this.bindAgentTab(clientId);
+    const pooled = this.taskPool?.tasks?.find((item) => item.id === task.taskId);
+    let tabId = pooled?.tabId || "";
+    if (!tabId) tabId = this.bindAgentTab(clientId) || "";
     if (before && this.activeTabId !== before && typeof this.switchTab === "function") this.switchTab(before);
     if (!tabId) {
       this.settleMcpTask(task, { ok: false, text: "无法为这个 agent 创建独立标签。" });
       this.agentPoolIds?.delete(task.taskId);
       this.taskPool?.finish?.(task.taskId, "failed");
       this.pumpAgent();
+      this.syncTaskChrome();
       this.pushSidebarState();
       return;
     }
-    const pooled = this.taskPool?.tasks?.find((item) => item.id === task.taskId);
-    if (pooled) pooled.tabId = tabId;
+    if (pooled && tabId) pooled.tabId = tabId;
     const controller = new AbortController();
     if (!this.agentAborts) this.agentAborts = new Set();
     this.agentAborts.add(controller);
@@ -6930,6 +6963,7 @@ export class SparkBrowser {
               taskId: cloudTaskId,
               onRound: (round) => {
                 if (task.status === "running") task.rounds = round;
+                this.syncTaskChrome();
               },
               onSidebar: (text) => {
                 this.chatLog.push({ role: "assistant", text });
@@ -6937,6 +6971,7 @@ export class SparkBrowser {
                 if (task.status === "running") task.lastAssistant = text;
                 const card = this.taskPool?.tasks?.find((item) => item.id === task.taskId);
                 if (card) card.lastLine = text.replace(/\s+/g, " ").trim().slice(0, 80);
+                this.syncTaskChrome();
               },
             });
             this.chatLog.push({ role: "assistant", text: result.text });
@@ -6958,8 +6993,11 @@ export class SparkBrowser {
       this.agentAborts.delete(controller);
       this.freeSoulRunning = this.chatRunningFlag || this.agentAborts.size > 0;
       this.agentPoolIds?.delete(task.taskId);
+      const finishedTab = tabId ? this.tabs?.get(tabId) : undefined;
+      if (finishedTab) finishedTab.agentStatus = "done";
       this.taskPool?.finish?.(task.taskId, task.status === "failed" ? "failed" : "done");
       this.pumpAgent();
+      this.syncTaskChrome();
       this.pushSidebarState();
     }
   }
@@ -7154,6 +7192,7 @@ export class SparkBrowser {
           if (this.shouldSuspend(out)) {
             if (this.activeMission) this.waitingMissions.set(card.id, this.activeMission);
             this.taskPool.suspend(card.id);
+            this.syncTaskChrome();
           }
           return out;
         },
@@ -7169,6 +7208,7 @@ export class SparkBrowser {
     if (!suspended) {
       this.waitingMissions.delete(card.id);
       this.taskPool.finish(card.id, result.ok ? "done" : "failed");
+      this.syncTaskChrome();
       if (card.lane === "background" && card.tabId) this.releaseAgentTab(card.tabId);
     }
     if (card.lane === "foreground") this.taskPool.releaseForeground();

@@ -2014,3 +2014,26 @@ agent 会话本轮不落盘、重启即清，是有意的：只把 `user` 会话
 
 - 未验证：截图时前台是别的窗口，没有亲眼看到 Sparo 壳层。上面这条 bounds 的 y 是 76，不是整窗覆盖。
 
+### T58 32px 归属横幅
+
+- 改动：`src/main/browser.ts`、`src/renderer/shell.html`、`tests/agent-chrome-sync.test.ts`、`tests/agent-banner.test.ts`。任务池本身不用改，推送放在浏览器侧。
+- 根因：入池时 `tabId` 还是空串，标签要等 `runAgentTask` 才补上。排队、开跑、每轮、结束都不推 `chrome-state`，壳层一直拿着任务开始前的快照，横幅保持隐藏。
+- `submitAgentTask` 先 `bindAgentTab` 再入池。`syncTaskChrome` 在入池、`markRunning`、`setStep`、`suspend`、`finish`、`pumpAgent` 和每轮回调之后推一次，并请壳层重报页面洞。`pushChromeState` 100ms 节流。`listTabs` 原本就会在任务离开池子之后用 `tab.agentStatus === "done"` 返回 done；这次在 `runAgentTask` 的 finally、`finish` 之前把这个标记写上，否则兜底没有值。横幅显隐变化时 `console.log("[banner]", show, name, state)`。
+- 测试：`tests/agent-chrome-sync.test.ts`「排队、运行、完成各推一次，标签状态依次变化」。全量 91 文件 / 655 通过，typecheck 通过。
+- 真机：临时窗口 MCP 3922。先切回用户标签，再提交任务，立刻切到 agent 标签。1 秒内：
+
+```
+[shell-console] [banner] true 视觉验收员 running
+[chrome-hole] bounds-changed ... old={"x":0,"y":76,"width":1021,"height":825} new={"x":0,"y":108,"width":1021,"height":793}
+```
+
+y 从 76 到 108，横幅占 32px。任务结束后 `list_tabs` 该标签 `agentState` 仍是 `done`。再切走又切回：
+
+```
+[shell-console] [banner] true 视觉验收员 done
+```
+
+没有回到空闲后消失。
+
+- 未验证：没有把窗口留在前台截横幅文字。高度靠页面洞 y 差 32 来确认。
+
