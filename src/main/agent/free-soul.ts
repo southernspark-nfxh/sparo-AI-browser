@@ -366,6 +366,7 @@ export class FreeSoul {
     history?: Array<{ role: "user" | "assistant"; text: string }>;
     signal?: AbortSignal;
     execMode?: "step" | "auto";
+    taskId?: string;
     onRound?: (round: number) => void;
     onSidebar?: (text: string) => void;
   }): Promise<{ ok: boolean; text: string; awaitingConfirm?: boolean; interrupted?: boolean }> {
@@ -411,7 +412,7 @@ export class FreeSoul {
       }
       let data: Awaited<ReturnType<FreeSoul["completion"]>>;
       try {
-        data = await this.completion(messages, input.signal);
+        data = await this.completion(messages, input.signal, input.taskId);
       } catch (error) {
         if (input.signal?.aborted) return interruptedResult();
         return { ok: false, text: modelRequestFailure(error) };
@@ -547,7 +548,7 @@ export class FreeSoul {
     }
   }
 
-  private async completion(messages: ChatMessage[], signal?: AbortSignal): Promise<{
+  private async completion(messages: ChatMessage[], signal?: AbortSignal, taskId?: string): Promise<{
     choices?: Array<{ message?: ChatMessage }>;
     error?: { message?: string } | string;
   }> {
@@ -567,8 +568,9 @@ export class FreeSoul {
     if (/anthropic\.com/i.test(this.config.baseUrl)) {
       headers["anthropic-version"] = "2023-06-01";
     }
-    if (this.config.mode === "cloud" && this.config.taskId) {
-      headers["X-Sparo-Task"] = this.config.taskId;
+    const billedTask = taskId || this.config.taskId;
+    if (this.config.mode === "cloud" && billedTask) {
+      headers["X-Sparo-Task"] = billedTask;
     }
 
     const doFetch = this.config.fetchImpl || fetch;
