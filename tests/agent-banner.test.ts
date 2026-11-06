@@ -39,17 +39,17 @@ describe("T53 页面归属条", () => {
 
   it("四种状态的横幅文案", () => {
     const agentBannerText = loadFn("agentBannerText") as (tab: Record<string, unknown>) => string;
-    expect(agentBannerText({ agentName: "Agent 甲", agentState: "running", agentRound: 3 })).toBe(
-      "Agent 甲 · 操作中 · 第 3 轮 · 正在读页",
+    expect(agentBannerText({ agentName: "Agent 甲", agentSeat: 1, agentState: "running", agentRound: 3 })).toBe(
+      "1号工位正在办公 · Agent 甲 · 第 3 轮 · 正在读页",
     );
-    expect(agentBannerText({ agentName: "Agent 甲", agentState: "waiting_human" })).toBe(
-      "Agent 甲 · 等你处理 · 需要登录",
+    expect(agentBannerText({ agentName: "Agent 甲", agentSeat: 1, agentState: "waiting_human" })).toBe(
+      "1号工位等你拍板 · Agent 甲 · 需要登录",
     );
-    expect(
-      agentBannerText({ agentName: "Agent 甲", agentState: "queued", agentStep: "排队中（第 2 位）" }),
-    ).toBe("Agent 甲 · 排队中（第 2 位）");
-    expect(agentBannerText({ agentName: "Agent 甲", agentState: "done" })).toBe(
-      "Agent 甲 · 已完成 · 页面已休眠",
+    expect(agentBannerText({ agentName: "Agent 甲", agentSeat: 1, agentState: "queued" })).toBe(
+      "1号工位排队候场 · Agent 甲",
+    );
+    expect(agentBannerText({ agentName: "Agent 甲", agentSeat: 1, agentState: "done" })).toBe(
+      "1号工位已下班 · Agent 甲 · 页面已休眠",
     );
   });
 

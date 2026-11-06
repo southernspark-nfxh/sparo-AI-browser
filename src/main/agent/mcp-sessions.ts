@@ -31,6 +31,13 @@ export function resetMcpSessions(): void {
   nextSeat = 1;
 }
 
+/** 接入顺序，从 1 起。没登记过返回 undefined。 */
+export function seatForClient(clientId: string): number | undefined {
+  const id = String(clientId || "").trim();
+  if (!id) return undefined;
+  return sessions.get(id)?.seat;
+}
+
 function seatLabel(seat: number): string {
   const stem = SEAT_STEMS[seat - 1];
   return stem ? `Agent ${stem}` : `Agent ${seat}`;
