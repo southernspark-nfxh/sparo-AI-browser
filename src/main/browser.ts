@@ -1405,7 +1405,7 @@ export class SparkBrowser {
     const view = tab.view;
     if (!view) {
       tab.discarded = true;
-      delete tab.agentStatus;
+      this.dropDoneUnlessAgent(id, tab);
       return true;
     }
     const wc = view.webContents;
@@ -1430,8 +1430,14 @@ export class SparkBrowser {
     }
     tab.view = null;
     tab.discarded = true;
-    delete tab.agentStatus;
+    this.dropDoneUnlessAgent(id, tab);
     return true;
+  }
+
+  /** 休眠只卸渲染进程。agent 标签的「已下班」要留着，关标签和接新任务时再清。 */
+  private dropDoneUnlessAgent(id: string, tab: TabInfo): void {
+    if (ownerForTab(id).startsWith("agent:")) return;
+    delete tab.agentStatus;
   }
 
   private wakeTab(id: string): void {
