@@ -103,7 +103,7 @@ export type DistillSkillDraft = {
   contract: Record<string, unknown>;
 };
 
-function stripSecretQuery(value: string): string {
+export function stripSecretQuery(value: string): string {
   if (!/^https?:\/\//i.test(value) || !/[?&]/.test(value)) return value;
   try {
     const url = new URL(value);
@@ -114,7 +114,7 @@ function stripSecretQuery(value: string): string {
   }
 }
 
-function cleanArgs(raw: unknown): Record<string, unknown> {
+export function cleanArgs(raw: unknown): Record<string, unknown> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
@@ -124,7 +124,7 @@ function cleanArgs(raw: unknown): Record<string, unknown> {
   return out;
 }
 
-function asRoute(raw: unknown): RouteMilestone[] {
+export function asRoute(raw: unknown): RouteMilestone[] {
   if (!Array.isArray(raw)) return [];
   const out: RouteMilestone[] = [];
   for (const item of raw) {
@@ -210,7 +210,7 @@ export function saveDistilledSkill(configDir: string, meta: DistillSkillDraft): 
   if (!title) return null;
   if (listSkills(configDir).some((skill) => skill.title.trim() === title)) return null;
   const now = new Date().toISOString();
-  const skill: Skill = {
+  const skill = {
     id: `taught-${slugify(title)}-${randomBytes(3).toString("hex")}`,
     title,
     intent: meta.intent || title,
@@ -226,8 +226,148 @@ export function saveDistilledSkill(configDir: string, meta: DistillSkillDraft): 
     params: meta.params,
     pitfalls: meta.pitfalls,
     contract: meta.contract,
-  };
+    ...(meta.aliases.length ? { aliases: meta.aliases } : {}),
+  } as Skill;
   return saveSkill(configDir, skill);
+}
+
+export type SoulTraceStep = {
+  tool: string;
+  args: Record<string, unknown>;
+  ok: boolean;
+  round: number;
+};
+
+export type SoulRunTrace = {
+  input: string;
+  trace: SoulTraceStep[];
+};
+
+const TRACE_KEYS = new Set([
+  "url",
+  "text",
+  "query",
+  "from",
+  "to",
+  "date",
+  "site",
+  "title",
+  "label",
+  "key",
+  "src",
+  "id",
+  "name",
+  "action",
+  "detail",
+  "intent",
+  "value",
+]);
+const SECRET_ARG = /token|password|pwd|captcha|secret|cookie|authorization|apikey|api_key/i;
+
+/** 轨迹里只留网址和文本关键词。选择器、坐标、密钥沿用 cleanArgs / stripSecretQuery。 */
+export function traceArgs(raw: unknown): Record<string, unknown> {
+  const cleaned = cleanArgs(raw);
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(cleaned)) {
+    if (SECRET_ARG.test(key) || !TRACE_KEYS.has(key.toLowerCase())) continue;
+    if (typeof value === "string") out[key] = stripSecretQuery(value).slice(0, 200);
+    else if (typeof value === "number" || typeof value === "boolean") out[key] = value;
+  }
+  return out;
+}
+
+function formatSoulTrace(last: SoulRunTrace): string {
+  const lines = last.trace.map((step) => {
+    const args = Object.entries(step.args)
+      .map(([key, value]) => `${key}=${String(value)}`)
+      .join(" ");
+    return `- r${step.round} ${step.tool} ${step.ok ? "ok" : "fail"}${args ? ` ${args}` : ""}`;
+  });
+  return [
+    `原话：${last.input}`,
+    "轨迹：",
+    ...lines,
+    "基于此轨迹输出 route JSON 后带参数再调 save_skill。",
+  ].join("\n");
+}
+
+function routePayload(raw: unknown): unknown {
+  if (typeof raw !== "string") return raw;
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return raw;
+  }
+}
+
+/** 用户点名沉淀时的两段式落盘。不在任务成功时自动调用。 */
+export function saveTaughtFromTrace(
+  configDir: string,
+  last: SoulRunTrace | null | undefined,
+  args: Record<string, unknown>,
+): { ok: boolean; message: string; id?: string; title?: string } {
+  const trace = last?.trace?.length ? last : null;
+  if (!trace) return { ok: false, message: "最近没有跑成功的任务，无可沉淀" };
+
+  const reused = trace.trace.find((step) => step.tool === "run_skill" && step.ok);
+  if (reused) {
+    const key = String(reused.args.id || reused.args.query || "").trim();
+    const known = key
+      ? listSkills(configDir).find((skill) => skill.id === key || skill.title === key)
+      : undefined;
+    const name = known?.title || key || "已有技能";
+    return { ok: false, message: `这趟走的是既有技能 ${name}，无需重复沉淀` };
+  }
+
+  if (args.route === undefined) return { ok: true, message: formatSoulTrace(trace) };
+
+  const route = asRoute(routePayload(args.route));
+  if (!route.length) {
+    return {
+      ok: false,
+      message:
+        "route 没有合法段。请修正后重试一次：fixed 段只能是 navigate、page_text、wait_for、report，open 段要有目标，不要写选择器或坐标。",
+    };
+  }
+
+  const title = String(args.title || "").trim().slice(0, 24);
+  if (!title) return { ok: false, message: "缺少 title。请补上技能名后重试一次。" };
+  const intent = String(args.intent || title).trim().slice(0, 80) || title;
+  const same = (left: string, right: string) => Boolean(left) && left === right;
+  const existing = listSkills(configDir).find(
+    (skill) =>
+      same(skill.title.trim(), title) ||
+      same(skill.intent.trim(), intent) ||
+      same(skill.title.trim(), intent) ||
+      same(skill.intent.trim(), title),
+  );
+  if (existing) return { ok: false, message: `已有技能 ${existing.id}（${existing.title}），无需重复沉淀` };
+
+  const draft = parseDistillSkill(
+    JSON.stringify({
+      title,
+      intent,
+      aliases: args.aliases,
+      route,
+      params: args.params,
+      pitfalls: args.pitfalls,
+      contract: args.contract,
+    }),
+  );
+  if (!draft) {
+    return {
+      ok: false,
+      message:
+        "route 没有合法段。请修正后重试一次：fixed 段只能是 navigate、page_text、wait_for、report，open 段要有目标，不要写选择器或坐标。",
+    };
+  }
+  const saved = saveDistilledSkill(configDir, draft);
+  if (!saved) {
+    const again = listSkills(configDir).find((skill) => skill.title.trim() === title);
+    if (again) return { ok: false, message: `已有技能 ${again.id}（${again.title}），无需重复沉淀` };
+    return { ok: false, message: "没能记下这条技能。" };
+  }
+  return { ok: true, message: `已记成 ${saved.title}（${saved.id}）`, id: saved.id, title: saved.title };
 }
 
 export async function distillMission(input: {

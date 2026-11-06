@@ -85,7 +85,7 @@ import { alternateSite, decideStall, NO_PROGRESS_MS } from "./agent/kernel/stall
 import { gateClickText } from "./agent/publish-gate.js";
 import { inspectUploadPath } from "./agent/set-file.js";
 import { writeExperience } from "./agent/experience.js";
-import { distillMission, oneShotJudgePrompt, parseOneShotVerdict } from "./agent/distill.js";
+import { distillMission, oneShotJudgePrompt, parseOneShotVerdict, saveTaughtFromTrace, type SoulRunTrace } from "./agent/distill.js";
 import { distillSkillFromTrace, shouldSkipRemember } from "./agent/remember.js";
 import {
   missionProgress,
@@ -705,6 +705,8 @@ export class SparkBrowser {
   private freeSoul: FreeSoul | null = null;
   /** 新核心 run 期间挡住旧学习系统向侧栏插话、暂停。 */
   private freeSoulRunning = false;
+  /** 最近一次成功跑完的轨迹。只在内存里，确认中断和失败不覆盖，重启即清。 */
+  private lastRunTrace: SoulRunTrace | null = null;
   /** 同一组 12306 查询参数只补一次表单。 */
   private repaired12306 = new Set<string>();
   private llmRuntime: "byok" | "cloud" = "byok";
@@ -4896,6 +4898,7 @@ export class SparkBrowser {
     if (name === "request_confirm") {
       return { ok: false, message: "确认要由核心循环中断，不应直接执行。" };
     }
+    if (name === "save_skill") return this.saveSkillTool(args);
     if (name === "search_site") return searchSite(args);
     if (name === "save_shot") return this.saveShot(args, tabId);
     if (name === "save_image") return this.saveImage(args, tabId);
@@ -4925,6 +4928,17 @@ export class SparkBrowser {
       return result;
     }
     return this.runAgentTool(name, args);
+  }
+
+  /** 用户点名沉淀才落盘。成功关单本身不调用这里。 */
+  private saveSkillTool(args: Record<string, unknown>): ToolResult {
+    const saved = saveTaughtFromTrace(this.configDir(), this.lastRunTrace, args);
+    if (saved.id) this.skillsCache = listSkills(this.configDir());
+    return {
+      ok: saved.ok,
+      message: saved.message,
+      ...(saved.id ? { data: { id: saved.id, title: saved.title } } : {}),
+    };
   }
 
   /** 12306 丢掉 URL 参数时，补一次查询表单并点一次查询。 */
@@ -6627,6 +6641,9 @@ export class SparkBrowser {
           this.pushSidebarState();
           this.noteMcpAssistant(text);
         },
+        onTrace: (trace) => {
+          this.lastRunTrace = trace;
+        },
       });
       this.chatLog.push({ role: "assistant", text: result.text });
       this.finishMcpTask(result);
@@ -7014,6 +7031,9 @@ export class SparkBrowser {
                 const card = this.taskPool?.tasks?.find((item) => item.id === task.taskId);
                 if (card) card.lastLine = text.replace(/\s+/g, " ").trim().slice(0, 80);
                 this.syncTaskChrome();
+              },
+              onTrace: (trace) => {
+                this.lastRunTrace = trace;
               },
             });
             this.chatLog.push({ role: "assistant", text: result.text });
