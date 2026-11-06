@@ -40,13 +40,29 @@ export function boundsWithinOnePixel(a: PageRect, b: PageRect): boolean {
   );
 }
 
+export type CoverReason = "y" | "x" | "width" | "right" | "height" | null;
+
+/** 命中哪一条覆盖。顺序与旧布尔判断一致，先碰到哪条算哪条。 */
+export function chromeCoverReason(actual: PageRect, hole: PageRect): CoverReason {
+  if (actual.x < -100) return null;
+  if (actual.width < 50 || actual.height < 50) return null;
+  if (actual.y < hole.y - 1) return "y";
+  if (actual.x < hole.x - 1) return "x";
+  if (actual.width > hole.width + 4) return "width";
+  if (actual.x + actual.width > hole.x + hole.width + 4) return "right";
+  if (actual.height > hole.height + 8) return "height";
+  return null;
+}
+
 export function pageViewCoversChrome(actual: PageRect, hole: PageRect): boolean {
-  if (actual.x < -100) return false;
-  if (actual.width < 50 || actual.height < 50) return false;
-  if (actual.y < hole.y - 1) return true;
-  if (actual.x < hole.x - 1) return true;
-  if (actual.width > hole.width + 4) return true;
-  if (actual.x + actual.width > hole.x + hole.width + 4) return true;
-  if (actual.height > hole.height + 8) return true;
-  return false;
+  return chromeCoverReason(actual, hole) !== null;
+}
+
+/** heal 日志里的差值。width 用 dw，正数表示视图比洞宽出多少。 */
+export function chromeCoverDelta(reason: Exclude<CoverReason, null>, actual: PageRect, hole: PageRect): string {
+  if (reason === "y") return `dy=${actual.y - hole.y}`;
+  if (reason === "x") return `dx=${actual.x - hole.x}`;
+  if (reason === "width") return `dw=${actual.width - hole.width}`;
+  if (reason === "right") return `dr=${actual.x + actual.width - (hole.x + hole.width)}`;
+  return `dh=${actual.height - hole.height}`;
 }

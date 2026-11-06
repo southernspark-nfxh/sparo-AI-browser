@@ -2000,3 +2000,17 @@ agent 会话本轮不落盘、重启即清，是有意的：只把 `user` 会话
 
 - 未验证：没有复现「进程消失」。没有在用户正在用的那个窗口里采样。T63 未做。
 
+### T57 页面视图 heal 死循环
+
+- 改动：`src/main/page-bounds.ts`、`src/main/browser.ts`、`tests/chrome-hole.test.ts`
+- 根因：`pageViewCoversChrome` 只返回真假。heal 之后 `applyViewBounds` 算出来的矩形和洞仍差 1px 以上，2 秒守卫又认为盖住了顶栏。200ms 去抖挡不住这 2 秒一次的长尾。
+- `chromeCoverReason` 标出 y / x / width / right / height。heal 日志带 `reason=width dw=286`。同一标签连续 3 次重排后视图仍在 1px 内，就写 `[chrome-hole] give-up` 并停手。resize、restore、壳层无响应（原来清预算的地方）和 `switchTab` 把计数清掉。2 秒守卫还在。
+- 测试：`tests/chrome-hole.test.ts`。「五条分支和正常矩形」；「连续 3 次同几何后第 4 次不重排，切标签后重新计数」。全量 90 文件 / 654 通过，typecheck 通过。
+- 真机：独立窗口（临时配置，MCP 3922）新建 3 个标签，再来回 `switch_tab` 15 次，之后空等 8 秒。日志里没有 `heal`，更没有连续 3 次 old≈new。唯一一条：
+
+```
+[chrome-hole] bounds-changed t=1793953135616 active=9a124b1c minimized=false maximized=false old=null new={"x":0,"y":76,"width":1021,"height":825}
+```
+
+- 未验证：截图时前台是别的窗口，没有亲眼看到 Sparo 壳层。上面这条 bounds 的 y 是 76，不是整窗覆盖。
+
