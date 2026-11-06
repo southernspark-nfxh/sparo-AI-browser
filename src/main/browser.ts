@@ -848,6 +848,16 @@ export class SparkBrowser {
     return { ok: true, selectedSession: this.selectedSession };
   }
 
+  /** 点任务卡：切到那张标签，同时切到那个 agent 的对话。 */
+  focusTask(taskId: string): { ok: boolean; message?: string; selectedSession?: string; activeId?: string } {
+    const card = (this.taskPool?.tasks || []).find((item) => item.id === taskId);
+    if (!card) return { ok: false, message: "没有这张任务卡" };
+    this.selectedSession = card.clientId ? `agent:${card.clientId}` : "user";
+    if (card.tabId && typeof this.switchTab === "function") this.switchTab(card.tabId);
+    else this.pushSidebarState();
+    return { ok: true, selectedSession: this.selectedSession, activeId: this.activeTabId };
+  }
+
   private sessionViews(): Array<{ key: string; label: string; color: string; running: number }> {
     const keys = new Set<string>(["user"]);
     for (const key of this.chatBook().keys()) keys.add(key);
@@ -2784,6 +2794,7 @@ export class SparkBrowser {
     handle("spark:discard-inactive-tabs", async () => this.discardInactiveTabs());
     handle("spark:clear-chat", async () => this.clearChat());
     handle("spark:select-session", async (_e, key: string) => this.selectSession(String(key || "")));
+    handle("spark:focus-task", async (_e, id: string) => this.focusTask(String(id || "")));
     handle("spark:reorder-tabs", async (_e, fromId: string, toId: string) =>
       this.reorderTabs(String(fromId || ""), String(toId || "")),
     );

@@ -1896,3 +1896,74 @@ Q16、Q13、Q5 仍未跑。
 - 回归：`tests/minimized-focus.test.ts`、`tests/mcp-agent.test.ts` 仍绿。
 - 全量：`npm test` 81 文件 / 632 通过。`npm run typecheck` 通过。
 - Q21、Q22：需用户在场，且微博账号安全验证未在本轮做。未跑。没有把窗口拉到前台。
+
+## 完成记录（多 Agent 并行 T47–T54，2026-11-06，Cursor）
+
+决策点：无。没有新增提前结束任务的本地判断，没有改 `docs/DECISION-POINTS.md`。没有改 `package.json` 版本号，没有碰 `docs/listings/`，没有价格和付款 UI。`CHROME_H` 仍是 76，顶栏仍是 36px + 40px。归属标识只画在壳层，没有向网页注入 DOM 或 CSS。
+
+agent 会话本轮不落盘、重启即清，是有意的：只把 `user` 会话写入 `chat-memory.json`。
+
+### T47
+
+- 改动：`src/main/browser.ts`
+- `runAgentTask` 把 `freeSoul.run` 放进 `runScoped("background", tabId, …, "agent:<clientId>")`。作用域增加 `chatKey`。不再手写保存/还原 `agentTabId`。
+- `settleMcpTask` 增加可选 `tabId`。建不出标签时失败关单并 `taskPool.finish(failed)`。
+- 测试：`tests/multi-agent-isolation.test.ts`。两个 client 并发时各自读到的 `agentTabId` 恒定且无交集，结束后 `activeTabId` 仍是用户标签。
+
+### T48
+
+- 改动：`src/main/browser.ts`、`src/main/shell-preload.ts`
+- `chatLog` 改为 getter/setter，底下是 `Map`。原有 `push` 不用改。前台任务 `chatKey` 为 `user`，后台 agent 为 `agent:<clientId>`。
+- `saveChatMemory` 只存 user。`clearChat` 只清当前选中会话。`noteSidebarMessages` 只数 user，agent 进度不闪任务栏。
+- `getSidebarPayload` 增加 `selectedSession`、`sessions`。IPC `spark:select-session`。
+- 测试：同文件。甲乙互不可见；切换会话后 `payload.chat` 跟着变；新建实例只恢复 user。
+
+### T49
+
+- 改动：`src/main/agent/free-soul.ts`、`src/main/browser.ts`
+- `run({ taskId })` 把计量 ID 传给 `completion`。`X-Sparo-Task` 用本次传入的值，否则才读 `config.taskId`。
+- `beginCloudTaskIfNeeded` / `finishCloudTask` 不再 `freeSoul.setTaskId`。`deepseek.setTaskId` 两处保留。
+- `handleChat` 与 `runAgentTask` 在开云端任务之后把 `cloudTaskId` 随 `run` 传入。
+- 测试：`tests/cloud-task-header.test.ts`。两个并发请求的头各自等于自己的任务 ID。
+
+### T50
+
+- 改动：`src/main/agent/task-pool.ts`、`src/main/browser.ts`、`src/main/mcp-server.ts`、`src/main/tools/index.ts`、`tests/mcp-agent.test.ts`
+- 池满改为 `queued` 进入独立的 `agentQueue`，结束后 `pumpAgent()`。不复用侧栏 `backgroundQueue`。
+- `getTask(taskId, clientId)`：任务带了别的 clientId 就返回 `unknown`，不带进度和结果。MCP `get_task` 传入 `scope.clientId`。
+- 新工具 `list_tasks`、`list_agents`。`waiting_human` 仍不占 `runningBackground` 名额。
+- 测试：`tests/agent-task-queue.test.ts`。4 个任务前 3 个 running、第 4 个 queued，第一个完成后第 4 个自动跑完；乙查甲为 unknown；挂起任务不占名额。
+
+### T51
+
+- 改动：`src/main/agent/mcp-sessions.ts`、`src/main/mcp-server.ts`、`src/main/browser.ts`、`src/main/tools/index.ts`
+- `registerClientName`：空名按顺序叫 Agent 甲/乙/…，非空截断 24 字。`colorForClient` 用 8 色板，同一 clientId 恒定。
+- `initialize` 读 `clientInfo.name`，走 `register_client`。`listTabs`、`list_tasks`、`list_agents`、任务卡带 `agentName` / `agentColor`。
+- 测试：`tests/agent-identity.test.ts`。
+
+### T52
+
+- 改动：`src/main/browser.ts` `listTabs`，`src/renderer/shell.html` `renderChrome`
+- 标签增加 `owner`、`agentState`。只有 `owner` 以 `agent:` 开头才画 6px 色点和 1px 底边。用户标签不加类名、不加内联样式。
+- 测试：`tests/list-tabs-owner.test.ts`。用户标签三个 agent 字段为空；agent 标签随 running / waiting_human / done 变化。
+
+### T53
+
+- 改动：`src/renderer/shell.html`，`src/main/browser.ts` 的 `switchTab` 在 `pushChromeState()` 之后补一次 `requestHoleReport()`。
+- `#agentBanner` 默认 hidden。`holeRectWithBanner`：隐藏时原样返回；32px 时 y+32、height−32；过高夹到 `height-80`。显隐变化后手动 `reportHole()`。
+- 文案：操作中 / 等你处理 / 排队中（第 N 位）/ 已完成 · 页面已休眠。
+- 测试：`tests/agent-banner.test.ts`。真机截图未跑。
+
+### T54
+
+- 改动：`src/renderer/shell.html`、`src/main/browser.ts`、`src/main/shell-preload.ts`
+- 侧栏「使用中 N · Agent 甲 · Agent 乙」。点名字或任务卡走 `focusTask`：切标签并切到 `agent:<clientId>`。`waiting_human` 卡片置顶，沿用 `.is-waiting_human`，后台卡加 3px 同色左边。
+- 侧栏对话仍只渲染 `payload.chat`（当前选中会话）。
+- 测试：`tests/agent-roster.test.ts`。点甲的卡片后 `selectedSession` 与 `activeId` 同时切过去；切回用户页只剩用户历史。
+
+### 测试与未跑
+
+- 全量：`npm test` 88 文件 / 648 通过，`npm run typecheck` 通过。
+- 真机 Q23、Q24、Q25、Q26、Q27：未跑。单测不能代替。
+- 并发 3 个 agent 时主进程内存和 CPU 有没有明显升高：没开着 Sparo 看任务管理器，未知。
+

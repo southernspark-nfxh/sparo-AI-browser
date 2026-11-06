@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld("sparkShell", {
   discardInactiveTabs: () => ipcRenderer.invoke("spark:discard-inactive-tabs"),
   clearChat: () => ipcRenderer.invoke("spark:clear-chat"),
   selectSession: (key: string) => ipcRenderer.invoke("spark:select-session", key),
+  focusTask: (taskId: string) => ipcRenderer.invoke("spark:focus-task", taskId),
   reorderTabs: (fromId: string, toId: string) =>
     ipcRenderer.invoke("spark:reorder-tabs", fromId, toId),
   stop: () => ipcRenderer.invoke("spark:stop"),

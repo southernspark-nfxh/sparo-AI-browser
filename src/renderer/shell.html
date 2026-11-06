@@ -162,6 +162,24 @@ input, textarea, select, .chat-log, .chat-log .bubble {
   flex: none;
   background: var(--agent-color);
 }
+.agent-roster {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.agent-roster[hidden] { display: none; }
+.agent-roster button {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+  color: var(--text);
+}
 .sidebar {
   grid-column: 2;
   grid-row: 2 / -1;
@@ -1933,6 +1951,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
             <span data-i18n="welcome.nudge">尚未完成设置</span>
             <button type="button" class="linkish" id="welcomeNudgeGo" data-i18n="welcome.nudgeGo">继续设置</button>
           </div>
+          <div class="agent-roster" id="agentRoster" hidden></div>
           <div id="taskStrip"></div>
           <div id="planStrip"></div>
           <div class="chat-log" id="chat"></div>
@@ -2856,6 +2875,37 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         }
       }
 
+      function renderAgentRoster(sessions, tasks) {
+        var root = document.getElementById("agentRoster");
+        if (!root) return;
+        var agents = (Array.isArray(sessions) ? sessions : []).filter(function (session) {
+          return session && typeof session.key === "string" && session.key.indexOf("agent:") === 0;
+        });
+        root.innerHTML = "";
+        if (!agents.length) {
+          root.hidden = true;
+          return;
+        }
+        root.hidden = false;
+        var label = document.createElement("span");
+        label.textContent = "使用中 " + agents.length;
+        root.appendChild(label);
+        agents.forEach(function (session) {
+          var btn = document.createElement("button");
+          btn.type = "button";
+          btn.textContent = session.label || session.key;
+          if (session.color) btn.style.color = session.color;
+          btn.onclick = function () {
+            var task = (Array.isArray(tasks) ? tasks : []).find(function (item) {
+              return item && item.clientId && "agent:" + item.clientId === session.key;
+            });
+            if (task && window.sparkShell && window.sparkShell.focusTask) window.sparkShell.focusTask(task.id);
+            else if (window.sparkShell && window.sparkShell.selectSession) window.sparkShell.selectSession(session.key);
+          };
+          root.appendChild(btn);
+        });
+      }
+
       function renderTaskStrip(tasks) {
         var root = document.getElementById("taskStrip");
         if (!root) return;
@@ -2871,6 +2921,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
             "#taskStrip .task-card.is-running .task-mark{color:var(--accent)}",
             "#taskStrip .task-card.is-done .task-mark{color:var(--ok)}",
             "#taskStrip .task-card.is-waiting_human .task-mark{color:var(--warn)}",
+            "#taskStrip .task-card.is-waiting_human{border-color:var(--warn)}",
             "#taskStrip .task-lane{flex:none;font-size:var(--fs-12);color:var(--muted)}",
             "#taskStrip .task-body{min-width:0;flex:1}",
             "#taskStrip .task-title{display:block;font-size:var(--fs-13)}",
@@ -2885,14 +2936,19 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           return;
         }
         root.classList.remove("hide");
+        list.sort(function (a, b) {
+          if (a.state === "waiting_human" && b.state !== "waiting_human") return -1;
+          if (b.state === "waiting_human" && a.state !== "waiting_human") return 1;
+          return 0;
+        });
         list.forEach(function (task) {
           var btn = document.createElement("button");
           btn.type = "button";
           btn.className = "task-card is-" + (task.state || "running");
+          if (task.lane === "background" && task.color) btn.style.borderLeft = "3px solid " + task.color;
           btn.onclick = function () {
-            if (task.tabId && window.sparkShell && window.sparkShell.switchTab) {
-              window.sparkShell.switchTab(task.tabId);
-            }
+            if (window.sparkShell && window.sparkShell.focusTask) window.sparkShell.focusTask(task.id);
+            else if (task.tabId && window.sparkShell && window.sparkShell.switchTab) window.sparkShell.switchTab(task.tabId);
           };
           var mark = document.createElement("span");
           mark.className = "task-mark";
@@ -2902,7 +2958,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           body.className = "task-body";
           var title = document.createElement("span");
           title.className = "task-title";
-          title.textContent = task.title || "任务";
+          title.textContent = task.agentName ? task.agentName + " · " + (task.title || "任务") : (task.title || "任务");
           var step = document.createElement("span");
           step.className = "task-step";
           step.textContent = task.step || "";
@@ -3352,6 +3408,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         renderTriggers(payload.triggers);
         renderQa(payload.qa);
         renderChat(payload.chat);
+        renderAgentRoster(payload.sessions, payload.tasks);
         renderTaskStrip(payload.tasks);
         renderPlanStrip(payload.plan);
         if (payload.chat && payload.chat.length) scrollDockIntoView();
