@@ -53,6 +53,17 @@ describe("T53 页面归属条", () => {
     );
   });
 
+  it("使用中行贴在侧栏滚动区顶部", () => {
+    const shell = readFileSync(join(process.cwd(), "src/renderer/shell.html"), "utf8");
+    const css = shell.slice(shell.indexOf(".agent-roster {"), shell.indexOf(".agent-roster[hidden]"));
+    expect(css).toContain("position: sticky;");
+    expect(css).toContain("top: 0;");
+    expect(css).toContain("z-index: 1;");
+    expect(css).toContain("background: var(--side);");
+    expect(shell).toContain(".agent-roster[hidden] { display: none; }");
+    expect(shell).toContain("function renderAgentRoster");
+  });
+
   it("顶栏高度和网格没被改", () => {
     const browser = readFileSync(join(process.cwd(), "src/main/browser.ts"), "utf8");
     const shell = readFileSync(join(process.cwd(), "src/renderer/shell.html"), "utf8");
