@@ -73,6 +73,21 @@ function rememberClientTab(clientId: string, tabId: string): void {
   owners.set(tabId, clientId);
 }
 
+/** 一个 client 可以拥有多张标签。最近一次登记的是主标签。 */
+export function claimTabForClient(clientId: string, tabId: string): void {
+  const id = String(clientId || "").trim();
+  const tab = String(tabId || "").trim();
+  if (!id || !tab) return;
+  rememberClientTab(id, tab);
+}
+
+/** 任务作用域优先；没有作用域时，从打开它的那张 agent 页继承。用户自己开的页两边都空。 */
+export function agentClientFromScope(chatKey?: string, openerOwner?: string): string {
+  if (chatKey?.startsWith("agent:")) return chatKey.slice("agent:".length);
+  if (openerOwner?.startsWith("agent:")) return openerOwner.slice("agent:".length);
+  return "";
+}
+
 /** initialize 响应里带回的 6 位 clientId。 */
 export function issueClientId(): string {
   return randomBytes(4).toString("hex").slice(0, 6);

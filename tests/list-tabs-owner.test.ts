@@ -31,7 +31,7 @@ vi.mock("electron", () => ({
 
 import { SparkBrowser } from "../src/main/browser.js";
 import { TaskPool } from "../src/main/agent/task-pool.js";
-import { bindClientTab, registerClientName, resetMcpSessions } from "../src/main/agent/mcp-sessions.js";
+import { bindClientTab, claimTabForClient, registerClientName, resetMcpSessions } from "../src/main/agent/mcp-sessions.js";
 
 afterEach(() => resetMcpSessions());
 
@@ -88,6 +88,31 @@ describe("T52 标签归属", () => {
     const tab = browser.tabs.get("agent-1");
     if (tab) tab.agentStatus = "done";
     expect(browser.listTabs().tabs.find((item) => item.id === "agent-1")?.agentState).toBe("done");
+  });
+
+  it("任务中新开的标签跟着同一份运行状态", () => {
+    const browser = browserWithTabs();
+    browser.tabs.set("agent-2", {
+      id: "agent-2",
+      title: "新页",
+      url: "https://agent.example/2",
+      view: null,
+      lastActiveAt: 2,
+    });
+    claimTabForClient("jia", "agent-2");
+    browser.taskPool.start({
+      id: "job",
+      tabId: "agent-1",
+      title: "跑",
+      lane: "background",
+      clientId: "jia",
+      agentName: "Agent 甲",
+      color: "#2f6feb",
+    });
+    const child = browser.listTabs().tabs.find((tab) => tab.id === "agent-2");
+    expect(child?.owner).toBe("agent:jia");
+    expect(child?.agentState).toBe("running");
+    expect(child?.agentName).toBe("Agent 甲");
   });
 
   it("色点只写在 agent 标签的渲染分支里", () => {
