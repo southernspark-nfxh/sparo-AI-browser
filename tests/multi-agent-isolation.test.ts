@@ -147,9 +147,13 @@ describe("T48 对话按会话隔离", () => {
     browser.recording = false;
     browser.paused = false;
     let seq = 0;
+    const tabs = new Map<string, { id: string }>();
+    (browser as unknown as { tabs: typeof tabs }).tabs = tabs;
     browser.createAgentTab = () => {
       seq += 1;
-      return seq === 1 ? "tab-jia" : "tab-yi";
+      const id = seq === 1 ? "tab-jia" : "tab-yi";
+      tabs.set(id, { id });
+      return id;
     };
     browser.chatLog.push({ role: "user", text: "用户的话" });
     browser.freeSoul = { run: async () => ({ ok: true, text: "做完了" }) };
