@@ -84,6 +84,7 @@ import { parseRewriteVerdict, rewriteVerdictPrompt } from "./agent/kernel/read-r
 import { alternateSite, decideStall, NO_PROGRESS_MS } from "./agent/kernel/stall.js";
 import { gateClickText } from "./agent/publish-gate.js";
 import { inspectUploadPath } from "./agent/set-file.js";
+import { saveDoc } from "./save-doc.js";
 import { writeExperience } from "./agent/experience.js";
 import { distillMission, oneShotJudgePrompt, parseOneShotVerdict, saveTaughtFromTrace, type SoulRunTrace } from "./agent/distill.js";
 import { distillSkillFromTrace, shouldSkipRemember } from "./agent/remember.js";
@@ -4902,6 +4903,7 @@ export class SparkBrowser {
       return { ok: false, message: "确认要由核心循环中断，不应直接执行。" };
     }
     if (name === "save_skill") return this.saveSkillTool(args);
+    if (name === "save_doc") return saveDoc(this.configDir(), args);
     if (name === "search_site") return searchSite(args);
     if (name === "save_shot") return this.saveShot(args, tabId);
     if (name === "save_image") return this.saveImage(args, tabId);

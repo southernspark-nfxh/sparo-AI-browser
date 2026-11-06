@@ -2190,6 +2190,69 @@ y 从 76 到 108，横幅占 32px。任务结束后 `list_tabs` 该标签 `agent
 
 遗留：① Q28 真机验收（含第 5 条反向验收：任务成功后不说话，日志无 save_skill 调用）；② 上轮遗留的 Q21/Q22、G1–G3、两个越界文档去留。
 
+---
+
+# 第十七轮（v18）— 真机暴露的两个缺口：文档落不了盘、技能乱匹配（2026-11-06 立项）
+
+> 背景（2026-11-06 真机测试暴露，用户原话意图）：「他连存文档都做不到 更不会做skill」。
+> 规划方核实：
+> ① Free Soul 工具表（free-soul.ts TOOLS，24 个工具）**没有任何写本地文件的能力**——save_shot/save_image 只存图，set_file 只上传。用户说「把你的问题写成 md 文档存下来」，模型手里没牌，跑成乱开 B 站。
+> ② matchSkills（runner.ts L273）distilled 技能无条件 +5，而入池门槛是 score>0——**任何 query 都至少命中一条 distilled 技能**。真机：「如何去百度贴吧留言」命中「1688选品 (5)」，5 分全部来自 distilled 加分，零关键词命中。
+
+## T68（P0）`save_doc` 本地文档工具
+
+1. `FreeSoulToolName` 增加 `save_doc`。参数：`title`（必填）、`body`（必填，正文全文）、`format`（md / txt / html，默认 md）、`path`（可选，用户原话给过的绝对路径）。
+2. 落盘规则：无 `path` 时落 `%APPDATA%\sparo-store\docs\`，文件名 title 清洗 + 时间戳防重；有 `path` 时按用户路径落，父目录必须已存在，扩展名必须在白名单。
+3. 护栏：body 上限 2MB；只写文本三类格式；拒绝写系统目录（Windows、Program Files）；不自动打开文件、不置前不夺焦，返回绝对路径供模型转述。
+4. 系统提示（step 与 auto 同加）：用户要把整理好的内容存成本地文档（md / txt / html）时用 `save_doc`，不要去开网页；写完把路径告诉用户。
+
+## T69（P0）match_skill 低分误匹配修复
+
+1. distilled / cleanSkillId 的 +5 只作为**已因其他理由入池**技能的同分加权，不单独构成入池资格——score 为 0 的技能不得因加分进候选。
+2. 返回前过滤：score < 15 的候选不返回（exact 100 / alias 50 / id 40 / title 35 / intent 25 单独都过线；单个 token 命中 8 分被滤掉，两个以上 token 命中过线）。
+3. 语义核对：`resolveSkill` 走同一过滤，低分不再可被 resolve——方向是收紧，误执行比漏执行更糟。alias、exact 命中路径不得回归。
+
+## 验收（Q29，真机）
+
+1. 「打开微博热搜页，把前 10 条整理成清单，存成 md 文档」→ 落盘 docs/ 出现 .md 文件，侧栏回路径，全程不开无关网页。
+2. 同句「如何去百度贴吧留言」→ match_skill 无 1688选品 这类零关键词候选；「比价」「发小红书」等既有命中不回归。
+3. 单测：docs 落盘（默认路径 / 指定路径 / 非法路径拒绝 / 超长拒绝 / 格式白名单）＋ match 阈值（5 分纯加分不再入池、exact/alias 不回归）。
+
+## 全局禁区（本轮）
+
+1. 不改技能种子文件；不动 v17 的 save_skill 两段式与轨迹留存语义。
+2. save_doc 只写文本文件，不提供删除、移动、覆盖已存在文件的能力（同名加时间戳绕开，不 overwrite）。
+3. 脑区改动（free-soul.ts 工具表与系统提示、runner.ts 匹配）独立 commit。
+4. 不碰 `package.json` 版本号、`docs/listings/`、价格付款；无新增 DECISION-POINTS（save_doc 是模型可调用的工具，不是提前结束任务的本地判断）。
+
+## 完成交付
+
+照旧：改动文件、测试名、决策点、真机未跑如实写。`npm test` 与 `npm run typecheck` 全绿后才算完成。
+
+## 完成记录（v18 T68/T69，2026-11-06）
+
+决策点：无。save_doc 是模型可调用的写文件工具，match 阈值是收紧候选召回，都不是提前结束任务的本地判断。没改技能种子文件，没动 save_skill 两段式与轨迹留存语义，没碰 `package.json` 版本号、`docs/listings/`。
+
+### T68
+
+- 改动：`src/main/save-doc.ts`（新）、`src/main/agent/free-soul.ts`、`src/main/browser.ts`
+- `save_doc` 进 Free Soul 工具表与系统提示（step 与 auto 共用同句）。参数 title / body 必填，format 默认 md，path 可选。
+- 护栏：body 2MB 上限；只写 md / txt / html；path 必须绝对路径、父目录已存在、扩展名白名单、拒绝 Windows / Program Files / System32；已存在文件不覆盖（报错，不 overwrite）；不打开文件、不置前不夺焦，返回绝对路径。
+- `runCoreTool` 一行分发到 `saveDoc(configDir, args)`，落 `%APPDATA%\sparo-store\docs\`（无 path 时文件名时间戳 + 标题清洗防重）。
+
+### T69
+
+- 改动：`src/main/skills/runner.ts`
+- distilled / cleanSkillId 的 +5 移进 `score > 0` 判定内——零关键词命中不再入池（修复「贴吧留言」命中「1688选品 (5)」）。
+- 返回前过滤 score < 15 的候选。`resolveSkill` 走同一过滤，方向收紧：误执行比漏执行更糟。
+
+### 测试
+
+- `tests/free-soul-v18.test.ts`（8 项）：默认落盘与内容原样、指定路径、七种拒绝（缺 title / 缺 body / 相对路径 / 目录不存在 / 非法扩展名 / 系统目录 / 超长）、不覆盖已存在文件、工具表与系统提示双模式登记；「贴吧留言」不再命中零关键词 distilled 技能、title 子串命中照常过线、exact 与 alias 不回归。
+- 全量：`npm test` 96 文件 / 679 项通过（首跑 triggers.test.ts 一次 Windows 临时目录清理竞态 ENOTEMPTY，重跑通过，与本轮改动无关），`npm run typecheck` 通过。
+- 真机 Q29：未跑。测试期间另有发现——用户测「去淘宝帮我选个男裤子」时渲染进程 crashed（render-process-gone），已录入日志待查，与本轮两任务无关。
+- 编号说明：本轮原拟 T66/T67，发现另一窗口 Cursor 已用 T66（横幅工位化，commit 56416b7），改号 T68/T69。
+
 ## 完成记录（T66 横幅工位化，2026-11-06，Cursor）
 
 决策点：无。横幅仍只在 agent 页、且状态不是空闲时出现。没有提前结束任务的本地判断。版本号没动。
