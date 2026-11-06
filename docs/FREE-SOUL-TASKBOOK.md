@@ -2037,3 +2037,12 @@ y 从 76 到 108，横幅占 32px。任务结束后 `list_tabs` 该标签 `agent
 
 - 未验证：没有把窗口留在前台截横幅文字。高度靠页面洞 y 差 32 来确认。
 
+### T59 任务完成后状态丢失
+
+- 改动：`src/main/browser.ts`、`tests/agent-chrome-sync.test.ts`
+- 根因：`finish` 把任务移出池子之后，`listTabs` 只剩 `tab.agentStatus`。这个标记以前要等标签休眠才写，所以刚做完的标签落到 idle，横幅消失。
+- `runAgentTask` 的 finally 在 `finish` 之前写 `agentStatus = "done"`（用本轮的 tabId）。同一张标签再接任务时清掉这个标记，池子里的 running 才能露出来。`discardTab` 和 `closeTab` 把字段删掉。`listTabs` 仍然在没有池任务时返回 done。
+- 测试：`tests/agent-chrome-sync.test.ts`「结束后是 done，再派变成 running，关掉就清空」。全量 91 文件 / 656 通过，typecheck 通过。
+- 真机：T58 那次切回已完成标签时日志是 `[banner] true 视觉验收员 done`，再派一单后 `list_tabs` 变成 `running`。关闭后字段清空这次没再开窗口，单测覆盖。
+- 未验证：没在真机上点关闭后再看 tooltip。
+

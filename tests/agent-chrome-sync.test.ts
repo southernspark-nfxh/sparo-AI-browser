@@ -129,3 +129,46 @@ describe("T58 任务状态推到壳层", () => {
     expect(pushes).toBeGreaterThanOrEqual(3);
   });
 });
+
+describe("T59 完成后还留着完成态", () => {
+  it("结束后是 done，再派变成 running，关掉就清空", async () => {
+    const browser = harness();
+    let release: (value: { ok: boolean; text: string }) => void = () => undefined;
+    let started: () => void = () => undefined;
+    const startedP = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    browser.freeSoul = {
+      run: () => {
+        started();
+        return new Promise((resolve) => {
+          release = resolve;
+        });
+      },
+    };
+    browser.pushChromeState = () => undefined;
+    const first = browser.submitTask("第一件", { clientId: "jia" });
+    expect(first.status).toBe("running");
+    await startedP;
+    release({ ok: true, text: "做完了" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(agentState(browser)).toBe("done");
+    const tab = browser.tabs.get("agent-1");
+    expect(tab?.agentStatus).toBe("done");
+
+    browser.freeSoul = {
+      run: () => new Promise(() => undefined),
+    };
+    const second = browser.submitTask("第二件", { clientId: "jia" });
+    expect(second.status).toBe("running");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(agentState(browser)).toBe("running");
+    expect(tab?.agentStatus).toBeUndefined();
+
+    if (tab) tab.view = undefined as unknown as TabStub["view"];
+    (browser as unknown as { layout: () => void }).layout = () => undefined;
+    browser.closeTab("agent-1");
+    expect(tab?.agentStatus).toBeUndefined();
+    expect(browser.listTabs().tabs.some((item) => item.id === "agent-1")).toBe(false);
+  });
+});

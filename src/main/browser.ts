@@ -1372,6 +1372,7 @@ export class SparkBrowser {
     const view = tab.view;
     if (!view) {
       tab.discarded = true;
+      delete tab.agentStatus;
       return true;
     }
     const wc = view.webContents;
@@ -1396,6 +1397,7 @@ export class SparkBrowser {
     }
     tab.view = null;
     tab.discarded = true;
+    delete tab.agentStatus;
     return true;
   }
 
@@ -1695,6 +1697,7 @@ export class SparkBrowser {
   closeTab(id: string): ToolResult {
     const tab = this.tabs.get(id);
     if (!tab) return { ok: false, message: `Tab not found: ${id}` };
+    delete tab.agentStatus;
     let closedUrl = tab.url || "about:blank";
     try {
       const live = tab.view?.webContents;
@@ -6873,6 +6876,8 @@ export class SparkBrowser {
     task.clientId = clientId;
     const before = this.activeTabId;
     const tabId = this.bindAgentTab(clientId) || "";
+    const reused = tabId ? this.tabs?.get(tabId) : undefined;
+    if (reused) delete reused.agentStatus;
     if (before && this.activeTabId !== before && typeof this.switchTab === "function") this.switchTab(before);
     const running = this.taskPool?.runningBackground?.() ?? 0;
     const face = listClientSessions().find((item) => item.clientId === clientId) || registerClientName(clientId, "");
