@@ -175,7 +175,7 @@ describe("submit_task 给 Agent", () => {
     expect(browser.activeTabId).toBe("user-tab");
   });
 
-  it("带 clientId 进后台池，满了 pool_full，不挡无 clientId 的排队语义", async () => {
+  it("带 clientId 进后台池，满了排队，不挡无 clientId 的排队语义", async () => {
     let runs = 0;
     const { browser } = harness(() => {
       runs += 1;
@@ -184,7 +184,7 @@ describe("submit_task 给 Agent", () => {
     const ids = ["a", "b", "c"].map((id) => browser.submitTask(`任务${id}`, { clientId: id }));
     expect(ids.map((item) => item.status)).toEqual(["running", "running", "running"]);
     const full = browser.submitTask("第四个", { clientId: "d" });
-    expect(full.status).toBe("pool_full");
+    expect(full.status).toBe("queued");
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(runs).toBe(3);
     const local = browser.submitTask("本地脚本");

@@ -1,5 +1,5 @@
 import type { SparkBrowser } from "../browser.js";
-import { ownerForTab } from "../agent/mcp-sessions.js";
+import { ownerForTab, registerClientName } from "../agent/mcp-sessions.js";
 import { navigateTool } from "./navigate.js";
 import { snapshotTool } from "./snapshot.js";
 import { clickTool } from "./click.js";
@@ -169,7 +169,13 @@ export function createToolHandlers(browser: SparkBrowser) {
       browser.sidebarChatTool(text, { hands }),
     submit_task: (text: string, opts?: { execMode?: "step" | "auto"; clientId?: string }) =>
       browser.submitTask(text, opts),
-    get_task: (taskId: string) => browser.getTask(taskId),
+    get_task: (taskId: string, clientId?: string) => browser.getTask(taskId, clientId),
+    list_tasks: (clientId?: string) => browser.listClientTasks(clientId),
+    list_agents: () => browser.listAgents(),
+    register_client: (clientId: string, name?: string) => {
+      const session = registerClientName(clientId, name);
+      return { ok: true, name: session.name, color: session.color };
+    },
     get_url: async (tabId?: string) => ({
       ok: true,
       message: browser.getUrl(tabId),

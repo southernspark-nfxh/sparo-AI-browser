@@ -24,7 +24,13 @@ import { coPresenceMayRestore } from "./shell-focus.js";
 import { traceMainWindow } from "./focus-trace.js";
 import { laneForText, type TaskLane } from "./agent/task-class.js";
 import { shouldSuspend as poolShouldSuspend, TaskPool, type PoolTask } from "./agent/task-pool.js";
-import { backgroundPoolDecision, bindClientTab, ownerForTab } from "./agent/mcp-sessions.js";
+import {
+  backgroundPoolDecision,
+  bindClientTab,
+  listClientSessions,
+  ownerForTab,
+  registerClientName,
+} from "./agent/mcp-sessions.js";
 import { capturesSince, ledgerCloseReason, reportSince, type LedgerClose } from "./agent/task-result.js";
 import type {
   ClickConfirm,
@@ -848,13 +854,14 @@ export class SparkBrowser {
     const pool = this.taskPool?.tasks || [];
     return [...keys].map((key) => {
       const clientId = key.startsWith("agent:") ? key.slice("agent:".length) : "";
+      const session = clientId ? listClientSessions().find((item) => item.clientId === clientId) : undefined;
       const running = clientId
         ? pool.filter((task) => task.tabId && ownerForTab(task.tabId) === key && task.state === "running").length
         : 0;
       return {
         key,
-        label: key === "user" ? "我" : key.replace(/^agent:/, "Agent "),
-        color: "",
+        label: key === "user" ? "我" : session?.name || key.replace(/^agent:/, "Agent "),
+        color: session?.color || "",
         running,
       };
     });
@@ -875,9 +882,12 @@ export class SparkBrowser {
     finalUrl?: string;
     captures?: string[];
     reportUrl?: string;
+    clientId?: string;
   }> = [];
   private activeMcpTaskId: string | null = null;
   private agentPoolIds = new Set<string>();
+  /** 池满后的 agent 任务。不和侧栏 backgroundQueue 混用。 */
+  private agentQueue: Array<{ task: SparkBrowser["mcpTasks"][number]; clientId: string }> = [];
   private agentAborts = new Set<AbortController>();
   private renderHoldCount = 0;
   private wasMinimizedForTask = false;
@@ -1521,6 +1531,8 @@ export class SparkBrowser {
       discarded?: boolean;
       favIcon?: string;
       agentStatus?: "done";
+      agentName?: string;
+      agentColor?: string;
     }>;
     activeId: string;
     url: string;
@@ -1532,16 +1544,23 @@ export class SparkBrowser {
     const wc = active?.view?.webContents;
     const wcLive = wc && !wc.isDestroyed() ? wc : undefined;
     return {
-      tabs: [...this.tabs.values()].map((t) => ({
-        id: t.id,
-        title: t.title,
-        url:
-          t.url ||
-          (t.view && !t.view.webContents.isDestroyed() ? t.view.webContents.getURL() : ""),
-        discarded: Boolean(t.discarded || !t.view),
-        favIcon: t.favIcon || "",
-        agentStatus: t.agentStatus === "done" ? "done" : undefined,
-      })),
+      tabs: [...this.tabs.values()].map((t) => {
+        const owner = ownerForTab(t.id);
+        const clientId = owner.startsWith("agent:") ? owner.slice("agent:".length) : "";
+        const session = clientId ? listClientSessions().find((item) => item.clientId === clientId) : undefined;
+        return {
+          id: t.id,
+          title: t.title,
+          url:
+            t.url ||
+            (t.view && !t.view.webContents.isDestroyed() ? t.view.webContents.getURL() : ""),
+          discarded: Boolean(t.discarded || !t.view),
+          favIcon: t.favIcon || "",
+          agentStatus: t.agentStatus === "done" ? "done" : undefined,
+          agentName: session?.name,
+          agentColor: session?.color,
+        };
+      }),
       activeId: this.activeTabId,
       url: wcLive ? wcLive.getURL() : active?.url || "",
       canGoBack: Boolean(wcLive && this.navCanGoBack(wcLive)),
@@ -6502,7 +6521,7 @@ export class SparkBrowser {
     return { taskId: task.taskId, status: task.status };
   }
 
-  getTask(taskId: string): {
+  getTask(taskId: string, clientId?: string): {
     status: "running" | "queued" | "done" | "interrupted" | "failed" | "pool_full" | "unknown";
     rounds: number;
     lastAssistant: string;
@@ -6517,7 +6536,9 @@ export class SparkBrowser {
     };
   } {
     const task = this.mcpTaskList().find((item) => item.taskId === taskId);
-    if (!task) return { status: "unknown", rounds: 0, lastAssistant: "", elapsedMs: 0, window: this.mainWindowMode() };
+    if (!task || (task.clientId && clientId && task.clientId !== clientId)) {
+      return { status: "unknown", rounds: 0, lastAssistant: "", elapsedMs: 0, window: this.mainWindowMode() };
+    }
     const view = {
       status: task.status,
       rounds: task.rounds,
@@ -6650,25 +6671,112 @@ export class SparkBrowser {
     while (list.length > 10) list.shift();
   }
 
+  private agentJobs() {
+    if (!this.agentQueue) this.agentQueue = [];
+    return this.agentQueue;
+  }
+
+  private pumpAgent(): void {
+    const pool = this.taskPool;
+    if (!pool?.canStartBackground) return;
+    const queue = this.agentJobs();
+    while (pool.canStartBackground() && queue.length) {
+      const next = queue.shift();
+      if (!next) break;
+      pool.markRunning(next.task.taskId);
+      next.task.status = "running";
+      void this.runAgentTask(next.task, next.clientId);
+    }
+  }
+
+  listClientTasks(clientId?: string): Array<{
+    id: string;
+    status: string;
+    rounds: number;
+    tabId: string;
+    tabTitle: string;
+    agentName: string;
+    agentColor: string;
+  }> {
+    const rows = [];
+    for (const task of this.mcpTaskList()) {
+      if (clientId && task.clientId !== clientId) continue;
+      const card = this.taskPool?.tasks?.find((item) => item.id === task.taskId);
+      const status = card?.state === "waiting_human" ? "waiting_human" : task.status;
+      if (status !== "running" && status !== "queued" && status !== "waiting_human") continue;
+      const tabId = card?.tabId || "";
+      rows.push({
+        id: task.taskId,
+        status,
+        rounds: task.rounds,
+        tabId,
+        tabTitle: tabId ? this.getTitle(tabId) : "",
+        agentName: card?.agentName || "",
+        agentColor: card?.color || "",
+      });
+    }
+    return rows;
+  }
+
+  listAgents(): Array<{ clientId: string; name: string; color: string; tabs: number; running: boolean }> {
+    const tabsByClient = new Map<string, Set<string>>();
+    const running = new Set<string>();
+    const names = new Map<string, { name: string; color: string }>();
+    for (const session of listClientSessions()) {
+      const bucket = tabsByClient.get(session.clientId) || new Set<string>();
+      if (session.tabId) bucket.add(session.tabId);
+      tabsByClient.set(session.clientId, bucket);
+      if (session.name || session.color) names.set(session.clientId, { name: session.name, color: session.color });
+    }
+    for (const task of this.taskPool?.tasks || []) {
+      if (!task.clientId) continue;
+      const bucket = tabsByClient.get(task.clientId) || new Set<string>();
+      if (task.tabId) bucket.add(task.tabId);
+      tabsByClient.set(task.clientId, bucket);
+      if (task.state === "running") running.add(task.clientId);
+      if (task.agentName || task.color) {
+        const prev = names.get(task.clientId);
+        names.set(task.clientId, {
+          name: task.agentName || prev?.name || "",
+          color: task.color || prev?.color || "",
+        });
+      }
+    }
+    return [...tabsByClient.entries()].map(([clientId, tabs]) => ({
+      clientId,
+      name: names.get(clientId)?.name || clientId,
+      color: names.get(clientId)?.color || "",
+      tabs: tabs.size,
+      running: running.has(clientId),
+    }));
+  }
+
   private submitAgentTask(
     task: (typeof this.mcpTasks)[number],
     clientId: string,
-  ): { taskId: string; status: "running" | "pool_full"; error?: "pool_full" } {
+  ): { taskId: string; status: "running" | "queued" } {
+    task.clientId = clientId;
     const running = this.taskPool?.runningBackground?.() ?? 0;
-    if (!backgroundPoolDecision(running).ok) {
-      task.status = "pool_full";
-      this.rememberMcpTask(task);
-      return { taskId: task.taskId, status: "pool_full", error: "pool_full" };
-    }
-    this.rememberMcpTask(task);
-    this.taskPool?.start?.({
+    const face = listClientSessions().find((item) => item.clientId === clientId) || registerClientName(clientId, "");
+    const card = {
       id: task.taskId,
       tabId: "",
       title: task.text.slice(0, 28) || "任务",
-      lane: "background",
-    });
+      lane: "background" as const,
+      clientId,
+      agentName: face.name,
+      color: face.color,
+    };
+    this.rememberMcpTask(task);
     if (!this.agentPoolIds) this.agentPoolIds = new Set();
     this.agentPoolIds.add(task.taskId);
+    if (!backgroundPoolDecision(running).ok) {
+      task.status = "queued";
+      this.taskPool?.enqueue?.(card);
+      this.agentJobs().push({ task, clientId });
+      return { taskId: task.taskId, status: "queued" };
+    }
+    this.taskPool?.start?.(card);
     void this.runAgentTask(task, clientId);
     return { taskId: task.taskId, status: "running" };
   }
@@ -6691,6 +6799,7 @@ export class SparkBrowser {
       this.settleMcpTask(task, { ok: false, text: "无法为这个 agent 创建独立标签。" });
       this.agentPoolIds?.delete(task.taskId);
       this.taskPool?.finish?.(task.taskId, "failed");
+      this.pumpAgent();
       this.pushSidebarState();
       return;
     }
@@ -6737,6 +6846,8 @@ export class SparkBrowser {
                 this.chatLog.push({ role: "assistant", text });
                 this.pushSidebarState();
                 if (task.status === "running") task.lastAssistant = text;
+                const card = this.taskPool?.tasks?.find((item) => item.id === task.taskId);
+                if (card) card.lastLine = text.replace(/\s+/g, " ").trim().slice(0, 80);
               },
             });
             this.chatLog.push({ role: "assistant", text: result.text });
@@ -6759,6 +6870,7 @@ export class SparkBrowser {
       this.freeSoulRunning = this.chatRunningFlag || this.agentAborts.size > 0;
       this.agentPoolIds?.delete(task.taskId);
       this.taskPool?.finish?.(task.taskId, task.status === "failed" ? "failed" : "done");
+      this.pumpAgent();
       this.pushSidebarState();
     }
   }
