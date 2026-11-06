@@ -179,9 +179,14 @@ input, textarea, select, .chat-log, .chat-log .bubble {
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
-  padding: 8px 12px 0;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 8px 12px;
   font-size: 12px;
   color: var(--muted);
+  background: var(--side);
+  border-bottom: 1px solid var(--line);
 }
 .agent-roster[hidden] { display: none; }
 .agent-roster button {
