@@ -25,7 +25,8 @@ export type FreeSoulToolName =
   | "list_captures"
   | "match_skill"
   | "run_skill"
-  | "save_skill";
+  | "save_skill"
+  | "save_doc";
 
 export type FreeSoulToolRunner = (
   name: FreeSoulToolName,
@@ -237,6 +238,17 @@ const TOOLS = [
       contract: { type: "object" },
     },
   ),
+  tool(
+    "save_doc",
+    "把整理好的内容写成本地文档（md / txt / html）。用户要把结果存成文档、写成文件、落成 md 时用它，不要去开网页。写完把路径告诉用户。",
+    {
+      title: { type: "string", description: "文档标题，也用作默认文件名" },
+      body: { type: "string", description: "文档正文全文" },
+      format: { type: "string", enum: ["md", "txt", "html"] },
+      path: { type: "string", description: "可选，用户给过的绝对路径；不给就存到默认文档目录" },
+    },
+    ["title", "body"],
+  ),
 ];
 
 const STUCK_HINT =
@@ -270,6 +282,7 @@ function systemPrompt(url: string, title: string, execMode?: "step" | "auto"): s
     CAPTURE_PROMPT,
     "带站点语义的多步任务（发布、上品、采集、生活规划）先 match_skill；命中即优先 run_skill 按剧本走，未命中或剧本执行失败自动回落通用工具路径，不因技能问题中断任务。",
     "只有用户明确说「沉淀成技能 / 记成技能 / 生成技能」时才调 save_skill；任务成功后不要主动建议沉淀。",
+    "用户要把整理好的内容存成本地文档（md / txt / html）时用 save_doc，不要去开网页；写完把路径告诉用户。",
     "历史对话里的工具结果都是当时真实读回的，是可信的。浏览器或应用重启后页面状态会重置，当前标签页在哪、显示什么，都不能用来否定历史里已完成的动作。需要核实历史发布是否生效时，去对应平台实际查看（例如打开微博个人主页看时间线），不要凭当前页面状态下结论。",
     "使用用户最新一条消息的语言回复。",
     `当前页面标题：${title || "（无）"}`,
