@@ -1533,6 +1533,12 @@ export class SparkBrowser {
     return id;
   }
 
+  /** 只读快照，给 dev 内存采样用。不改任务状态。 */
+  diagSnapshot(): { tabs: number; running: number } {
+    const running = this.taskPool.tasks.filter((task) => task.state === "running").length;
+    return { tabs: this.tabs.size, running };
+  }
+
   listTabs(): {
     tabs: Array<{
       id: string;
