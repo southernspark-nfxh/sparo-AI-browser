@@ -647,7 +647,21 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
     "get_task",
     "Read a submit_task record: status, rounds, lastAssistant, elapsedMs. When done, result has closeReason, finalUrl, lastAssistant, captures, and reportUrl. Unknown ids return status unknown.",
     { taskId: z.string().min(1) },
-    async ({ taskId }) => textResult(handlers.get_task(taskId)),
+    async ({ taskId }) => textResult(handlers.get_task(taskId, scope?.clientId)),
+  );
+
+  server.tool(
+    "list_tasks",
+    "List this client's running, queued, or waiting tasks: id, status, rounds, tab. No task text.",
+    {},
+    async () => textResult(handlers.list_tasks(scope?.clientId)),
+  );
+
+  server.tool(
+    "list_agents",
+    "List connected agents: display name, tab count, whether one is running. No chat and no task text.",
+    {},
+    async () => textResult(handlers.list_agents()),
   );
 
   server.tool("get_url", "Get current page URL", { tabId: tabIdField }, async ({ tabId }) =>
@@ -852,6 +866,14 @@ export async function startMcpServer(handlers: ToolHandlers): Promise<{
       : "";
     const clientId = headerClient || (rpcMethod === "initialize" ? issueClientId() : "");
     if (clientId) res.setHeader("x-sparo-client", clientId);
+    if (clientId && rpcMethod === "initialize") {
+      const params =
+        parsedEarly && typeof parsedEarly === "object" && "params" in parsedEarly
+          ? (parsedEarly as { params?: { clientInfo?: { name?: unknown } } }).params
+          : undefined;
+      const rawName = params?.clientInfo?.name;
+      handlers.register_client(clientId, typeof rawName === "string" ? rawName : "");
+    }
     const server = new McpServer(
       { name: "sparo", version: "0.1.0" },
       clientId

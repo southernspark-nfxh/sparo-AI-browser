@@ -16,6 +16,10 @@ export type PoolTask = {
   lane: TaskLane;
   state: TaskCardState;
   step: string;
+  clientId?: string;
+  agentName?: string;
+  color?: string;
+  lastLine?: string;
 };
 
 export type TaskCardView = {
@@ -25,6 +29,10 @@ export type TaskCardView = {
   lane: TaskLane;
   state: TaskCardState;
   step: string;
+  clientId?: string;
+  agentName?: string;
+  color?: string;
+  lastLine?: string;
 };
 
 export class TaskPool {
@@ -56,7 +64,16 @@ export class TaskPool {
     this.foregroundBusy = false;
   }
 
-  start(input: { id: string; tabId: string; title: string; lane: TaskLane }): PoolTask {
+  start(input: {
+    id: string;
+    tabId: string;
+    title: string;
+    lane: TaskLane;
+    clientId?: string;
+    agentName?: string;
+    color?: string;
+    lastLine?: string;
+  }): PoolTask {
     const task: PoolTask = {
       ...input,
       state: "running",
@@ -66,7 +83,16 @@ export class TaskPool {
     return task;
   }
 
-  enqueue(input: { id: string; tabId: string; title: string; lane: TaskLane }): PoolTask {
+  enqueue(input: {
+    id: string;
+    tabId: string;
+    title: string;
+    lane: TaskLane;
+    clientId?: string;
+    agentName?: string;
+    color?: string;
+    lastLine?: string;
+  }): PoolTask {
     const task: PoolTask = {
       ...input,
       state: "queued",
@@ -159,6 +185,10 @@ export class TaskPool {
         lane: task.lane,
         state: task.state,
         step: task.step,
+        clientId: task.clientId,
+        agentName: task.agentName,
+        color: task.color,
+        lastLine: task.lastLine,
       }));
   }
 }
