@@ -36,6 +36,7 @@ vi.mock("electron", () => ({
 }));
 
 import { SparkBrowser, formatTabMemoryBoard } from "../src/main/browser.js";
+import { bindClientTab, resetMcpSessions } from "../src/main/agent/mcp-sessions.js";
 import { loadSettings } from "../src/main/settings/store.js";
 
 type TabRow = {
@@ -52,6 +53,7 @@ type TabRow = {
 const dirs: string[] = [];
 
 afterEach(() => {
+  resetMcpSessions();
   for (const d of dirs.splice(0)) {
     try {
       rmSync(d, { recursive: true, force: true });
@@ -246,6 +248,65 @@ describe("reader tab reuse", () => {
     expect((manual.data as { id?: string }).id).not.toBe(readerId);
     expect(browser.readerTabId).toBe(readerId);
     expect(created()).toBe(2);
+  });
+});
+
+describe("T70 休眠后仍是已下班", () => {
+  function ownJob(browser: ReturnType<typeof harness>["browser"]) {
+    bindClientTab({
+      clientId: "jia",
+      tabId: "job",
+      knownTabIds: ["active", "job"],
+      createAgentTab: () => "unused",
+    });
+    const tab = browser.tabs.get("job");
+    if (!tab) throw new Error("missing job");
+    tab.agentStatus = "done";
+    return tab;
+  }
+
+  it("agent 标签休眠后保留已下班，用户标签仍清掉", () => {
+    const { browser } = harness();
+    const agent = ownJob(browser);
+    browser.discardTab("job");
+    expect(agent.discarded).toBe(true);
+    expect(agent.agentStatus).toBe("done");
+
+    resetMcpSessions();
+    const user = harness();
+    const tab = user.browser.tabs.get("job");
+    if (!tab) throw new Error("missing job");
+    tab.agentStatus = "done";
+    user.browser.discardTab("job");
+    expect(tab.agentStatus).toBeUndefined();
+  });
+
+  it("没有视图的 agent 标签休眠也不清已下班", () => {
+    const { browser } = harness();
+    const tab = ownJob(browser);
+    tab.view = null;
+    browser.discardTab("job");
+    expect(tab.discarded).toBe(true);
+    expect(tab.agentStatus).toBe("done");
+  });
+
+  it("关掉标签后已下班标记清空", () => {
+    const { browser } = harness();
+    const tab = ownJob(browser);
+    browser.closeTab("job");
+    expect(tab.agentStatus).toBeUndefined();
+    expect(browser.tabs.has("job")).toBe(false);
+  });
+
+  it("自动休眠后 listTabs 仍是 done", () => {
+    const { browser } = harness();
+    const tab = ownJob(browser);
+    tab.lastActiveAt = Date.now() - 6 * 60_000;
+    (browser as unknown as { autoDiscardIdleTabs: () => void }).autoDiscardIdleTabs();
+    const listed = browser.listTabs().tabs.find((item) => item.id === "job");
+    expect(listed?.agentState).toBe("done");
+    expect(listed?.agentStatus).toBe("done");
+    expect(tab.discarded).toBe(true);
   });
 });
 
