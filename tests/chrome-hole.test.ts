@@ -14,7 +14,7 @@ vi.mock("electron", () => ({
 }));
 
 import { SparkBrowser } from "../src/main/browser.js";
-import { resetChromeCoverBudget, takeChromeCoverFix } from "../src/main/page-bounds.js";
+import { chromeCoverReason, pageViewCoversChrome, resetChromeCoverBudget, takeChromeCoverFix } from "../src/main/page-bounds.js";
 
 type HoleBrowser = SparkBrowser & {
   tabs: Map<string, { id: string; view?: { getBounds: () => { x: number; y: number; width: number; height: number } }; discarded?: boolean }>;
@@ -75,5 +75,75 @@ describe("常驻页面洞断言", () => {
     timers.push(browser.chromeHoleTimer);
     vi.advanceTimersByTime(2_000);
     expect(pulls).toBeGreaterThan(0);
+  });
+});
+
+describe("T57 覆盖原因", () => {
+  const hole = { x: 100, y: 76, width: 800, height: 700 };
+
+  it("五条分支和正常矩形", () => {
+    expect(chromeCoverReason({ ...hole, y: 0 }, hole)).toBe("y");
+    expect(chromeCoverReason({ ...hole, x: 0 }, hole)).toBe("x");
+    expect(chromeCoverReason({ ...hole, width: 900 }, hole)).toBe("width");
+    expect(chromeCoverReason({ x: 110, y: 76, width: 800, height: 700 }, hole)).toBe("right");
+    expect(chromeCoverReason({ ...hole, height: 720 }, hole)).toBe("height");
+    expect(chromeCoverReason(hole, hole)).toBeNull();
+    expect(pageViewCoversChrome(hole, hole)).toBe(false);
+    expect(pageViewCoversChrome({ ...hole, y: 0 }, hole)).toBe(true);
+  });
+});
+
+describe("T57 无进展抑制", () => {
+  it("连续 3 次同几何后第 4 次不重排，切标签后重新计数", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-06T08:00:00Z"));
+    const browser = bare();
+    const hole = { x: 0, y: 76, width: 680, height: 829 };
+    const stuck = { x: 0, y: 76, width: 966, height: 829 };
+    const view = { getBounds: () => stuck };
+    browser.tabs = new Map([
+      ["a", { id: "a", view }],
+      ["b", { id: "b", view }],
+    ]);
+    browser.activeTabId = "a";
+    browser.holeBounds = hole;
+    browser.overlay = "none";
+    browser.boundsGuard = false;
+    browser.lastActiveBounds = null;
+    browser.chromeHoleTimer = null;
+    browser.chromeCover = resetChromeCoverBudget(Date.now());
+    browser.window = {
+      isDestroyed: () => false,
+      isMinimized: () => false,
+      isMaximized: () => false,
+    };
+    const host = browser as unknown as Record<string, () => void>;
+    for (const name of ["wakeTab", "layout", "focusActivePage", "pushChromeState", "requestHoleReport", "pushSidebarState", "listTabs"]) {
+      host[name] = () => undefined;
+    }
+    let pulls = 0;
+    browser.applyViewBounds = () => {
+      pulls += 1;
+    };
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map(String).join(" "));
+    });
+    try {
+      for (let i = 0; i < 3; i += 1) {
+        browser.assertChromeHole();
+        vi.advanceTimersByTime(2_000);
+      }
+      expect(pulls).toBe(3);
+      browser.assertChromeHole();
+      expect(pulls).toBe(3);
+      expect(lines.some((line) => line.includes("[chrome-hole] give-up tab=a reason=width"))).toBe(true);
+      expect(lines.some((line) => line.includes("reason=width dw=286"))).toBe(true);
+      browser.switchTab("b");
+      browser.assertChromeHole();
+      expect(pulls).toBe(4);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

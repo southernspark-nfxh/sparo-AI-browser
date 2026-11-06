@@ -18,7 +18,7 @@ import { join, resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { boundsWithinOnePixel, pageViewCoversChrome, resetChromeCoverBudget, takeChromeCoverFix, type ChromeCoverBudget } from "./page-bounds.js";
+import { boundsWithinOnePixel, chromeCoverDelta, chromeCoverReason, pageViewCoversChrome, resetChromeCoverBudget, takeChromeCoverFix, type ChromeCoverBudget, type CoverReason } from "./page-bounds.js";
 import { clickPointUsable, offscreenAgentBounds, viewportTooSmall } from "./agent-viewport.js";
 import { coPresenceMayRestore } from "./shell-focus.js";
 import { traceMainWindow } from "./focus-trace.js";
@@ -1084,7 +1084,7 @@ export class SparkBrowser {
     this.offerMissionRecovery();
     this.window.on("resize", () => {
       this.rememberUserWindowBounds();
-      this.chromeCover = resetChromeCoverBudget(Date.now());
+      this.resetChromeCoverState();
       const [w, h] = this.window.getContentSize();
       if (
         this.lastLayoutContent &&
@@ -1103,7 +1103,7 @@ export class SparkBrowser {
     // Windows 上最小化→恢复不一定补一次有效 resize（事件可能在尺寸还是 0 时触发）。
     // Electron 没有 unminimize；restore 就是从最小化还原。延迟补排，防止页面视图停在 100px 窄条。
     this.window.on("restore", () => {
-      this.chromeCover = resetChromeCoverBudget(Date.now());
+      this.resetChromeCoverState();
       this.scheduleLayout(150);
       this.armChromeGuard();
       // 壳层回到前台就恢复节流。Agent 标签是独立 webContents，不受这条影响。
@@ -1618,6 +1618,7 @@ export class SparkBrowser {
 
   switchTab(id: string): ToolResult {
     if (!this.tabs.has(id)) return { ok: false, message: `Tab not found: ${id}` };
+    this.clearChromeHealStall();
     this.wakeTab(id);
     this.activeTabId = id;
     const tab = this.tabs.get(id);
@@ -1752,7 +1753,7 @@ export class SparkBrowser {
       return;
     }
     this.ensureWindowVisible();
-    this.chromeCover = resetChromeCoverBudget(Date.now());
+    this.resetChromeCoverState();
     this.armChromeGuard();
   }
 
@@ -2561,10 +2562,16 @@ export class SparkBrowser {
     actual: { x: number; y: number; width: number; height: number },
     hole: { x: number; y: number; width: number; height: number },
   ): void {
+    const reason = chromeCoverReason(actual, hole);
+    if (!reason) return;
+    const tabId = this.activeTabId || "";
+    const stalls = this.chromeHealStalls();
+    const prev = stalls.get(tabId);
+    if (prev && prev.count >= 3) return;
     const taken = takeChromeCoverFix(this.chromeCover, Date.now());
     this.chromeCover = taken.state;
     if (!taken.allow) return;
-    this.logChromeHole("heal", actual, hole);
+    this.logChromeHole("heal", actual, hole, reason);
     this.boundsGuard = true;
     try {
       this.applyViewBounds(false);
@@ -2573,12 +2580,44 @@ export class SparkBrowser {
     } finally {
       this.boundsGuard = false;
     }
+    let after = actual;
+    try {
+      const view = this.tabs.get(tabId)?.view;
+      if (view) after = view.getBounds();
+    } catch {
+      after = actual;
+    }
+    if (boundsWithinOnePixel(actual, after)) {
+      const count = (prev?.count || 0) + 1;
+      stalls.set(tabId, { count, reason });
+      if (count >= 3) console.log(`[chrome-hole] give-up tab=${tabId} reason=${reason}`);
+      return;
+    }
+    stalls.delete(tabId);
+  }
+
+  /** 同一标签连续三次设了等于没设，就停手。resize / restore / switchTab 再清掉。 */
+  private chromeHealStall: Map<string, { count: number; reason: Exclude<CoverReason, null> }> | null = null;
+
+  private chromeHealStalls(): Map<string, { count: number; reason: Exclude<CoverReason, null> }> {
+    if (!this.chromeHealStall) this.chromeHealStall = new Map();
+    return this.chromeHealStall;
+  }
+
+  private clearChromeHealStall(): void {
+    this.chromeHealStall = new Map();
+  }
+
+  private resetChromeCoverState(): void {
+    this.chromeCover = resetChromeCoverBudget(Date.now());
+    this.clearChromeHealStall();
   }
 
   private logChromeHole(
     kind: "bounds-changed" | "heal",
     oldBounds: { x: number; y: number; width: number; height: number } | null,
     newBounds: { x: number; y: number; width: number; height: number },
+    reason?: Exclude<CoverReason, null>,
   ): void {
     let minimized = false;
     let maximized = false;
@@ -2588,8 +2627,9 @@ export class SparkBrowser {
     } catch {
       /* ignore */
     }
+    const delta = reason && oldBounds ? ` reason=${reason} ${chromeCoverDelta(reason, oldBounds, newBounds)}` : "";
     console.log(
-      `[chrome-hole] ${kind} t=${Date.now()} active=${this.activeTabId || ""} minimized=${minimized} maximized=${maximized} old=${JSON.stringify(oldBounds)} new=${JSON.stringify(newBounds)}`,
+      `[chrome-hole] ${kind} t=${Date.now()} active=${this.activeTabId || ""} minimized=${minimized} maximized=${maximized} old=${JSON.stringify(oldBounds)} new=${JSON.stringify(newBounds)}${delta}`,
     );
   }
 
