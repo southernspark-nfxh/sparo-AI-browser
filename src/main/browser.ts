@@ -860,16 +860,43 @@ export class SparkBrowser {
     return { ok: true, selectedSession: this.selectedSession, activeId: this.activeTabId };
   }
 
-  private sessionViews(): Array<{ key: string; label: string; color: string; running: number }> {
-    const keys = new Set<string>(["user"]);
-    for (const key of this.chatBook().keys()) keys.add(key);
+  /** 没有在跑、没有排队、没有等人、也没有打开的标签，就把这份对话丢掉。 */
+  private pruneDeadAgentChats(): void {
     const pool = this.taskPool?.tasks || [];
-    return [...keys].map((key) => {
+    for (const key of [...this.chatBook().keys()]) {
+      if (!key.startsWith("agent:")) continue;
+      const clientId = key.slice("agent:".length);
+      const liveTask = pool.some(
+        (task) =>
+          task.clientId === clientId &&
+          (task.state === "running" || task.state === "queued" || task.state === "waiting_human"),
+      );
+      const openTab = [...(this.tabs?.keys() || [])].some((id) => ownerForTab(id) === key);
+      if (liveTask || openTab) continue;
+      this.chatBook().delete(key);
+      if (this.selectedSession === key) this.selectedSession = "user";
+    }
+  }
+
+  private sessionViews(): Array<{ key: string; label: string; color: string; running: number }> {
+    this.pruneDeadAgentChats();
+    const keys = new Set<string>(["user"]);
+    const pool = this.taskPool?.tasks || [];
+    for (const task of pool) {
+      if (!task.clientId) continue;
+      if (task.state === "running" || task.state === "queued" || task.state === "waiting_human") {
+        keys.add(`agent:${task.clientId}`);
+      }
+    }
+    for (const id of this.tabs?.keys() || []) {
+      const owner = ownerForTab(id);
+      if (owner.startsWith("agent:")) keys.add(owner);
+    }
+    const ordered = ["user", ...[...keys].filter((key) => key !== "user")];
+    return ordered.map((key) => {
       const clientId = key.startsWith("agent:") ? key.slice("agent:".length) : "";
       const session = clientId ? listClientSessions().find((item) => item.clientId === clientId) : undefined;
-      const running = clientId
-        ? pool.filter((task) => task.tabId && ownerForTab(task.tabId) === key && task.state === "running").length
-        : 0;
+      const running = clientId ? pool.filter((task) => task.clientId === clientId && task.state === "running").length : 0;
       return {
         key,
         label: key === "user" ? "我" : session?.name || key.replace(/^agent:/, "Agent "),

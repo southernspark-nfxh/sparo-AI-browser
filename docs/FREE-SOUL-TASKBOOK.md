@@ -2067,3 +2067,12 @@ y 从 76 到 108，横幅占 32px。任务结束后 `list_tabs` 该标签 `agent
 
 - 未验证：没有截色点。任务结束后新标签没有单独的 done 标记，横幅会回到隐藏；原标签仍是 done。
 
+### T61 「使用中」列的是历史
+
+- 改动：`src/main/browser.ts`、`tests/session-views.test.ts`、`tests/multi-agent-isolation.test.ts`
+- 根因：`sessionViews` 把 `chatBook` 里所有会话都算进去。agent 对话不落盘，但一直留在内存里，关掉之后还显示。
+- 只保留正在跑、排队、等人，或还有未关闭标签的 agent。`user` 永远排第一。什么痕迹都没有的 key 从 `chatBook` 删掉；当时选中它就回到 `user`。
+- 测试：`tests/session-views.test.ts`「三个都结束并关标签后只剩用户，还有一个在跑就留两个」。隔离测试改为标签还开着，对话才留得住。全量 93 文件 / 660 通过，typecheck 通过。
+- 真机：没再造 11 个历史 agent 去看侧栏。单测覆盖这条。
+- 未验证：用户那个已经堆了 11 个名字的窗口要重启后才会变短。
+
