@@ -26,6 +26,15 @@ describe("T51 agent 显示名与颜色", () => {
     expect(renamed.seat).toBe(first.seat);
   });
 
+  it("验收甲原样保留，超长按字符而不是字节截断", () => {
+    expect(registerClientName("jia", "验收甲").name).toBe("验收甲");
+    const raw = "审".repeat(30);
+    const named = registerClientName("long", raw);
+    expect(named.name).toBe("审".repeat(24));
+    expect(named.name).toHaveLength(24);
+    expect(Buffer.byteLength(named.name, "utf8")).toBe(72);
+  });
+
   it("名字超过 24 字会截断，绑定标签不冲掉已有名字", () => {
     const raw = "一二三四五六七八九十一二三四五六七八九十额外的字啊";
     const named = registerClientName("gamma", raw);
