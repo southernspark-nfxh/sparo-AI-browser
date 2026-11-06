@@ -2088,3 +2088,92 @@ y 从 76 到 108，横幅占 32px。任务结束后 `list_tabs` 该标签 `agent
 
 - T63：`page_text` 单次最多 80000 字，送进模型前单条截到约 2.4 万字，但每一轮都追加，旧轮不删。T56 只写了会增长的测试，没有改脑区。
 
+---
+
+# 第十六轮（v17）— 用户主动沉淀：跑通的路子留得下来（2026-11-06 立项）
+
+> 背景与拍板（用户原话意图）：「当前的 sparo 自己没法沉淀 skill 没法记录 skill 这就是个问题」「用户主动说 把xxx沉淀成skill 或者生成skill时候再做」。
+> 规划方核实：消费端已通——`run_skill` 命中 distilled 技能返回脚手架（runner.ts L1146）、stats 记账与连败停用（retireBrokenSkill）都在；旧架构有三条沉淀路径（browser.ts L8943 直答后蒸馏、L6269 旧任务循环关单蒸馏、L10656 手动录制），**但主力 Free Soul 内核跑完即丢，工具轨迹不留任何痕迹**。技能库只能靠官方种子包和人手动录制，模型自己跑通的路子一条都留不下。
+> 拍板：**不做自动沉淀**。只在用户主动说「把刚才这趟沉淀成技能 / 生成技能」时触发。
+
+## T64（P0）Free Soul 轨迹留存
+
+改动：`src/main/agent/free-soul.ts`、`src/main/browser.ts`
+
+1. `freeSoul.run()` 循环内，每次 `safeRun` 之后收集一条轨迹：`{ tool, args(脱敏摘要), ok, round }`。args 只留 URL / 文本关键词类字段，**选择器、坐标、密钥类字段不进轨迹**（复用或对照 `src/main/agent/distill.ts` 的 `cleanArgs` / `stripSecretQuery`）。
+2. 轨迹上限 60 条，超出滚动丢弃中段，保留开头（navigate 类）与结尾。
+3. run 以 `ok: true` 且**非** `awaitingConfirm` 结束时，把 `{ input 原话, trace }` 通过新回调（如 `onTrace`）交给 browser 层，存为实例字段 `lastRunTrace`。`awaitingConfirm`、`interrupted`、失败结束**不覆盖**已有 `lastRunTrace`。
+4. `lastRunTrace` 只存内存，重启即清，不落盘、不进聊天记忆。
+
+## T65（P0）`save_skill` 工具进内核
+
+改动：`src/main/agent/free-soul.ts`（工具表 + 系统提示）、`src/main/browser.ts`（runCoreTool 分发）、`src/main/agent/distill.ts`（export 校验逻辑）
+
+两段式设计，模型拍板、本地只校验落盘：
+
+1. `FreeSoulToolName` 增加 `save_skill`。
+2. **第一段**：模型无 `route` 参数调 `save_skill` → 本地返回 `lastRunTrace` 的格式化文本（原话 + 轨迹列表），并提示「基于此轨迹输出 route JSON 后带参数再调 save_skill」。没有 `lastRunTrace` 时返回「最近没有跑成功的任务，无可沉淀」。
+3. **第二段**：模型带 `route` 参数调 `save_skill`（形状与 distill.ts 的 DistillSkillDraft 一致：title / intent / aliases / route / params / pitfalls / contract）→ 本地复用 `asRoute` / `cleanArgs` 校验（从 distill.ts export，不改语义）→ `saveDistilledSkill` 落盘（source: "taught"，distilled: true）→ 刷新 `skillsCache` → 返回成功消息（含技能 id 与 title，供模型转述用户）。
+4. 拒绝分支，全部返回明确原因给模型转述，不静默：
+   - 轨迹中含**成功的** `run_skill` 调用 → 「这趟走的是既有技能 XX，无需重复沉淀」；
+   - 与现有技能 title / intent 重名 → 返回已有技能 id；
+   - route 校验全灭（无合法段）→ 提示模型修正后重试一次。
+5. 系统提示（step 与 auto 同加，措辞自拟，语义如下）：**只有用户明确说「沉淀成技能 / 记成技能 / 生成技能」时才调 save_skill；任务成功后不要主动建议沉淀**。后半句是红线，写进提示原文。
+
+## 验收（Q28，真机）
+
+1. 侧栏跑一个多步任务（例：「打开微博热搜页，把前 10 条整理成清单」）成功关单。
+2. 下一句说「把刚才这趟沉淀成技能」→ 内核调 save_skill（两段）→ 侧栏回复「已记成 XX」。
+3. `%APPDATA%\sparo-store\skills\` 出现新技能 JSON：`source: "taught"`、`distilled: true`、route 内无选择器 / 坐标 / token。
+4. 新对话里 `match_skill` 能查到、`run_skill` 返回脚手架文本；设置里技能列表可见、可删。
+5. 反向验收：任务成功关单后**不说话**，侧栏不得出现任何沉淀提示；日志无 save_skill 调用。
+
+## 全局禁区（本轮）
+
+1. **不自动沉淀**：任何任务成功关单路径不得调用 save_skill 或蒸馏逻辑；系统提示不得含「主动建议沉淀」语义。这是用户拍板，不是工程取舍。
+2. 不改技能文件本身、不动 seeded 技能、不碰 `lessons.json` 路径。
+3. 脱敏照旧：密码、验证码、带 token 的 URL、选择器、坐标不得进轨迹与技能；`docs/SKILL-FORMAT.md` 的禁止清单全部适用。
+4. 脑区改动（free-soul.ts、agent/）独立 commit，不与 browser.ts 非脑区改动合并；一个任务书一个 commit。
+5. 沉淀失败不挡任务：save_skill 出错只返回错误文本，模型转述，不影响当前轮次继续。
+6. 不碰 `package.json` 版本号、不碰 `docs/listings/`、不提价格付款。
+7. 决策点：本两任务无提前结束任务的本地判断，预期不新增 DECISION-POINTS 登记。
+
+## 完成交付
+
+照旧：改动文件、测试名、决策点、真机未跑如实写。`npm test` 与 `npm run typecheck` 全绿后才算完成。
+
+## 完成记录（用户主动沉淀 T64–T65，2026-11-06，Cursor）
+
+决策点：无。没有提前结束任务的本地判断，没有改 `docs/DECISION-POINTS.md`。没有改 `package.json` 版本号，没有碰 `docs/listings/`，没有价格和付款 UI。成功关单只把轨迹放进内存，不调用 `save_skill`，也不写 `lessons.json`。
+
+`lastRunTrace` 不落盘、不进聊天记忆。确认中断、用户打断、失败结束都不覆盖已有轨迹。
+
+### T64
+
+- 改动：`src/main/agent/free-soul.ts`、`src/main/browser.ts`
+- 每次 `safeRun` 之后记一条 `{ tool, args, ok, round }`。args 走 `traceArgs`（`cleanArgs` 去掉选择器、坐标，`stripSecretQuery` 去掉 URL 里的 token / 密码 / 验证码），只留网址和文本关键词。
+- 超过 60 条丢掉中段。开头连续的 `navigate` / `search_site` 留下，结尾留下。
+- `ok: true` 且不是 `awaitingConfirm`、也不是 `interrupted` 时，经 `onTrace` 写到 `lastRunTrace`。侧栏 `handleChat` 和后台 `runAgentTask` 都接了这个回调。
+- 测试：`tests/free-soul-v17.test.ts`
+  - 「成功关单留下脱敏轨迹，确认、失败和打断都不覆盖」
+  - 「超过 60 条时丢掉中段，开头的打开页和结尾还在」
+
+### T65
+
+- 改动：`src/main/agent/free-soul.ts`、`src/main/agent/distill.ts`、`src/main/browser.ts`
+- 新工具 `save_skill`。不带 `route` 时返回最近一次成功轨迹，并请模型带参数再调一次。带 `route` 时用导出的 `asRoute` / `cleanArgs` 校验，`saveDistilledSkill` 落盘（`source: "taught"`，`distilled: true`），刷新 `skillsCache`。
+- 拒绝都把原因交回模型：没有轨迹、轨迹里有成功的 `run_skill`、title / intent 重名（带回已有 id）、route 没有合法段（请重试一次）。出错不结束本轮。
+- 系统提示（手动和自动都有）：只有用户明确说「沉淀成技能 / 记成技能 / 生成技能」时才调 `save_skill`；任务成功后不要主动建议沉淀。
+- `saveDistilledSkill` 现在会把草稿里的 aliases 写进技能文件，`match_skill` 才能按别名命中。校验语义没改。
+- 测试：`tests/free-soul-v17.test.ts`
+  - 「系统提示只在用户点名时沉淀，自动模式也一样」
+  - 「save_skill 把结果交回模型，不中断本轮」
+  - 「没轨迹、走了既有技能、路线不合法、重名，都把原因交回去」
+  - 「带 route 落成 taught 技能，文件里没有选择器和 token」
+  - 「任务成功后不落盘、不提沉淀；下一句才记成技能，失败不覆盖轨迹」
+
+### 测试与未跑
+
+- 全量：`npm test` 94 文件 / 668 通过，`npm run typecheck` 通过。
+- 真机 Q28：未跑。单测覆盖了侧栏入口的两段式落盘、脱敏和「成功后不自动沉淀」，没有开着 Sparo 去微博热搜页走一遍。
+

@@ -1,6 +1,7 @@
 import type { ToolResult } from "../../shared/types.js";
 import { CAPTURE_PROMPT, CAPTURE_RUN_LIMIT, RUN_CAPTURE_FULL } from "../captures.js";
 import { pageTextGrowthNote } from "./deepseek.js";
+import { traceArgs, type SoulRunTrace, type SoulTraceStep } from "./distill.js";
 import { chatCompletionsUrl } from "../settings/llm-url.js";
 
 export type FreeSoulToolName =
@@ -23,7 +24,8 @@ export type FreeSoulToolName =
   | "save_image"
   | "list_captures"
   | "match_skill"
-  | "run_skill";
+  | "run_skill"
+  | "save_skill";
 
 export type FreeSoulToolRunner = (
   name: FreeSoulToolName,
@@ -222,6 +224,19 @@ const TOOLS = [
       params: { type: "object" },
     },
   ),
+  tool(
+    "save_skill",
+    "把最近一次成功跑完的任务记成技能。只有用户明确说沉淀成技能、记成技能或生成技能时才调用。不带 route 时先取回轨迹；带上 title、intent、aliases、route、params、pitfalls、contract 后再次调用才会落盘。任务成功后不要主动建议沉淀。",
+    {
+      title: { type: "string" },
+      intent: { type: "string" },
+      aliases: { type: "array", items: { type: "string" } },
+      route: { type: "array", description: "fixed 段只能是 navigate、page_text、wait_for、report；open 段只写目标" },
+      params: { type: "object" },
+      pitfalls: { type: "array" },
+      contract: { type: "object" },
+    },
+  ),
 ];
 
 const STUCK_HINT =
@@ -254,6 +269,7 @@ function systemPrompt(url: string, title: string, execMode?: "step" | "auto"): s
     "用户给出本地文件路径让你上传（视频、图片、附件）时，用 set_file 把文件放进文件选择框，不要试图用 fill 填路径或用 file:// 打开本地目录。",
     CAPTURE_PROMPT,
     "带站点语义的多步任务（发布、上品、采集、生活规划）先 match_skill；命中即优先 run_skill 按剧本走，未命中或剧本执行失败自动回落通用工具路径，不因技能问题中断任务。",
+    "只有用户明确说「沉淀成技能 / 记成技能 / 生成技能」时才调 save_skill；任务成功后不要主动建议沉淀。",
     "历史对话里的工具结果都是当时真实读回的，是可信的。浏览器或应用重启后页面状态会重置，当前标签页在哪、显示什么，都不能用来否定历史里已完成的动作。需要核实历史发布是否生效时，去对应平台实际查看（例如打开微博个人主页看时间线），不要凭当前页面状态下结论。",
     "使用用户最新一条消息的语言回复。",
     `当前页面标题：${title || "（无）"}`,
@@ -334,6 +350,18 @@ function noteStuck(
   };
 }
 
+const TRACE_CAP = 60;
+const TRACE_HEAD_TOOLS = new Set(["navigate", "search_site"]);
+
+function capSoulTrace(steps: SoulTraceStep[]): SoulTraceStep[] {
+  if (steps.length <= TRACE_CAP) return steps;
+  let head = 0;
+  while (head < steps.length && TRACE_HEAD_TOOLS.has(steps[head].tool)) head += 1;
+  if (head === 0) head = 1;
+  if (head > TRACE_CAP - 1) head = TRACE_CAP - 1;
+  return [...steps.slice(0, head), ...steps.slice(steps.length - (TRACE_CAP - head))];
+}
+
 function serializeResult(result: ToolResult): string {
   const text = JSON.stringify({
     ok: result.ok,
@@ -369,6 +397,7 @@ export class FreeSoul {
     taskId?: string;
     onRound?: (round: number) => void;
     onSidebar?: (text: string) => void;
+    onTrace?: (trace: SoulRunTrace) => void;
   }): Promise<{ ok: boolean; text: string; awaitingConfirm?: boolean; interrupted?: boolean }> {
     if (!this.config.apiKey && this.config.mode !== "cloud") {
       return { ok: false, text: "请先在设置里配置模型 Key。" };
@@ -398,9 +427,16 @@ export class FreeSoul {
     let samePageCount = 0;
     let budgetSent = false;
     let savedCaptures = 0;
+    const trace: SoulTraceStep[] = [];
+    const end = (result: { ok: boolean; text: string; awaitingConfirm?: boolean; interrupted?: boolean }) => {
+      if (result.ok && !result.awaitingConfirm && !result.interrupted) {
+        input.onTrace?.({ input: input.input, trace: trace.slice() });
+      }
+      return result;
+    };
     console.log(`[free-soul] run start input=${input.input.slice(0, 80)}`);
     for (let round = 1; round <= safetyCap; round += 1) {
-      if (input.signal?.aborted) return interruptedResult();
+      if (input.signal?.aborted) return end(interruptedResult());
       input.onRound?.(round);
       if (!budgetSent && round >= budgetAt) {
         budgetSent = true;
@@ -414,11 +450,11 @@ export class FreeSoul {
       try {
         data = await this.completion(messages, input.signal, input.taskId);
       } catch (error) {
-        if (input.signal?.aborted) return interruptedResult();
-        return { ok: false, text: modelRequestFailure(error) };
+        if (input.signal?.aborted) return end(interruptedResult());
+        return end({ ok: false, text: modelRequestFailure(error) });
       }
       const choice = data.choices?.[0]?.message;
-      if (!choice) return { ok: false, text: "模型没有返回消息，任务尚未完成。" };
+      if (!choice) return end({ ok: false, text: "模型没有返回消息，任务尚未完成。" });
 
       const calls = (choice.tool_calls || []).map((call, index) => normalizeToolCall(call, round, index));
       messages.push({
@@ -430,8 +466,8 @@ export class FreeSoul {
       if (!calls.length) {
         const text = typeof choice.content === "string" ? choice.content.trim() : "";
         return text
-          ? { ok: true, text }
-          : { ok: false, text: "模型返回了空回复，任务尚未完成。" };
+          ? end({ ok: true, text })
+          : end({ ok: false, text: "模型返回了空回复，任务尚未完成。" });
       }
 
       const pendingHints: string[] = [];
@@ -445,15 +481,24 @@ export class FreeSoul {
           parseError = "工具参数不是合法 JSON，请修正后重试。";
         }
         if (name === "request_confirm") {
-          return { ok: true, text: confirmText(args), awaitingConfirm: true };
+          return end({ ok: true, text: confirmText(args), awaitingConfirm: true });
         }
         const overCaptureBudget =
           (name === "save_shot" || name === "save_image") && savedCaptures >= CAPTURE_RUN_LIMIT;
+        const ranTool = !parseError && !overCaptureBudget;
         const result = parseError
           ? { ok: false, message: parseError }
           : overCaptureBudget
             ? { ok: false, message: RUN_CAPTURE_FULL }
             : await this.safeRun(name, args);
+        if (ranTool) {
+          trace.push({ tool: name, args: traceArgs(args), ok: Boolean(result.ok), round });
+          if (trace.length > TRACE_CAP) {
+            const capped = capSoulTrace(trace);
+            trace.length = 0;
+            trace.push(...capped);
+          }
+        }
         if (name === "match_skill" || name === "run_skill") {
           console.log(`[free-soul] ${name} ok=${result.ok} ${String(result.message || "").slice(0, 160)}`);
         }
@@ -491,7 +536,7 @@ export class FreeSoul {
           name,
           content: serializeResult(reported),
         });
-        if (input.signal?.aborted) return interruptedResult();
+        if (input.signal?.aborted) return end(interruptedResult());
         if (name === "page_text" && result.ok && samePageCount >= 3) {
           console.log(`[free-soul] r${round} PAGE_SAME_HINT`);
           pendingHints.push(PAGE_SAME_HINT);
@@ -528,12 +573,12 @@ export class FreeSoul {
       }
     }
 
-    return {
+    return end({
       ok: false,
       text: input.locale?.startsWith("zh")
         ? "已达 100 轮安全上限，为防失控已停止；回复继续可接着跑"
         : "Reached the 100-round safety limit and stopped. Reply continue to keep going.",
-    };
+    });
   }
 
   private async safeRun(name: FreeSoulToolName, args: Record<string, unknown>): Promise<ToolResult> {
