@@ -24,7 +24,7 @@ import { coPresenceMayRestore } from "./shell-focus.js";
 import { traceMainWindow } from "./focus-trace.js";
 import { laneForText, type TaskLane } from "./agent/task-class.js";
 import { shouldSuspend as poolShouldSuspend, TaskPool, type PoolTask } from "./agent/task-pool.js";
-import { backgroundPoolDecision, bindClientTab } from "./agent/mcp-sessions.js";
+import { backgroundPoolDecision, bindClientTab, ownerForTab } from "./agent/mcp-sessions.js";
 import { capturesSince, ledgerCloseReason, reportSince, type LedgerClose } from "./agent/task-result.js";
 import type {
   ClickConfirm,
@@ -604,6 +604,8 @@ type TaskScope = {
   lastMission: ActiveMission | undefined;
   helpAsk: HelpAsk | null;
   cloudTaskId: string | undefined;
+  /** 对话落在哪一份历史。user 或 agent:<clientId>。T48 起消费。 */
+  chatKey: string;
 };
 
 type BackgroundJob = {
@@ -656,7 +658,11 @@ export class SparkBrowser {
   private paused = false;
   private approvals = new Map<string, ApprovalRequest>();
   private lastQa: QaReport | null = null;
-  private chatLog: ChatTurn[] = [];
+  /** 对话按会话分开。user 落盘；agent:<clientId> 本轮只留内存，重启即清。 */
+  private chatSessions = new Map<string, ChatTurn[]>();
+  private chatKeyFallback = "user";
+  /** 空字符串表示跟着当前标签的归属走。 */
+  private selectedSession = "";
   /** 启动时回放出来的未完成单。只问一次，不挡后面的新句子。 */
   private pendingRecovery: RestoredMission | null = null;
   private lastReaderSender: WebContents | null = null;
@@ -782,6 +788,76 @@ export class SparkBrowser {
     const scope = this.taskStore();
     if (scope) scope.cloudTaskId = id;
     else this.fallbackCloudTaskId = id;
+  }
+
+  private chatBook(): Map<string, ChatTurn[]> {
+    if (!this.chatSessions) this.chatSessions = new Map();
+    return this.chatSessions;
+  }
+
+  private sessionKey(): string {
+    return this.taskStore()?.chatKey || this.chatKeyFallback || "user";
+  }
+
+  /** 60 处 this.chatLog.push 不用改：当前作用域决定写进哪一份。 */
+  private get chatLog(): ChatTurn[] {
+    const key = this.sessionKey();
+    const book = this.chatBook();
+    let list = book.get(key);
+    if (!list) {
+      list = [];
+      book.set(key, list);
+    }
+    return list;
+  }
+
+  private set chatLog(list: ChatTurn[]) {
+    this.chatBook().set(this.sessionKey(), list);
+  }
+
+  private userTurns(): ChatTurn[] {
+    const book = this.chatBook();
+    let list = book.get("user");
+    if (!list) {
+      list = [];
+      book.set("user", list);
+    }
+    return list;
+  }
+
+  private turnsFor(key: string): ChatTurn[] {
+    return this.chatBook().get(key) || [];
+  }
+
+  private resolvedSession(): string {
+    if (this.selectedSession) return this.selectedSession;
+    const owner = ownerForTab(this.activeTabId || "");
+    return owner || "user";
+  }
+
+  selectSession(key: string): { ok: boolean; selectedSession: string } {
+    const clean = String(key || "").trim();
+    this.selectedSession = clean === "user" || clean.startsWith("agent:") ? clean : "user";
+    this.pushSidebarState();
+    return { ok: true, selectedSession: this.selectedSession };
+  }
+
+  private sessionViews(): Array<{ key: string; label: string; color: string; running: number }> {
+    const keys = new Set<string>(["user"]);
+    for (const key of this.chatBook().keys()) keys.add(key);
+    const pool = this.taskPool?.tasks || [];
+    return [...keys].map((key) => {
+      const clientId = key.startsWith("agent:") ? key.slice("agent:".length) : "";
+      const running = clientId
+        ? pool.filter((task) => task.tabId && ownerForTab(task.tabId) === key && task.state === "running").length
+        : 0;
+      return {
+        key,
+        label: key === "user" ? "我" : key.replace(/^agent:/, "Agent "),
+        color: "",
+        running,
+      };
+    });
   }
 
   private chatRunningFlag = false;
@@ -1747,7 +1823,8 @@ export class SparkBrowser {
 
   /** 侧栏新消息在窗口最小化或未聚焦时只闪任务栏，不把窗口弹回来。 */
   private noteSidebarMessages(): void {
-    const n = this.chatLog.length;
+    const userLog = this.userTurns();
+    const n = userLog.length;
     if (this.lastNotifiedChat < 0 || !this.didPlaceWindow) {
       this.lastNotifiedChat = n;
       return;
@@ -1756,7 +1833,7 @@ export class SparkBrowser {
       this.lastNotifiedChat = n;
       return;
     }
-    const added = this.chatLog.slice(this.lastNotifiedChat);
+    const added = userLog.slice(this.lastNotifiedChat);
     this.lastNotifiedChat = n;
     if (!added.some((m) => m.role === "assistant")) return;
     this.flashTaskbarIfHidden();
@@ -2655,6 +2732,7 @@ export class SparkBrowser {
     handle("spark:list-tabs", async () => this.listTabs());
     handle("spark:discard-inactive-tabs", async () => this.discardInactiveTabs());
     handle("spark:clear-chat", async () => this.clearChat());
+    handle("spark:select-session", async (_e, key: string) => this.selectSession(String(key || "")));
     handle("spark:reorder-tabs", async (_e, fromId: string, toId: string) =>
       this.reorderTabs(String(fromId || ""), String(toId || "")),
     );
@@ -3275,7 +3353,7 @@ export class SparkBrowser {
     if (this.window.isDestroyed() || this.window.webContents.isDestroyed()) return;
     try {
       this.window.webContents.send("spark:sidebar-state", this.getSidebarPayload());
-      saveChatMemory(this.configDir(), this.chatLog);
+      saveChatMemory(this.configDir(), this.userTurns());
       this.noteSidebarMessages();
       // handleChat 的 finally 才把 chatRunning 清掉。微任务里再看一眼，任务结束就恢复壳层节流。
       queueMicrotask(() => this.syncShellKeepalive());
@@ -3285,9 +3363,12 @@ export class SparkBrowser {
   }
 
   clearChat(): ToolResult {
-    this.chatLog = [];
-    this.lastCs = null;
-    clearChatMemory(this.configDir());
+    const key = this.resolvedSession();
+    this.chatBook().set(key, []);
+    if (key === "user") {
+      this.lastCs = null;
+      clearChatMemory(this.configDir());
+    }
     this.pushSidebarState();
     return { ok: true, message: tx(this.settings.locale, "chat.cleared") };
   }
@@ -3356,6 +3437,7 @@ export class SparkBrowser {
 
   private getSidebarPayload() {
     pruneStaleApprovals(this.approvals);
+    const selectedSession = this.resolvedSession();
     return {
       paused: this.paused,
       agentConnect: connectedStatus(),
@@ -3371,7 +3453,9 @@ export class SparkBrowser {
         createdAt: a.createdAt,
       })),
       qa: this.lastQa,
-      chat: this.chatLog.slice(-40),
+      chat: this.turnsFor(selectedSession).slice(-40),
+      selectedSession,
+      sessions: this.sessionViews(),
       skills: this.skillsCache.map(skillSummary).slice(0, 30),
       deepseek: this.settingsPublic(),
       cloud: this.cloudPublic(),
@@ -4471,7 +4555,6 @@ export class SparkBrowser {
       const t = await assertAndStartTask(this.configDir());
       this.cloudTaskId = t.taskId;
       this.deepseek?.setTaskId(t.taskId);
-      this.freeSoul?.setTaskId(t.taskId);
       this.cloudQuota = {
         ...t.snap,
         email: this.cloudQuota?.email || loadTokens(this.configDir())?.email,
@@ -4496,7 +4579,6 @@ export class SparkBrowser {
     const id = this.cloudTaskId;
     this.cloudTaskId = undefined;
     this.deepseek?.setTaskId(undefined);
-    this.freeSoul?.setTaskId(undefined);
     if (!id) return null;
     try {
       const s = await settleCloudTask(this.configDir(), id);
@@ -6356,6 +6438,7 @@ export class SparkBrowser {
         .map((turn) => ({ role: turn.role, text: turn.text.slice(0, 4000) }));
       this.freeSoulRunning = true;
       this.activePiAbort = new AbortController();
+      const cloudTaskId = this.cloudTaskId;
       const result = await this.freeSoul.run({
         input: prompt,
         url: this.getUrl(this.agentTabId),
@@ -6364,6 +6447,7 @@ export class SparkBrowser {
         history,
         signal: this.activePiAbort.signal,
         execMode: this.execModeForActiveTask(),
+        taskId: cloudTaskId,
         onRound: (round) => this.noteMcpRound(round),
         onSidebar: (text) => {
           this.chatLog.push({ role: "assistant", text });
@@ -6603,56 +6687,76 @@ export class SparkBrowser {
     const before = this.activeTabId;
     const tabId = this.bindAgentTab(clientId);
     if (before && this.activeTabId !== before && typeof this.switchTab === "function") this.switchTab(before);
-    const previousAgentTab = this.agentTabId;
-    if (tabId) this.agentTabId = tabId;
+    if (!tabId) {
+      this.settleMcpTask(task, { ok: false, text: "无法为这个 agent 创建独立标签。" });
+      this.agentPoolIds?.delete(task.taskId);
+      this.taskPool?.finish?.(task.taskId, "failed");
+      this.pushSidebarState();
+      return;
+    }
+    const pooled = this.taskPool?.tasks?.find((item) => item.id === task.taskId);
+    if (pooled) pooled.tabId = tabId;
     const controller = new AbortController();
     if (!this.agentAborts) this.agentAborts = new Set();
     this.agentAborts.add(controller);
     this.freeSoulRunning = true;
     this.engageBackgroundRender();
     try {
-      if (!this.freeSoul) {
-        this.settleMcpTask(task, { ok: false, text: "请先在设置里配置模型。" });
-        return;
-      }
-      const cloudGate = await this.beginCloudTaskIfNeeded({ type: "llm", text: task.text }, task.text);
-      if (cloudGate === "refused") {
-        const message = this.lastCloudRefuse || this.L("cloud.exhausted");
-        this.chatLog.push({ role: "assistant", text: message });
-        this.settleMcpTask(task, { ok: false, text: message });
-        return;
-      }
-      this.chatLog.push({ role: "user", text: task.text });
-      const result = await this.freeSoul.run({
-        input: task.text,
-        url: this.getUrl(this.agentTabId),
-        title: this.getTitle(this.agentTabId),
-        locale: this.settings.locale,
-        history: this.chatLog.slice(0, -1).slice(-12).map((turn) => ({ role: turn.role, text: turn.text.slice(0, 4000) })),
-        signal: controller.signal,
-        execMode: task.execMode === "step" ? "step" : "auto",
-        onRound: (round) => {
-          if (task.status === "running") task.rounds = round;
+      // 并发时标签、计量、对话都走这份作用域，退出后自动回到用户当前页，不再手写还原 agentTabId。
+      await this.runScoped(
+        "background",
+        tabId,
+        async () => {
+          try {
+            if (!this.freeSoul) {
+              this.settleMcpTask(task, { ok: false, text: "请先在设置里配置模型。" }, tabId);
+              return;
+            }
+            const cloudGate = await this.beginCloudTaskIfNeeded({ type: "llm", text: task.text }, task.text);
+            if (cloudGate === "refused") {
+              const message = this.lastCloudRefuse || this.L("cloud.exhausted");
+              this.chatLog.push({ role: "assistant", text: message });
+              this.settleMcpTask(task, { ok: false, text: message }, tabId);
+              return;
+            }
+            this.chatLog.push({ role: "user", text: task.text });
+            const cloudTaskId = this.cloudTaskId;
+            const result = await this.freeSoul.run({
+              input: task.text,
+              url: this.getUrl(tabId),
+              title: this.getTitle(tabId),
+              locale: this.settings.locale,
+              history: this.chatLog.slice(0, -1).slice(-12).map((turn) => ({ role: turn.role, text: turn.text.slice(0, 4000) })),
+              signal: controller.signal,
+              execMode: task.execMode === "step" ? "step" : "auto",
+              taskId: cloudTaskId,
+              onRound: (round) => {
+                if (task.status === "running") task.rounds = round;
+              },
+              onSidebar: (text) => {
+                this.chatLog.push({ role: "assistant", text });
+                this.pushSidebarState();
+                if (task.status === "running") task.lastAssistant = text;
+              },
+            });
+            this.chatLog.push({ role: "assistant", text: result.text });
+            this.pushSidebarState();
+            this.settleMcpTask(task, result, tabId);
+          } catch (error) {
+            const message = `执行失败：${error instanceof Error ? error.message : String(error)}`;
+            this.chatLog.push({ role: "assistant", text: message });
+            this.settleMcpTask(task, { ok: false, text: message }, tabId);
+          } finally {
+            if (this.cloudTaskId) void this.finishCloudTask();
+          }
         },
-        onSidebar: (text) => {
-          this.chatLog.push({ role: "assistant", text });
-          this.pushSidebarState();
-          if (task.status === "running") task.lastAssistant = text;
-        },
-      });
-      this.chatLog.push({ role: "assistant", text: result.text });
-      this.pushSidebarState();
-      this.settleMcpTask(task, result);
-    } catch (error) {
-      const message = `执行失败：${error instanceof Error ? error.message : String(error)}`;
-      this.chatLog.push({ role: "assistant", text: message });
-      this.settleMcpTask(task, { ok: false, text: message });
+        undefined,
+        `agent:${clientId}`,
+      );
     } finally {
       this.releaseBackgroundRender();
       this.agentAborts.delete(controller);
       this.freeSoulRunning = this.chatRunningFlag || this.agentAborts.size > 0;
-      if (this.cloudTaskId) void this.finishCloudTask();
-      this.agentTabId = previousAgentTab;
       this.agentPoolIds?.delete(task.taskId);
       this.taskPool?.finish?.(task.taskId, task.status === "failed" ? "failed" : "done");
       this.pushSidebarState();
@@ -6662,6 +6766,7 @@ export class SparkBrowser {
   private settleMcpTask(
     task: (typeof this.mcpTasks)[number],
     result: { ok: boolean; text: string; interrupted?: boolean; awaitingConfirm?: boolean },
+    tabId?: string,
   ): void {
     if (task.status !== "running") return;
     task.lastAssistant = result.text;
@@ -6677,7 +6782,7 @@ export class SparkBrowser {
     task.status = "done";
     task.closeReason = reason;
     try {
-      task.finalUrl = this.getUrl(this.agentTabId) || "";
+      task.finalUrl = this.getUrl(tabId || this.agentTabId) || "";
       task.captures = capturesSince(this.configDir(), task.startedAt);
       task.reportUrl = reportSince(this.configDir(), task.startedAt);
     } catch {
@@ -6718,7 +6823,11 @@ export class SparkBrowser {
     tabId: string,
     work: () => Promise<T>,
     mission?: ActiveMission,
+    chatKey?: string,
   ): Promise<T> {
+    if (!this.taskScope || typeof this.taskScope.run !== "function") {
+      this.taskScope = new AsyncLocalStorage<TaskScope>();
+    }
     const scope: TaskScope = {
       tabId,
       lane,
@@ -6726,6 +6835,7 @@ export class SparkBrowser {
       lastMission: lane === "foreground" ? this.fallbackLastMission : undefined,
       helpAsk: lane === "foreground" ? this.fallbackHelpAsk : null,
       cloudTaskId: undefined,
+      chatKey: chatKey || "user",
     };
     try {
       return await this.taskScope.run(scope, work);
@@ -6847,6 +6957,7 @@ export class SparkBrowser {
           return out;
         },
         job.mission,
+        "user",
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
