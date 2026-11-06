@@ -1531,8 +1531,13 @@ export class SparkBrowser {
       discarded?: boolean;
       favIcon?: string;
       agentStatus?: "done";
+      owner?: "user" | `agent:${string}`;
       agentName?: string;
       agentColor?: string;
+      agentState?: "running" | "waiting_human" | "queued" | "done" | "idle";
+      lastLine?: string;
+      agentStep?: string;
+      agentRound?: number;
     }>;
     activeId: string;
     url: string;
@@ -1548,6 +1553,23 @@ export class SparkBrowser {
         const owner = ownerForTab(t.id);
         const clientId = owner.startsWith("agent:") ? owner.slice("agent:".length) : "";
         const session = clientId ? listClientSessions().find((item) => item.clientId === clientId) : undefined;
+        const related = clientId ? (this.taskPool?.tasks || []).filter((item) => item.tabId === t.id) : [];
+        const poolTask = related.find((item) => item.state === "running")
+          || related.find((item) => item.state === "waiting_human")
+          || related.find((item) => item.state === "queued");
+        const mcp = poolTask ? this.mcpTaskList().find((item) => item.taskId === poolTask.id) : undefined;
+        let agentState: "running" | "waiting_human" | "queued" | "done" | "idle" | undefined;
+        if (clientId) {
+          agentState = poolTask?.state === "waiting_human"
+            ? "waiting_human"
+            : poolTask?.state === "queued"
+              ? "queued"
+              : poolTask?.state === "running"
+                ? "running"
+                : t.agentStatus === "done"
+                  ? "done"
+                  : "idle";
+        }
         return {
           id: t.id,
           title: t.title,
@@ -1557,8 +1579,17 @@ export class SparkBrowser {
           discarded: Boolean(t.discarded || !t.view),
           favIcon: t.favIcon || "",
           agentStatus: t.agentStatus === "done" ? "done" : undefined,
-          agentName: session?.name,
-          agentColor: session?.color,
+          owner,
+          ...(clientId
+            ? {
+                agentName: session?.name || poolTask?.agentName,
+                agentColor: session?.color || poolTask?.color,
+                agentState,
+                lastLine: poolTask?.lastLine,
+                agentStep: poolTask?.step,
+                agentRound: mcp?.rounds,
+              }
+            : {}),
         };
       }),
       activeId: this.activeTabId,
@@ -1579,6 +1610,7 @@ export class SparkBrowser {
     this.layout();
     this.focusActivePage();
     this.pushChromeState();
+    this.requestHoleReport();
     this.pushSidebarState();
     return { ok: true, message: `Switched to tab ${id}`, data: this.listTabs() };
   }
