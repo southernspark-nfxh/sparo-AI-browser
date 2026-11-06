@@ -137,6 +137,31 @@ input, textarea, select, .chat-log, .chat-log .bubble {
   position: relative;
   min-width: 0;
 }
+.agent-banner {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  font-size: 12px;
+  z-index: 2;
+  background: color-mix(in srgb, var(--agent-color) 12%, var(--paper));
+  border-bottom: 1px solid color-mix(in srgb, var(--agent-color) 35%, transparent);
+}
+.agent-banner[hidden] {
+  display: none;
+}
+.agent-banner .agent-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--agent-color);
+}
 .sidebar {
   grid-column: 2;
   grid-row: 2 / -1;
@@ -1799,6 +1824,12 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         </div>
       </div>
       <div class="page-hole" id="pageHole">
+        <div class="agent-banner" id="agentBanner" hidden>
+          <span class="agent-dot"></span>
+          <span class="agent-name"></span>
+          <span class="agent-state"></span>
+          <span class="agent-line"></span>
+        </div>
         <div class="history-panel" id="historyPanel">
           <div class="history-head">
             <h2 data-i18n="history.title">历史记录</h2>
@@ -2358,6 +2389,54 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
       }
 
       let draggingTabId = "";
+      function holeRectWithBanner(rect, bannerH) {
+        const h = Math.max(0, Math.min(bannerH || 0, rect.height - 80));
+        return { x: rect.left, y: rect.top + h, width: rect.width, height: rect.height - h };
+      }
+      function agentBannerText(tab) {
+        const name = (tab && tab.agentName) || "Agent";
+        if (!tab) return name;
+        if (tab.agentState === "waiting_human") return name + " · 等你处理 · " + (tab.lastLine || "需要登录");
+        if (tab.agentState === "queued") {
+          const step = tab.agentStep && String(tab.agentStep).indexOf("排队") >= 0 ? tab.agentStep : "排队中";
+          return name + " · " + step;
+        }
+        if (tab.agentState === "done") return name + " · 已完成 · 页面已休眠";
+        const round = "第 " + (Number(tab.agentRound) || 1) + " 轮";
+        return name + " · 操作中 · " + round + " · " + (tab.lastLine || "正在读页");
+      }
+      let reportHole = function () {};
+      function renderAgentBanner() {
+        const banner = document.getElementById("agentBanner");
+        if (!banner) return;
+        const tab = (chromeState.tabs || []).find((item) => item.id === chromeState.activeId);
+        const show = Boolean(
+          tab && typeof tab.owner === "string" && tab.owner.indexOf("agent:") === 0 && tab.agentState && tab.agentState !== "idle",
+        );
+        const wasHidden = banner.hidden;
+        if (!show) {
+          banner.hidden = true;
+        } else {
+          banner.hidden = false;
+          banner.style.setProperty("--agent-color", tab.agentColor || "#2f6feb");
+          const text = agentBannerText(tab);
+          const parts = text.split(" · ");
+          const nameEl = banner.querySelector(".agent-name");
+          const stateEl = banner.querySelector(".agent-state");
+          const lineEl = banner.querySelector(".agent-line");
+          if (nameEl) nameEl.textContent = parts[0] || "";
+          if (stateEl) stateEl.textContent = parts[1] || "";
+          if (lineEl) lineEl.textContent = parts.slice(2).join(" · ");
+        }
+        if (wasHidden !== banner.hidden) reportHole();
+      }
+      function agentStateLabel(state) {
+        if (state === "running") return "操作中";
+        if (state === "waiting_human") return "等你处理";
+        if (state === "queued") return "排队中";
+        if (state === "done") return "已完成";
+        return "空闲";
+      }
       function renderChrome() {
         tabsEl.innerHTML = "";
         for (const tab of chromeState.tabs) {
@@ -2369,10 +2448,17 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
             (tab.agentStatus === "done" ? " done" : "");
           el.draggable = true;
           el.dataset.id = tab.id;
+          const agentOwned = typeof tab.owner === "string" && tab.owner.indexOf("agent:") === 0;
           el.title =
+            (agentOwned
+              ? (tab.agentName || "Agent") + " · " + agentStateLabel(tab.agentState) + "\n"
+              : "") +
             (tab.agentStatus === "done" ? t("mem.done") + "\n" : "") +
             (tab.discarded ? t("mem.tabSleeping") + "\n" : "") +
             (tab.url || "");
+          if (agentOwned) {
+            el.style.boxShadow = "inset 0 -1px 0 " + (tab.agentColor || "#2f6feb");
+          }
           let ico;
           if (tab.favIcon) {
             ico = document.createElement("img");
@@ -2419,6 +2505,13 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
             const from = e.dataTransfer.getData("text/plain") || draggingTabId;
             if (from && from !== tab.id) window.sparkShell.reorderTabs(from, tab.id);
           });
+          if (agentOwned) {
+            const dot = document.createElement("span");
+            dot.className = "tab-agent-dot";
+            dot.style.cssText =
+              "width:6px;height:6px;border-radius:50%;flex:none;background:" + (tab.agentColor || "#2f6feb");
+            el.appendChild(dot);
+          }
           el.appendChild(ico);
           el.appendChild(title);
           if (tab.agentStatus === "done") {
@@ -2453,6 +2546,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           memBtn.textContent = board || t("mem.optimize");
           memBtn.title = board ? t("mem.moonTitle") + "\n" + board : t("mem.moonTitle");
         }
+        renderAgentBanner();
       }
 
       function navigateFromBar() {
@@ -3673,15 +3767,12 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           return;
         }
         const hole = document.getElementById("pageHole");
-        const reportHole = () => {
+        reportHole = () => {
           if (!hole || !window.sparkShell.pageHoleBounds) return;
           const r = hole.getBoundingClientRect();
-          window.sparkShell.pageHoleBounds({
-            x: r.left,
-            y: r.top,
-            width: r.width,
-            height: r.height,
-          });
+          const banner = document.getElementById("agentBanner");
+          const bannerH = banner ? banner.offsetHeight : 0;
+          window.sparkShell.pageHoleBounds(holeRectWithBanner(r, bannerH));
         };
         reportHole();
         if (typeof ResizeObserver === "function") {
