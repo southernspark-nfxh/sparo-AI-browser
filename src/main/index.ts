@@ -1,6 +1,6 @@
 import { app, BrowserWindow, session, crashReporter } from "electron";
 import { chromeUserAgent } from "./oauth-popups.js";
-import { writeFileSync, mkdirSync, existsSync, readFileSync, copyFileSync, unlinkSync } from "node:fs";
+import { appendFileSync, writeFileSync, mkdirSync, existsSync, readFileSync, copyFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
@@ -12,6 +12,7 @@ import { migrateCookiesFromLegacyUserData } from "./sessions/store.js";
 import { persistInstallInfo } from "./agent-connect.js";
 import { stopAll as stopAllEnvProxy } from "./envs/singbox-runner.js";
 import { storeConfigDir } from "./paths.js";
+import { crashLogFileName, formatDiagEvent, formatErrorDetail, formatMemLine } from "./diag-log.js";
 
 /** Reuse mcp-auth.json token unless SPARO_MCP_TOKEN_TTL (seconds) says rotate. */
 function resolveMcpToken(configDir: string): { token: string; createdAt: number } {
@@ -96,28 +97,27 @@ async function main(): Promise<void> {
     console.log("[sparo] last GPU crash — hardware acceleration off this launch");
   }
 
-  // 黑匣子：崩溃/异常落盘，下次好查。
+  // 黑匣子：每次启动一份带时间戳的取证日志，旧的 crash.log 继续追加。
   const crashLog = join(configDir, "diag", "crash.log");
+  const stampedCrash = join(configDir, "diag", crashLogFileName());
   const appendCrash = (tag: string, err: unknown) => {
+    const detail = formatErrorDetail(err);
+    const line = formatDiagEvent(tag, detail);
     try {
       mkdirSync(join(configDir, "diag"), { recursive: true });
-      const msg =
-        err instanceof Error ? `${err.message}\n${err.stack || ""}` : String(err);
-      writeFileSync(
-        crashLog,
-        `${new Date().toISOString()} [${tag}] ${msg}\n`,
-        { flag: "a" },
-      );
+      writeFileSync(crashLog, `${line}\n`, { flag: "a" });
+      appendFileSync(stampedCrash, `${line}\n`, "utf8");
     } catch {
       /* 写不进就算了 */
     }
   };
+  console.log(`[sparo] diag → ${stampedCrash}`);
   process.on("uncaughtException", (err) => appendCrash("uncaughtException", err));
   process.on("unhandledRejection", (err) => appendCrash("unhandledRejection", err));
   app.on("child-process-gone", (_e, details) => {
     appendCrash(
       "child-process-gone",
-      `${details.type} reason=${details.reason} code=${details.exitCode}`,
+      `type=${details.type} reason=${details.reason} exitCode=${details.exitCode} name=${details.name || ""}`,
     );
     if (String(details.type).toLowerCase() === "gpu") {
       try {
@@ -127,9 +127,23 @@ async function main(): Promise<void> {
       }
     }
   });
-  app.on("render-process-gone", (_e, _wc, details) =>
-    appendCrash("render-process-gone", `reason=${details.reason}`),
-  );
+  app.on("render-process-gone", (_e, wc, details) => {
+    let url = "";
+    try {
+      url = typeof wc?.getURL === "function" ? wc.getURL() : "";
+    } catch {
+      url = "";
+    }
+    appendCrash(
+      "render-process-gone",
+      `reason=${details.reason} exitCode=${details.exitCode} url=${url}`,
+    );
+  });
+  if (process.env.SPARO_DIAG_PROBE === "1") {
+    setTimeout(() => {
+      throw new Error("diag-probe");
+    }, 800);
+  }
 
   // 原生崩溃转储 + 事件循环卡顿哨兵（AppHang 取证）。
   try {
@@ -181,6 +195,37 @@ async function main(): Promise<void> {
   const browser = createBrowser();
   browser.attachShell();
   browser.presentWindow();
+
+  if (!app.isPackaged) {
+    const writeMem = () => {
+      const mem = process.memoryUsage();
+      let tabs = 0;
+      let running = 0;
+      try {
+        const snap = browser.diagSnapshot();
+        tabs = snap.tabs;
+        running = snap.running;
+      } catch {
+        /* 采样失败不影响浏览 */
+      }
+      const line = formatMemLine({
+        rss: mem.rss,
+        heapUsed: mem.heapUsed,
+        heapTotal: mem.heapTotal,
+        external: mem.external,
+        tabs,
+        running,
+      });
+      try {
+        appendFileSync(stampedCrash, `${new Date().toISOString()} ${line}\n`, "utf8");
+      } catch {
+        /* ignore */
+      }
+      console.log(line);
+    };
+    writeMem();
+    setInterval(writeMem, 30_000);
+  }
 
   try {
     const { nativeImage } = await import("electron");

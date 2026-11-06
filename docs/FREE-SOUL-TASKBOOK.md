@@ -1967,3 +1967,36 @@ agent 会话本轮不落盘、重启即清，是有意的：只把 `user` 会话
 - 真机 Q23、Q24、Q25、Q26、Q27：未跑。单测不能代替。
 - 并发 3 个 agent 时主进程内存和 CPU 有没有明显升高：没开着 Sparo 看任务管理器，未知。
 
+## 完成记录（缺陷修复 T56–T62，2026-11-06，Cursor）
+
+### T56 崩溃取证与内存护栏
+
+- 改动：`src/main/diag-log.ts`（新）、`src/main/index.ts`、`src/main/browser.ts`（只加只读 `diagSnapshot`）
+- 根因：还不能下。上次进程在第 28 轮后消失，日志停在正常工具返回。这次独立进程把同一类任务跑完了，没有异常、没有渲染进程退出。
+- 每次启动另写 `%APPDATA%\sparo-store\diag\crash-YYYYMMDD-HHmmss.log`（这次用临时目录，见下）。`uncaughtException`、`unhandledRejection`、`render-process-gone`（reason、exitCode、url）、`child-process-gone` 都进这份文件。dev 下立刻写一行内存，之后每 30 秒一行。旧的 `crash.log` 仍追加。
+- 结论：
+  - `chatLog` 单会话没有条数上限。内存数组只追加。落盘 `chat-memory.json` 只存 user 会话，上限 40 条。侧栏展示只取最后 40 条，底层不截。
+  - 传给模型的侧栏 history 有截断：`slice(-12)`，每条 `slice(0, 4000)`。
+  - `page_text` 单次最多 80000 字。送进模型前单条超过 24000 字会截成头 16000 + 尾 7000。截断后的正文每一轮都留在 `messages` 里，旧轮不删，一轮任务没有字符预算。不是 80000 字原文整段重复入栈。修复另立 T63，这次没改脑区。
+- 测试：`tests/diag-log.test.ts`、`tests/page-text-stack.test.ts`「截断后的正文每轮追加，旧轮还在」。全量 `npm test` 90 文件 / 652 通过，`npm run typecheck` 通过。
+- 真机：独立窗口，`SPARO_CONFIG_DIR` 指向临时目录，不碰正在用的 3921。人为 `throw new Error("diag-probe")` 已落盘。
+  - 异常文件：`C:\Users\60914\AppData\Local\Temp\sparo-t56-diag\diag\crash-20261106-160819.log`
+  - 内容：`2026-11-06T08:08:20.079Z [uncaughtException] diag-probe`，带堆栈。
+  - 长任务：MCP `3922` 提交「打开维基百科第二次世界大战并通读摘要」。`get_task` 结果 `status=done`，`rounds=29`，`elapsedMs=328838`。r2/r4/r8 的 `page_text` 仍是 80000 chars。进程没有消失，diag 里没有 render-process-gone / child-process-gone。主进程高峰大约 rss=187 heapUsed=23。不能把上次消失断言成代码崩溃。
+  - 内存文件：`crash-20261106-160907.log`，最后 10 行：
+
+```
+2026-11-06T08:09:37.647Z [mem] rss=181 heapUsed=22 heapTotal=34 external=4 tabs=2 running=1
+2026-11-06T08:10:07.664Z [mem] rss=182 heapUsed=21 heapTotal=23 external=6 tabs=2 running=1
+2026-11-06T08:10:37.679Z [mem] rss=187 heapUsed=23 heapTotal=32 external=8 tabs=2 running=1
+2026-11-06T08:11:07.686Z [mem] rss=187 heapUsed=23 heapTotal=32 external=8 tabs=2 running=0
+2026-11-06T08:11:37.701Z [mem] rss=187 heapUsed=23 heapTotal=32 external=8 tabs=2 running=0
+2026-11-06T08:12:07.706Z [mem] rss=169 heapUsed=17 heapTotal=19 external=4 tabs=2 running=0
+2026-11-06T08:12:37.720Z [mem] rss=168 heapUsed=17 heapTotal=19 external=4 tabs=2 running=0
+2026-11-06T08:13:07.736Z [mem] rss=168 heapUsed=17 heapTotal=19 external=4 tabs=2 running=0
+2026-11-06T08:13:37.746Z [mem] rss=171 heapUsed=17 heapTotal=19 external=4 tabs=2 running=0
+2026-11-06T08:14:07.757Z [mem] rss=170 heapUsed=17 heapTotal=19 external=4 tabs=2 running=0
+```
+
+- 未验证：没有复现「进程消失」。没有在用户正在用的那个窗口里采样。T63 未做。
+
