@@ -25,8 +25,10 @@ import { traceMainWindow } from "./focus-trace.js";
 import { laneForText, type TaskLane } from "./agent/task-class.js";
 import { shouldSuspend as poolShouldSuspend, TaskPool, type PoolTask } from "./agent/task-pool.js";
 import {
+  agentClientFromScope,
   backgroundPoolDecision,
   bindClientTab,
+  claimTabForClient,
   listClientSessions,
   ownerForTab,
   registerClientName,
@@ -1234,7 +1236,7 @@ export class SparkBrowser {
     attachPageContextMenu(wc, {
       openInNewTab: (openUrl) => {
         if (tab.envId) this.createEnvTab(tab.envId, openUrl);
-        else this.createTab(openUrl, true);
+        else this.createTab(openUrl, true, { openerTabId: id });
       },
       t: (key) => tx(this.settings.locale, key),
       canGoBack: () => this.navCanGoBack(wc),
@@ -1305,9 +1307,9 @@ export class SparkBrowser {
       const openUrl = details.url;
       if (openUrl && openUrl !== "about:blank") {
         if (this.windowIsMinimized()) {
-          this.createTab(openUrl, false, { agentOwned: tab.agentOwned === true });
+          this.createTab(openUrl, false, { agentOwned: tab.agentOwned === true, openerTabId: id });
         } else if (tab.envId) this.createEnvTab(tab.envId, openUrl);
-        else this.createTab(openUrl, true);
+        else this.createTab(openUrl, true, { openerTabId: id });
       }
       return { action: "deny" };
     });
@@ -1484,9 +1486,13 @@ export class SparkBrowser {
     return formatTabMemoryBoard(this.settings?.locale, processes, mb);
   }
 
-  private createTab(url = DEFAULT_URL, activate = true, opts?: { agentOwned?: boolean }): string {
+  private createTab(url = DEFAULT_URL, activate = true, opts?: { agentOwned?: boolean; openerTabId?: string }): string {
     const id = randomBytes(4).toString("hex");
-    const agentOwned = opts?.agentOwned === true;
+    const clientId = agentClientFromScope(
+      this.taskStore()?.chatKey,
+      opts?.openerTabId ? ownerForTab(opts.openerTabId) : undefined,
+    );
+    const agentOwned = opts?.agentOwned === true || Boolean(clientId);
     const view = this.makePageView(undefined, { agentOwned });
     const tab: TabInfo = {
       id,
@@ -1497,6 +1503,7 @@ export class SparkBrowser {
       agentOwned,
     };
     this.tabs.set(id, tab);
+    if (clientId) claimTabForClient(clientId, id);
     if (activate) this.activeTabId = id;
     this.pinViewBeforeMount(view);
     this.window.contentView.addChildView(view);
@@ -1572,7 +1579,10 @@ export class SparkBrowser {
         const owner = ownerForTab(t.id);
         const clientId = owner.startsWith("agent:") ? owner.slice("agent:".length) : "";
         const session = clientId ? listClientSessions().find((item) => item.clientId === clientId) : undefined;
-        const related = clientId ? (this.taskPool?.tasks || []).filter((item) => item.tabId === t.id) : [];
+        const poolTasks = this.taskPool?.tasks || [];
+        const onThisTab = clientId ? poolTasks.filter((item) => item.tabId === t.id) : [];
+        const onThisClient = clientId ? poolTasks.filter((item) => item.clientId === clientId) : [];
+        const related = onThisTab.length ? onThisTab : onThisClient;
         const poolTask = related.find((item) => item.state === "running")
           || related.find((item) => item.state === "waiting_human")
           || related.find((item) => item.state === "queued");

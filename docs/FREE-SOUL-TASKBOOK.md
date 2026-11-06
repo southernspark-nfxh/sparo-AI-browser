@@ -2046,3 +2046,24 @@ y 从 76 到 108，横幅占 32px。任务结束后 `list_tabs` 该标签 `agent
 - 真机：T58 那次切回已完成标签时日志是 `[banner] true 视觉验收员 done`，再派一单后 `list_tabs` 变成 `running`。关闭后字段清空这次没再开窗口，单测覆盖。
 - 未验证：没在真机上点关闭后再看 tooltip。
 
+### T60 任务中新开的标签没有归属
+
+- 改动：`src/main/agent/mcp-sessions.ts`、`src/main/browser.ts`、`tests/agent-tab-claim.test.ts`、`tests/list-tabs-owner.test.ts`
+- 根因：一个 client 的 `owners` 只记最后一张标签。任务里点链接或 `window.open` 出来的新标签没有登记，壳层把它当用户页。
+- `claimTabForClient` 允许多张标签，最近一张仍是主标签。`createTab` 在任务作用域里登记；作用域传不到网页回调时，从打开它的那张 agent 页继承。用户自己的新标签不登记。新标签没有自己的池任务时，跟这个 client 正在跑的任务共用状态，横幅才出得来。`navigate` 只在当前标签加载，没有单独的新建分支。
+- 测试：`tests/agent-tab-claim.test.ts`「作用域里连续三张都归同一个 agent，作用域外的第四张不归」。`tests/list-tabs-owner.test.ts`「任务中新开的标签跟着同一份运行状态」。全量 92 文件 / 659 通过，typecheck 通过。
+- 真机：任务跑着时在 agent 页执行 `window.open`。新标签：
+
+```
+{"id":"a33dbaba","owner":"agent:f1edff","name":"视觉验收员","color":"#c2410c","state":"running"}
+```
+
+和原标签同名同色，状态是 running。壳层日志：
+
+```
+[shell-console] [banner] true 视觉验收员 running
+[chrome-hole] bounds-changed ... active=a33dbaba ... new={"x":0,"y":108,...}
+```
+
+- 未验证：没有截色点。任务结束后新标签没有单独的 done 标记，横幅会回到隐藏；原标签仍是 done。
+
