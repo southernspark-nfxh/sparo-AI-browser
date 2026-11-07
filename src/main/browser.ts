@@ -31,10 +31,12 @@ import {
   backgroundPoolDecision,
   bindClientTab,
   claimTabForClient,
+  ensureSidebarClient,
   listClientSessions,
   ownerForTab,
   registerClientName,
 } from "./agent/mcp-sessions.js";
+import { SIDEBAR_CLIENT_ID, sidebarStaysOnUserTab, sidebarToolNeedsPage } from "./agent/sidebar-tab.js";
 import { capturesSince, ledgerCloseReason, reportSince, type LedgerClose } from "./agent/task-result.js";
 import type {
   ClickConfirm,
@@ -694,6 +696,8 @@ export class SparkBrowser {
   private taskPool = new TaskPool();
   private taskScope = new AsyncLocalStorage<TaskScope>();
   private fallbackAgentTabId = "";
+  /** 这次侧栏任务要自己的标签。读当前页和划词时为假。 */
+  private sidebarOwnTab = false;
   private fallbackMission: ActiveMission | undefined;
   private fallbackLastMission: ActiveMission | undefined;
   private fallbackHelpAsk: HelpAsk | null = null;
@@ -1790,6 +1794,14 @@ export class SparkBrowser {
                 : t.agentStatus === "done"
                   ? "done"
                   : "idle";
+          if (
+            agentState === "idle" &&
+            clientId === SIDEBAR_CLIENT_ID &&
+            this.chatRunning &&
+            this.agentTabId === t.id
+          ) {
+            agentState = "running";
+          }
         }
         return {
           id: t.id,
@@ -5332,12 +5344,40 @@ export class SparkBrowser {
     });
   }
 
+  /**
+   * 侧栏开站任务第一次碰到页面时，开或复用「侧栏」工位。
+   * 不改用户正在看的标签。划词和读当前页不走这里。
+   */
+  private ensureSidebarWorkTab(): string {
+    ensureSidebarClient();
+    const before = this.activeTabId;
+    const tabId = this.bindAgentTab(SIDEBAR_CLIENT_ID) || "";
+    if (before && this.activeTabId !== before && typeof this.switchTab === "function") this.switchTab(before);
+    if (!tabId) return "";
+    const tab = this.tabs?.get(tabId);
+    if (tab?.agentStatus === "done") delete tab.agentStatus;
+    this.agentTabId = tabId;
+    if (typeof this.pushChromeState === "function") this.pushChromeState();
+    return tabId;
+  }
+
+  /** MCP 作用域里的标签优先。侧栏开站才在需要页面时绑定自己的工位。 */
+  private resolveToolTab(needsPage: boolean): string {
+    const scope = this.taskStore();
+    if (scope?.tabId) return scope.tabId;
+    if (needsPage && this.sidebarOwnTab) {
+      const bound = this.ensureSidebarWorkTab();
+      if (bound) return bound;
+    }
+    return this.fallbackAgentTabId || this.activeTabId || "";
+  }
+
   /** 新核心只暴露通用浏览原语；路线和下一步全由模型决定。 */
   private async runCoreTool(
     name: FreeSoulToolName,
     args: Record<string, unknown>,
   ): Promise<ToolResult> {
-    const tabId = this.agentTabId || this.activeTabId;
+    const tabId = this.resolveToolTab(sidebarToolNeedsPage(name));
     if (name === "scroll") {
       const direction = args.direction === "up" ? -1 : 1;
       const amount = Math.min(3000, Math.max(100, Number(args.amount) || 900));
@@ -5449,7 +5489,7 @@ export class SparkBrowser {
     name: AgentToolName,
     args: Record<string, unknown>,
   ): Promise<ToolResult> {
-    const tabId = this.agentTabId || this.activeTabId;
+    const tabId = this.resolveToolTab(sidebarToolNeedsPage(name));
     switch (name) {
       case "navigate":
         return this.watchPageTool("navigate", { ...args, tabId }, () =>
@@ -7102,8 +7142,10 @@ export class SparkBrowser {
       return { ok: true, message: "已记下，当前任务汇报后接着做。" };
     }
 
+    const stayOnUser = sidebarStaysOnUserTab(clean, cleanQuotes);
     const previousAgentTab = this.agentTabId;
-    this.agentTabId = this.activeTabId;
+    this.sidebarOwnTab = !stayOnUser;
+    this.agentTabId = stayOnUser ? this.activeTabId || "" : "";
     if (!opts?.alreadyLogged) this.chatLog.push(quotedUserTurn(text, cleanQuotes, pics));
     this.chatRunning = true;
     this.claimQueuedMcpTask(clean);
@@ -7169,10 +7211,13 @@ export class SparkBrowser {
       this.finishMcpTask({ ok: false, text: message });
       return { ok: false, message };
     } finally {
+      const ownTab = this.sidebarOwnTab ? this.fallbackAgentTabId || "" : "";
+      this.sidebarOwnTab = false;
       this.freeSoulRunning = (this.agentAborts?.size ?? 0) > 0;
       this.activePiAbort = null;
       if (this.cloudTaskId) void this.finishCloudTask();
       this.agentTabId = previousAgentTab;
+      if (ownTab && ownTab !== this.activeTabId) this.releaseAgentTab(ownTab);
       this.chatRunning = false;
       this.pushSidebarState();
       const next = this.pendingChat;

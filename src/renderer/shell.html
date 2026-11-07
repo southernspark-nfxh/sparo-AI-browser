@@ -2475,8 +2475,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
       }
       function agentBannerText(tab) {
         const name = (tab && tab.agentName) || "Agent";
-        const seat = (tab && Number(tab.agentSeat)) || 1;
-        const desk = seat + "号工位";
+        const desk = tab && tab.agentSeat === 0 ? "侧栏工位" : ((tab && Number(tab.agentSeat)) || 1) + "号工位";
         if (!tab) return desk + " · " + name;
         if (tab.agentState === "waiting_human") return desk + "等你拍板 · " + name + " · " + (tab.lastLine || "需要登录");
         if (tab.agentState === "queued") return desk + "排队候场 · " + name;
