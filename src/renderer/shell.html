@@ -1310,6 +1310,18 @@ body.side-collapsed .dock { display: none; }
   opacity: .55;
   filter: none;
 }
+.go-row #chatStop {
+  height: 38px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--bad);
+  color: #fff;
+  font: inherit;
+  font-size: var(--fs-13);
+  cursor: pointer;
+}
+.go-row #chatStop[hidden] { display: none; }
 .note, #chatHint {
   margin-top: 8px;
   font-size: var(--fs-12);
@@ -2043,6 +2055,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
               <button type="button" class="send" id="chatSend" data-i18n-title="chat.send" title="发送 (Ctrl+Enter)" aria-label="发送" disabled>
                 <svg class="ic"><use href="#i-send"/></svg>
               </button>
+              <button type="button" id="chatStop" hidden>停止</button>
             </div>
           </div>
           <div class="note" id="chatHint" data-i18n="chat.hintDefault">网页上的发送和提交，始终由你确认</div>
@@ -3519,6 +3532,15 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         if (payload.profile) {
           userProfile.nickname = payload.profile.nickname || "";
         }
+        syncChatStop(payload);
+      }
+
+      function syncChatStop(payload) {
+        const btn = document.getElementById("chatStop");
+        if (!btn) return;
+        const running = Boolean(payload && payload.chatRunning);
+        btn.hidden = !running;
+        btn.dataset.taskId = running ? String((payload && payload.sidebarTaskId) || "") : "";
       }
 
       function showWelcomePanel(panel) {
@@ -4731,6 +4753,15 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           paintNoteMenu();
         }
         document.getElementById("chatSend").onclick = sendChat;
+        const chatStop = document.getElementById("chatStop");
+        if (chatStop) {
+          chatStop.onclick = (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            const id = chatStop.dataset.taskId || "";
+            if (window.sparkShell && window.sparkShell.stopTask) window.sparkShell.stopTask(id);
+          };
+        }
         const execModeEl = document.getElementById("execMode");
         if (execModeEl) {
           execModeEl.onchange = async () => {
