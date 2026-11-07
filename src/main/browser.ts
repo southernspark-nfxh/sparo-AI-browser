@@ -4041,6 +4041,8 @@ export class SparkBrowser {
     const chat = this.chatFrame(selectedSession, !incremental);
     return {
       paused: this.paused,
+      chatRunning: Boolean(this.chatRunningFlag),
+      sidebarTaskId: this.sidebarTaskIdForShell(),
       agentConnect: connectedStatus(),
       recording: this.recording,
       recordingTask: this.recordingTask,
@@ -7137,6 +7139,7 @@ export class SparkBrowser {
           this.lastRunTrace = trace;
         },
       });
+      if (this.takeSidebarManualStop()) return { ok: false, message: "已手动停止" };
       this.chatLog.push({ role: "assistant", text: result.text });
       this.finishMcpTask(result);
       return {
@@ -7145,6 +7148,7 @@ export class SparkBrowser {
         ...(result.awaitingConfirm ? { data: { awaitingConfirm: true } } : {}),
       };
     } catch (error) {
+      if (this.takeSidebarManualStop()) return { ok: false, message: "已手动停止" };
       const message = `执行失败：${error instanceof Error ? error.message : String(error)}`;
       this.chatLog.push({ role: "assistant", text: message });
       this.finishMcpTask({ ok: false, text: message });
@@ -7328,7 +7332,8 @@ export class SparkBrowser {
       : client
         ? live.filter((task) => task.clientId === client)
         : live;
-    if (!targets.length) return { ok: false, message: "没有可停止的任务", stopped: [] };
+    const sidebar = this.sidebarStopId(id, client);
+    if (!targets.length && !sidebar) return { ok: false, message: "没有可停止的任务", stopped: [] };
     if (!this.manualStopIds) this.manualStopIds = new Set();
     if (!this.agentQueue) this.agentQueue = [];
     if (!this.backgroundQueue) this.backgroundQueue = [];
@@ -7354,10 +7359,79 @@ export class SparkBrowser {
       stopped.push(card.id);
       console.log(`[task] stop ${card.id} state=${was}`);
     }
+    if (sidebar) {
+      this.stopLiveSidebar(sidebar);
+      stopped.push(sidebar);
+    }
     this.pumpAgent();
     this.syncTaskChrome();
     this.pushSidebarState();
     return { ok: true, message: "已手动停止", stopped };
+  }
+
+  /** 手动停止已经写过「已手动停止」。这里只清标记，不再把打断文案推进对话。 */
+  private takeSidebarManualStop(): boolean {
+    const stopMark = this.activeMcpTaskId || "sidebar";
+    if (!this.manualStopIds?.has(stopMark)) return false;
+    this.manualStopIds.delete(stopMark);
+    if (this.activeMcpTaskId) this.manualStopIds.delete(this.activeMcpTaskId);
+    this.manualStopIds.delete("sidebar");
+    this.activeMcpTaskId = null;
+    return true;
+  }
+
+  /** 侧栏正在跑的那条。没有 mcp 记录时用 sidebar，好让输入区的停止有东西可传。 */
+  private sidebarTaskIdForShell(): string {
+    if (!this.chatRunningFlag) return "";
+    const id = this.activeMcpTaskId || "";
+    const record = id ? this.mcpTaskList().find((task) => task.taskId === id) : undefined;
+    if (record && !record.clientId && (record.status === "running" || record.status === "queued")) return id;
+    return "sidebar";
+  }
+
+  /** 这次停止要不要打到侧栏对话。别的 client 的「全停」不带上它。 */
+  private sidebarStopId(id: string, client: string): string {
+    if (client || !id) return "";
+    if (id === "sidebar") return this.chatRunningFlag ? "sidebar" : "";
+    const record = this.mcpTaskList().find((task) => task.taskId === id);
+    if (!record || record.clientId) return "";
+    if (record.status !== "running" && record.status !== "queued") return "";
+    return id;
+  }
+
+  /** 侧栏对话不在任务池里。停掉它，并清掉还排着的下一句。 */
+  private stopLiveSidebar(taskId: string): void {
+    if (!this.manualStopIds) this.manualStopIds = new Set();
+    const active = this.activeMcpTaskId || "";
+    const record = taskId === "sidebar" ? undefined : this.mcpTaskList().find((task) => task.taskId === taskId);
+    const stopsRun = taskId === "sidebar" || taskId === active || record?.status === "running";
+    if (stopsRun) {
+      if (active) this.manualStopIds.add(active);
+      this.manualStopIds.add(taskId === "sidebar" ? "sidebar" : taskId);
+      const hadQueue = Boolean(this.pendingChat);
+      this.pendingChat = null;
+      for (const task of this.mcpTaskList()) {
+        if (task.clientId) continue;
+        if (task.status !== "running" && task.status !== "queued") continue;
+        task.status = "failed";
+        task.lastAssistant = "已手动停止";
+      }
+      this.activePiAbort?.abort();
+      this.appendChat("user", "已手动停止");
+      if (hadQueue) this.appendChat("user", "排队的消息也一并取消了");
+      console.log(`[task] stop ${active || taskId} state=running`);
+      return;
+    }
+    if (!record) return;
+    const was = record.status;
+    record.status = "failed";
+    record.lastAssistant = "已手动停止";
+    if (this.pendingChat && this.pendingChat.text === record.text) {
+      this.pendingChat = null;
+      this.appendChat("user", "排队的消息也一并取消了");
+    }
+    this.appendChat("user", "已手动停止");
+    console.log(`[task] stop ${taskId} state=${was}`);
   }
 
   private appendChat(key: string, text: string): void {

@@ -1,8 +1,8 @@
 # 多 Agent 并行缺陷修复任务书（T73–T75）
 
-状态：代码已交（T73 / T74 / T75）。T75 没复现，只加了取证日志，没有改并行行为。真机都还没跑。来源：2026-11-06 T70–T72 验收通过后的用户新反馈 + 验收遗留。上一轮见 [MULTI-AGENT-FIX-TASKBOOK-2.md](./MULTI-AGENT-FIX-TASKBOOK-2.md)（T70–T72 已验收通过，状态字段已改为「已完成」）。
+状态：T73–T75 已执行并验收（2026-11-07）。T76 代码已交，真机未跑。agent 路径停止通过；T74 机制落地、长对话数据待模型恢复后补测；T75 未复现。
 
-**执行顺序：T73 → T74 → T75。T75 第一步是复现取证，没复现前不许改行为代码。**
+**T75 的三标签复现和 T74 的 30 轮长对话复测不是代码任务，模型恢复后由验收方补跑，不阻塞 T76。**
 
 ---
 
@@ -162,3 +162,53 @@ Agent 操纵浏览器期间，用户自己另开新网页、再让侧栏 Agent �
   3. 侧栏不走 `laneForText`。`handleChat` 用 `chatRunning` 串行，忙就排队并打断当前这轮。`enqueueForeground` 没有调用点。MCP 带 clientId 的任务写死 `background`。`laneForText` 兜底 foreground 目前没接到侧栏入口。
 - 测试：`tests/parallel-log.test.ts`「填表失败日志带上标签、是否前台、是否有焦点」「车道日志分开记分类结果和实际走的路」「学习门禁早退单独记，不假装工具做成了」。
 - 真机未跑。要看这三行日志，得重启 `npm run start` 后再做标签 A / B / C 那一场。
+
+### T76（2026-11-07）
+
+- 改动：`src/main/browser.ts`、`src/renderer/shell.html`
+- 根因：不带 clientId 的 `submitTask` 走 `handleChat`，不进 taskPool。`stopAgentTask` 只搜任务卡，所以返回「没有可停止的任务」。
+- 停止这条侧栏对话时 abort `activePiAbort`，mcp 记录标失败，对话写「已手动停止」。有排队就清掉 `pendingChat`，并补一句「排队的消息也一并取消了」。打断文案不再推进对话，复用 `manualStopIds`。`finally` 里 chatRunning / activePiAbort / agentTabId 的复位没动。侧栏仍不出任务卡。
+- 输入区在 `chatRunning` 时显示红色「停止」，点击走 `spark:stop-task`，传 `sidebarTaskId`。空闲时藏起来。
+- 测试：`tests/sidebar-stop.test.ts`「不进任务池的侧栏任务能停，排队取消，停完马上能再跑」「跑动中输入区有停止，空闲时藏起来」。单测日志有 `[task] stop <id> state=running`。
+- 真机未跑。没有在窗口里点输入区「停止」，也没有用 MCP `stop_task` 停一条侧栏任务。停完再发新任务只在单测里跑过。
+
+---
+
+# T76 侧栏发起的任务停不了（T73 验收缺口）
+
+## 现象
+
+2026-11-07 真机验收实测：`submit_task` **不带 clientId**（= 用户在侧栏输入框直接发起的任务）running 中调 `stop_task`，返回「没有可停止的任务」，任务继续跑到自然结束。GUI 上侧栏任务也没有任务卡、没有任何停止入口。带 clientId 的 agent 任务停止已验收通过，本条只补侧栏路径。
+
+## 根因（已定位）
+
+`src/main/browser.ts` 的 `submitTask`（约 L7165）：`if (opts?.clientId) return this.submitAgentTask(...)`；无 clientId 时 `void this.handleChat(clean)`（约 L7183）——侧栏任务走 chat 流程，**不进 taskPool、没有任务卡**。
+
+`stopAgentTask` 只搜 `this.taskPool?.tasks` 里的 live 卡（running / queued / waiting_human），搜不到 handleChat 里的任务，于是返回「没有可停止的任务」。
+
+handleChat 的执行控制在三个字段上：`chatRunning`（约 L7091）、`activePiAbort`（约 L7119，传给 `freeSoul.run` 的 signal）、`pendingChat`（约 L7082，chatRunning 期间用户又发消息时排队，上一条跑完自动接着跑）。侧栏任务的 mcp 记录由 `rememberMcpTask` 维护，taskId 就是 `submit_task` 返回值；当前跑着的 taskId 在 `activeMcpTaskId`（约 L7181）。
+
+## 改哪
+
+`src/main/browser.ts`（stopAgentTask / handleChat / submitTask）、`src/renderer/shell.html`（输入区停止按钮）。
+
+## 怎么做
+
+1. **stopAgentTask 覆盖侧栏任务**：除池内卡外，再处理「`activeMcpTaskId` 对应的 mcp 记录还在 running / queued」的场景。停侧栏任务 = `this.activePiAbort?.abort()` + 该 mcp 记录置 failed（lastAssistant「已手动停止」）+ 侧栏会话追加一条「已手动停止」+ **清空 `pendingChat`**（停就要停干净，别让排队消息自动接着开跑；清了以后侧栏说明一句「排队的消息也一并取消了」，只在真有排队消息时说）。
+2. **侧栏输入区加停止入口**：`chatRunning === true` 时，输入区显示「停止」按钮（发送按钮旁或替换发送位置，按现有 UI 风格做，红色系停止样式）。点击走已有的 `spark:stop-task` IPC，传 `activeMcpTaskId`。空闲时恢复原样。**不要**给侧栏轻对话出任务卡——侧栏每句话都跑 freeSoul，出卡会刷屏。
+3. **手动停止的收尾自洽**：abort 后 `freeSoul.run` 返回 interruptedResult，handleChat 会把它 push 进 chatLog——手动停止场景下这条要覆盖为「已手动停止」，参考 `runAgentTask` 里 `manualStopIds` 的既有做法（复用同一个 Set 即可）。`finally` 里 chatRunning / activePiAbort / agentTabId 的复位路径不动。
+4. MCP `stop_task` 传侧栏任务的 taskId 也能停（第 1 条天然覆盖，验收要覆盖）。
+
+## 测试
+
+- 单测：
+  - handleChat 跑动中（freeSoul 永挂的假实现）stopAgentTask → mcp 记录 failed、chatLog 有「已手动停止」、`pendingChat` 被清、收尾后 `chatRunning === false`；
+  - 带排队消息时停止，排队消息不接着跑；
+  - 停止后立刻再发新任务，能正常跑（不被残留 abort / 状态卡住）。
+- 真机：
+  - 侧栏发起一个多步任务，跑动中点输入区「停止」→ 3 秒内出「已手动停止」、按钮恢复发送形态、马上再发一条新任务正常执行；
+  - MCP `stop_task` 停侧栏任务同验。
+
+## 验收
+
+停止后不需要重启实例就能继续用侧栏。日志贴 `[task] stop` 一行。
