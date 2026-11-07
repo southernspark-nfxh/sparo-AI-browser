@@ -176,7 +176,7 @@ import {
 } from "./history.js";
 import { uniqueDownloadPath } from "./downloads.js";
 import { loadChatMemory, saveChatMemory, clearChatMemory, type ChatTurn } from "./profile/chat-memory.js";
-import { planChatFrame, stampChatSeq } from "./sidebar-sync.js";
+import { formatPushFrame, planChatFrame, stampChatSeq } from "./sidebar-sync.js";
 import {
   decideRecovery,
   journalCloseUtterance,
@@ -3943,11 +3943,26 @@ export class SparkBrowser {
     try {
       const payload = this.getSidebarPayload(true);
       this.ensurePushMeter().sidebarFlush += 1;
+      let totalBytes = 0;
+      let chatBytes = 0;
       try {
-        this.ensurePushMeter().sidebarBytes += JSON.stringify(payload).length;
+        totalBytes = JSON.stringify(payload).length;
+        chatBytes = JSON.stringify(payload.chat ?? []).length;
+        this.ensurePushMeter().sidebarBytes += totalBytes;
       } catch {
         /* 体积量不到不影响推送 */
       }
+      console.log(
+        formatPushFrame({
+          key: String(payload.selectedSession || "user"),
+          sync: payload.chatSync,
+          chatN: Array.isArray(payload.chat) ? payload.chat.length : 0,
+          chatBytes,
+          totalBytes,
+          cursor: Number(payload.chatSeq) || 0,
+          why: payload.why,
+        }),
+      );
       this.window.webContents.send("spark:sidebar-state", payload);
       this.noteSidebarMessages();
       queueMicrotask(() => this.syncShellKeepalive());
