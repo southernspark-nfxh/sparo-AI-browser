@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { SIDEBAR_CLIENT_ID } from "./sidebar-tab.js";
 
 export const AGENT_COLORS = [
   "#2f6feb",
@@ -49,6 +50,24 @@ export function colorForClient(clientId: string): string {
     hash = (Math.imul(hash, 31) + clientId.charCodeAt(i)) >>> 0;
   }
   return AGENT_COLORS[hash % AGENT_COLORS.length];
+}
+
+/** 侧栏任务的固定工位。不占用甲、乙、丙的序号。 */
+export function ensureSidebarClient(): ClientSession {
+  const current = sessions.get(SIDEBAR_CLIENT_ID);
+  if (current) {
+    current.name = "侧栏";
+    current.seat = 0;
+    return current;
+  }
+  const session: ClientSession = {
+    clientId: SIDEBAR_CLIENT_ID,
+    name: "侧栏",
+    color: colorForClient(SIDEBAR_CLIENT_ID),
+    seat: 0,
+  };
+  sessions.set(SIDEBAR_CLIENT_ID, session);
+  return session;
 }
 
 /** 有名字就用（最多 24 字）；没有就按接入顺序叫 Agent 甲、乙、丙。颜色按 clientId 固定。 */

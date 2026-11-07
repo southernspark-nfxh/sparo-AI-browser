@@ -51,6 +51,12 @@ describe("T53 页面归属条", () => {
     expect(agentBannerText({ agentName: "Agent 甲", agentSeat: 1, agentState: "done" })).toBe(
       "1号工位已下班 · Agent 甲 · 页面已休眠",
     );
+    expect(agentBannerText({ agentName: "侧栏", agentSeat: 0, agentState: "running", agentRound: 1 })).toBe(
+      "侧栏工位正在办公 · 侧栏 · 第 1 轮 · 正在读页",
+    );
+    expect(agentBannerText({ agentName: "侧栏", agentSeat: 0, agentState: "done" })).toBe(
+      "侧栏工位已下班 · 侧栏 · 页面已休眠",
+    );
   });
 
   it("使用中行贴在侧栏滚动区顶部", () => {
