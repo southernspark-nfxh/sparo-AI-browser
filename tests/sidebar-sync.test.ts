@@ -101,6 +101,48 @@ describe("T74 侧栏对话增量", () => {
     expect(applied.state.texts).toEqual(["开头"]);
   });
 
+  it("重同步后下一拍是全量，再下一拍回到增量", () => {
+    const browser = frameBrowser();
+    const book = browser.chatSessions.get("user")!;
+    book.push({ role: "user", text: "开头" });
+    browser.chatResync = true;
+    const full = browser.chatFrame("user", false);
+    expect(full.chatSync).toBe("full");
+    expect(full.why).toBe("resync");
+    book.push({ role: "assistant", text: "下一句" });
+    const delta = browser.chatFrame("user", false);
+    expect(delta.chatSync).toBe("delta");
+    expect(delta.chat.map((turn) => turn.text)).toEqual(["下一句"]);
+    book.push({ role: "assistant", text: "再一句" });
+    const again = browser.chatFrame("user", false);
+    expect(again.chatSync).toBe("delta");
+    expect(again.why).toBe("delta");
+    expect(again.chat.map((turn) => turn.text)).toEqual(["再一句"]);
+    const applied = applyChatFrame(
+      { key: "user", seq: full.chatSeq, texts: full.chat.map((turn) => turn.text || "") },
+      { selectedSession: "user", ...delta },
+    );
+    expect(applied.requestFull).toBe(false);
+  });
+
+  it("旧序号更大时不再把整段窗口当成每一拍", () => {
+    const browser = frameBrowser();
+    const book = browser.chatSessions.get("user")!;
+    book.push({ role: "assistant", text: "旧", seq: 49 });
+    book.push({ role: "assistant", text: "末尾", seq: 12 });
+    browser.chatSeq = 1;
+    browser.chatResync = true;
+    const full = browser.chatFrame("user", false);
+    expect(full.chatSync).toBe("full");
+    expect(full.chatSeq).toBe(49);
+    book.push({ role: "assistant", text: "新的一轮" });
+    const delta = browser.chatFrame("user", false);
+    expect(delta.chatSync).toBe("delta");
+    expect(delta.why).toBe("delta");
+    expect(delta.chat.map((turn) => turn.text)).toEqual(["新的一轮"]);
+    expect(JSON.stringify(delta.chat).length).toBeLessThan(JSON.stringify(full.chat).length);
+  });
+
   it("壳层重载后下一拍是全量", () => {
     const browser = frameBrowser();
     const book = browser.chatSessions.get("user")!;
