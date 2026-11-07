@@ -73,10 +73,33 @@ describe("模型请求超时", () => {
     const result = await agent.run({ input: "看一下", url: "https://example.com", title: "例", locale: "zh" });
     expect(calls).toBe(2);
     expect(result.ok).toBe(false);
-    expect(result.text).toContain("模型请求超时/失败");
-    expect(result.text).toContain("请求超时");
-    expect(result.text).toContain("可重试");
+    expect(result.text).toBe("模型长时间无响应，已停止。可重试。");
     expect(result.text).not.toContain("已完成");
+  });
+
+  it("fetch 不认中断时，无首字超时仍会停", async () => {
+    const fetchImpl = (() => new Promise(() => undefined)) as typeof fetch;
+    const agent = new FreeSoul(config(fetchImpl, 30), async () => ({ ok: true, message: "不会执行" }));
+    const result = await agent.run({ input: "看一下", url: "https://example.com", title: "例", locale: "zh" });
+    expect(result.ok).toBe(false);
+    expect(result.text).toBe("模型长时间无响应，已停止。可重试。");
+  });
+
+  it("用户中断优先于无首字超时", async () => {
+    const fetchImpl = (() => new Promise(() => undefined)) as typeof fetch;
+    const agent = new FreeSoul(config(fetchImpl, 5_000), async () => ({ ok: true, message: "不会执行" }));
+    const controller = new AbortController();
+    const pending = agent.run({
+      input: "看一下",
+      url: "https://example.com",
+      title: "例",
+      locale: "zh",
+      signal: controller.signal,
+    });
+    setTimeout(() => controller.abort(), 20);
+    const result = await pending;
+    expect(result.interrupted).toBe(true);
+    expect(result.text).not.toContain("模型长时间无响应");
   });
 });
 

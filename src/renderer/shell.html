@@ -2982,6 +2982,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
             "#taskStrip .task-body{min-width:0;flex:1}",
             "#taskStrip .task-title{display:block;font-size:var(--fs-13)}",
             "#taskStrip .task-step{display:block;color:var(--muted);font-size:var(--fs-12)}",
+            "#taskStrip .task-stop{flex:none;border:1px solid var(--line);background:var(--paper);color:var(--text);border-radius:999px;padding:2px 8px;font:inherit;font-size:var(--fs-12);cursor:pointer}",
           ].join("");
           document.head.appendChild(style);
         }
@@ -2998,8 +2999,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           return 0;
         });
         list.forEach(function (task) {
-          var btn = document.createElement("button");
-          btn.type = "button";
+          var btn = document.createElement("div");
           btn.className = "task-card is-" + (task.state || "running");
           if (task.lane === "background" && task.color) btn.style.borderLeft = "3px solid " + task.color;
           btn.onclick = function () {
@@ -3028,6 +3028,17 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
             btn.appendChild(lane);
           }
           btn.appendChild(body);
+          if (task.state === "running" || task.state === "waiting_human") {
+            var stop = document.createElement("button");
+            stop.type = "button";
+            stop.className = "task-stop";
+            stop.textContent = "停止";
+            stop.onclick = function (event) {
+              event.stopPropagation();
+              if (window.sparkShell && window.sparkShell.stopTask) window.sparkShell.stopTask(task.id);
+            };
+            btn.appendChild(stop);
+          }
           root.appendChild(btn);
         });
       }

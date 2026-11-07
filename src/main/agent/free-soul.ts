@@ -33,6 +33,10 @@ export type FreeSoulToolRunner = (
   args: Record<string, unknown>,
 ) => Promise<ToolResult>;
 
+/** 单轮没有任何响应头时的上限。接到首字后不再用这只计时掐断正文。 */
+export const FIRST_BYTE_TIMEOUT_MS = 180_000;
+export const SILENT_LLM_TEXT = "模型长时间无响应，已停止。可重试。";
+
 export type freeSoulConfig = {
   apiKey: string;
   baseUrl: string;
@@ -42,6 +46,7 @@ export type freeSoulConfig = {
   fetchImpl?: typeof fetch;
   maxRounds?: number;
   requestTimeoutMs?: number;
+  firstByteTimeoutMs?: number;
 };
 
 type ChatMessage = {
@@ -464,6 +469,10 @@ export class FreeSoul {
         data = await this.completion(messages, input.signal, input.taskId);
       } catch (error) {
         if (input.signal?.aborted) return end(interruptedResult());
+        if (isSilentTimeout(error)) {
+          console.log("[free-soul] llm silent timeout");
+          return end({ ok: false, text: SILENT_LLM_TEXT });
+        }
         return end({ ok: false, text: modelRequestFailure(error) });
       }
       const choice = data.choices?.[0]?.message;
@@ -632,23 +641,28 @@ export class FreeSoul {
     }
 
     const doFetch = this.config.fetchImpl || fetch;
-    const timeoutMs = this.config.requestTimeoutMs || 120_000;
+    const timeoutMs = this.config.firstByteTimeoutMs || this.config.requestTimeoutMs || FIRST_BYTE_TIMEOUT_MS;
     let lastError: unknown;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       if (signal?.aborted) throw abortError();
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-      const onAbort = () => controller.abort();
-      signal?.addEventListener("abort", onAbort);
-      if (signal?.aborted) controller.abort();
+      const timed = AbortSignal.timeout(timeoutMs);
+      const merged = signal ? mergeSignals([signal, timed]) : timed;
+      const silentRace = rejectWhen(timed, silentTimeoutError());
+      const stopRace = signal ? rejectWhen(signal, abortError()) : undefined;
+      void silentRace.catch(() => undefined);
+      void stopRace?.catch(() => undefined);
       try {
-        const response = await doFetch(chatCompletionsUrl(this.config.baseUrl), {
-          method: "POST",
-          headers,
-          body: JSON.stringify(body),
-          signal: controller.signal,
-        });
-        const raw = (await response.json()) as {
+        const response = await Promise.race([
+          doFetch(chatCompletionsUrl(this.config.baseUrl), {
+            method: "POST",
+            headers,
+            body: JSON.stringify(body),
+            signal: merged,
+          }),
+          silentRace,
+          ...(stopRace ? [stopRace] : []),
+        ]);
+        const raw = (await readJson(response, signal)) as {
           choices?: Array<{ message?: ChatMessage }>;
           error?: { message?: string } | string;
         };
@@ -661,20 +675,55 @@ export class FreeSoul {
         return raw;
       } catch (error) {
         if (signal?.aborted) throw error;
-        lastError = error;
-        console.log(`[free-soul] request failed attempt=${attempt + 1} ${requestErrorDetail(error)}`);
-      } finally {
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", onAbort);
+        lastError = timed.aborted || isSilentTimeout(error) ? silentTimeoutError() : error;
+        console.log(`[free-soul] request failed attempt=${attempt + 1} ${requestErrorDetail(lastError)}`);
       }
     }
     throw lastError instanceof Error ? lastError : new Error(String(lastError));
   }
 }
 
+function mergeSignals(signals: AbortSignal[]): AbortSignal {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  for (const item of signals) {
+    if (item.aborted) {
+      controller.abort();
+      return controller.signal;
+    }
+    item.addEventListener("abort", abort, { once: true });
+  }
+  return controller.signal;
+}
+
+function rejectWhen(signal: AbortSignal, error: Error): Promise<never> {
+  if (signal.aborted) return Promise.reject(error);
+  return new Promise((_, reject) => {
+    signal.addEventListener("abort", () => reject(error), { once: true });
+  });
+}
+
+async function readJson(response: Response, signal?: AbortSignal): Promise<unknown> {
+  const body = response.json();
+  if (!signal) return body;
+  const stop = rejectWhen(signal, abortError());
+  void stop.catch(() => undefined);
+  return Promise.race([body, stop]);
+}
+
 function requestErrorDetail(error: unknown): string {
   if (isAbortError(error)) return "请求超时";
   return error instanceof Error ? error.message : String(error);
+}
+
+function silentTimeoutError(): Error {
+  const error = new Error(SILENT_LLM_TEXT);
+  error.name = "SilentTimeoutError";
+  return error;
+}
+
+function isSilentTimeout(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "name" in error && String((error as { name?: string }).name) === "SilentTimeoutError");
 }
 
 function isAbortError(error: unknown): boolean {
