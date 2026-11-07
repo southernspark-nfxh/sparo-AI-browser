@@ -2298,6 +2298,9 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
       let userProfile = { nickname: "" };
 
       let lastSidebar = null;
+      let shellChat = [];
+      let shellChatSeq = 0;
+      let shellChatKey = "";
       function sidebarDsCloud() {
         return {
           ds: lastSidebar && lastSidebar.deepseek,
@@ -3155,13 +3158,17 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         return fold;
       }
 
-      function renderChat(log) {
+      function renderChat(log, fromIndex) {
         const root = document.getElementById("chat");
-        root.innerHTML = "";
+        const start = fromIndex || 0;
+        if (!start) root.innerHTML = "";
         const meLabel = userProfile.nickname ? userProfile.nickname.slice(0, 1) : t("chat.me");
         let lastUser = "";
-        for (const m of log || []) {
+        const rows = log || [];
+        for (let i = 0; i < rows.length; i++) {
+          const m = rows[i];
           if (m.role === "user") lastUser = m.text || "";
+          if (i < start) continue;
           const row = document.createElement("div");
           row.className = "bubble-row " + (m.role === "user" ? "me" : "sparo");
           const av = document.createElement("div");
@@ -3382,6 +3389,24 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         el.textContent = isVisionModelName(model) ? t("chat.visionOn") : t("chat.visionOff");
       }
 
+      function applyChatFrame(state, frame) {
+        const key = (frame && frame.selectedSession) || "user";
+        let next = state.key === key ? state : { key: key, seq: 0, texts: [] };
+        if (frame && frame.chatSync === "delta") {
+          if (Number(frame.chatBase) !== next.seq) return { state: next, requestFull: true };
+          const extra = Array.isArray(frame.chat) ? frame.chat : [];
+          next = {
+            key: key,
+            seq: Number(frame.chatSeq) || next.seq,
+            texts: next.texts.concat(extra),
+          };
+          return { state: next, requestFull: false, from: state.key === key ? state.texts.length : 0 };
+        }
+        const all = frame && Array.isArray(frame.chat) ? frame.chat : [];
+        next = { key: key, seq: Number(frame && frame.chatSeq) || 0, texts: all.slice() };
+        return { state: next, requestFull: false, from: 0 };
+      }
+
       function applySidebar(payload) {
         if (!payload) return;
         lastSidebar = payload;
@@ -3474,11 +3499,23 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         renderLessons(payload.lessons);
         renderTriggers(payload.triggers);
         renderQa(payload.qa);
-        renderChat(payload.chat);
+        const framed = applyChatFrame(
+          { key: shellChatKey, seq: shellChatSeq, texts: shellChat },
+          payload,
+        );
+        if (framed.requestFull) {
+          if (window.sparkShell && window.sparkShell.requestChatFull) window.sparkShell.requestChatFull();
+        } else {
+          const from = framed.from;
+          shellChat = framed.state.texts;
+          shellChatSeq = framed.state.seq;
+          shellChatKey = framed.state.key;
+          renderChat(shellChat, from);
+        }
         renderAgentRoster(payload.sessions, payload.tasks);
         renderTaskStrip(payload.tasks);
         renderPlanStrip(payload.plan);
-        if (payload.chat && payload.chat.length) scrollDockIntoView();
+        if (shellChat.length) scrollDockIntoView();
         if (payload.profile) {
           userProfile.nickname = payload.profile.nickname || "";
         }

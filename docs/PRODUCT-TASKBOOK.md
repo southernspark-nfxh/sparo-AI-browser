@@ -8,6 +8,13 @@
 >
 > **大脑进度（0.1.19）：** 听整句、站点表换站、模型编 `handbook` / 写下一步已进代码。10-26 起任务循环硬规则：新任务出确认卡、关单必有声、跑完计划步才许收摊、挂起答复接得回。10-27 起同能力多段逐段对账，最小化不再把窗口拉回前台。`absorb`（页上价格对约束）未开工。9 月交接稿见 [archive/2026-09/TRAE-PROMPT-AGENT-BRAIN.md](./archive/2026-09/TRAE-PROMPT-AGENT-BRAIN.md)，以 changelog 和测试为准。
 
+## 2026-11-07 现行（任务卡死、侧栏推送，T73–T74）
+
+任务书：[MULTI-AGENT-FIX-TASKBOOK-3.md](./MULTI-AGENT-FIX-TASKBOOK-3.md)。版本号没动。安装包没打。T75 还没做。
+
+- T73：模型单轮 180 秒没有响应头就停，文案「模型长时间无响应，已停止。可重试。」任务卡补了「停止」，MCP 有 `stop_task`。根因是挂起的 fetch 不认 abort，旧的 120 秒计时取消不了等待。测试：`tests/free-soul-v4.test.ts`、`tests/stop-task.test.ts`。真机未跑，没有点停止的日志或截图。
+- T74：侧栏对话改成带序号的增量，100ms 合并后再发。换会话、壳层重载、序号对不上才发全量。根因是侧栏没有合并层，每次把整段对话推给壳层。测试：`tests/sidebar-sync.test.ts`。真机未跑，没有新的 `[push]` sidebar avgBytes；T72 基线是 avgBytes=10470。拖出屏幕那类白屏没动。
+
 ## 2026-11-06 现行（多 Agent 横幅缺陷，T70–T72）
 
 任务书：[MULTI-AGENT-FIX-TASKBOOK-2.md](./MULTI-AGENT-FIX-TASKBOOK-2.md)。版本号没动。安装包没打。
