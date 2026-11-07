@@ -171,6 +171,7 @@ export function createToolHandlers(browser: SparkBrowser) {
       browser.submitTask(text, opts),
     get_task: (taskId: string, clientId?: string) => browser.getTask(taskId, clientId),
     list_tasks: (clientId?: string) => browser.listClientTasks(clientId),
+    stop_task: (taskId?: string, clientId?: string) => browser.stopAgentTask(taskId, clientId),
     list_agents: () => browser.listAgents(),
     register_client: (clientId: string, name?: string) => {
       const session = registerClientName(clientId, name);

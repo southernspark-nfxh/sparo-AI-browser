@@ -18,7 +18,7 @@ import { join, resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { boundsWithinOnePixel, chromeCoverDelta, chromeCoverReason, pageViewCoversChrome, resetChromeCoverBudget, takeChromeCoverFix, type ChromeCoverBudget, type CoverReason } from "./page-bounds.js";
+import { boundsWithinOnePixel, CHROME_HEAL_COOLDOWN_MS, CHROME_HEAL_STALL_LIMIT, chromeCoverDelta, chromeCoverReason, pageViewCoversChrome, resetChromeCoverBudget, takeChromeCoverFix, type ChromeCoverBudget, type CoverReason, type PageRect } from "./page-bounds.js";
 import { formatPushMinute, formatShellCrashContext, formatShellMemLine } from "./diag-log.js";
 import { clickPointUsable, offscreenAgentBounds, viewportTooSmall } from "./agent-viewport.js";
 import { coPresenceMayRestore } from "./shell-focus.js";
@@ -933,6 +933,8 @@ export class SparkBrowser {
   /** 池满后的 agent 任务。不和侧栏 backgroundQueue 混用。 */
   private agentQueue: Array<{ task: SparkBrowser["mcpTasks"][number]; clientId: string }> = [];
   private agentAborts = new Set<AbortController>();
+  private agentAbortByTask = new Map<string, AbortController>();
+  private manualStopIds = new Set<string>();
   private renderHoldCount = 0;
   private wasMinimizedForTask = false;
 
@@ -1809,7 +1811,7 @@ export class SparkBrowser {
 
   switchTab(id: string): ToolResult {
     if (!this.tabs.has(id)) return { ok: false, message: `Tab not found: ${id}` };
-    this.clearChromeHealStall();
+    this.resetChromeCoverState();
     this.wakeTab(id);
     this.activeTabId = id;
     const tab = this.tabs.get(id);
@@ -2710,27 +2712,34 @@ export class SparkBrowser {
   /**
    * 活动页或被拉回屏幕的后台页盖住顶栏/侧栏时，立刻按页面洞重排。
    * 自己这次 setBounds 触发的 bounds-changed 用 boundsGuard 挡掉，避免来回拉。
+   * before / after 必须是触发这次事件的同一个视图。
    */
   private onPageViewBoundsChanged(view: WebContentsView): void {
-    let actual: { x: number; y: number; width: number; height: number };
+    let actual: PageRect;
     try {
       actual = view.getBounds();
     } catch {
       return;
     }
-    const active = this.getActiveTab();
-    if (active?.view === view) {
+    const tabId = this.tabIdForPageView(view);
+    if (tabId && tabId === this.activeTabId) {
       const jitter = this.lastActiveBounds ? boundsWithinOnePixel(this.lastActiveBounds, actual) : false;
       if (!jitter) this.logChromeHole("bounds-changed", this.lastActiveBounds, actual);
       this.lastActiveBounds = actual;
     }
     if (this.boundsGuard || this.overlay !== "none") return;
+    if (!tabId) {
+      this.noteUnregisteredPageViews();
+      return;
+    }
+    const tab = this.tabs.get(tabId);
+    if (!tab?.view || tab.discarded || this.pageViewIsDestroyed(tab.view)) return;
     const hole = this.reportedPageHole();
     if (!hole || !pageViewCoversChrome(actual, hole)) return;
-    this.healCoveredChrome(actual, hole);
+    this.healCoveredChrome(tabId, tab.view, actual, hole);
   }
 
-  /** 约 2 秒对一次：活跃视图盖住最近一次 #pageHole 就拉回。烧过事件预算也继续。 */
+  /** 约 2 秒对一次：已登记且未休眠的页面盖住壳层就拉回。烧过事件预算也继续。 */
   private startChromeHoleWatch(): void {
     if (this.chromeHoleTimer) return;
     this.chromeHoleTimer = setInterval(() => this.assertChromeHole(), 2000);
@@ -2739,16 +2748,90 @@ export class SparkBrowser {
   private assertChromeHole(): void {
     try {
       if (!this.window || this.window.isDestroyed()) return;
-      const tab = this.getActiveTab();
-      if (!tab?.view || tab.discarded) return;
       const hole = this.reportedPageHole();
       if (!hole) return;
-      const actual = tab.view.getBounds();
-      if (!pageViewCoversChrome(actual, hole)) return;
-      this.healCoveredChrome(actual, hole);
+      this.noteUnregisteredPageViews();
+      for (const id of this.chromeWatchOrder()) {
+        const tab = this.tabs.get(id);
+        if (!tab?.view || tab.discarded || this.pageViewIsDestroyed(tab.view)) continue;
+        let actual: PageRect;
+        try {
+          actual = tab.view.getBounds();
+        } catch {
+          continue;
+        }
+        if (!pageViewCoversChrome(actual, hole)) continue;
+        this.healCoveredChrome(id, tab.view, actual, hole);
+      }
     } catch {
       /* 视图已销毁 */
     }
+  }
+
+  /** 活动页先修，避免同一拍的去抖把真正盖住壳层的活动页让给后台页。 */
+  private chromeWatchOrder(): string[] {
+    const ids = [...this.tabs.keys()];
+    ids.sort((left, right) => {
+      if (left === this.activeTabId) return -1;
+      if (right === this.activeTabId) return 1;
+      return 0;
+    });
+    return ids;
+  }
+
+  private tabIdForPageView(view: WebContentsView): string | null {
+    for (const [id, tab] of this.tabs) {
+      if (tab.view === view) return id;
+    }
+    return null;
+  }
+
+  private pageViewIsDestroyed(view: WebContentsView): boolean {
+    try {
+      const wc = view.webContents;
+      if (!wc || typeof wc.isDestroyed !== "function") return false;
+      return Boolean(wc.isDestroyed());
+    } catch {
+      return true;
+    }
+  }
+
+  /** 未登记子视图只记数量和矩形。不关闭、不移除。 */
+  private noteUnregisteredPageViews(): void {
+    let children: WebContentsView[] = [];
+    try {
+      children = (this.window?.contentView?.children || []) as WebContentsView[];
+    } catch {
+      return;
+    }
+    const known = new Set<WebContentsView>();
+    for (const tab of this.tabs.values()) {
+      if (tab.view) known.add(tab.view);
+    }
+    const stray = children.filter((child) => child && !known.has(child));
+    if (stray.length === 0) {
+      this.lastStrayDiag = "";
+      return;
+    }
+    const parts = stray.map((child) => {
+      let bounds = "unavailable";
+      let destroyed = false;
+      try {
+        bounds = JSON.stringify(child.getBounds());
+      } catch {
+        bounds = "unavailable";
+      }
+      try {
+        destroyed = Boolean(child.webContents?.isDestroyed?.());
+      } catch {
+        destroyed = true;
+      }
+      return `bounds=${bounds} destroyed=${destroyed}`;
+    });
+    const line = `[chrome-hole] unregistered count=${stray.length} ${parts.join(" ")}`;
+    if (line === this.lastStrayDiag) return;
+    this.lastStrayDiag = line;
+    console.log(line);
   }
 
   private reportedPageHole(): { x: number; y: number; width: number; height: number } | null {
@@ -2757,48 +2840,142 @@ export class SparkBrowser {
     return hole;
   }
 
-  private healCoveredChrome(
-    actual: { x: number; y: number; width: number; height: number },
-    hole: { x: number; y: number; width: number; height: number },
-  ): void {
+  private healCoveredChrome(tabId: string, view: WebContentsView, actual: PageRect, hole: PageRect): void {
     const reason = chromeCoverReason(actual, hole);
     if (!reason) return;
-    const tabId = this.activeTabId || "";
+    const now = Date.now();
     const stalls = this.chromeHealStalls();
     const prev = stalls.get(tabId);
-    if (prev && prev.count >= 3) return;
-    const taken = takeChromeCoverFix(this.chromeCover, Date.now());
+    if (prev && prev.count >= CHROME_HEAL_STALL_LIMIT && now < prev.retryAt) return;
+
+    const cooledRetry = Boolean(prev && prev.count >= CHROME_HEAL_STALL_LIMIT);
+    const taken = takeChromeCoverFix(this.chromeCover, now);
+    // 同一次断言里刚修过别的标签时，其余后台页仍要停放。同一标签仍受 200ms 去抖，避免事件风暴把三次计数一次烧完。
+    const budgetOwner = this.chromeCoverTabId || "";
+    const samePass = !taken.allow && taken.state.lastFix === now && budgetOwner !== "" && budgetOwner !== tabId;
+    if (taken.allow) this.chromeCoverTabId = tabId;
     this.chromeCover = taken.state;
-    if (!taken.allow) return;
-    this.logChromeHole("heal", actual, hole, reason);
+    if (!taken.allow && !samePass) return;
+
+    const showActive = tabId === this.activeTabId && this.overlay === "none";
+    if (cooledRetry && showActive) this.requestHoleReport();
+    if (!cooledRetry) this.logChromeHole("heal", actual, hole, reason, tabId);
+
     this.boundsGuard = true;
     try {
-      this.applyViewBounds(false);
+      if (showActive) this.applyViewBounds(false);
+      else {
+        const bounds = this.pageBounds();
+        if (bounds) this.parkPageView(view, bounds, true);
+      }
     } catch {
       /* 视图已销毁 */
     } finally {
       this.boundsGuard = false;
     }
-    let after = actual;
-    try {
-      const view = this.tabs.get(tabId)?.view;
-      if (view) after = view.getBounds();
-    } catch {
-      after = actual;
+
+    const after = this.readPageViewBounds(view, actual);
+    if (cooledRetry) {
+      this.logChromeHealAction("retry", tabId, reason, actual, after, CHROME_HEAL_COOLDOWN_MS);
     }
-    if (boundsWithinOnePixel(actual, after)) {
-      const count = (prev?.count || 0) + 1;
-      stalls.set(tabId, { count, reason });
-      if (count >= 3) console.log(`[chrome-hole] give-up tab=${tabId} reason=${reason}`);
+    if (!boundsWithinOnePixel(actual, after)) {
+      stalls.delete(tabId);
       return;
     }
-    stalls.delete(tabId);
+
+    const count = cooledRetry ? CHROME_HEAL_STALL_LIMIT : (prev?.count || 0) + 1;
+    if (count < CHROME_HEAL_STALL_LIMIT) {
+      stalls.set(tabId, { count, reason, retryAt: 0, remounted: false });
+      return;
+    }
+
+    let remounted = Boolean(prev?.remounted);
+    let settled = after;
+    if (!cooledRetry && showActive) this.requestHoleReport();
+    if (!cooledRetry && showActive && !remounted) {
+      this.boundsGuard = true;
+      try {
+        this.remountCoveredActiveView(view);
+        remounted = true;
+      } catch {
+        /* 视图已销毁 */
+      } finally {
+        this.boundsGuard = false;
+      }
+      settled = this.readPageViewBounds(view, after);
+      this.logChromeHealAction("remount", tabId, reason, actual, settled, CHROME_HEAL_COOLDOWN_MS);
+      if (!boundsWithinOnePixel(actual, settled)) {
+        stalls.delete(tabId);
+        return;
+      }
+    }
+
+    stalls.set(tabId, {
+      count: CHROME_HEAL_STALL_LIMIT,
+      reason,
+      retryAt: now + CHROME_HEAL_COOLDOWN_MS,
+      remounted,
+    });
+    this.logChromeHealAction("retry-deferred", tabId, reason, actual, settled, CHROME_HEAL_COOLDOWN_MS);
   }
 
-  /** 同一标签连续三次设了等于没设，就停手。resize / restore / switchTab 再清掉。 */
-  private chromeHealStall: Map<string, { count: number; reason: Exclude<CoverReason, null> }> | null = null;
+  /** 活动页三次普通重排仍覆盖时，按 pin → 重新挂上 → 精确洞。不重建 webContents，不刷新。 */
+  private remountCoveredActiveView(view: WebContentsView): void {
+    const bounds = this.pageBounds();
+    if (!bounds || bounds.y < CHROME_H || bounds.width < 80 || bounds.height < 80) return;
+    const parent = this.window.contentView;
+    try {
+      if (parent?.children?.includes(view)) parent.removeChildView(view);
+    } catch {
+      /* 视图已销毁 */
+    }
+    this.pinViewBeforeMount(view);
+    try {
+      parent?.addChildView(view);
+    } catch {
+      /* 视图已销毁 */
+    }
+    try {
+      view.setVisible(true);
+      view.setBounds(bounds);
+    } catch {
+      /* 视图已销毁 */
+    }
+  }
 
-  private chromeHealStalls(): Map<string, { count: number; reason: Exclude<CoverReason, null> }> {
+  private readPageViewBounds(view: WebContentsView, fallback: PageRect): PageRect {
+    try {
+      return view.getBounds();
+    } catch {
+      return fallback;
+    }
+  }
+
+  private logChromeHealAction(
+    kind: "retry-deferred" | "remount" | "retry",
+    tabId: string,
+    reason: Exclude<CoverReason, null>,
+    before: PageRect,
+    after: PageRect,
+    cooldownMs: number,
+  ): void {
+    console.log(
+      `[chrome-hole] ${kind} tab=${tabId} reason=${reason} before=${JSON.stringify(before)} after=${JSON.stringify(after)} cooldown=${cooldownMs}`,
+    );
+  }
+
+  /** 同一标签连续无进展后降频。resize / restore / switchTab 清掉退避，冷却到点还会再试。 */
+  private chromeHealStall: Map<
+    string,
+    { count: number; reason: Exclude<CoverReason, null>; retryAt: number; remounted: boolean }
+  > | null = null;
+
+  private lastStrayDiag = "";
+
+  private chromeHealStalls(): Map<
+    string,
+    { count: number; reason: Exclude<CoverReason, null>; retryAt: number; remounted: boolean }
+  > {
     if (!this.chromeHealStall) this.chromeHealStall = new Map();
     return this.chromeHealStall;
   }
@@ -2809,6 +2986,7 @@ export class SparkBrowser {
 
   private resetChromeCoverState(): void {
     this.chromeCover = resetChromeCoverBudget(Date.now());
+    this.chromeCoverTabId = "";
     this.clearChromeHealStall();
   }
 
@@ -2817,6 +2995,7 @@ export class SparkBrowser {
     oldBounds: { x: number; y: number; width: number; height: number } | null,
     newBounds: { x: number; y: number; width: number; height: number },
     reason?: Exclude<CoverReason, null>,
+    tabId?: string,
   ): void {
     let minimized = false;
     let maximized = false;
@@ -2827,8 +3006,9 @@ export class SparkBrowser {
       /* ignore */
     }
     const delta = reason && oldBounds ? ` reason=${reason} ${chromeCoverDelta(reason, oldBounds, newBounds)}` : "";
+    const who = tabId ? ` tab=${tabId}` : "";
     console.log(
-      `[chrome-hole] ${kind} t=${Date.now()} active=${this.activeTabId || ""} minimized=${minimized} maximized=${maximized} old=${JSON.stringify(oldBounds)} new=${JSON.stringify(newBounds)}${delta}`,
+      `[chrome-hole] ${kind}${who} t=${Date.now()} active=${this.activeTabId || ""} minimized=${minimized} maximized=${maximized} old=${JSON.stringify(oldBounds)} new=${JSON.stringify(newBounds)}${delta}`,
     );
   }
 
@@ -2910,6 +3090,8 @@ export class SparkBrowser {
   private boundsGuard = false;
   private lastActiveBounds: { x: number; y: number; width: number; height: number } | null = null;
   private chromeCover: ChromeCoverBudget = { windowStart: 0, fixes: 0, lastFix: 0 };
+  /** 最近一次真正占用去抖预算的标签。同一毫秒里的其他标签仍可校正。 */
+  private chromeCoverTabId = "";
   /** 向 shell 要一次最新的 page-hole 测量（恢复过渡的回调可能丢过）。 */
   private requestHoleReport(): void {
     try {
@@ -3040,6 +3222,7 @@ export class SparkBrowser {
     handle("spark:clear-chat", async () => this.clearChat());
     handle("spark:select-session", async (_e, key: string) => this.selectSession(String(key || "")));
     handle("spark:focus-task", async (_e, id: string) => this.focusTask(String(id || "")));
+    handle("spark:stop-task", async (_e, id: string) => this.stopAgentTask(String(id || "")));
     handle("spark:reorder-tabs", async (_e, fromId: string, toId: string) =>
       this.reorderTabs(String(fromId || ""), String(toId || "")),
     );
@@ -7002,6 +7185,59 @@ export class SparkBrowser {
 
   abortAgentRuns(): void {
     for (const controller of this.agentAborts || []) controller.abort();
+    for (const controller of this.agentAbortByTask?.values() || []) controller.abort();
+  }
+
+  /** 停一张任务卡，或某个 client 名下还活着的任务。缺省停该 client 的全部。 */
+  stopAgentTask(taskId?: string, clientId?: string): { ok: boolean; message: string; stopped: string[] } {
+    const pool = this.taskPool?.tasks || [];
+    const live = pool.filter(
+      (task) => task.state === "running" || task.state === "queued" || task.state === "waiting_human",
+    );
+    const id = String(taskId || "").trim();
+    const client = String(clientId || "").trim();
+    const targets = id
+      ? live.filter((task) => task.id === id)
+      : client
+        ? live.filter((task) => task.clientId === client)
+        : live;
+    if (!targets.length) return { ok: false, message: "没有可停止的任务", stopped: [] };
+    if (!this.manualStopIds) this.manualStopIds = new Set();
+    if (!this.agentQueue) this.agentQueue = [];
+    if (!this.backgroundQueue) this.backgroundQueue = [];
+    const stopped: string[] = [];
+    for (const card of targets) {
+      this.manualStopIds.add(card.id);
+      const was = card.state;
+      const key = card.clientId ? `agent:${card.clientId}` : "user";
+      this.appendChat(key, "已手动停止");
+      const mcp = this.mcpTaskList().find((item) => item.taskId === card.id);
+      if (mcp) {
+        mcp.status = "failed";
+        mcp.lastAssistant = "已手动停止";
+      }
+      this.agentQueue = this.agentQueue.filter((job) => job.task.taskId !== card.id);
+      this.backgroundQueue = this.backgroundQueue.filter((job) => job.id !== card.id);
+      this.agentAbortByTask?.get(card.id)?.abort();
+      if (card.lane === "foreground") this.activePiAbort?.abort();
+      this.taskPool?.finish?.(card.id, "failed");
+      if (card.lane === "foreground") this.taskPool?.releaseForeground?.();
+      const tab = card.tabId ? this.tabs?.get(card.tabId) : undefined;
+      if (tab) tab.agentStatus = "done";
+      stopped.push(card.id);
+      console.log(`[task] stop ${card.id} state=${was}`);
+    }
+    this.pumpAgent();
+    this.syncTaskChrome();
+    this.pushSidebarState();
+    return { ok: true, message: "已手动停止", stopped };
+  }
+
+  private appendChat(key: string, text: string): void {
+    const book = this.chatBook();
+    const list = book.get(key) || [];
+    list.push({ role: "assistant", text });
+    book.set(key, list);
   }
 
   private sidebarPoolBusy(): boolean {
@@ -7170,7 +7406,9 @@ export class SparkBrowser {
     if (pooled && tabId) pooled.tabId = tabId;
     const controller = new AbortController();
     if (!this.agentAborts) this.agentAborts = new Set();
+    if (!this.agentAbortByTask) this.agentAbortByTask = new Map();
     this.agentAborts.add(controller);
+    this.agentAbortByTask.set(task.taskId, controller);
     this.freeSoulRunning = true;
     this.engageBackgroundRender();
     try {
@@ -7218,9 +7456,14 @@ export class SparkBrowser {
                 this.lastRunTrace = trace;
               },
             });
-            this.chatLog.push({ role: "assistant", text: result.text });
-            this.pushSidebarState();
-            this.settleMcpTask(task, result, tabId);
+            if (this.manualStopIds?.has(task.taskId)) {
+              task.status = "failed";
+              task.lastAssistant = "已手动停止";
+            } else {
+              this.chatLog.push({ role: "assistant", text: result.text });
+              this.pushSidebarState();
+              this.settleMcpTask(task, result, tabId);
+            }
           } catch (error) {
             const message = `执行失败：${error instanceof Error ? error.message : String(error)}`;
             this.chatLog.push({ role: "assistant", text: message });
@@ -7235,11 +7478,15 @@ export class SparkBrowser {
     } finally {
       this.releaseBackgroundRender();
       this.agentAborts.delete(controller);
+      this.agentAbortByTask?.delete(task.taskId);
+      const stopped = this.manualStopIds?.has(task.taskId) === true;
+      this.manualStopIds?.delete(task.taskId);
       this.freeSoulRunning = this.chatRunningFlag || this.agentAborts.size > 0;
       this.agentPoolIds?.delete(task.taskId);
       const finishedTab = tabId ? this.tabs?.get(tabId) : undefined;
       if (finishedTab) finishedTab.agentStatus = "done";
-      this.taskPool?.finish?.(task.taskId, task.status === "failed" ? "failed" : "done");
+      const stillThere = this.taskPool?.tasks?.some((item) => item.id === task.taskId);
+      if (stillThere) this.taskPool?.finish?.(task.taskId, stopped || task.status === "failed" ? "failed" : "done");
       this.pumpAgent();
       this.syncTaskChrome();
       this.pushSidebarState();

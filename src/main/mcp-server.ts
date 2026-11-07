@@ -651,6 +651,13 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
   );
 
   server.tool(
+    "stop_task",
+    "Stop one running, queued, or waiting task. Omit taskId to stop every live task of this client. The sidebar says 已手动停止.",
+    { taskId: z.string().optional() },
+    async ({ taskId }) => textResult(handlers.stop_task(taskId, scope?.clientId)),
+  );
+
+  server.tool(
     "list_tasks",
     "List this client's running, queued, or waiting tasks: id, status, rounds, tab. No task text.",
     {},

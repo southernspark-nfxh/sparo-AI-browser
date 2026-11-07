@@ -39,8 +39,15 @@
 | 29 | 新核心正文重复提示 | `free-soul.ts` `FreeSoul.run()` | `page_text` 正文连续 3 次相同（中间可以夹别的工具）时，向 messages 注入一条「基于已读内容汇报」的提示，然后清空计数让模型继续。不结束循环 | 同一次 run 里的 page_text 正文全文 | 保留。只注入提示，不终止、不替模型决定。与 #27 的调用指纹并存，不改 #27 |
 | 30 | 新核心轮次预算提示 | `free-soul.ts` `FreeSoul.run()` | 执行到轮次上限的 75%（默认 24/32，取整）时注入一次收尾提醒。每次 run 只注入一次，不结束循环 | 当前轮次与本次 `maxRounds` | 保留。预算提示不改变任务走向，只提醒收尾 |
 | 31 | 新核心跳过店小秘提交闸门 | `browser.ts` 点击路径 `submitClickNeedsGate` | `freeSoulRunning` 时，提交类点击不调用 `qaGate`、不弹 `requestApproval`。旧路径仍走这两步 | 不可逆确认只留在 #28 的 `request_confirm`。执行层再拦一次会把知乎发布误判成速卖通 | 保留。只这一处布尔短路。不许删 `looksLikeSubmitAction`、`qaGate`、`requestApproval`，不许加站点白名单 |
-| 32 | 新核心模型请求超时 | `free-soul.ts` `completion` | 单次请求默认 120 秒，到时 abort，原样重试一次。第二次仍失败则本次 run 以 `ok: false` 结束，文案写明超时或失败、可重试。不把已有工具结果收成答案 | 这一次 HTTP 请求的耗时 | 保留。只终止挂起的请求，不替模型选路线，不判任务成败 |
+| 32 | 新核心模型请求超时 | `free-soul.ts` `completion` | 单轮无响应头默认 180 秒（`AbortSignal.timeout`），接到响应头就不再用这只计时掐正文。fetch 不认 abort 时 `Promise.race` 仍会失败。失败重试一次，第二次仍无首字则本次 run 以 `ok: false` 结束，文案是「模型长时间无响应，已停止。可重试。」用户点停止走另一条 AbortSignal，不走这句 | 这一次 HTTP 请求到响应头的耗时 | 保留。只终止挂起的请求，不替模型选路线，不把已有工具结果收成答案 |
 | 33 | 新核心 click_text 放行发送 | `publish-gate.ts` `gateClickText`；`browser.ts` `clickText` | `freeSoulRunning` 时 send 类不再查 `allowClick`。支付、登录、验证码仍拦。旧路径不变 | 点击文字的分类。确认仍在 #28 | 保留。只豁免 send。不许删 `classifyClick` / `allowClick` |
 | 34 | 自动执行模式边界 | `settings/store.ts` `execMode`；`free-soul.ts` `systemPrompt` | `execMode === "auto"` 时提示词要求发布、发送直接执行、不调用 `request_confirm`；支付、删除仍必须确认。模型若仍调用 `request_confirm`，本地照常中断等待，不代答。客服回复两模式都只填草稿。登录、验证码、安全验证两模式都如实停等。step 模式提示词与原先逐字相同 | settings 里用户显式选择的 `execMode`，不是本地自主判断。任务书写作 #30，登记册 #30–#33 已占用，本条为 #34 | 保留。假完成禁令与轮次护栏（#26）继续生效。本地不吞确认、不代答 |
+| 35 | 店小秘速卖通身份不唯一停等 | `dxm-smt-page.ts` `resolveIdentity`；`dxm-smt-listing.ts` 准备入口 | 商品或店铺不能唯一对应时进入 `waiting_human`，不默认第一条，不认领、不发布 | 页面读回的记录 ID、店铺 ID/名称，加上调用参数里用户点名的店铺。缺可靠 ID 时不许只用标题判重 | 保留。只停等，不替用户选商品或店铺。不接回旧意图路由 |
+| 36 | 登录、权限或入口变化停等 | `dxm-smt-page.ts` `classifyPage` | 未加载、登录失效、验证码、无权限、入口对不上时停等，不绕过，也不改走旧店小秘工作流 | 当前标签 URL 与页面标记 | 保留。不绕过验证码、登录和权限 |
+| 37 | 标签失效或中断停止副作用 | `dxm-smt-listing.ts` 准备/发布循环；`dxm-smt-page.ts` `editTabWritable` | 编辑标签关闭或 URL 变化、本次 run 的 `AbortSignal` 已取消、或用户暂停时，保存断点，不再执行队列里的认领、写字段、翻译、保存、发布 | 浏览器内部给出的 `tabId` 和本次 run 的 `AbortSignal`，不是模型参数 | 保留。不刷新、不重开编辑页找回草稿 |
+| 38 | QA 与草稿指纹门 | `dxm-smt-qa.ts`；`dxm-smt-listing.ts` `dxm_smt_publish` | 指纹不一致、工作单身份不一致、QA 不是通过或已失效、页面关键内容已变时拒绝发布，要求重新准备。关键内容变化后旧 QA 同时失效 | 规范化后的草稿指纹，与工作单上一次 QA 记下的指纹 | 保留。不把 `best_effort` 当成通过，不把准备完成当成上线。发布确认仍由模型按 #28 / #34 调用 `request_confirm`，本地不存「已确认」布尔值 |
+| 39 | 提交结果未知禁止重试 | `dxm-smt-listing.ts` 发布锁；`dxm-smt-journal.ts` 发布尝试 | 已经写下 `publish_attempt_started` 或 `publish_clicked` 但没有最终回执时，无论超时、重启还是崩溃恢复，都只允许状态查询；无法排除已提交就不再次点击。同一工作单已有发布在执行时，后来的调用只返回当前尝试 | 本机 `dxm-smt-journal.jsonl` 里的发布尝试与回执。不写入 `missions.jsonl` | 保留。待审、结果未知、已上线重复发布都不再次提交。平台拒绝后旧指纹不能直接重发 |
 
 模型把采集句编成「一步 navigate + 只有 answer」时，第 1 条仍会当成只是开站。这是信脑区计划的残留，不是词表漏洞。无计划又带「复制」的句子在过期日前仍走第 2 条。
+
+店小秘到速卖通新链路的本地停等是 #35–#39。状态核验和动作读回本身不另开路线判断。逐步确认模式下的发布同意、收费功能同意，仍由模型看对话历史调用 `request_confirm`，不在本地用布尔值代替。
