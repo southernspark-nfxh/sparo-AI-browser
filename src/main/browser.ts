@@ -24,6 +24,7 @@ import { clickPointUsable, offscreenAgentBounds, viewportTooSmall } from "./agen
 import { coPresenceMayRestore } from "./shell-focus.js";
 import { traceMainWindow } from "./focus-trace.js";
 import { laneForText, type TaskLane } from "./agent/task-class.js";
+import { formatFillFailure, formatLane, formatLearnSwallow } from "./agent/parallel-log.js";
 import { shouldSuspend as poolShouldSuspend, TaskPool, type PoolTask } from "./agent/task-pool.js";
 import {
   agentClientFromScope,
@@ -2168,6 +2169,27 @@ export class SparkBrowser {
     } catch {
       /* ignore */
     }
+  }
+
+  /** 填表没对上时记下标签是否在前台、窗口是否有焦点。不改填写结果。 */
+  private logFillFailure(tabId: string | undefined, method: string, matched: boolean): void {
+    if (matched) return;
+    const tab = tabId || this.activeTabId || "";
+    let focused = false;
+    try {
+      focused = Boolean(this.window && !this.window.isDestroyed() && this.window.isFocused());
+    } catch {
+      focused = false;
+    }
+    console.log(
+      formatFillFailure({
+        tab,
+        active: Boolean(tab) && tab === this.activeTabId,
+        focused,
+        method,
+        matched,
+      }),
+    );
   }
 
   private recoverHungPage(tab: TabInfo): void {
@@ -4455,7 +4477,10 @@ export class SparkBrowser {
   }
 
   private openHelpAsk(hit: ReturnType<typeof detectFailure>): void {
-    if (this.freeSoulRunning) return;
+    if (this.freeSoulRunning) {
+      console.log(formatLearnSwallow("openHelpAsk"));
+      return;
+    }
     if (!hit || this.helpAsk) return;
     const zh = this.settings.locale.startsWith("zh");
     this.helpAsk = questionFor(hit, zh);
@@ -4464,7 +4489,10 @@ export class SparkBrowser {
   }
 
   private async applyHostLessons(tabId?: string): Promise<boolean> {
-    if (this.freeSoulRunning) return false;
+    if (this.freeSoulRunning) {
+      console.log(formatLearnSwallow("applyHostLessons"));
+      return false;
+    }
     tabId = tabId || this.agentTabId || this.activeTabId;
     const lessons = findLessonsForHost(this.configDir(), this.getUrl(tabId));
     if (!lessons.length) return false;
@@ -4495,7 +4523,10 @@ export class SparkBrowser {
   }
 
   answerLearning(raw: string): ToolResult {
-    if (this.freeSoulRunning) return { ok: true, message: "" };
+    if (this.freeSoulRunning) {
+      console.log(formatLearnSwallow("answerLearning"));
+      return { ok: true, message: "" };
+    }
     const ask = this.helpAsk;
     if (!ask) return { ok: false, message: tx(this.settings.locale, "learn.none") };
     const parsed = parseAnswer(ask, raw);
@@ -7033,6 +7064,17 @@ export class SparkBrowser {
   ): Promise<ToolResult> {
     const clean = text.trim();
     if (!clean) return { ok: false, message: "请输入任务" };
+    console.log(
+      formatLane({
+        path: "sidebar",
+        classified: laneForText(clean),
+        applied: "chat",
+        chatRunning: this.chatRunning,
+        freeSoulRunning: this.freeSoulRunning,
+        active: this.activeTabId || "",
+        agentTab: this.agentTabId || "",
+      }),
+    );
     const pics = sanitizeImageDataUrls(images);
     const cleanQuotes = normalizeQuotes(quotes);
     if (this.chatRunning) {
@@ -7431,6 +7473,17 @@ export class SparkBrowser {
     clientId: string,
   ): { taskId: string; status: "running" | "queued" } {
     task.clientId = clientId;
+    console.log(
+      formatLane({
+        path: "mcp",
+        classified: laneForText(task.text || ""),
+        applied: "background",
+        chatRunning: this.chatRunning,
+        freeSoulRunning: this.freeSoulRunning,
+        active: this.activeTabId || "",
+        agentTab: this.agentTabId || "",
+      }),
+    );
     const before = this.activeTabId;
     const tabId = this.bindAgentTab(clientId) || "";
     const reused = tabId ? this.tabs?.get(tabId) : undefined;
@@ -11775,6 +11828,7 @@ export class SparkBrowser {
         const actual = filled?.value || "";
         const matched =
           Boolean(filled?.ok && filled.matched) && !isMojibake(value, actual);
+        this.logFillFailure(tabId, `cdp-frame:${FIX}`, matched);
         return {
           ok: matched,
           message: matched
@@ -11830,6 +11884,7 @@ export class SparkBrowser {
 
       // Fallback: CDP Input.insertText (true Unicode), not per-char sendInputEvent
       if (!result.matched) {
+        this.logFillFailure(tabId, `Input.insertText:${FIX}`, false);
         await this.insertTextUnicode(value, tabId);
         await sleep(200);
         let actual = (await wc.executeJavaScript(
@@ -11970,6 +12025,7 @@ export class SparkBrowser {
 
       this.pushStatus();
       this.lastSnapshot = null;
+      this.logFillFailure(tabId, result.method || result.kind || FIX, result.matched);
       return {
         ok: result.matched,
         message: result.matched
@@ -11985,6 +12041,7 @@ export class SparkBrowser {
         },
       };
     } catch (error) {
+      this.logFillFailure(tabId, "error", false);
       return {
         ok: false,
         message: error instanceof Error ? error.message : String(error),
