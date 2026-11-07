@@ -13,8 +13,11 @@ export const SPARO_AGENT_GUIDE = `你是大脑，Sparo 是浏览器。多步任�
 
 标签：带 clientId 时，不带 tabId 的操作落在你自己的标签上，不要抢用户当前页。调研要出报告页，不要把对照表堆进聊天。`;
 
-export function agentInstructions(clientId: string): string {
-  return `clientId=${clientId}。多步任务（发布、采集、调研）用 submit_task 一次交完整目标和素材，再用 get_task 轮询。navigate、click、fill 只用来读状态和做轻量校验。支付、删除、客服发送仍由真人点。详细用法读 prompt sparo_agent_guide。不带 tabId 的页面操作落在这个 client 自己的标签上，不要抢用户当前页。后台池满不再返回 pool_full，改为 queued，空出来自动开跑。`;
+export function agentInstructions(clientId: string, docsDir?: string): string {
+  const at = docsDir
+    ? `完整说明在 ${docsDir}\\AGENTS.md（怎么连、怎么用技能）与 ${docsDir}\\MCP-API.md（全部工具）。安装目录里、和 Sparo.exe 同一层，也有一份 AGENTS.md。`
+    : "";
+  return `clientId=${clientId}。${at}多步任务（发布、采集、调研）用 submit_task 一次交完整目标和素材，再用 get_task 轮询。navigate、click、fill 只用来读状态和做轻量校验。支付、删除、客服发送仍由真人点。详细用法读 prompt sparo_agent_guide。不带 tabId 的页面操作落在这个 client 自己的标签上，不要抢用户当前页。后台池满不再返回 pool_full，改为 queued，空出来自动开跑。`;
 }
 
 type PromptHost = {

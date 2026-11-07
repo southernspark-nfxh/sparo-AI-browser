@@ -1,4 +1,5 @@
 import http from "node:http";
+import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -16,6 +17,13 @@ import {
 } from "./mcp-security.js";
 
 const DEFAULT_PORT = Number(process.env.SPARO_MCP_PORT || process.env.SPARK_MCP_PORT || 3921);
+
+/** Agent 文档目录：安装包内 resources/docs，开发时是仓库 docs。 */
+const DOCS_DIR =
+  process.env.SPARO_DOCS_DIR ||
+  (process.resourcesPath && !/node_modules|electron\.exe/i.test(process.resourcesPath)
+    ? path.join(process.resourcesPath, "docs")
+    : path.resolve("docs"));
 
 export const MCP_HANDOFF_HINT =
   "多步任务（发布、采集、调研）请把完整目标与素材一次交给侧栏（send one complete instruction），让 Sparo 自主执行；不要用 navigate/click/fill 逐步遥控。原语适合读状态与轻量校验。";
@@ -830,8 +838,11 @@ export async function startMcpServer(handlers: ToolHandlers): Promise<{
           tools: TOOL_NAMES,
           xhs_tools: TOOL_NAMES.filter((t) => t.startsWith("xhs_")),
           agent: {
-            read: "AGENTS.md",
-            open_example: "npm run open -- https://weibo.com",
+            read: path.join(DOCS_DIR, "AGENTS.md"),
+            docs: DOCS_DIR,
+            connect: path.join(DOCS_DIR, "AGENTS.md"),
+            guide: path.join(DOCS_DIR, "MCP-API.md"),
+            prompt: "sparo_agent_guide",
             auth: "%APPDATA%/sparo-store/mcp-auth.json",
           },
         }),
@@ -884,7 +895,7 @@ export async function startMcpServer(handlers: ToolHandlers): Promise<{
     const server = new McpServer(
       { name: "sparo", version: "0.1.0" },
       clientId
-        ? { instructions: agentInstructions(clientId) }
+        ? { instructions: agentInstructions(clientId, DOCS_DIR) }
         : undefined,
     );
     registerSparoPrompt(server);

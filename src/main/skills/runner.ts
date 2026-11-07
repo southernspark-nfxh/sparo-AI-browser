@@ -13,6 +13,7 @@ import {
 } from "./store.js";
 import { writeExperience } from "../agent/experience.js";
 import { skillConflictsWithQuery } from "../agent/intent-router.js";
+import { gateDxmSmtSkill } from "../workflows/dxm-smt-preview.js";
 import { normalizeUtterance } from "../triggers/gate.js";
 import { loadTriggers } from "../triggers/store.js";
 
@@ -1143,6 +1144,10 @@ export async function runSkill(
       message: `未找到技能「${key}」`,
       data: { suggestions },
     };
+  }
+  const closedPreview = gateDxmSmtSkill(skill.id);
+  if (closedPreview) {
+    return { ok: false, message: closedPreview.message, data: { skillId: skill.id, closed: true } };
   }
   if (skill.distilled) {
     return {

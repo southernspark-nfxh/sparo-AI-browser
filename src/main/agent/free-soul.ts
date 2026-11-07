@@ -1,4 +1,5 @@
 import type { ToolResult } from "../../shared/types.js";
+import { registerPaidConfirmFromArgs } from "../workflows/dxm-smt-images.js";
 import { CAPTURE_PROMPT, CAPTURE_RUN_LIMIT, RUN_CAPTURE_FULL } from "../captures.js";
 import { pageTextGrowthNote } from "./deepseek.js";
 import { traceArgs, type SoulRunTrace, type SoulTraceStep } from "./distill.js";
@@ -25,6 +26,7 @@ export type FreeSoulToolName =
   | "list_captures"
   | "match_skill"
   | "run_skill"
+  | "run_workflow"
   | "save_skill"
   | "save_doc";
 
@@ -229,6 +231,15 @@ const TOOLS = [
       query: { type: "string" },
       params: { type: "object" },
     },
+  ),
+  tool(
+    "run_workflow",
+    "执行店小秘到速卖通上架白名单。id 只能是 dxm_smt_probe、dxm_smt_prepare、dxm_smt_status、dxm_smt_publish。收费图片和逐步确认模式下的发布，必须先 request_confirm。不要把 tabId 放进参数。其他 id 会拒绝。",
+    {
+      id: { type: "string" },
+      params: { type: "object" },
+    },
+    ["id"],
   ),
   tool(
     "save_skill",
@@ -503,6 +514,7 @@ export class FreeSoul {
           parseError = "工具参数不是合法 JSON，请修正后重试。";
         }
         if (name === "request_confirm") {
+          registerPaidConfirmFromArgs(args);
           return end({ ok: true, text: confirmText(args), awaitingConfirm: true });
         }
         const overCaptureBudget =

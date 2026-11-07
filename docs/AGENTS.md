@@ -31,6 +31,7 @@ $auth = Get-Content "$env:APPDATA\sparo-store\mcp-auth.json" | ConvertFrom-Json
 | Hermes | Tool actuator over MCP |
 | Workbuddy | MCP host |
 | Codex / Cursor / Claude Code | Add Sparo as MCP server |
+| Trae | 同一套 MCP：地址 + Bearer token，按 AGENTS.md 调用技能 |
 | Custom | Any client that can call navigate / snapshot / click / fill |
 
 ## Typical loop · 典型闭环
