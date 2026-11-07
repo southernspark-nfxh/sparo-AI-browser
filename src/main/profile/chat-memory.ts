@@ -15,6 +15,8 @@ export type ChatTurn = {
   doc?: ChatDoc;
   images?: string[];
   quotes?: SparoQuote[];
+  /** 侧栏增量推送的单调序号。只在内存里用，落盘多一个字段无妨。 */
+  seq?: number;
   /** Cortex 停问 / 出思路，侧栏出按钮。 */
   cortex?: { mode: "ask" | "propose" | "loop"; need?: string; approach?: string };
   /** 门岗登记卡。用户点「记住」才写入触发语。 */

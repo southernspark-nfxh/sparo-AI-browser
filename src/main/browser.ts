@@ -175,6 +175,7 @@ import {
 } from "./history.js";
 import { uniqueDownloadPath } from "./downloads.js";
 import { loadChatMemory, saveChatMemory, clearChatMemory, type ChatTurn } from "./profile/chat-memory.js";
+import { planChatFrame, stampChatSeq } from "./sidebar-sync.js";
 import {
   decideRecovery,
   journalCloseUtterance,
@@ -350,6 +351,9 @@ import {
   listWorkflowSummaries,
   runWorkflow,
 } from "./workflows/dianxiaomi.js";
+import { createLiveDxmSmtPort } from "./workflows/dxm-smt-live.js";
+import { runDxmSmtWorkflow } from "./workflows/dxm-smt-listing.js";
+import { dxmSmtPreviewEnabled, gateFreeSoulWorkflow } from "./workflows/dxm-smt-preview.js";
 import {
   QA_PROBE_SCRIPT,
   buildSmtQaReport,
@@ -707,6 +711,14 @@ export class SparkBrowser {
   private freeSoul: FreeSoul | null = null;
   /** 新核心 run 期间挡住旧学习系统向侧栏插话、暂停。 */
   private freeSoulRunning = false;
+  /** 对话序号。侧栏增量推送用，重启从 1 重新发全量。 */
+  private chatSeq = 1;
+  private chatCursor = new Map<string, number>();
+  private lastChatKey = "";
+  /** 壳层重载或对不上序号时，下一拍发全量。 */
+  private chatResync = true;
+  private sidebarTimer: ReturnType<typeof setTimeout> | null = null;
+  private sidebarQueued = false;
   /** 最近一次成功跑完的轨迹。只在内存里，确认中断和失败不覆盖，重启即清。 */
   private lastRunTrace: SoulRunTrace | null = null;
   /** 同一组 12306 查询参数只补一次表单。 */
@@ -3143,6 +3155,7 @@ export class SparkBrowser {
       console.log(`[shell-console] ${message}`);
     });
     this.window.webContents.on("did-finish-load", () => {
+      this.chatResync = true;
       this.pushChromeState();
       this.pushSidebarState();
       this.layout();
@@ -3223,6 +3236,10 @@ export class SparkBrowser {
     handle("spark:select-session", async (_e, key: string) => this.selectSession(String(key || "")));
     handle("spark:focus-task", async (_e, id: string) => this.focusTask(String(id || "")));
     handle("spark:stop-task", async (_e, id: string) => this.stopAgentTask(String(id || "")));
+    handle("spark:chat-resync", async () => {
+      this.requestChatFull();
+      return { ok: true };
+    });
     handle("spark:reorder-tabs", async (_e, fromId: string, toId: string) =>
       this.reorderTabs(String(fromId || ""), String(toId || "")),
     );
@@ -3881,10 +3898,28 @@ export class SparkBrowser {
   }
 
   private pushSidebarState(): void {
-    if (this.window.isDestroyed() || this.window.webContents.isDestroyed()) return;
+    if (!this.window || this.window.isDestroyed() || this.window.webContents.isDestroyed()) return;
+    this.ensurePushMeter().sidebarReq += 1;
     try {
-      const payload = this.getSidebarPayload();
-      this.ensurePushMeter().sidebarReq += 1;
+      saveChatMemory(this.configDir(), this.userTurns());
+    } catch {
+      /* 落盘失败不影响推送 */
+    }
+    this.sidebarQueued = true;
+    if (this.sidebarTimer) return;
+    this.sidebarTimer = setTimeout(() => {
+      this.sidebarTimer = null;
+      if (!this.sidebarQueued) return;
+      this.sidebarQueued = false;
+      this.flushSidebarState();
+    }, 100);
+  }
+
+  /** 100ms 内的多次侧栏推送合成一拍。对话只带新增的几条。 */
+  private flushSidebarState(): void {
+    if (!this.window || this.window.isDestroyed() || this.window.webContents.isDestroyed()) return;
+    try {
+      const payload = this.getSidebarPayload(true);
       this.ensurePushMeter().sidebarFlush += 1;
       try {
         this.ensurePushMeter().sidebarBytes += JSON.stringify(payload).length;
@@ -3892,13 +3927,17 @@ export class SparkBrowser {
         /* 体积量不到不影响推送 */
       }
       this.window.webContents.send("spark:sidebar-state", payload);
-      saveChatMemory(this.configDir(), this.userTurns());
       this.noteSidebarMessages();
-      // handleChat 的 finally 才把 chatRunning 清掉。微任务里再看一眼，任务结束就恢复壳层节流。
       queueMicrotask(() => this.syncShellKeepalive());
     } catch (error) {
       console.error("[shell] pushSidebarState failed:", error);
     }
+  }
+
+  /** 壳层说序号对不上，下一拍发全量。 */
+  requestChatFull(): void {
+    this.chatResync = true;
+    this.pushSidebarState();
   }
 
   clearChat(): ToolResult {
@@ -3974,9 +4013,10 @@ export class SparkBrowser {
     }
   }
 
-  private getSidebarPayload() {
+  private getSidebarPayload(incremental = false) {
     pruneStaleApprovals(this.approvals);
     const selectedSession = this.resolvedSession();
+    const chat = this.chatFrame(selectedSession, !incremental);
     return {
       paused: this.paused,
       agentConnect: connectedStatus(),
@@ -3992,7 +4032,7 @@ export class SparkBrowser {
         createdAt: a.createdAt,
       })),
       qa: this.lastQa,
-      chat: this.turnsFor(selectedSession).slice(-40),
+      ...chat,
       selectedSession,
       sessions: this.sessionViews(),
       skills: this.skillsCache.map(skillSummary).slice(0, 30),
@@ -4048,6 +4088,25 @@ export class SparkBrowser {
       plan: this.sidebarPlan(),
       tasks: this.taskPool.visible(),
     };
+  }
+
+  /** 当前会话的对话帧。全量带最近 40 条；增量只带序号比上次大的。 */
+  private chatFrame(key: string, forceFull: boolean) {
+    if (!this.chatSeq) this.chatSeq = 1;
+    if (!this.chatCursor) this.chatCursor = new Map();
+    const stamped = stampChatSeq(this.turnsFor(key), this.chatSeq);
+    this.chatSeq = stamped.nextSeq;
+    const turns = stamped.turns.slice(-40);
+    const frame = planChatFrame({
+      turns,
+      cursor: this.chatCursor.get(key) || 0,
+      sessionChanged: key !== this.lastChatKey,
+      resync: forceFull || this.chatResync,
+    });
+    this.lastChatKey = key;
+    this.chatCursor.set(key, frame.chatSeq);
+    this.chatResync = false;
+    return frame;
   }
 
   /** 进行中的单优先；做完后留下最后一张计划卡。后台任务不盖掉用户眼前这张。 */
@@ -5292,6 +5351,26 @@ export class SparkBrowser {
       if (result.ok) await this.repair12306QueryOnce(requested);
       return result;
     }
+    if (name === "run_workflow") {
+      const id = String(args.id || "");
+      const gate = gateFreeSoulWorkflow(id);
+      if (gate.action !== "run") return { ok: false, message: gate.message };
+      const params =
+        args.params && typeof args.params === "object" ? (args.params as Record<string, unknown>) : {};
+      return runDxmSmtWorkflow({
+        id,
+        params,
+        port: createLiveDxmSmtPort({
+          tabId: this.agentTabId || this.activeTabId,
+          signal: this.activePiAbort?.signal,
+          isPaused: () => this.isPaused(),
+          journalDir: this.configDir(),
+          execute: (script, tabId) => this.execute(script, { tabId }),
+          getUrl: (tabId) => this.getUrl(tabId),
+          listTabs: () => this.listTabs().tabs.map((tab) => ({ id: tab.id, url: tab.url })),
+        }),
+      });
+    }
     return this.runAgentTool(name, args);
   }
 
@@ -5451,7 +5530,13 @@ export class SparkBrowser {
       ok: true,
       message: `skills: ${this.skillsCache.length}`,
       data: {
-        skills: this.skillsCache.map(skillSummary),
+        skills: this.skillsCache.map((skill) => {
+          const summary = skillSummary(skill);
+          if (skill.id === "dxm-smt-listing" && !dxmSmtPreviewEnabled()) {
+            return { ...summary, availability: "尚未开放" };
+          }
+          return summary;
+        }),
         recording: this.recording,
         tip: "match_skill(query) 拿候选 id → run_skill({ id, params })。run_skill 只认 id 或用户已记住的原话，自然语言 query 不执行。",
       },

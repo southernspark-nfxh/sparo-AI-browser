@@ -1,6 +1,6 @@
 # 多 Agent 并行缺陷修复任务书（T73–T75）
 
-状态：执行中（T73 已改，T74 / T75 未做）。来源：2026-11-06 T70–T72 验收通过后的用户新反馈 + 验收遗留。上一轮见 [MULTI-AGENT-FIX-TASKBOOK-2.md](./MULTI-AGENT-FIX-TASKBOOK-2.md)（T70–T72 已验收通过，状态字段已改为「已完成」）。
+状态：执行中（T73 / T74 已改，T75 未做）。来源：2026-11-06 T70–T72 验收通过后的用户新反馈 + 验收遗留。上一轮见 [MULTI-AGENT-FIX-TASKBOOK-2.md](./MULTI-AGENT-FIX-TASKBOOK-2.md)（T70–T72 已验收通过，状态字段已改为「已完成」）。
 
 **执行顺序：T73 → T74 → T75。T75 第一步是复现取证，没复现前不许改行为代码。**
 
@@ -143,3 +143,11 @@ Agent 操纵浏览器期间，用户自己另开新网页、再让侧栏 Agent �
 - 任务卡在 running / waiting_human 上有「停止」。点下去 abort 对应 controller，任务卡标失败，侧栏写「已手动停止」，标签标已下班。休眠不结束任务，停止照样能用。MCP `stop_task` 走同一条。
 - 测试：`tests/free-soul-v4.test.ts`「两次都挂起时如实失败」「fetch 不认中断时，无首字超时仍会停」「用户中断优先于无首字超时」；`tests/stop-task.test.ts`「无首字超时默认 180 秒」「停止按钮和 stop_task 走同一条链路，休眠后也能停」
 - 真机未跑。没有在长任务上点「停止」，所以没有停止生效的日志或截图。
+
+### T74（2026-11-07）
+
+- 改动：`src/main/sidebar-sync.ts`、`src/main/browser.ts`、`src/main/shell-preload.ts`、`src/main/profile/chat-memory.ts`、`src/renderer/shell.html`
+- 根因：侧栏每次把整段对话全量推给壳层，没有 100ms 合并。T72 基线是 sidebar req=26 flush=26 avgBytes=10470，最高 20321。
+- 对话带单调序号。100ms 内多次推送合成一拍，只带上次序号之后的条目。壳层本地追加。初始化、换会话、壳层 `did-finish-load`、序号对不上，才发全量。对不上时壳层调用 `requestChatFull`，不做补洞。任务卡仍走 `syncTaskChrome`。拖出屏幕、Ctrl+\ 能恢复的那类白屏没动。
+- 测试：`tests/sidebar-sync.test.ts`「合并窗口里追加 10 条只形成一条增量，壳层结果与全量一致」「换会话发全量」「序号对不上就请求全量，不把缺口拼进本地」「壳层重载后下一拍是全量」「100ms 内 10 次推送只发出一拍」
+- 真机未跑。没有 30 轮长对话的 `[push]` 前后对比，所以没有新的 sidebar avgBytes。对照基线仍是 T72 的 avgBytes=10470。
