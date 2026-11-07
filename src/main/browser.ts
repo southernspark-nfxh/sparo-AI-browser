@@ -9,6 +9,7 @@ import {
   clipboard,
   shell,
   screen,
+  powerMonitor,
   nativeImage,
   type MenuItemConstructorOptions,
   type WebContents,
@@ -21,6 +22,13 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { boundsWithinOnePixel, CHROME_HEAL_COOLDOWN_MS, CHROME_HEAL_STALL_LIMIT, chromeCoverDelta, chromeCoverReason, pageViewCoversChrome, resetChromeCoverBudget, takeChromeCoverFix, type ChromeCoverBudget, type CoverReason, type PageRect } from "./page-bounds.js";
 import { formatPushMinute, formatShellCrashContext, formatShellMemLine } from "./diag-log.js";
 import { clickPointUsable, offscreenAgentBounds, viewportTooSmall } from "./agent-viewport.js";
+import {
+  applyDisplayClamp,
+  formatDisplayClamp,
+  formatDisplayLine,
+  windowOnScreen,
+  type Rect,
+} from "./window-visible.js";
 import { coPresenceMayRestore } from "./shell-focus.js";
 import { traceMainWindow } from "./focus-trace.js";
 import { laneForText, type TaskLane } from "./agent/task-class.js";
@@ -1169,6 +1177,7 @@ export class SparkBrowser {
       this.returnWindowIfUserFocused();
     });
     this.window.on("show", () => this.scheduleLayout(150));
+    this.registerDisplayWatch();
     this.window.once("ready-to-show", () => this.presentWindow());
     this.window.webContents.once("did-finish-load", () => this.presentWindow());
     this.window.webContents.on("did-fail-load", (_e, code, desc, url) => {
@@ -2007,6 +2016,7 @@ export class SparkBrowser {
   /**
    * 最小化 / 甩到屏幕外时拉回工作区。只留给三处：
    * 壳层渲染进程 unresponsive、首次 presentWindow、前台任务的一次人机同窗。
+   * 会 show 并 focus。显示器变化不要走这里，走 handleDisplayEvent。
    * 后台任务路径禁止调用。
    */
   private ensureWindowVisible(recenter = false): void {
@@ -2015,13 +2025,7 @@ export class SparkBrowser {
       if (this.window.isMinimized()) this.window.restore();
       const wa = screen.getPrimaryDisplay().workArea;
       const b = this.window.getBounds();
-      const onScreen =
-        b.width >= 400 &&
-        b.height >= 300 &&
-        b.x + b.width > wa.x + 40 &&
-        b.y + b.height > wa.y + 40 &&
-        b.x < wa.x + wa.width - 40 &&
-        b.y < wa.y + wa.height - 40;
+      const onScreen = windowOnScreen(b, wa);
       if (recenter || !onScreen) {
         const width = Math.min(1360, Math.max(800, wa.width - 48));
         const height = Math.min(900, Math.max(560, wa.height - 48));
@@ -2040,6 +2044,62 @@ export class SparkBrowser {
     } catch (error) {
       console.error("[shell] ensureWindowVisible failed:", error);
     }
+  }
+
+  /**
+   * 显示器变化、拔插、解锁。只在事件里做一次：屏幕外才拉回，然后重算洞和壳层。
+   * 不 show、不 focus、不 restore。最小化时只记日志并重算，不把窗口弹出来。
+   */
+  private registerDisplayWatch(): void {
+    const onMetrics = () => this.handleDisplayEvent("display-metrics-changed");
+    const onAdded = () => this.handleDisplayEvent("display-added");
+    const onRemoved = () => this.handleDisplayEvent("display-removed");
+    const onUnlock = () => this.handleDisplayEvent("unlock-screen");
+    screen.on("display-metrics-changed", onMetrics);
+    screen.on("display-added", onAdded);
+    screen.on("display-removed", onRemoved);
+    if (typeof powerMonitor?.on === "function") powerMonitor.on("unlock-screen", onUnlock);
+    this.window.on("closed", () => {
+      screen.removeListener("display-metrics-changed", onMetrics);
+      screen.removeListener("display-added", onAdded);
+      screen.removeListener("display-removed", onRemoved);
+      if (typeof powerMonitor?.removeListener === "function") powerMonitor.removeListener("unlock-screen", onUnlock);
+    });
+  }
+
+  private handleDisplayEvent(event: string): void {
+    if (this.window.isDestroyed()) return;
+    let bounds: Rect;
+    let minimized = false;
+    try {
+      bounds = this.window.getBounds();
+      minimized = this.window.isMinimized();
+    } catch {
+      return;
+    }
+    const displays = screen.getAllDisplays().map((item) => ({
+      bounds: item.bounds,
+      workArea: item.workArea,
+      scaleFactor: item.scaleFactor,
+    }));
+    const home = screen.getPrimaryDisplay().workArea;
+    console.log(formatDisplayLine(event, displays, bounds, { minimized, hole: this.lastActiveBounds }));
+    const clampEvents = event === "display-metrics-changed" || event === "display-removed" || event === "unlock-screen";
+    if (clampEvents) {
+      try {
+        const result = applyDisplayClamp(this.window, displays.map((item) => item.workArea), home);
+        if (result.moved) console.log(formatDisplayClamp(bounds, result.bounds));
+      } catch (error) {
+        console.error("[display] clamp failed", error);
+      }
+    }
+    this.requestHoleReport();
+    this.scheduleLayout(120);
+    setTimeout(() => {
+      if (this.window.isDestroyed()) return;
+      this.requestHoleReport();
+      this.layout();
+    }, 400);
   }
 
   /**
