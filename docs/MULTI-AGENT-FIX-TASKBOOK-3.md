@@ -1,6 +1,6 @@
 # 多 Agent 并行缺陷修复任务书（T73–T75）
 
-状态：执行中（T73 / T74 已改，T75 未做）。来源：2026-11-06 T70–T72 验收通过后的用户新反馈 + 验收遗留。上一轮见 [MULTI-AGENT-FIX-TASKBOOK-2.md](./MULTI-AGENT-FIX-TASKBOOK-2.md)（T70–T72 已验收通过，状态字段已改为「已完成」）。
+状态：代码已交（T73 / T74 / T75）。T75 没复现，只加了取证日志，没有改并行行为。真机都还没跑。来源：2026-11-06 T70–T72 验收通过后的用户新反馈 + 验收遗留。上一轮见 [MULTI-AGENT-FIX-TASKBOOK-2.md](./MULTI-AGENT-FIX-TASKBOOK-2.md)（T70–T72 已验收通过，状态字段已改为「已完成」）。
 
 **执行顺序：T73 → T74 → T75。T75 第一步是复现取证，没复现前不许改行为代码。**
 
@@ -151,3 +151,14 @@ Agent 操纵浏览器期间，用户自己另开新网页、再让侧栏 Agent �
 - 对话带单调序号。100ms 内多次推送合成一拍，只带上次序号之后的条目。壳层本地追加。初始化、换会话、壳层 `did-finish-load`、序号对不上，才发全量。对不上时壳层调用 `requestChatFull`，不做补洞。任务卡仍走 `syncTaskChrome`。拖出屏幕、Ctrl+\ 能恢复的那类白屏没动。
 - 测试：`tests/sidebar-sync.test.ts`「合并窗口里追加 10 条只形成一条增量，壳层结果与全量一致」「换会话发全量」「序号对不上就请求全量，不把缺口拼进本地」「壳层重载后下一拍是全量」「100ms 内 10 次推送只发出一拍」
 - 真机未跑。没有 30 轮长对话的 `[push]` 前后对比，所以没有新的 sidebar avgBytes。对照基线仍是 T72 的 avgBytes=10470。
+
+### T75（2026-11-07）
+
+- 没复现。没有拿用户的 3921 跑，临时窗口也没有可用模型，做不出「标签 A 采集、标签 B 填表、标签 C 打字」的现场。所以没有改填写、焦点和车道。`focusPageForInput` 失焦直接返回，没动。
+- 加了日志，不改结果：填表最终没对上、以及走进 `Input.insertText` 时打 `[fill] tab= active= focused= method= matched=`。侧栏和 MCP 开工打 `[lane]`，分类结果和实际走的路分开记。`freeSoulRunning` 挡住旧学习时打 `[learn] swallowed …`。
+- 代码审查，不是现场结论：
+  1. 自由核心的 click / fill / press / snapshot 在 `runAgentTool` 入口拿 `agentTabId || activeTabId` 再传下去。真正不传、会落到用户当前标签的是：`setDxmProductTitle` 的 execute 和 fill、`translateDxmTitle` 的 clickText / execute、`repair12306QueryOnce` 的 `fill12306Form`、旧的 `runAgentTool`→`runWorkflow`、`menuClick` 里选菜单项的那次 `clickText`。侧栏 `handleChat` 一进来就把 `agentTabId` 设成用户正在看的标签，所以侧栏填表打的就是这张。
+  2. `freeSoulRunning` 的早退只在 `openHelpAsk`、`applyHostLessons`、`answerLearning`。不包住 fill / click。门禁响了也只是旧学习没插话，不是工具被当成成功。
+  3. 侧栏不走 `laneForText`。`handleChat` 用 `chatRunning` 串行，忙就排队并打断当前这轮。`enqueueForeground` 没有调用点。MCP 带 clientId 的任务写死 `background`。`laneForText` 兜底 foreground 目前没接到侧栏入口。
+- 测试：`tests/parallel-log.test.ts`「填表失败日志带上标签、是否前台、是否有焦点」「车道日志分开记分类结果和实际走的路」「学习门禁早退单独记，不假装工具做成了」。
+- 真机未跑。要看这三行日志，得重启 `npm run start` 后再做标签 A / B / C 那一场。
