@@ -1,0 +1,65 @@
+{
+  "id": "dxm-smt-listing",
+  "title": "店小秘认领到速卖通并发布",
+  "kind": "site",
+  "version": 1,
+  "shareable": false,
+  "distilled": true,
+  "platform": "dianxiaomi",
+  "aliases": ["认领到速卖通", "发布到速卖通", "店小秘发到速卖通", "速卖通上架", "认领并发布"],
+  "createdAt": "2026-11-07T00:00:00.000Z",
+  "updatedAt": "2026-11-07T06:00:00.000Z",
+  "intent": "用户明确要求把店小秘采集箱里的一个商品认领到指定速卖通店铺并发布时使用。只编辑、不认领时仍用 dxm-crawl-prep。",
+  "declared_domains": ["www.dianxiaomi.com"],
+  "declared_actions": ["run_workflow"],
+  "human_gates": ["login", "captcha", "pay", "publish"],
+  "params": {},
+  "steps": [],
+  "route": [
+    {
+      "kind": "open",
+      "goal": "只调用 run_workflow，id 为 dxm_smt_probe。只读识别当前页。商品或店铺不唯一就停问，不默认第一条。"
+    },
+    {
+      "kind": "open",
+      "goal": "调用 run_workflow，id 为 dxm_smt_prepare。只认领用户指定的一个商品到一个店铺，完成编辑、翻译和发布前 QA。准备最多到草稿就绪，不得发布。"
+    },
+    {
+      "kind": "open",
+      "goal": "图片翻译或图片白底可能收费。先 request_confirm，detail 写明工作单、收费功能、图片范围和页面上的费用。用户下一条明确同意后，才把同意原文放进这一次 prepare 的 paidConsent。拒绝就停止，不扣费、不重试。"
+    },
+    {
+      "kind": "open",
+      "goal": "逐步确认模式下，发布前先 request_confirm。detail 必须包含工作单 ID、目标店铺、准备摘要和本次 draftFingerprint。用户下一条明确同意后，才调用 run_workflow，id 为 dxm_smt_publish，并带上同一个工作单和指纹。不得用通用 click 或 execute 绕过 QA、确认和防重。"
+    },
+    {
+      "kind": "open",
+      "goal": "发布后调用 run_workflow，id 为 dxm_smt_status。待审要说已提交、平台处理中、尚未上线。只有在线商品链接或在线列表读回才算完成。提交结果未知时只查询，不再次点击。"
+    }
+  ],
+  "pitfalls": [
+    { "milestone": 1, "note": "采集箱总表和速卖通编辑页不是同一页。来源页另开标签，不刷新编辑页。" },
+    { "milestone": 2, "note": "图片翻译和页顶文字翻译分开记录。主图完成不能代替变种图或描述图。" },
+    { "milestone": 4, "note": "本地不保存已确认布尔值。指纹变了必须重新准备、重新确认。" }
+  ],
+  "knownGaps": [
+    "规划方尚未提供脱敏人工基线，真实选择器、平台回执和在线证据未跑。",
+    "没有已核对的页面标记时，写操作会停等，不会盲点认领、保存或发布。",
+    "自动执行模式的发布边界保持原登记，本技能的真机验收只覆盖逐步确认。",
+    "E1 到 E12 真实场景未跑。安装包回归不在本次执行。"
+  ],
+  "notes": [
+    "预览关闭时 run_skill 不返回路线，run_workflow 不执行。",
+    "只处理单商品、单店铺、串行发布。"
+  ],
+  "agentPlaybook": [
+    "match_skill 查询认领到速卖通。只编辑不认领时不要选本技能。",
+    "run_skill 只给出路线。执行必须走 dxm_smt_probe、dxm_smt_prepare、dxm_smt_status、dxm_smt_publish。"
+  ],
+  "contract": {
+    "workflows": ["dxm_smt_probe", "dxm_smt_prepare", "dxm_smt_status", "dxm_smt_publish"],
+    "doNotUse": ["click", "execute"],
+    "paidConfirm": ["图片翻译", "图片白底"],
+    "publishConfirm": ["request_confirm"]
+  }
+}

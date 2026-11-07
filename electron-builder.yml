@@ -16,6 +16,15 @@ files:
 extraResources:
   - from: resources/sparo-agent.cjs
     to: sparo-agent.cjs
+  # 运行中的 MCP 从 resources/docs 读这两份。不要把仓库 docs 整包打进去（含内部任务书和密钥说明）。
+  - from: packaging/AGENTS.md
+    to: docs/AGENTS.md
+  - from: docs/MCP-API.md
+    to: docs/MCP-API.md
+extraFiles:
+  # 与 Sparo.exe 同一层。Hermes、Cursor、Trae、Codex 打开安装目录就能读到。
+  - from: packaging/AGENTS.md
+    to: AGENTS.md
 win:
   icon: resources/icon.ico
   artifactName: Sparo-${version}-win.${ext}

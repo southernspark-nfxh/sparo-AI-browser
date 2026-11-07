@@ -9,6 +9,10 @@ export type ChromeCoverBudget = { windowStart: number; fixes: number; lastFix: n
 const CHROME_COVER_WINDOW_MS = 3000;
 /** 同一瞬间连着拉，只挡这一下，下一拍仍救。不许攒到 N 次后永久放弃。 */
 const CHROME_COVER_DEBOUNCE_MS = 200;
+/** 同一视图连续这么多次几何不动，就离开两秒节拍，改走冷却后的降频恢复。 */
+export const CHROME_HEAL_STALL_LIMIT = 3;
+/** 降频后的冷却。不是永久放弃，到点仍可再修。resize / restore / switchTab 会提前清掉。 */
+export const CHROME_HEAL_COOLDOWN_MS = 10_000;
 
 /** restore / resize 时清掉去抖计数，守卫接着救白屏。 */
 export function resetChromeCoverBudget(now: number): ChromeCoverBudget {

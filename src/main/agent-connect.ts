@@ -340,10 +340,13 @@ export function copyForAgent(locale?: string): { ok: boolean; text: string; mess
     args: launch.args,
     env: launch.env,
   };
+  const guide = /\.exe$/i.test(path) ? join(dirname(path), "AGENTS.md") : join(path, "AGENTS.md");
   const text = [
     "请连接并操纵本机 Sparo 浏览器。和用户看到的是同一窗口、同一登录。",
     `程序位置：${path}`,
+    `Agent 说明：${guide}`,
     "这是用户双击打开的那个程序。Sparo 需要保持开着。发送和提交前必须等人确认。",
+    "Hermes、Cursor、Trae、Codex 以及其他 Agent 都先读这份 AGENTS.md，再按里面的技能和工具执行。",
     "优先用 url 配置；若你的软件只支持本地命令，用 command 配置。然后先调用 sparo_info。",
     "",
     JSON.stringify(

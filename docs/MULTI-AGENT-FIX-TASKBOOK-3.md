@@ -1,8 +1,6 @@
-# 多 Agent 并行缺陷修复任务书（T73–T75）
+# 多 Agent 并行缺陷修复任务书（T73–T78）
 
-状态：T73–T75 已执行并验收（2026-11-07）。T76 代码已交，真机未跑。agent 路径停止通过；T74 机制落地、长对话数据待模型恢复后补测；T75 未复现。
-
-**T75 的三标签复现和 T74 的 30 轮长对话复测不是代码任务，模型恢复后由验收方补跑，不阻塞 T76。**
+状态：T73–T76 已执行并验收（2026-11-07，复测当日模型已恢复）。复测结论：T75 并行成立（侧栏 30 轮 + MCP agent 32 轮同跑互不干扰）；T74 增量**未生效**（数据见 T77）；T76 完整跑通。**T77 / T78 待执行**，来自 2026-11-07 复测。
 
 ---
 
@@ -212,3 +210,96 @@ handleChat 的执行控制在三个字段上：`chatRunning`（约 L7091）、`a
 ## 验收
 
 停止后不需要重启实例就能继续用侧栏。日志贴 `[task] stop` 一行。
+
+---
+
+# T77 sidebar 推送每拍仍发全量（T74 增量未生效）
+
+## 现象（2026-11-07 复测实测数据）
+
+模型恢复后跑 30 轮侧栏任务 + 32 轮 MCP agent 任务并行，`[push]` 日志全程：
+
+- 任务跑动期 sidebar avgBytes 25800–29500，30 轮和 60 轮时数值相同（不再线性涨——窗口封顶了，但基线高一倍）
+- **空闲拍也有 26500**（该分钟 req=1 flush=1，无任何新对话轮次）
+- 对照基线：同实例 11-07 15:38 刚启动、无任务时固定字段约 11550
+- 跳变证据：清朝 6 轮任务期间 avg 从 11627 直接跳到 28388——若 delta 生效，每拍只应带新增的几条 turn（几百字节到 2K），不该整段跳变
+- 落盘 `chat-memory.json` 的 user 会话末 40 条窗口序列化约 15–25K，与 26K 吻合
+
+## 两个假设（都能解释全部现象，第一步诊断区分，禁止跳过直接改代码）
+
+- **(a) delta 每拍被判成 full**：cursor 被某处清空 / gap 判定频繁命中 / resync 循环（壳层 `applyChatFrame` 基线对不上 → `spark:chat-resync` → 主进程 chatResync=true → full → 壳层又对不上……）
+- **(b) 固定字段膨胀**：sessions（多 agent 会话残留）、tasks、notes 等随使用累计涨到 26K，delta 本身其实是正常的
+
+## 第一步：诊断（必须先做）
+
+flush 路径（`browser.ts` 约 L3944，`getSidebarPayload(true)` 调用处）加一行诊断日志：
+
+```text
+[push-frame] key=<会话key> sync=<full|delta> chatN=<本拍对话条数> chatBytes=<n> totalBytes=<n> cursor=<n>
+```
+
+开发实例跑一个 10 轮以上任务 + 静置 2 分钟，贴出这些行。**完成记录里必须写清**：26K 里 chat 占多少、固定字段占多少、sync 是 full 还是 delta。没贴这个不许进入第二步。
+
+## 第二步：按诊断结果对症修（二选一，两个都占就都修）
+
+- **若 (a)**：修 cursor / gap / resync 逻辑。重点排查：
+  - `chatSyncCursors` 是否被某处重置（注意 `getSidebarPayload()` 不带参的全量调用点：约 L1959 字节采样、约 L3348 `spark:get-status`——确认它们确实不动 cursor）；
+  - 壳层 `spark:chat-resync` 是否被循环触发：什么场景下壳层 seq 与主进程 chatSeq 对不上；
+  - 会话切换时 cursorMap 的 key 是否串了（agent 会话与 user 会话交替推送时）。
+- **若 (b)**：固定字段瘦身。sessions 只发当前会话 + 活跃列表（标题/预览）；skills / notes / lessons / tasks 分频（仅变化时发）；chat 窗口从 40 条收紧到 20 条。壳层相应字段改为「缺省沿用上次」。
+
+## 改哪
+
+`src/main/browser.ts`（getSidebarPayload 约 L4038、flush 约 L3944）、`src/main/sidebar-sync.ts`、`src/renderer/shell.html`（若做分频）。
+
+## 测试
+
+- `planChatFrame` / `applyChatFrame` 现有单测保持全绿；
+- 新增：模拟一次 resync 后，下一拍 full、再下一拍恢复 delta（证明不循环）；
+- 若做固定字段瘦身：payload 构成回归测试（固定字段 JSON 序列化 ≤ 8K）。
+
+## 验收（真机）
+
+- 10 轮以上任务跑动中，`[push]` sidebar avgBytes ≤ 13000；静置 2 分钟后的空闲拍 ≤ 13000；
+- 壳层对话渲染不回归：新轮次即时出现、换会话内容正确、壳层 reload 后对话恢复；
+- 完成记录贴前后 `[push]` 对比数字和 `[push-frame]` 诊断行。
+
+---
+
+# T78 侧栏任务征用用户当前标签（T75 复测的结构性发现）
+
+## 现象（2026-11-07 真机实测）
+
+用户在标签 A 浏览，侧栏发「打开维基百科唐朝条目逐节汇报」→ 任务把**标签 A 直接导航走**，任务结束时 A 停在维基 API 页（实测 `list_tabs`：owner 为 "user" 的标签 cfeaeab3 标题变成 `wikitext section=11`）。对照：MCP agent 任务有独立标签（owner "agent:xxx"），从不碰用户页面。这是用户中午「Agent 操作浏览器时人没法用」反馈的结构性原因。
+
+## 根因（已定位）
+
+`src/main/browser.ts` 约 L7091：handleChat 开工时 `this.agentTabId = this.activeTabId`——侧栏任务的工作标签无条件设为用户当前标签，freeSoul 的 navigate 全打在它上面。
+
+## 期望行为（验收标准）
+
+- 用户在标签 A 浏览，侧栏发需要开站的任务 → **新标签 B** 打开目标站，A 不动；
+- B 带侧栏任务归属（色点 + 横幅，参照 MCP agent 工位样式，名称用「侧栏」），任务完成后「已下班 · 页面已休眠」；
+- 新建 B 不抢焦点、不把窗口拉回前台（沿既有承诺，完成只闪任务栏）；
+- **「读当前页」类任务不受影响**：划词 / 页面引用（quotes）发送时仍作用用户当前标签；`page_text` 不带 tabId 仍读用户当前页；
+- 下一个侧栏任务复用还开着的侧栏标签（同 MCP agent 复用逻辑）。
+
+## 改哪
+
+`src/main/browser.ts`（handleChat 约 L7091、navigate 工具的标签解析）、可能 `src/main/agent/mcp-sessions.ts`（复用 claimTabForClient 给逻辑 client "sidebar"）。
+
+## 怎么做
+
+1. handleChat 去掉无条件的 `agentTabId = activeTabId`。侧栏任务开工时 agentTabId 保持空，freeSoul 工具在侧栏任务作用域内**首次需要页面时**：若无绑定标签则新建（不抢焦点）并 claim 归属，之后都打这张。
+2. 带 quotes（划词 / 页面引用）或用户明确指当前页的任务：工作标签就是当前 active（现状行为），不新建。
+3. 归属 owner 记为 `agent:sidebar`，横幅 / 色点走现有 agent 渲染链路（工位号给侧栏留一个固定位）。
+4. `chatRunning` 期间侧栏任务与 MCP agent 任务并存时各用各的标签，互不干扰（T75 已验证的并行不回退）。
+
+## 测试
+
+- 单测：无 quotes 的侧栏任务 navigate 一次后 `ownerForTab(新标签) === "agent:sidebar"`，用户 active 标签 url 不变；带 quotes 的任务不新建标签；第二个侧栏任务复用同一张侧栏标签。
+- 真机：标签 A 百度 + 侧栏维基任务 → A 仍是百度、B 维基带横幅；划词发送 → 作用当前页不新建；任务跑动中用户继续在 A 打字搜索不受影响。
+
+## 红线提醒
+
+不向网页注入 DOM；用户标签不染色不加横幅；新建标签不抢焦点。修 UI 的提交不混入脑区 / 推送层改动（T77 与 T78 分开提交）。
