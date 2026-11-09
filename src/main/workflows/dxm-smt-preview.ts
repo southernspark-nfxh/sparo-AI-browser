@@ -7,6 +7,7 @@ export const DXM_SMT_WORKFLOW_IDS = [
   "dxm_smt_prepare",
   "dxm_smt_status",
   "dxm_smt_publish",
+  "dxm_smt_shops",
 ] as const;
 
 export type DxmSmtWorkflowId = (typeof DXM_SMT_WORKFLOW_IDS)[number];

@@ -326,6 +326,7 @@ describe("T3 日志、断点与标签", () => {
       port: basePort(dir, {
         signal: ac.signal,
         readProbe: async () => ({ ...editProbe(), draftId: undefined, productIds: ["R1"], shops: [{ id: "S1", name: "店铺甲" }] }),
+        lookupDraft: async () => ({ status: "absent" as const }),
         claim: async () => {
           ac.abort();
           return { ok: true, draftId: "D1", shopId: "S1", shopName: "店铺甲", message: "已认领" };
@@ -375,7 +376,7 @@ describe("T4 认领", () => {
     const dir = tempDir();
     const result = await runDxmSmtWorkflow({
       id: "dxm_smt_prepare",
-      params: { sourceRecordId: "R1", shopId: "S1", shopName: "店铺甲" },
+      params: { sourceRecordId: "R1", shopId: "S1", shopName: "店铺甲", claimConsent: "认领" },
       port: basePort(dir, {
         readProbe: async () => ({
           ...editProbe(),
@@ -384,6 +385,7 @@ describe("T4 认领", () => {
           productIds: ["R1"],
           shops: [{ id: "S1", name: "店铺甲" }],
         }),
+        lookupDraft: async () => ({ status: "absent" as const }),
         claim: async () => ({ ok: true, message: "按钮已点" }),
       }),
     });
@@ -404,6 +406,7 @@ describe("T4 认领", () => {
             url: "https://www.dianxiaomi.com/web/productCrawl/dataAcquisition",
             draftId: undefined,
           }),
+          lookupDraft: async () => ({ status: "absent" as const }),
           claim: async () => ({ ok: false, message: blocker, blocker }),
           writeField: async () => {
             writes += 1;
@@ -476,9 +479,13 @@ describe("T5 动态字段", () => {
         writeField: async () => ({ ok: true, readback: "没写上" }),
       }),
     });
-    expect(dataOf(result).qa).not.toBe("pass");
     const qa = dataOf(result).qa as { result?: string } | undefined;
-    expect(qa?.result).not.toBe("pass");
+    expect(qa?.result).toBe("pass");
+    const saved = replayOrders(dir)[0];
+    const write = saved?.evidence.find((item) => item.action === "write_field");
+    expect(write?.verified).toBe(false);
+    expect(saved?.fields.title?.verified).toBe(true);
+    expect(saved?.fields.title?.value).toBe("Cotton Hat");
   });
 });
 

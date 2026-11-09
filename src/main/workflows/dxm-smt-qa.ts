@@ -14,14 +14,23 @@ export function evaluateQa(input: {
   fields: FieldDef[];
   images: Record<ImageGroupName, ImageSlot[]>;
   missing: Array<{ field: string; reason: string; action: string }>;
+  skuProblems?: string[];
 }): QaEvaluation {
+  const missing = [
+    ...input.missing,
+    ...(input.skuProblems || []).map((reason) => ({
+      field: "SKU",
+      reason,
+      action: "请按翻译前的规格、价格和库存重新读回，不能发布空 SKU",
+    })),
+  ];
   if (!input.identityOk) {
-    return { result: "fail", missing: input.missing };
+    return { result: "fail", missing };
   }
-  if (input.missing.length) return { result: "waiting_human", missing: input.missing };
+  if (missing.length) return { result: "waiting_human", missing };
   const requiredOpen = input.fields.some((field) => field.required && (!String(field.value || "").trim() || !field.verified));
-  if (requiredOpen) return { result: "fail", missing: input.missing };
-  if (!imagesPass(input.images)) return { result: "fail", missing: input.missing };
+  if (requiredOpen) return { result: "fail", missing };
+  if (!imagesPass(input.images)) return { result: "fail", missing };
   return { result: "pass", missing: [] };
 }
 

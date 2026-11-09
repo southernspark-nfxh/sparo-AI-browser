@@ -598,3 +598,480 @@ R1-4 的同单串行/CAS、基础完整指纹、拒绝后续跑、分类读回�
 6. **Required：崩溃回归仍打在点击前。** `tests/dxm-smt-r1.test.ts` 的“点击后崩溃”仍在 `beforeClick` 抛错且点击数为 0。增加点击已发生、本地 clicked/receipt 尚未落账的故障注入，验证平台已提交而本地只有 attempt_started 时，恢复只查询、不再次点击，并能凭关联证据关单。
 
 以上修复前仍不进入真机写操作、真实发布或安装包验收。
+
+### Cursor R2 修复记录（2026-11-07）
+
+当前 HEAD `d4dbe83`。未提交 Git，未运行 `npm run dist`，未操作真实账号。E1–E12 真机仍未跑。真实选择器和安装包仍未验收。定向测试通过只代表代码验收候选，不是真机上线。
+
+| 项 | 修改文件 | 时序 / 合同 | 新增测试 |
+|---|---|---|---|
+| R2-1 | `dxm-smt-images.ts`；`free-soul.ts` | `request_confirm` 当轮只登记 pending，句柄放进工具结果 data，不写进给用户看的正文。下一条用户消息的 Free Soul run 才允许显式 confirmId 消费。省略句柄不再自动匹配。消费、跨轮、过期、换图、换费用、换工作单都失效。决策点 #40 已改成“请求时 pending，下一条明确同意后显式消费” | `tests/dxm-smt-r2.test.ts`：脚本化两轮往返；未回答、拒绝、模糊不调用准备；省略句柄、换图、过期、跨轮、跨单不执行；同意只执行一次且不发布 |
+| R2-2 | `dxm-smt-page.ts`；`dxm-smt-listing.ts` | 发布读字段前先 `classifyPage`。登录、验证码、无权限、未加载、入口变化、非编辑页、`fields_missing` 都停等并留断点。`probe.missingFields` 并入 QA。当前草稿必须有 `draftShopId`，店铺列表不能代替 | 六类页面门点击数为 0；shops 含 S1 但草稿属于 S2、店铺字段缺失都不点；合法 S1 才进入后续 QA 并点击 |
+| R2-3 | `dxm-smt-contract.ts` `applyStatusEvidence` | 提交、失败、平台 ID 至少要 draftId + shopId，有 sourceRecordId 时也必须一致。裸 productId 不改变状态。多条记录按关联挑选，不取最新一条。本单还没有关联提交写入的平台 ID 时，不从在线列表收养 | 他品提交 + 同店在线不上线；缺关联、草稿/来源/店铺冲突都停等；他品失败不让本单失败；合法关联提交给 P1 后再同店同 ID 上线 |
+| R2-4 | `dxm-smt-listing.ts` | 没有 `lookupDraft`、超时或无法判定都是 unknown，认领数为 0。claim 失败或来源/店铺未读回时不写 `claimedDraftId`。来源 + 店铺在生成新工作单前原子预留。`afterClaim` 落在平台返回之后、草稿落账之前 | 无查重不认领；失败草稿号不能绕过下次查重；同来源并发只建一单；不同来源可并行；平台已认领、本地崩溃后复用目标箱 |
+| R2-5 | `dxm-smt-listing.ts`；`dxm-smt-fields.ts` | 标题、描述、动态字段和 verified 只来自翻译后的 reread，不再用旧快照回填。空标题、空描述进入 `textReadbackIssues`。图片仍单独读回。指纹和准备摘要用这份最新视图 | 翻译后字段缺失或 verified=false 时 QA 不通过；空标题和空描述不通过；最新标题进入指纹；完整读回才 `draft_ready` |
+| R2-6 | `dxm-smt-listing.ts` `afterClick` | `clickPublish` 成功返回之后、回执落账之前注入崩溃。本地只留下 `publish_attempt_started`。恢复的 status 和再次 publish 都不再点击。R1 的点击前崩溃测试保留并改名 | 点击数先到 1，回执未落账；关联提交收成待审，同店同 ID 在线收成上线，点击数保持 1 |
+
+原 65 项仍在：`tests/dxm-smt-listing.test.ts` 36 项，`tests/dxm-smt-publish.test.ts` 8 项，`tests/dxm-smt-r1.test.ts` 21 项。`tests/dxm-smt-r2.test.ts` 新增 10 项。四份一起 75 项，全部通过。
+
+R1 里会把无关联提交记录收成待审的夹具，已补上 draftId、shopId、sourceRecordId，断言仍是待审或上线，不是放宽。点击前崩溃测试保留，点击数仍是 0。
+
+### R2 工程命令（2026-11-07 当场）
+
+- `npx vitest run tests/dxm-smt-listing.test.ts tests/dxm-smt-publish.test.ts tests/dxm-smt-r1.test.ts tests/dxm-smt-r2.test.ts`：4 个文件，75 项通过。
+- `npm test`：106 个文件，797 项。通过 796，失败 1。失败名称：`tests/chrome-hole.test.ts` > `T2 降频恢复` > `同一次断言会停放每一个仍在屏幕内的后台页`。期望 `x === -20000`，实际 `30`（约第 493 行）。`tests/chrome-hole.test.ts` 与 `src/main/page-bounds.ts` 相对 HEAD `d4dbe83` 无本地改动，这条失败在当前 HEAD 上复现。没有改它们。
+- `npm run typecheck`：通过，退出码 0。
+- `npm run lint`：通过，退出码 0。0 个 error，19 个既有 warning，未超过上限 50。警告仍在 `chart.ts`、`read.ts`、`travel.ts`、`browser.ts`、`skills/store.ts`。本次 `dxm-smt-*` 和 `free-soul.ts` 没有新增警告。
+- `npm run build`：通过，退出码 0。
+- `npm run dist`：未运行。
+- Git：未提交。
+
+### 仍未完成
+
+- 没有脱敏基线。live 写操作仍然停等。真实选择器、平台回执和在线商品证据未跑。
+- E1–E12 真机未跑。安装包和 E12 不在本轮。
+- 保存、提交、待审、结果未知都不是上线。
+- 全量测试有 1 项页面洞失败，见上，不算进本链路通过数。
+- 复审通过前继续禁止真实写操作和发布。
+
+### 规划方第三次复审（2026-11-07）：R2 主路径有进展，但仍不通过
+
+复审基线：HEAD `d4dbe83` 加当前未提交文件。未修改产品代码，未运行 `npm run dist`，未操作真实账号。复审期间工作区另有页面可见性测试加入，因此全量数量与 Cursor 记录不同。
+
+- 四份定向测试：75/75 通过，其中 R2 新增 10 项。
+- `npm test`：107 个文件、800 项，799 通过；唯一失败仍是 `tests/chrome-hole.test.ts:493`，第二个后台页期望 x=-20000、实际 30。
+- `npm run typecheck`、`npm run lint`、`npm run build`：通过；lint 0 error、19 个既有 warning。
+
+已落实：无 confirmId 自动匹配已删除，pending/下一轮显式消费主路径成立；发布 blocker、draftShopId 和动态缺项门已加入；提交/失败/在线证据按 draft+shop 关联；真正的 afterClick 崩溃恢复已覆盖。
+
+仍有以下阻断问题：
+
+1. **Critical：原子建单仍可绕过。** `dxm-smt-listing.ts:160-187` 只有“未传 workOrderId 且 sourceRecordId、shopId 都已传”才进入身份锁。两个未预传来源/店铺的当前页请求，或分别指定不同新 workOrderId 的请求，都能绕过同身份串行并重复认领。身份解析后必须再次按来源+店铺原子预留；显式 workOrderId 也要核对同身份未关单。
+2. **Critical：错店草稿仍会被写入。** `dxm-smt-listing.ts:239-297` 直接采用 `probe.draftId`，没有核对其 `draftShopId`；查到的 found 草稿缺 shopId 也会接受。目标 S1、当前草稿 D1/S2 时仍可能执行 writeField 和 translateText。所有 knownDraft/probe/found 路径都必须精确读回 draftId+shopId+recordId，缺关联只能停等。
+3. **Critical：空 SKU 或变量整项丢失仍可能通过并发布。** `dxm-smt-listing.ts:354-358,402-433` 只从翻译后的 SKU 收集变量；reread.skus=[] 时没有 token、对齐成功，`dxm-smt-qa.ts:21-25` 又不检查 SKU。必须把翻译前 SKU 行数、规格变量和关键值与翻译后逐行核对；原本有 SKU 而读回为空、规格/价格/库存丢失均不得 QA 通过。
+4. **Required：最新字段读回仍被旧状态覆盖。** `dxm-smt-listing.ts:687-704` 在旧字段 verified=false 时，即使最新 reread 已 verified=true，也保留旧值并标 false，导致修复后无法通过。最新读回必须决定值和 verified，旧数据只保留来源等元信息。
+5. **Required：变种图/描述图的合法收费确认无法消费。** Free Soul 要求 scope 是当前图片 src 摘要，但 `dxm-smt-listing.ts:375,765-769` 通过“变种/描述”文字推断组；纯 src 摘要会被归到 main，再与实际 variant/description 摘要比对失败。确认合同应显式携带 group + srcDigest，执行时同时精确匹配，不再靠文字猜组。
+6. **Required：lookupDraft 异常没有转成安全停等。** `dxm-smt-listing.ts:624-627` 未捕获 reject/timeout，不能按合同返回 unknown，也不会保存 waiting_human/checkpoint。捕获异常并保留原因、可靠断点和下一步。
+
+修复前仍不进入真机写操作、真实发布或安装包验收。
+
+### Cursor R3 修复记录（2026-11-07）
+
+HEAD `40f61dc` 加未提交改动。没有提交 Git，没有运行 `npm run dist`，没有操作真实账号，没有改页面洞、侧栏或 `docs/listings/`。`dxmEnabled()` 仍是 false。
+
+- **R3-1** `dxm-smt-listing.ts`：身份解析之后、选定工作单之前加来源+店铺锁。当前页没传来源和店铺也会锁。显式新工作单号如果已有同身份未关单，并到那张单，不另认领。
+- **R3-2** 同文件：采用草稿前必须同时读回 draftId、shopId、recordId。对不上或缺少任一项就停等，不写字段、不翻译、不把缺店铺的 found 写成已认领。恢复夹具补了 `recordId: "R1"`。
+- **R3-3** `dxm-smt-fields.ts` `skuContinuityIssues`，`dxm-smt-qa.ts` 增加 `skuProblems`。翻译前有 SKU，读回为空、规格、价格或库存丢失，QA 不通过，发布点击数为 0。原先没有 SKU 的空对空不误伤。
+- **R3-4** `projectTranslatedFields` 的值和 verified 跟最新读回。旧字段只保留来源等元信息。`改值未读回不算成功` 改为：写操作证据仍是未验证；最新读回已验证时 QA 可以通过。
+- **R3-5** 收费确认显式带 `group`（main / variant / description）和 src 摘要。不再用「变种 / 描述」猜组。缺组、组与摘要不一致都不执行。变种图 `v1.jpg`、描述图 `d1.jpg` 可以各执行一次。决策点 #40 已改成同一口径。
+- **R3-6** `lookupClaim` 捕获 reject / timeout，转成 unknown，停在 `waiting_human`，checkpoint 留下原因、可靠断点和下一步。认领数为 0。
+
+测试：`tests/dxm-smt-r3.test.ts` 8 项。定向五份合计 83/83（listing 36、publish 8、r1 21、r2 10、r3 8）。
+
+当场结果：
+
+- `npm test`：109 个文件、813 项，812 通过。唯一失败仍是 `tests/chrome-hole.test.ts:493`，第二个后台页期望 x=-20000、实际 30。本轮没有改这个文件。
+- `npm run typecheck`：通过。
+- `npm run lint`：0 error、19 个既有 warning。
+- `npm run build`：通过。
+
+未跑：E1–E12、真实选择器、真实发布、安装包。保存、提交、待审都不是上线。复审通过前继续禁止真实写操作和发布。
+
+### 规划方第四次复审（2026-11-08）：R3 仍不通过
+
+复审基线：HEAD `40f61dc` 加当前未提交改动。规划方未修改产品代码，未提交 Git，未运行 `npm run dist`，未操作真实账号。
+
+独立复跑结果：
+
+- 九份定向测试合计 105/105，通过范围包括店小秘五份 83 项及 Free Soul v16–v19 等相关回归。
+- `npm test`：109 个文件、813/813 通过。此前页面洞用例在本次复跑中通过，本轮未修改该模块。
+- `npm run typecheck`、`npm run lint`、`npm run build`：通过；lint 为 0 error、19 个既有 warning。
+
+已核实落实：最新字段读回决定值和 verified；写操作自身未读回时仍保持未验证；收费确认显式绑定图片组和 src 摘要；查重异常可留下 waiting_human、原因和可靠断点。现有 R3 测试覆盖了这些正向路径。
+
+仍有以下三项阻断问题：
+
+1. **Critical：首次探针失败或暂时缺身份时，仍会绕过来源+店铺原子建单。** `dxm-smt-listing.ts:163-188` 的 `resolveBound()` 在 `readProbe` reject 或身份不完整时返回 `undefined`，`runPrepare()` 随即无身份锁进入 `openPrepare()`。两个并发请求若首次探针都失败、第二次探针又恢复为同一 R1/S1，会分别按不同工作单号建单并认领；现有测试只覆盖首次探针成功。探针异常或身份不足必须安全停等，不能降级为无锁建单，并需补“首次失败、随后恢复”的并发回归。
+2. **Critical：持久化工作单身份仍被冒充为当前页面草稿读回。** `dxm-smt-listing.ts:270-285` 在当前 probe 没有 draftId 时，用工作单自己的 claimedDraftId、shopId、recordId 构造 `knownDraft`。这只是工作单自证，不是当前草稿的 draft+shop+record 读回，后续仍可能写字段和翻译。已认领草稿也必须在当前执行页面重新核对三项身份；缺当前读回只能停等，并补该路径的零写操作、零翻译测试。
+3. **Critical：SKU 连续性仍允许改值和新增行。** `dxm-smt-fields.ts:122-141` 只遍历翻译前 SKU，价格、库存只检查是否变空，不检查未经批准的变化，也不检查 after 新增行。红色 SKU 从 price=10/stock=5 变成 999/0，或额外增加蓝色 SKU，均可能通过 QA 并进入发布。翻译前后必须核对完整行集合、规格、价格和库存；业务值变化只能走有明确来源的独立变更路径，并补改值、新增行及发布点击数为 0 的回归。
+
+结论：R3 代码复审不通过，暂不进入只读真机、真实写操作、真实发布或安装包验收。测试全绿不能替代上述未覆盖路径。
+
+### Cursor R3 复审修复记录（2026-11-08）
+
+HEAD `40f61dc` 加未提交改动。没有提交 Git，没有运行 `npm run dist`，没有操作真实账号，没有改页面洞。
+
+- **探针失败或身份不完整不再无锁建单。** 没有同时传来源和店铺时，第一次探针如果失败，或身份还不完整，直接停等，不进入准备、不建单、不认领。并发里前两次探针失败、后面即使能读回同一 R1/S1，认领数也是 0，工作单数是 0。
+- **已认领草稿必须由当前页读回。** 页面没有 draftId 时，不再用工作单里保存的草稿号、店铺和来源继续。这种情况下写字段和翻译都是 0。
+- **SKU 改值和新增行不能通过。** 价格、库存必须和翻译前逐字相同，多出来的行算「新增 SKU 行」。红色 SKU 从 10/5 变成 999/0，或再加一行蓝色，QA 都不通过，发布点击数为 0。
+
+决策点 #35、#38 补了这两条停等，没有新编号。
+
+测试：`tests/dxm-smt-r3.test.ts` 现为 12 项。店小秘五份定向与本轮相关用例已通过。
+
+当场结果：
+
+- `npm test`：109 个文件、819 项，818 通过。唯一失败是 `tests/chrome-hole.test.ts:493`，第二个后台页期望 x=-20000、实际 30。本轮没有改这个文件。复审那次全量是 813/813，这次又复现了这个失败。
+- `npm run typecheck`：通过。
+- `npm run lint`：0 error、19 个既有 warning。
+- `npm run build`：通过。
+
+未跑：E1–E12、真实选择器、真实发布、安装包。复审通过前继续禁止真实写操作和发布。
+
+### 规划方第五次复审（2026-11-08）：代码复审通过，真机仍未验收
+
+复审基线：HEAD `40f61dc` 加当前未提交改动。规划方未修改产品代码，未提交 Git，未运行 `npm run dist`，未操作真实账号。
+
+独立核对：
+
+- `dxm-smt-listing.ts:163-198`：`resolveBound` 改为 `{ ok:false }` 返回，探针异常和身份不完整都在建单前停等，`openPrepare` 只能从加锁分支进入。并发用例（前两次探针失败、随后恢复 R1/S1）断言认领数 0、工作单数 0。
+- `dxm-smt-listing.ts:281-292`：当前页没有 `draftId` 时不再用工作单保存的身份兜底；已认领草稿缺当前读回直接停等。用例断言写字段 0、翻译 0，工作单仍保留 D1。
+- `dxm-smt-fields.ts:122-141`：按规格逐行匹配，价格、库存严格比较，多出的行记为「新增 SKU 行」。用例覆盖 10/5→999/0 和新增蓝色行，QA 均不通过且发布点击数 0。
+- 独立复跑：九份定向 111/111（`dxm-smt-r3.test.ts` 现 12 项）；`npm test` 109 个文件、819/819 通过（本轮页面洞用例通过，该用例仍属并行不稳定项，不计入本链路结论）；`npm run typecheck`、`npm run lint`（0 error、19 个既有 warning）、`npm run build` 通过。
+
+非阻断观察：价格、库存用字符串严格比较，若平台读回对数值做格式化（如 `10` 与 `10.00`），真机可能出现保守拦截。方向是挡住发布而非放过，留到只读真机时核对一次读回格式即可。
+
+结论：本轮代码复审通过，可以进入只读真机。仍不进入真实写操作、真实发布和安装包验收；E1–E12 未跑，live 写适配器仍在停等，保存、提交、待审都不是上线。
+
+### 只读真机第一段发现（2026-11-08，规划方执行）
+
+环境：工作区开发版（`npm run start`，76 工具，含 R4 修复）。真实页面：`productCrawl/edit?id=167842582613033710`（账号 jiuyecc，F19 挂腰风扇，登录态有效）。
+
+发现：
+
+1. 真实采集编辑页**没有任何 `data-*` 探针标记**（`dataAttrCount: 0`）。PROBE_SCRIPT 依赖的标记全部是 mock 约定，`dxm_smt_probe` 在真实页面会安全停等——行为符合设计，但链路不可用。
+2. recordId 可靠来源是 URL 参数（`edit?id=…`）；页面为 Vue + Ant Design Vue；标题输入 `input[placeholder="请填写标题"]`；描述在 CKEditor iframe；SKU 变种区是 div 网格（非 table）；价格读回 `1.75 USD` 带单位、库存为空；按钮「保存并认领」存在但未点击。
+3. 店铺列表在编辑页不存在（顶栏无切换器），入口待定位（可能在「保存并认领」弹窗或店铺管理页，均未触碰）。
+
+产出：`docs/ECOMMERCE-PHASE1-FIX-R5-CURSOR-TASKBOOK.md`（真实只读选择器基线，R5-1 探针改造 / R5-2 字段读回与价格剥离 / R5-3 真实 fixture / R5-4 店铺来源占位）。R5 完成并复审后，规划方补采店铺管理页出 R6。
+
+### Cursor R5 完成记录（2026-11-08）
+
+HEAD `40f61dc` 加未提交改动。没有提交 Git，没有运行 `npm run dist`，没有操作真实账号。真机探针未跑。E1–E12 继续未跑。
+
+- **R5-1。** 采集编辑页的来源号先看 `data-record-id`，没有再读 URL 的 `id`。`urlId` 单独留下。页面类型要路径 `/web/productCrawl/edit` 再加上这个 id；「保存并认领」不能单独决定类型。
+- **R5-2。** `readFields` 读标题输入和变种信息网格。`parsePriceCell` 把 `1.75 USD` 收成 `1.75`，原文留在 `rawPrice`。价格、库存比较用剥离后的值。描述只标「iframe 待基线」，不读 iframe。
+- **R5-3。** 新测试共用 `tests/fixtures/dxm-crawl-edit.html`。里面没有真实账号、店铺和可识别商品标题。
+- **R5-4。** 采集编辑页读不到店铺时停等原因是「店铺来源待基线（R5-4）」，同时写明页面无店铺来源。不猜店铺。这是已知缺口，不冒充完成。店铺管理页留给 R6。
+
+认领、写字段、翻译、保存、发布、选分类仍是停等。没有点击「保存并认领」。
+
+改动文件：`src/main/workflows/dxm-smt-page.ts`、`dxm-smt-live.ts`、`dxm-smt-fields.ts`，`tests/dxm-smt-r5.test.ts`，`tests/fixtures/dxm-crawl-edit.html`，`docs/DECISION-POINTS.md`（#35 补了一句，没有新编号）。
+
+新测试（`tests/dxm-smt-r5.test.ts`，7 项）：
+
+- 没有 data 标记时，recordId 来自 URL，页面是采集编辑，缺店铺就停等
+- data-record-id 仍优先于 URL，保存并认领按钮不能单独决定页面类型
+- parsePriceCell 剥离单位，空和非数字返回空
+- 真实变种区读回 8 行，价格剥离，库存为空，描述标成 iframe 待基线
+- 变种区没有行时不猜，SKU 连续性仍报读回为空
+- 价格比较用剥离后的值，规格仍按原文
+- 认领、保存、发布仍然停等，不会去点保存并认领
+
+当场结果：
+
+- `npm test`：110 个文件、826 项。收尾这次 825 通过。唯一失败是 `tests/chrome-hole.test.ts:493`，第二个后台页期望 x=-20000、实际 30。本轮没有改这个文件。同一会话里紧挨着的另一次全量是 826/826，这是已知抖动。
+- `npm run typecheck`：通过。
+- `npm run lint`：0 error、19 个既有 warning。
+- `npm run build`：通过。`out/main/index.js` 1,403.35 kB。
+
+未跑：E1–E12、真实采集编辑页探针、真实写操作、真实发布、安装包。店铺来源仍待基线。
+
+### 规划方第六次复审（R5，2026-11-08）：代码复审通过，真机探针待跑
+
+对照 R5 任务书（`ECOMMERCE-PHASE1-FIX-R5-CURSOR-TASKBOOK.md`）逐条独立核对：
+
+- **R5-1 通过。** `PROBE_SCRIPT` 与 `probeFromHtml` 都是标记优先、URL `id` 兜底，`urlId` 独立返回（`dxm-smt-page.ts` L64-67、L99-101）。`crawl_edit` 判型要求路径 `/web/productCrawl/edit` **加** URL id（`crawlEditUrlId`），按钮文字不参与判型，测试覆盖「只有按钮不是编辑页」。`crawlEditUrlId` 同时约束「别的页面带 id 不当来源」。
+- **R5-2 通过。** `READ_FIELDS_SCRIPT` 以「变种信息」文本锚点定位网格、按 `.cell` 读行；列头对不上或没有行返回空 SKU 并写明原因，不猜。`parsePriceCell` 四类用例全过；`SkuRow.rawPrice` 留原文；`skuContinuityIssues` 价格/库存用剥离值比较、规格仍按原文。描述只标「iframe 待基线」。
+- **R5-3 通过。** 单一 fixture `tests/fixtures/dxm-crawl-edit.html`，测试里断言不含 `data-*` 标记、真实账号（jiuyecc）、真实商品（挂腰风扇）。
+- **R5-4 通过。** `missingShopReason` 对采集编辑页返回「店铺来源待基线（R5-4）」，经 `resolveIdentity` → `runProbe` / `resolveBound` 透传到 probe 和 prepare 的停等消息。无店铺猜测逻辑。
+- **停等边界未破。** claim / writeField / translateText / translateImages / saveDraft / clickPublish / selectCategory 全部仍返回停等；测试断言认领、保存、发布拒绝。未接回 `runFullListing()`，未动 `dxmEnabled()`。
+- **决策点纪律。** `DECISION-POINTS.md` 只给 #35 补句（URL 来源号 + 店铺待基线），无未登记的新本地判断；#38/#40 的改动是 R2–R4 轮累计未提交内容，非本轮新增。
+
+独立复跑（规划方本机）：
+
+- 定向 `tests/dxm-smt-r5.test.ts`：7/7 通过。
+- 全量 `npm test`：110 文件、**826/826 通过**（本轮 `chrome-hole.test.ts:493` 也绿，确认是既有抖动）。
+- `npm run typecheck`：通过。`npm run lint`：0 error、19 既有 warning。`npm run build`：通过。
+
+非阻断观察（留 R6 顺带处理，不要求返工）：
+
+1. `missingShopReason` 的原因串把三种说法拼在一句里（「店铺来源缺失，店铺来源待基线（R5-4），页面无店铺来源（等待店铺基线）」），能用但啰嗦，可在 R6 收敛成一句。
+2. `READ_FIELDS_SCRIPT` 假定网格行内是 `.cell` 类名——真实页面的类名未经采样核实。若不符，读回会安全停等（列头对不上→空数组+原因），不会猜，但需要真机 probe 验证后按实际结构修正。
+3. `parsePriceCell("10")` 与 `parsePriceCell("10.00")` 仍不相等，价格格式变化会保守拦截（R4 已观察，行为一致，非回退）。
+
+结论：**R5 代码复审通过。**
+
+**真机只读验收（2026-11-08，规划方执行）：通过。** 带 `SPARO_DXM_SMT_PREVIEW=1` 重启开发版（工作区 electron，76 工具），在真实采集编辑页（`productCrawl/edit?id=167842582613033710`，登录态保持）做了两层验证：
+
+1. **探针脚本层**（MCP `execute` 直跑 PROBE_SCRIPT）：`recordId=167842582613033710` 来自 URL、`urlId` 独立返回、页面无任何 `data-*` 标记、`shops` 空数组、`draftId`/`draftShopId` 空。
+2. **工作流层**（`sidebar_chat` 端到端，Free Soul 模型实际调用 `run_workflow`）：门控放行（预览变量生效）；probe 返回 `state: waiting_human`、`pageKind: crawl_edit`、原因「店铺来源缺失，店铺来源待基线（R5-4），页面无店铺来源」；prepare 返回 `refused: true` 同一原因、未建工作单；status 如实返回找不到工作单；在非店小秘页面上 probe 也停等不乱动。模型全程零写操作，并主动声明「保存并认领需用户明示才动」。
+
+非阻断新观察（真机）：非店小秘页面上 probe 的停等原因显示「没有目标店铺，已停等」（身份失败优先于页面分类），可读性略差，R6 可顺带把 `runProbe` 的原因优先级调成 blocker 优先。
+
+R5 全部验收完成。下一步 R6：店铺来源基线（店铺管理页 DOM 采样 + 认领弹窗只读采样）。E1–E12、T63 维基压测、真实写操作、发布、安装包继续挂未跑。
+
+### Cursor R6 完成记录（2026-11-08）
+
+HEAD `40f61dc` 加未提交改动。没有提交 Git，没有运行 `npm run dist`，没有操作真实账号，没有重启正在跑的开发版。真机「刷新店铺基线」未跑。E1–E12 继续未跑。认领弹窗没有采样。
+
+- **R6-1。** `readShops` 直开授权页，按行内第 1 到第 4 个单元格读店名、速卖通 ID、币种、托管状态和授权时间。`rowid` 为空，或速卖通 ID 不是 `cn` 加数字开头，这一行作废并计数。表格没出来、0 行、行全部作废都返回空列表和原因，不猜。当前标签是采集编辑页时另开标签读，读完关闭，不导航编辑页。
+- **R6-2。** 读到店铺才写入 `%APPDATA%\sparo-store\dxm-smt-shops.json`。失败不覆盖已有缓存。新工作流 `dxm_smt_shops` 已进预览白名单，语义是刷新店铺基线。编辑页没有页面内店铺时用这份缓存：多家且没指定店名就停等并列出店名；指定店名后按名字绑定；只有一家可以默认绑定并注明。
+- **R6-3。** 采集编辑页没有基线时，停等改成一句：「页面读不到店铺，店铺基线未就绪（先跑 dxm_smt_shops）」。探针在非店小秘页面上先说页面分类原因。
+- **R6-4。** 夹具 `tests/fixtures/dxm-auth-shops.html` 用编造店名。测试断言里面没有真实店铺名。
+
+认领、写字段、翻译、保存、发布、选分类仍是停等。没有点击重新授权、修改、更多，也没有点保存并认领。`dxmEnabled()` 仍是关闭。`dxm_smt_shops` 没有进旧工作流清单。
+
+改动文件：`src/main/workflows/dxm-smt-shops.ts`、`dxm-smt-page.ts`、`dxm-smt-listing.ts`、`dxm-smt-live.ts`、`dxm-smt-preview.ts`，`src/main/browser.ts`，`src/main/agent/free-soul.ts`，`strategies/skills/dxm-smt-listing.json`，`tests/dxm-smt-r6.test.ts`，`tests/fixtures/dxm-auth-shops.html`，`tests/dxm-smt-r5.test.ts`（停等句改成新的一句），`docs/DECISION-POINTS.md`（#35 补了一句，没有新编号）。
+
+新测试（`tests/dxm-smt-r6.test.ts`，9 项）：
+
+- 授权页解析出 3 家编造店铺，空编号和非 cn 编号记入坏行
+- 表格没出来或一行都没有时返回空列表和原因
+- 刷新店铺基线会把列表和读取时间写进缓存
+- 编辑页没有缓存时，停等是一句人话
+- 缓存有 3 家店且没有指定店名时，停等并列出店名，不建单
+- 指定店名后身份完整并建单，认领和发布仍然停等
+- 当前标签是采集编辑页时，读店铺另开标签，不导航编辑页
+- 非店小秘页面的探针先说明页面不对
+- 认领、保存、发布仍然拒绝
+
+当场结果：
+
+- `npm test`：111 个文件、835 项，835 通过。这次 `chrome-hole.test.ts:493` 也通过，它仍是既有抖动，本轮没有改那个文件。
+- `npm run typecheck`：通过。
+- `npm run lint`：0 error、19 个既有 warning。
+- `npm run build`：通过。`out/main/index.js` 1,411.13 kB。
+
+未跑：E1–E12、侧栏「刷新店铺基线」真机、真实写操作、真实发布、安装包、认领弹窗采样。
+
+### 规划方第七次复审（R6，2026-11-08）：代码复审通过，真机验收待跑
+
+对照 R6 任务书逐条核对四个新文件与接线，全部通过：
+
+- **R6-1**（`dxm-smt-live.ts` readShops + `dxm-smt-shops.ts` READ_SHOPS_SCRIPT）：裸 URL 直开授权页（无 go 参数）；轮询 10 秒 / 间隔 400ms；行解析按「行内第 1–4 个 td + 内容特征」双保险，不碰 colid；`rowid` 空 / 店名空 / aliId 不匹配 `/^cn\d+/` 计入 badRows；表没出来 / 0 行 / 全作废各有一句原因，不猜。**硬边界核实**：port tab 是采集编辑页（`crawlEditUrlId` 判定）时 `openTab` 另开标签、`finally closeTab` 关闭、绝不 `navigate` 编辑页；新标签 `createTab(url, false, { agentOwned: true })`，符合决策点 #42/#47 的 agent 标签语义。
+- **R6-2**（`dxm-smt-listing.ts` runShops/runPrepare + `dxm-smt-page.ts` resolveIdentity）：`journalDir = configDir()`，缓存落 `%APPDATA%\sparo-store\dxm-smt-shops.json`；读到店铺才写，失败不覆盖；`dxm_smt_shops` 只进预览白名单（`gateFreeSoulWorkflow` 放行、`WORKFLOWS` 不含、`dxmEnabled()` 未动）；页面直读为空时用缓存，多店无 shopName 停等并列店名、shopName 精确匹配（不唯一 / 不匹配都停等，不猜）、单店默认绑定并注明。
+- **R6-3**：`missingShopReason` 编辑页收敛为一句「页面读不到店铺，店铺基线未就绪（先跑 dxm_smt_shops）」；`runProbe` 原因优先级改为页面分类（blocker / not_dianxiaomi）优先于身份失败——R5 留的「非店小秘页显示没有目标店铺」已修。
+- **R6-4**：fixture 3 好行 + 空 rowid 坏行 + 非 cn 坏行，编造店名，结构与真实采样一致；9 项测试与任务书逐条对应。
+- **停等边界**：claim / writeField / translateText / translateImages / saveDraft / clickPublish / selectCategory 仍全部停等（`dxm-smt-live.ts` L46–56），测试第 9 项回归覆盖；READ_SHOPS_SCRIPT 纯 querySelector，无任何点击。free-soul 提示词同步更新（「用户说刷新店铺基线时用 dxm_smt_shops」）。
+
+独立复跑（规划方执行，2026-11-08 20:40–20:41）：
+
+- 定向 `tests/dxm-smt-r6.test.ts`：9/9 通过。
+- 全量：834/835，唯一失败 `chrome-hole.test.ts:493`（既有抖动；单独复跑该文件 15/15 通过，与 R6 改动无关）。
+- `npm run typecheck` 通过；`npm run lint` 0 error、19 个既有 warning；`npm run build` 通过。
+
+非阻断观察（记档，不要求本轮处理）：
+
+1. `runShops` 对 openTab/navigate **抛异常**（而非返回 ok:false）的路径没有本地兜底，异常会传播到 `runDxmSmtWorkflow` 之外——与 R5 同模式，browser.ts 接线层返回结果不抛错，上游 `runCoreTool` 有兜底，实际风险低。
+2. 页面直读出多店时报「店铺不唯一，已停等」不列店名，与缓存多店的「列出店名请指定」略不对称——R5 既有行为，页面直读店铺来自 data-shop-id 路径，实际罕见。
+
+**结论：R6 代码复审通过。**
+
+**真机验收（2026-11-08 20:42–20:48，规划方执行）：通过。** 带 `SPARO_DXM_SMT_PREVIEW=1` 重启开发版（工作区 electron，76 工具），全程只读：
+
+1. **刷新店铺基线 ✓**：侧栏「刷新店铺基线」→ 模型调 `dxm_smt_shops` → 返回 3 家真实店铺（PetLifeGlobal/8420150、Charmify Store/8441427、cn1093224020zuhae/8922322），badRows 0，落缓存 `%APPDATA%\sparo-store\dxm-smt-shops.json`，全字段（币种/托管/授权时间）与 11/8 早间人工采样一致。侧栏另自发去授权页逐条核对实况，如实报告 Charmify Store 未授权的差异。
+2. **强制重抓 ✓**：明确指令「重新抓取不要用上次结果」后 fetchedAt 从 12:44:21Z 更新到 12:47:05Z——代码无任何「回快照」路径，此前时间戳未变纯属模型复述行为（见观察 1）。
+3. **编辑页 probe ✓**：采集编辑页上探针不再报店铺缺失，改为「店铺基线有多家店铺，请指定目标店铺：PetLifeGlobal、Charmify Store、cn1093224020zuhae」停等列店名；`pageKind: crawl_edit` 判型正确。
+4. **prepare 带 shopName ✓**：`shopName: "PetLifeGlobal"` 被采纳，建单 `dxm-mw7tswnm-aa8c6b`（空记录）与 `dxm-mw7tuiy5-1151e2`（有料记录 167842582613033710，标题/39 图/8 变种/6183 字描述齐全），两张单均 `waiting_human` 停在判重（保护性停等），`dxm_smt_status` 如实查单，**模型全程零写操作**且两次主动声明「写操作需用户点头」。
+
+真机新观察（记档，R7 候选）：
+
+1. **模型第一次猜错 prepare 参数名**（传 `shop` 无效，换 `shopName` 才生效）；强制重抓时模型自己发明了 force/refresh/noCache 参数（被工作流忽略，无害）。free-soul 提示词可补一句「prepare 指定店铺用参数 shopName；dxm_smt_shops 无参数、每次必重抓」。
+2. **判重读不到 disabled 控件**：有料记录的来源 URL 输入框（`#form_item_sourceList_0_path`）有值但 `disabled: true`，侧栏推断判重把禁用控件读成空 → 无法判重停等。R7 探针适配候选（读 disabled 输入框的 value 而非交互态）。
+3. **外部 MCP 直调 `run_workflow` 的 dxm_smt_* 被拒**（「Vertical workflows are disabled…SPARO_ENABLE_DXM=1」）——符合设计：dxm_smt_* 只从 Free Soul 侧栏路径开放。
+4. 侧栏发现规划方 URL 抄错一位（58261→58613 空记录）并如实提醒；尝试只读核对采集箱列表被站点重定向回编辑页，两次后停手没硬闯——纪律符合预期。
+
+认领弹窗采样未做（需用户当场授权点一次「保存并认领」，该动作会先真实保存草稿），挂 R7。E1–E12、真实写操作、安装包验收继续挂账。
+
+### Cursor R7 完成记录（2026-11-08）
+
+HEAD `40f61dc` 加未提交改动。没有提交 Git，没有运行 `npm run dist`，没有操作真实账号，没有重启正在跑的开发版。真机判重未跑。E1–E12 继续未跑。认领弹窗没有采样。
+
+R6 真机里「判重读不到 disabled 输入框」这个推断不成立。停等是因为 `lookupDraft` 一直返回 unknown，没有去读采集箱。本轮换成真读。
+
+- **R7-1。** 打开速卖通采集箱草稿列表。0 行或「暂无数据」视为没有同源草稿，准备会继续走到认领停等。列表有行时，用编辑页标题做精确搜索：对不上视为没有；对上一条或多条就停等，原因写明匹配条数，并说明没有按店铺过滤。第一版不产生 found。编辑页读不到标题，或列表没加载出来，就停等并说明原因。当前标签是采集编辑页时另开标签读，读完关闭，不导航编辑页。搜索只允许带 `title` 参数打开，或填搜索框并点「搜索」。不点行内编辑、删除、刊登。
+- **R7-2。** 侧栏工作流说明写明：`dxm_smt_prepare` 指定店铺用参数 `shopName`；`dxm_smt_shops` 没有参数，每次调用都重新抓取。
+- **R7-3。** 夹具是 ant 表格。0 行用 `tests/fixtures/dxm-smt-box-list.html`，2 行编造草稿用 `tests/fixtures/dxm-smt-box-rows.html`。测试确认里面没有真实店铺名和真实商品标题。
+
+认领、写字段、翻译、保存、发布、选分类仍是停等。判重通过后，停等文案是「认领入口没有已核对标记，已停等」，页面上没有认领点击。
+
+改动文件：`src/main/workflows/dxm-smt-box.ts`、`dxm-smt-live.ts`、`dxm-smt-listing.ts`，`src/main/agent/free-soul.ts`，`strategies/skills/dxm-smt-listing.json`，`tests/dxm-smt-r7.test.ts`，`tests/fixtures/dxm-smt-box-list.html`，`tests/fixtures/dxm-smt-box-rows.html`，`docs/DECISION-POINTS.md`（#35 补了判重这一句，没有新编号）。
+
+新测试（`tests/dxm-smt-r7.test.ts`，7 项）：
+
+- 采集箱 0 行视为没有同源草稿
+- 有草稿但标题精确搜索没有对上时，判重通过
+- 标题精确对上就停等人确认，不记成已找到
+- 编辑页读不到标题时停等，并说明原因
+- 当前标签是采集编辑页时，判重另开标签，不导航编辑页
+- 判重通过后停在认领入口，页面上没有认领点击
+- 认领、保存、发布和写字段仍然拒绝
+
+当场结果：
+
+- `npm test`：112 个文件、842 项。841 通过。唯一失败是 `tests/chrome-hole.test.ts:493`，第二个后台页期望 x=-20000、实际 30。本轮没有改这个文件。
+- `npm run typecheck`：通过。
+- `npm run lint`：0 error、19 个既有 warning。
+- `npm run build`：通过。`out/main/index.js` 1,417.79 kB。
+
+未跑：E1–E12、有料记录上的真机 prepare、真实写操作、真实发布、安装包、认领弹窗采样。
+
+### 规划方第八次复审（R7，2026-11-08 21:29–21:40）：代码复审通过，真机验收待跑
+
+复审基线：HEAD `40f61dc` 加当前未提交改动。规划方未修改产品代码，未提交 Git，未运行 `npm run dist`，未操作真实账号，未动正在跑的开发版和标签页。
+
+对照 R7 任务书逐条核对，全部通过：
+
+- **R7-1**（`dxm-smt-box.ts` 新模块 + `dxm-smt-live.ts` lookupDraft 真读）：unknown 桩已换成完整状态机——0 行/「暂无数据」→ `absent`（判重通过，链路走向认领停等）；有行时先用 URL `?title=` 参数打开并核对 `searchValue` 回显（回显不符即回落），回落路径只 `fill` 搜索框 + 点文字恰为「搜索」且不在表格行内的按钮，无任何行内操作列点击；0 匹配 → `absent`，1+ 匹配 → `ambiguous` 且原因写明「标题精确匹配 N 条（未按店铺过滤）」；`decideBoxLookup` 纯函数第一版不产生 `found`。recordId/shopId 缺一仍直接 unknown（判重合同保持）。轮询 10 秒/间隔 400ms，列表没出来 → unknown 不猜。**硬边界核实**：port tab 是采集编辑页（`crawlEditUrlId` 判定）时 `openTab` 另开标签、`finally closeTab` 关闭、绝不 `navigate` 编辑页；非编辑页才允许直接 navigate。标题由调用方传入——`lookupClaim` 先 `readFields` 编辑页取标题，读不到且列表有行时停等「编辑页读不到标题，无法判重」（0 行判 absent 不需要标题，与任务书一致）。
+- **R7-2**：`free-soul.ts` L246 工作流说明已含「dxm_smt_prepare 指定目标店铺用参数 shopName；dxm_smt_shops 没有参数，每次调用都重新抓取」；`strategies/skills/dxm-smt-listing.json` 同步写明「不要改用 shop、force、refresh 或 noCache」。
+- **R7-3**：`tests/fixtures/dxm-smt-box-list.html`（0 行+暂无数据）与 `dxm-smt-box-rows.html`（2 行编造草稿「示例夹子风扇草稿/box-9001」「示例另一草稿/box-9002」），测试断言不含真实店铺名/真实商品标题/真实记录 ID；7 项测试与任务书 R7-3 清单逐条对应，第 6 项走完整 `runDxmSmtWorkflow` 验证 absent 后停在「认领入口没有已核对标记」且 claim 零调用、无「保存并认领」脚本。
+- **停等边界**：claim / writeField / translateText / translateImages / saveDraft / clickPublish / selectCategory 仍全部停等（测试第 7 项回归覆盖）；`dxmEnabled()` 未动；`DECISION-POINTS.md` #35 补了判重条款（另开标签、0 行视为没有、标题匹配停等不视为找到），没有新编号，符合登记要求。
+
+独立复跑（规划方执行，2026-11-08 21:29–21:36）：
+
+- 定向 `tests/dxm-smt-r7.test.ts`：7/7 通过。
+- 全量：112 个文件、842/842 全过（Cursor 报的 `chrome-hole.test.ts:493` 本轮未复现，确认是既有时序抖动）。
+- `npm run typecheck` 通过；`npm run lint` 0 error、19 个既有 warning；`npm run build` 通过（out/main/index.js 1,417.79 kB）。
+
+非阻断观察（记档，不要求本轮处理）：
+
+1. `searchBox` 的 URL 参数路径带 `?title=` 打开是真机上未验证的假设——若站点不支持该参数，回显核对不符会自动回落到填搜索框+点搜索，行为正确但多一次导航；真机验收时留意实际走哪条路径。
+2. `READ_BOX_SCRIPT` 的 `loaded` 判定是「暂无数据 ∥ 存在 .ant-table ∥ 有行」——若站点把左侧导航或其他 ant 表格也渲染进页面，可能在列表数据未出时就判定 loaded；10 秒轮询从第一次 loaded 即返回，极端时会把「还没渲染完」当成 0 行判 absent。真机主场景（0 条采集箱）验收时确认「暂无数据」先于表格壳出现即可。
+
+**结论：R7 代码复审通过。** 真机验收待跑：带 `SPARO_DXM_SMT_PREVIEW=1` 重启开发版，在有料记录 `id=167842582613033710` 上 prepare（shopName=PetLifeGlobal），期望判重 absent 后停等原因变为「认领入口没有已核对标记，已停等」、判重走独立标签且编辑页未被导航。认领弹窗采样仍需用户当场授权，不同意就挂 R8。E1–E12、真实写操作、安装包验收继续挂账。
+
+### Cursor R8 完成记录（2026-11-08）
+
+HEAD `40f61dc` 加未提交改动。没有提交 Git，没有运行 `npm run dist`，没有操作真实账号，没有重启正在跑的开发版。附录 A 仍是待填。选择器没有回填。live 认领仍停在「认领入口没有已核对标记，已停等」。认领不可用。采样没做：用户还没有当场授权，也没有指定测试采集记录和店铺。R7 只读真机验收仍未跑。E1–E12 继续未跑。
+
+本轮只交付不碰真实页面的部分。
+
+- **R8-2。** 新增 `src/main/workflows/dxm-smt-claim.ts`。`pickClaimShop` 先按店铺编号精确匹配，再按店名精确匹配。0 条或多条都停等并列出候选，不默认第一家。`planClaim` 在弹窗没出现、读不到店或找不到确认时，不把「确认」放进点击计划。只读脚本不含 `.click(`。弹窗标题和确认文案常量仍是空的，`claimSelectorsReady()` 为 false。
+- **R8-3。** 只留骨架。live `claim` 在选择器未就绪时直接停等，不点「保存并认领」，不选店，不点确认，不新开标签，不刷新。
+- **R8-4。** `dxm_smt_prepare` 新增 `claimConsent`。缺原话时在写入认领尝试之前停等，文案是「认领需要你当场确认，已停等，没有点保存并认领」，认领调用次数为 0。上次认领没落账的分支仍在授权检查之前，所以带了原话也不会二次认领。认领三证核对通过后先升到 `claimed`，当前标签地址不含该草稿号就停等：「认领已提交，但没有进入草稿编辑页，已停等。草稿号 …」。不刷新、不改绑。侧栏说明和技能准备步骤写明：用户明确说「认领」或「保存并认领」后，才把当次原话放进 `claimConsent`。决策点 #43、#44 本轮已在登记里，没有新编号。
+- **R8-5。** 夹具 `tests/fixtures/dxm-smt-claim-dialog.html`（示例店铺A/9001、示例店铺B/9002）和 `dxm-smt-claim-empty.html`。测试确认里面没有真实店铺名、真实商品标题、真实记录号。
+
+新测试（`tests/dxm-smt-r8.test.ts`，10 项）：
+
+- 弹窗里唯一精确命中目标店时，计划只点保存并认领、该店和确认
+- 没有匹配到目标店时停等并列出候选，不点确认
+- 多家同名时停等列候选，不默认第一家
+- 弹窗没出现时停等，工作单不写草稿号
+- 确认后读回缺草稿号时不进入编辑
+- 没有认领原话时零调用，页面零点击
+- 确认后本地没落账时，再查不到草稿也不二次认领
+- 写字段、翻译、保存、发布和选分类仍然拒绝
+- 带认领原话并读回三证后，不再停在判重或认领入口
+- 认领后编辑页地址没有草稿号就停等，并记下草稿号
+
+写字段、翻译、保存、发布、选分类仍是停等。既有会走到认领的测试补了当次原话 `claimConsent: "认领"`，停在认领之前的测试没有补。
+
+当场结果：
+
+- `npm test`：113 个文件、852 项，852 通过。`tests/chrome-hole.test.ts` 本轮通过，文件没有改。
+- `npm run typecheck`：通过。
+- `npm run lint`：0 error、19 个既有 warning。
+- `npm run build`：通过。`out/main/index.js` 1,419.08 kB。
+
+未跑：附录 A 采样、live 认领点击、R7 只读真机验收、E1–E12、真实写操作、真实发布、安装包。不得把本轮当成认领已可用。
+
+### 规划方第九次复审（R8，2026-11-08 22:05–22:12）：代码复审通过（降级交付），认领不可用属预期
+
+复审基线：HEAD `40f61dc` 加当前未提交改动。规划方未修改产品代码，未提交 Git，未运行 `npm run dist`，未操作真实账号，未动正在跑的开发版。本轮按任务书第 1 节降级条款验收：附录 A 未回填、无采样授权，live 认领保持停等是**合规状态**，不是缺陷。
+
+对照 R8 任务书逐条核对，全部通过：
+
+- **R8-2**（`dxm-smt-claim.ts`）：`SMT_CLAIM_TEXT` 弹窗标题/确认/取消文案留空，`claimSelectorsReady()` 判定常量齐备才放行；`READ_CLAIM_DIALOG_SCRIPT` 纯只读（测试断言不含 `.click(`）；`pickClaimShop` shopId 精确优先、店名精确其次，0 条或多条都停等并列候选（不默认第一家）；`claimDialogIssue` 弹窗没出现/读不到候选/找不到确认各有停等原因；`planClaim` 点击计划只含「保存并认领 + 目标店铺 + 确认」三处，失败路径不含「确认」；`claimProofIssue` 三证缺一或对不上各有文案。
+- **R8-3 骨架**：live `claim` 用 `claimSelectorsReady()` 把门——选择器未回填即返回「认领入口没有已核对标记，已停等」，零点击，符合任务书「附录 A 未回填时只交骨架」条款。
+- **R8-4**：`claimConsent` 授权门位置正确——在 `claim_attempt_started` 落账之前、**未落账恢复检查之后**（`dxm-smt-listing.ts` L356–363），所以上次认领未落账时即使带原话也不会二次点击（测试 7 覆盖）；缺原话停等文案与任务书逐字一致，认领零调用（测试 6 覆盖）。#44 落点检查（L399–410）：三证核对通过、升 `claimed` 后，当前标签 URL 不含草稿号即停等并报草稿号，不刷新、不改绑（测试 10 覆盖）。free-soul L246 与技能 json 均写明「用户明确说认领/保存并认领后才放原话，不能自己编」。决策点 #43/#44 无新编号。
+- **R8-5**：两份夹具均为编造店铺（示例店铺A/9001、示例店铺B/9002），secret 正则断言不含真实店铺名/真实记录 ID；10 项测试覆盖任务书 9 项要求并多出「带原话读回三证后不再停在判重或认领入口」的正向断言；既有走到认领的测试补了 `claimConsent`，未走到的没补——修改面判断正确。
+- **停等边界**：写字段/翻译/保存/发布/选分类全部仍拒绝（测试 8 覆盖，含 live port）；`dxmEnabled()` 未动；`dxm_smt_*` 仍只走侧栏白名单。
+
+独立复跑（规划方执行，2026-11-08 22:05–22:09）：
+
+- 定向 `tests/dxm-smt-r8.test.ts`：10/10 通过。
+- 全量：113 个文件、852/852 全过。
+- `npm run typecheck` 通过；`npm run lint` 0 error、19 个既有 warning；`npm run build` 通过（out/main/index.js 1,419.08 kB）。
+
+非阻断观察（记档，不要求本轮处理）：
+
+1. `READ_CLAIM_DIALOG_SCRIPT` 按 `label + input[value]` 读候选、按钮按「确认/取消」文字精确匹配——都是基于夹具的假设，真实弹窗（可能是 ant Select 下拉而非 radio）需在附录 A 采样后校准；采样时优先核对控件类型。
+2. `claimConsent` 是非空字符串即放行，与 `paidConsent` 同信任模型（模型转述用户原话）；R8 真机验收时留意侧栏是否如实携带原话、不自行编造。
+
+**结论：R8 代码复审通过（降级交付）。认领不可用是采样未做的直接后果，解锁条件是附录 A 回填。** 后续顺序：① R7 只读真机验收（重启开发版跑一次 prepare，验证判重推进到认领停等）；② 用户授权后附录 A 采样（点一次「保存并认领」，会真实保存草稿）；③ 附录 A 回填 → R9 实现 live 认领点击。E1–E12、真实写操作、安装包验收继续挂账。
+
+### Cursor R9 完成记录（2026-11-09）
+
+HEAD `40f61dc` 加未提交改动。没有提交 Git，没有运行 `npm run dist`，没有操作真实账号，没有重启正在跑的开发版。附录 B 仍是待采。附录 A 的弹窗容器、复选项结构和取消按钮仍是待采。没有点「保存并认领」。挂腰风扇那条草稿没有删。E1–E12 继续未跑。
+
+判重读取层没有改。`READ_BOX_SCRIPT` 和 `boxListFromHtml` 仍是 R7 的 ant 选择器，仍会把全文「暂无数据」当成加载完成。**判重不可用。** live 认领仍停在「认领入口没有已核对标记，已停等」。**认领不可用。**
+
+- **R9-1。** 只加了纯函数，没有接到 live。`assessBoxLoad`：有行或空表标记才是加载完成；0 行且没有空表标记是未加载，不看「暂无数据」。`lookupFromLoad` 在未加载时返回 unknown，文案含「没有加载出来」，不返回 absent。已渲染且 0 行才 absent。标题精确匹配仍是 ambiguous。`boxPollExhausted` 在样本全是未加载时同样停等。`boxSearchAttempt` 在搜索框或按钮缺一个时 `filled:false` 且 `clicked:false`。三份夹具是待定骨架：`tests/fixtures/dxm-smt-box-vxe-rows.html`、`dxm-smt-box-vxe-empty.html`、`dxm-smt-box-vxe-loading.html`。里面写了「待定」，没有真实店铺名、真实标题、真实记录号。读取层不解析它们。原 ant 夹具仍被 R7 测试引用，因为读取层按任务书没改。
+- **R9-2。** 只改提示词。`free-soul.ts` 的 `run_workflow` 描述追加：「dxm_smt 工作流返回停等（ok:false 或 waiting_human）时就是停等。禁止绕过工作流用 click_text、execute_primitives 或任何页面工具去手动点『保存并认领』『保存』『认领』『发布』类按钮；停等后只向用户说明原因并等待指示，不得替用户完成写操作。」技能卡准备步骤和 `agentPlaybook` 写了同一禁令：停等就是停等，禁止用这些页面工具手动点保存并认领、保存、认领、发布，停等后只说明原因并等待指示。没有改执行层，没有改 #28/#31/#33。
+- **R9-3。** 准备入口在编辑标签不一致时，先读当前标签。只有当前页是采集编辑页，且 `crawlEditUrlId` 和工作单来源记录一致，才把 `editTabId` 改成当前标签，并落账 `tab_rebound`，原因是「同记录编辑页，改绑当前标签」，然后继续。不同记录、非编辑页、探针失败都维持「当前执行标签不是工作单的编辑标签，已停等，不会在新标签继续」。不新开标签，不刷新。`bindTabs` 仍是旧值优先。决策点 #45、#46 本轮已在登记里，没有新编号。
+- **R9-4。** 常量按已采行为回填：弹窗标题「选择店铺-认领到采集箱」，确认按钮「确定」。取消仍为空。`SMT_CLAIM_DOM` 的容器、复选项、「已选(N)」节点仍是空的，所以 `claimSelectorsReady()` 仍是 false，live `claim` 零点击。只读脚本改用「确定」，不再查找「确认」。`planClaim` 增加复选规则：目标店以外还有勾选就停等，原因含「认领弹窗里有其他店铺被勾选（已选 N）」，点击计划里没有「确定」，也不代用户取消。目标店已经勾上时，计划不再点它。
+
+新测试（`tests/dxm-smt-r9.test.ts`，10 项）：
+
+- 表体已渲染且标题精确对上一条时停等，原因含 1 条
+- 已渲染空表标记才是没有草稿
+- 只有占位文本时不判 absent，轮询耗尽后说没有加载出来
+- 搜索框或按钮对不上时两个都不做
+- 同一来源记录的采集编辑页会改绑并落账
+- 不同记录、非编辑页或探针失败都不改绑
+- 没有其他勾选时，计划只点保存并认领、目标店和确定
+- 目标店以外还有勾选时不点确定
+- 确认按钮常量是确定，只读脚本不再找确认
+- 没有认领原话仍零调用，写翻译保存发布选分类仍拒绝，落点检查仍在
+
+当场结果：
+
+- `npm test`：114 个文件、862 项，862 通过。`tests/chrome-hole.test.ts` 本轮通过，文件没有改。
+- `npm run typecheck`：通过。
+- `npm run lint`：0 error、19 个既有 warning。
+- `npm run build`：通过。`out/main/index.js` 1,421.72 kB。
+
+未跑：附录 B 只读采样、附录 A 的 DOM 采样、判重读取层重写、live 认领点击、真机改绑、E1–E12、真实发布、安装包。不得把本轮当成判重已修好或认领已可用。附录 B 回填后才能改读取层。DOM 项回填后才能写认领点击。
+
+### Cursor R9-1 读取层（2026-11-09）
+
+附录 B 已回填后补上判重读取层。HEAD `40f61dc` 加未提交改动。没有提交 Git，没有打包，没有重启开发版，没有点保存或认领，没有删挂腰风扇草稿。认领弹窗 DOM 仍待采，live 认领继续停等。
+
+- 行只认 `tr.vxe-body--row`。ant 表格选择器已从读取脚本和离线解析里拿掉，原 ant 夹具已删。
+- 标题取 `td[2]` 的第一行，去掉「店铺名」那一行。产品 ID 从整行文本取第一段 7 位以上数字，不写死列号。
+- `.vxe-table--empty-block` 不算空表。有行就是有数据，哪怕页面上有「暂无数据」或空表节点。行数为 0 且 `.vxe-table--empty-content .empty-container` 可见，才算真空并判 absent。只有占位文本或单独的空表节点时 `loaded:false`，轮询到上限是「采集箱列表没有加载出来，无法判重」，不判 absent。
+- 搜索后若结果还没加载完，不用旧行或空行判 absent。搜索框是表格外第一个 `input.ant-input`，搜索按钮取第一个「搜索」。缺一就 `filled:false` 且 `clicked:false`，停等，不改别的框。
+- 决策点 #45 的依据改成行数加真空结构，没有新编号。
+
+当场结果：
+
+- 定向 `tests/dxm-smt-r7.test.ts`、`tests/dxm-smt-r9.test.ts`、`tests/dxm-smt-r8.test.ts`：27 项通过。
+- `npm test`：115 个文件、866 项。865 通过。唯一失败是 `tests/chrome-hole.test.ts:493`，期望 x=-20000、实际 30。本轮没有改这个文件。
+- `npm run typecheck`：通过。
+- `npm run lint`：0 error、19 个既有 warning。
+- `npm run build`：通过。`out/main/index.js` 1,424.42 kB。
+
+未跑：真机判重、附录 A 的 DOM 采样、live 认领点击、E1–E12、真实发布、安装包。不得把认领当成已可用。
+
+### Cursor R9B 完成记录（2026-11-09）
+
+HEAD `5f2b12a` 加未提交改动。没有提交 Git，没有运行 `npm run dist`，没有重启正在跑的开发版，没有在真实账号上点「保存并认领」或「确定」。挂腰风扇草稿没有删。E1–E12 继续未跑。决策点 #48 已按登记实现，没有新编号。`dxmEnabled()` 没改，`dxm_smt_*` 仍不进旧 `WORKFLOWS`。`parkPageView`、`backgroundThrottling` 和布局系统没改。
+
+**判重和认领都还不能说可用。** 判重要等规划方同记录 prepare 复验，期望停 ambiguous「标题精确匹配 1 条」。认领点击已经写进代码，但成功落点、成功后 URL、draftId / shopId / recordId 的页面位置仍是附录 A 待采；真机认领要等用户当场授权。本轮没有跑 live prepare，也没有跑认领路径。
+
+- **R9-6。** `createLiveDxmSmtPort` 增加 `activateTab`、`getActiveTabId`、`hasTab`。`activateTab` 只改 `activeTabId`、`lastActiveAt`，然后 `layout()` 和 `pushChromeState()`。不调用 `window.focus()`、`focusActivePage()`、`flashFrame`、`wakeTab`。用户正看着窗口时会看到标签短暂切换，这是 #48 已接受的代价。
+- 代码入口是 `lookupDraft`（任务书写的 lookupOrder 就是它）。采集编辑页仍先 `openTab` 采集箱，记下 `prevActive`，立刻 `activateTab(boxTabId)`，再走原来的 `pollBox` / `searchBox` / `decideBoxLookup`。`finally` 里关掉采集箱标签；`prevActive` 还在才切回去。原标签已经没了，不恢复、不抛错。判重期间采集箱标签被关掉，返回 unknown「采集箱列表没有加载出来，无法判重」，不抛错、不等满 10 秒。`pollBox` 仍是 10 秒 / 400 毫秒。`hasTab` 缺省时不当成已关闭，避免旧测试的标签列表被误判。
+- **R9-4。** 常量已按附录 A 回填：标题「选择店铺-认领到采集箱」，确定「确定」，取消按钮是「关闭」。`claimSelectorsReady()` 现在为 true。读弹窗只收可见复选（`offsetParent` 加上 computed style 的 display / visibility）。隐藏且默认勾选的「eBay产品默认认领到原站点」不计入其他勾选，也不去取消它。checkbox 的 value 恒为 on，shopId 不从 DOM 读。选店仍是 shopId 优先、否则店名精确；弹窗没有 shopId 时走店名。目标店以外还有可见勾选就停等，原因是「认领弹窗里有其他店铺被勾选（已选 N），已停等」，确定点击次数为 0。
+- live `claim` 只在采集编辑页上做，不新开标签、不导航、不刷新、不重试。顺序：点「保存并认领」（按钮不在 `tr` 里；没点到就立刻停等，不空等 10 秒）→ 等弹窗 → 匹配店铺 → 目标未勾才点那一家 → 只点可见的「确定」→ 读三证。三证只认 `data-draft-id` / `data-draft-shop-id` / `data-record-id`，草稿号也可以来自 `/web/smt/edit` 的 URL id。采集编辑页 URL 上的记录号不当成 recordId。读不全就停等，不返回 `ok:true`，不猜落点。弹窗还开着就说「点确定后认领弹窗没有结束，已停等」。`claimedDraftId` 和 #44 仍走现有 listing，本轮没改。
+- 夹具 `tests/fixtures/dxm-smt-claim-dialog.html` 改成附录 A 结构，店名只有示例店铺 A/B，按钮是「确定」和「关闭」，另有一条 `display:none` 的默认勾选。不含真实店铺名、真实标题、真实记录号。R8 选店断言改为按店名，shopId 为空。R7「判重通过后」改为：会执行一次打开弹窗的脚本；模拟点击没有 `clicked:true` 时不点确定。
+
+当场结果：
+
+- 定向 `tests/dxm-smt-r5.test.ts` 至 `tests/dxm-smt-r9b.test.ts`：6 个文件、51 项通过。其中 R9B 8 项覆盖任务书的 3 项激活和 5 项认领。
+- `npm test`：118 个文件、884 项，884 通过。`tests/chrome-hole.test.ts` 本轮通过，文件没有改，断言没有改。上一轮 R9-1 全量曾在第 493 行失败（期望 x=-20000，实际 30）。本轮 R9-6 没有改停放位，这一次该断言是通过的；它和 park 停放位同源，以后再抖仍不许改断言。
+- `npm run typecheck`：通过。
+- `npm run lint`：0 error、19 个既有 warning。
+- `npm run build`：通过。`out/main/index.js` 1,439.86 kB。
+
+未跑：同记录 prepare 真机复验、用户当场授权后的认领、成功落点 DOM、E1–E12、真实写字段 / 翻译 / 保存 / 发布 / 选分类、安装包。

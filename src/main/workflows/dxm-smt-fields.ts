@@ -15,6 +15,8 @@ export type FieldDef = {
 export type SkuRow = {
   specs: Record<string, string>;
   price?: string;
+  /** 价格格原文，例如 `1.75 USD`。比较和入库用剥离后的 price。 */
+  rawPrice?: string;
   stock?: string;
 };
 
@@ -38,7 +40,19 @@ export type FieldSnapshot = {
   weight?: string;
   size?: string;
   description?: string;
+  /** 描述在 iframe 里，本轮不读，只留下这个标记。 */
+  descriptionNote?: string;
+  /** 变种区读不到行时的原因。空数组本身不代表成功读回。 */
+  skuReadReason?: string;
 };
+
+/** `1.75 USD` → `1.75`。空或非数字返回空，不把原文留成价格。 */
+export function parsePriceCell(text: string): string {
+  const raw = String(text ?? "").replace(/\u00a0/g, " ").trim();
+  if (!raw) return "";
+  const match = raw.match(/^(-?\d+(?:\.\d+)?)(?:\s*[A-Za-z]{2,4})?$/);
+  return match?.[1] || "";
+}
 
 const BUSINESS_KEYS = new Set([
   "price",
@@ -107,6 +121,7 @@ export function textReadbackIssues(input: { title?: string; description?: string
   const issues: string[] = [];
   const title = String(input.title || "");
   if (!title.trim()) issues.push("空译文");
+  if (!String(input.description || "").trim()) issues.push("描述空译文");
   if (title.length > 128) issues.push("译文超长");
   const blob = `${title}\n${input.description || ""}`;
   for (const token of input.skuTokens || []) {
@@ -114,6 +129,28 @@ export function textReadbackIssues(input: { title?: string; description?: string
     if (!/^[{$]/.test(token)) continue;
     if (!blob.includes(token)) issues.push(`SKU 变量丢失：${token}`);
   }
+  return issues;
+}
+
+/** 翻译前后的 SKU 行必须一致。改价格、改库存或多出一行都不能当成翻译成功。 */
+export function skuContinuityIssues(before: SkuRow[], after: SkuRow[]): string[] {
+  if (!before.length && !after.length) return [];
+  if (!after.length) return ["SKU 读回为空"];
+  const issues: string[] = [];
+  const used = new Set<number>();
+  for (const row of before) {
+    const index = after.findIndex((candidate, at) => !used.has(at) && specKey(candidate.specs) === specKey(row.specs));
+    if (index < 0) {
+      issues.push("规格丢失");
+      continue;
+    }
+    used.add(index);
+    const next = after[index];
+    if (!next) continue;
+    if (parsePriceCell(String(row.price ?? "")) !== parsePriceCell(String(next.price ?? ""))) issues.push("价格变化");
+    if (parsePriceCell(String(row.stock ?? "")) !== parsePriceCell(String(next.stock ?? ""))) issues.push("库存变化");
+  }
+  if (after.some((_row, index) => !used.has(index))) issues.push("新增 SKU 行");
   return issues;
 }
 

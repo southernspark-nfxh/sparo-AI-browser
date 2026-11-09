@@ -18,11 +18,15 @@
   "route": [
     {
       "kind": "open",
+      "goal": "用户说刷新店铺基线时，调用 run_workflow，id 为 dxm_smt_shops。这个工作流没有参数，每次调用都重新抓取店铺列表。只读授权页并写入本机缓存。当前标签是采集编辑页时不得把该页导航走。不要点击重新授权、修改、更多。"
+    },
+    {
+      "kind": "open",
       "goal": "只调用 run_workflow，id 为 dxm_smt_probe。只读识别当前页。商品或店铺不唯一就停问，不默认第一条。"
     },
     {
       "kind": "open",
-      "goal": "调用 run_workflow，id 为 dxm_smt_prepare。只认领用户指定的一个商品到一个店铺，完成编辑、翻译和发布前 QA。准备最多到草稿就绪，不得发布。"
+      "goal": "调用 run_workflow，id 为 dxm_smt_prepare。指定目标店铺用参数 shopName，不要改用 shop、force、refresh 或 noCache。用户明确说认领或保存并认领后，才把用户原话放进 claimConsent；用户没说就不带，不能自己编。工作流返回停等就是停等。禁止绕过工作流用 click_text、execute_primitives 或任何页面工具去手动点「保存并认领」「保存」「认领」「发布」类按钮。停等后只向用户说明原因并等待指示，不得替用户完成写操作。只认领用户指定的一个商品到一个店铺，完成编辑、翻译和发布前 QA。准备最多到草稿就绪，不得发布。"
     },
     {
       "kind": "open",
@@ -54,10 +58,11 @@
   ],
   "agentPlaybook": [
     "match_skill 查询认领到速卖通。只编辑不认领时不要选本技能。",
-    "run_skill 只给出路线。执行必须走 dxm_smt_probe、dxm_smt_prepare、dxm_smt_status、dxm_smt_publish。"
+    "run_skill 只给出路线。执行必须走 dxm_smt_probe、dxm_smt_prepare、dxm_smt_status、dxm_smt_publish。刷新店铺基线走 dxm_smt_shops。",
+    "工作流返回停等就是停等。禁止用 click_text、execute_primitives 或任何页面工具手动点保存并认领、保存、认领、发布。停等后只说明原因并等待指示，不得替用户完成写操作。"
   ],
   "contract": {
-    "workflows": ["dxm_smt_probe", "dxm_smt_prepare", "dxm_smt_status", "dxm_smt_publish"],
+    "workflows": ["dxm_smt_probe", "dxm_smt_prepare", "dxm_smt_status", "dxm_smt_publish", "dxm_smt_shops"],
     "doNotUse": ["click", "execute"],
     "paidConfirm": ["图片翻译", "图片白底"],
     "publishConfirm": ["request_confirm"]

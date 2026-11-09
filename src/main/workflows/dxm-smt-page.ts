@@ -1,5 +1,6 @@
 /** 只读页面识别。决策点 #35、#36、#37。 */
 import type { DxmListingWorkOrder } from "./dxm-smt-contract.js";
+import type { ShopBaseline } from "./dxm-smt-shops.js";
 
 export type PageKind =
   | "crawl_list"
@@ -26,7 +27,11 @@ export type PageProbe = {
   productIds: string[];
   shops: Array<{ id: string; name: string }>;
   recordId?: string;
+  /** 采集编辑 URL 上的 id。诊断用，不覆盖 data-record-id。 */
+  urlId?: string;
   draftId?: string;
+  /** 当前草稿绑定的店铺。店铺列表不能代替这个读回。 */
+  draftShopId?: string;
   platformProductId?: string;
   missingFields: string[];
   online: Array<{ productId: string; shopId: string; url: string }>;
@@ -47,7 +52,7 @@ export type IdentityRequest = {
 };
 
 export type IdentityResolution =
-  | { ok: true; recordId?: string; shopId?: string; shopName?: string; draftId?: string }
+  | { ok: true; recordId?: string; shopId?: string; shopName?: string; draftId?: string; note?: string }
   | { ok: false; reason: string };
 
 export const PROBE_SCRIPT = `(() => {
@@ -56,7 +61,12 @@ export const PROBE_SCRIPT = `(() => {
     const node = document.querySelector("[data-" + name + "]");
     return node ? node.getAttribute("data-" + name) || "" : "";
   };
-  const products = [...document.querySelectorAll("[data-product-id]")].map((node) => node.getAttribute("data-product-id") || "").filter(Boolean);
+  const markedProducts = [...document.querySelectorAll("[data-product-id]")].map((node) => node.getAttribute("data-product-id") || "").filter(Boolean);
+  const path = location.pathname || "";
+  const urlId = /\\/web\\/productCrawl\\/edit/i.test(path) ? (new URLSearchParams(location.search || "").get("id") || "") : "";
+  const markedRecord = read("record-id");
+  const recordId = markedRecord || urlId;
+  const products = markedProducts.length ? markedProducts : (recordId ? [recordId] : []);
   const shops = [...document.querySelectorAll("[data-shop-id]")].map((node) => ({
     id: node.getAttribute("data-shop-id") || "",
     name: node.getAttribute("data-shop-name") || "",
@@ -73,8 +83,10 @@ export const PROBE_SCRIPT = `(() => {
     loaded: document.readyState !== "loading",
     products,
     shops,
-    recordId: read("record-id"),
+    recordId,
+    urlId,
     draftId: read("draft-id"),
+    draftShopId: read("draft-shop-id"),
     platformProductId: read("platform-product-id"),
     missing: read("missing"),
     online,
@@ -85,7 +97,9 @@ export function probeFromHtml(html: string, url: string): PageProbe {
   const title = matchOne(html, /<title>([^<]*)<\/title>/i);
   const loadedAttr = matchOne(html, /data-loaded="([^"]*)"/i);
   const productIds = matchAll(html, /data-product-id="([^"]+)"/gi);
-  const recordId = matchOne(html, /data-record-id="([^"]*)"/i);
+  const markedRecord = matchOne(html, /data-record-id="([^"]*)"/i);
+  const urlId = crawlEditUrlId(url);
+  const recordId = markedRecord || urlId;
   const shops = [...html.matchAll(/data-shop-id="([^"]+)"[^>]*data-shop-name="([^"]*)"/gi)].map((item) => ({
     id: item[1] || "",
     name: item[2] || "",
@@ -110,7 +124,9 @@ export function probeFromHtml(html: string, url: string): PageProbe {
     productIds: ids,
     shops: dedupeShops(shops),
     recordId: recordId || undefined,
+    urlId: urlId || undefined,
     draftId: matchOne(html, /data-draft-id="([^"]*)"/i) || undefined,
+    draftShopId: matchOne(html, /data-draft-shop-id="([^"]*)"/i) || undefined,
     platformProductId: matchOne(html, /data-platform-product-id="([^"]*)"/i) || undefined,
     missingFields: missing ? missing.split("|").filter(Boolean) : [],
     online,
@@ -135,7 +151,8 @@ export function classifyPage(probe: PageProbe): PageClassification {
   const url = probe.url || "";
   let kind: PageKind = "unknown";
   if (/\/web\/productCrawl\/dataAcquisition/i.test(url)) kind = "crawl_list";
-  else if (/\/web\/productCrawl\/edit/i.test(url)) kind = "crawl_edit";
+  // 采集编辑必须是路径加 id。保存并认领按钮不能单独把别的页面判成编辑页。
+  else if (/\/web\/productCrawl\/edit/i.test(url) && crawlEditUrlId(url)) kind = "crawl_edit";
   else if (/\/web\/smt\/edit/i.test(url)) kind = "smt_edit";
   else if (/\/web\/smt\/(draft|crawl|collect)/i.test(url)) kind = "smt_box";
   else if (/publishFail|失败记录/i.test(url)) kind = "failure_record";
@@ -154,10 +171,18 @@ export function entersSmtQa(page: PageClassification): boolean {
   return page.kind === "smt_edit" || page.kind === "smt_box";
 }
 
-export function resolveIdentity(probe: PageProbe, request: IdentityRequest = {}): IdentityResolution {
-  const shops = dedupeShops(probe.shops);
+export function resolveIdentity(
+  probe: PageProbe,
+  request: IdentityRequest = {},
+  baseline?: ShopBaseline | null,
+): IdentityResolution {
+  const pageShops = dedupeShops(probe.shops);
+  const cached = (baseline?.shops || []).filter((shop) => shop.shopId && shop.name);
+  const usingCache = pageShops.length === 0 && cached.length > 0;
+  const shops = pageShops.length ? pageShops : cached.map((shop) => ({ id: shop.shopId, name: shop.name }));
   let shopId = request.shopId;
   let shopName = request.shopName;
+  let note: string | undefined;
   if (!shopId && shopName) {
     const named = shops.filter((shop) => shop.name === shopName);
     if (named.length !== 1) {
@@ -172,11 +197,15 @@ export function resolveIdentity(probe: PageProbe, request: IdentityRequest = {})
     shopName = named[0]?.name || shopName;
   }
   if (!shopId) {
+    if (usingCache && shops.length > 1) {
+      return { ok: false, reason: `店铺基线有多家店铺，请指定目标店铺：${shops.map((shop) => shop.name).join("、")}` };
+    }
     if (shops.length > 1) return { ok: false, reason: "店铺不唯一，已停等，不会默认第一条" };
     if (shops.length === 1) {
       shopId = shops[0]?.id;
       shopName = shopName || shops[0]?.name;
-    } else return { ok: false, reason: "没有目标店铺，已停等" };
+      if (usingCache) note = "店铺基线只有一家，已默认绑定";
+    } else return { ok: false, reason: missingShopReason(probe) };
   } else if (!shopName) {
     shopName = shops.find((shop) => shop.id === shopId)?.name;
   }
@@ -190,7 +219,7 @@ export function resolveIdentity(probe: PageProbe, request: IdentityRequest = {})
     return { ok: false, reason: "指定商品不在当前页面，已停等" };
   }
   if (!recordId && products.length === 1) recordId = products[0];
-  return { ok: true, recordId, shopId, shopName, draftId: probe.draftId };
+  return { ok: true, recordId, shopId, shopName, draftId: probe.draftId, note };
 }
 
 /** 编辑标签关闭或地址变了就停。不刷新、不重开。决策点 #37。 */
@@ -215,7 +244,7 @@ export function publishIdentityMatches(
   order: DxmListingWorkOrder,
   executingTabId: string,
   tabs: Array<{ id: string; url: string; closed?: boolean }>,
-  probe: { draftId?: string; recordId?: string; shops: Array<{ id: string; name: string }> },
+  probe: { draftId?: string; recordId?: string; draftShopId?: string; url?: string; shops: Array<{ id: string; name: string }> },
 ): { ok: true } | { ok: false; reason: string } {
   const editId = order.tabs.editTabId || "";
   const draftId = order.claimedDraftId || "";
@@ -235,8 +264,11 @@ export function publishIdentityMatches(
   if (!probe.recordId || probe.recordId !== recordId) {
     return { ok: false, reason: "读回来源记录和本工作单不一致，已停等" };
   }
-  if (!probe.shops.some((shop) => shop.id === shopId)) {
-    return { ok: false, reason: "读回店铺和目标店铺不一致，已停等" };
+  if (!probe.draftShopId || probe.draftShopId !== shopId) {
+    return { ok: false, reason: "当前草稿店铺和目标店铺不一致，已停等" };
+  }
+  if (probe.url && !probe.url.includes(draftId)) {
+    return { ok: false, reason: "当前编辑地址和认领草稿不一致，已停等" };
   }
   return { ok: true };
 }
@@ -260,6 +292,24 @@ function pageReason(kind: PageKind): string {
     default:
       return "已识别页面";
   }
+}
+
+/** 采集编辑页的来源号只认路径 `/web/productCrawl/edit` 上的 id。别的页面即使带 id 也不拿来当来源。 */
+export function crawlEditUrlId(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (!/\/web\/productCrawl\/edit/i.test(parsed.pathname)) return "";
+    return parsed.searchParams.get("id") || "";
+  } catch {
+    return "";
+  }
+}
+
+function missingShopReason(probe: PageProbe): string {
+  if (/\/web\/productCrawl\/edit/i.test(probe.url || "")) {
+    return "页面读不到店铺，店铺基线未就绪（先跑 dxm_smt_shops）";
+  }
+  return "没有目标店铺，已停等";
 }
 
 function hostname(url: string): string {
