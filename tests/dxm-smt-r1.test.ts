@@ -5,6 +5,7 @@ import { createWorkOrder } from "../src/main/workflows/dxm-smt-contract.js";
 import { fingerprintFromSnapshot } from "../src/main/workflows/dxm-smt-fingerprint.js";
 import { commitOrder, loadOrder, replayOrders, saveOrder } from "../src/main/workflows/dxm-smt-journal.js";
 import {
+  beginPaidConfirmRun,
   consumePaidConfirm,
   decidePaidAction,
   issuePaidConfirm,
@@ -24,15 +25,17 @@ function dataOf(result: { data?: unknown }): Record<string, unknown> {
   return (result.data || {}) as Record<string, unknown>;
 }
 
-function ticket(over: Partial<{ confirmId: string; workOrderId: string; feature: "图片翻译" | "图片白底"; scope: string; fee: string }> = {}) {
+function ticket(over: Partial<{ confirmId: string; workOrderId: string; feature: "图片翻译" | "图片白底"; group: "main" | "variant" | "description"; scope: string; fee: string }> = {}) {
   const issued = {
     confirmId: over.confirmId || "confirm-1",
     workOrderId: over.workOrderId || "wo-1",
     feature: over.feature || "图片翻译",
-    scope: over.scope || "主图",
+    group: over.group || "main" as const,
+    scope: over.scope || "m1.jpg",
     fee: over.fee || "1元",
   };
   issuePaidConfirm(issued);
+  beginPaidConfirmRun();
   return issued;
 }
 
@@ -60,7 +63,7 @@ describe("R1-1 收费确认句柄", () => {
         return { ok: true, message: "不应发布", receipt: { kind: "submitted", text: "已提交" } };
       },
     });
-    const params = { workOrderId: order.id, paidConsent: { confirmId: issued.confirmId, feature: issued.feature, scope: issued.scope, fee: issued.fee } };
+    const params = { workOrderId: order.id, paidConsent: { confirmId: issued.confirmId, feature: issued.feature, group: issued.group, scope: issued.scope, fee: issued.fee } };
     await runDxmSmtWorkflow({ id: "dxm_smt_prepare", params, port });
     expect(images).toBe(1);
     expect(clicks).toBe(0);
@@ -131,7 +134,7 @@ describe("R1-2 发布身份绑定", () => {
     let writes = 0;
     const result = await runDxmSmtWorkflow({
       id: "dxm_smt_prepare",
-      params: { sourceRecordId: "R1", shopId: "S1", shopName: "店铺甲" },
+      params: { sourceRecordId: "R1", shopId: "S1", shopName: "店铺甲", claimConsent: "认领" },
       port: basePort(dir, {
         readProbe: async () => ({ ...editProbe(), draftId: undefined }),
         lookupDraft: async () => ({ status: "absent" }),
@@ -363,7 +366,7 @@ describe("R1-5 崩溃恢复、拒绝后修复和上线迁移", () => {
     const pending = await runDxmSmtWorkflow({
       id: "dxm_smt_status",
       params: { workOrderId: order.id },
-      port: basePort(dir, { queryStatus: async () => ({ submitRecord: { text: "审核中", productId: "P1" } }) }),
+      port: basePort(dir, { queryStatus: async () => ({ submitRecord: { text: "审核中", productId: "P1", draftId: "D1", shopId: "S1", sourceRecordId: "R1" } }) }),
     });
     expect(dataOf(pending).state).toBe("submitted_pending_review");
     expect(loadOrder(dir, order.id)?.platformProductId).toBe("P1");
@@ -378,7 +381,7 @@ describe("R1-5 崩溃恢复、拒绝后修复和上线迁移", () => {
     expect(clicks).toBe(1);
   });
 
-  it("点击后崩溃，查询可以关成待审或上线，期间不重复点击", async () => {
+  it("点击前崩溃，查询可以关成待审或上线，期间不重复点击", async () => {
     const dir = tempDir();
     const order = seedReady(dir);
     let clicks = 0;
@@ -398,7 +401,7 @@ describe("R1-5 崩溃恢复、拒绝后修复和上线迁移", () => {
       id: "dxm_smt_status",
       params: { workOrderId: order.id },
       port: basePort(dir, {
-        queryStatus: async () => ({ submitRecord: { text: "审核中", productId: "P8" } }),
+        queryStatus: async () => ({ submitRecord: { text: "审核中", productId: "P8", draftId: "D1", shopId: "S1", sourceRecordId: "R1" } }),
         clickPublish: async () => {
           clicks += 1;
           return { ok: true, message: "又点了", receipt: { kind: "submitted", text: "已提交" } };
@@ -535,7 +538,7 @@ describe("R1-6 认领幂等、证据和来源", () => {
     const port = (): DxmSmtPort => basePort(dir, {
       readProbe: async () => ({ ...editProbe(), draftId: undefined }),
       lookupDraft: async () => phase === "found"
-        ? { status: "found", draftId: "D1", shopId: "S1" }
+        ? { status: "found" as const, draftId: "D1", shopId: "S1", recordId: "R1" }
         : { status: "absent" },
       claim: async () => {
         claims += 1;
@@ -545,7 +548,7 @@ describe("R1-6 认领幂等、证据和来源", () => {
     });
     await expect(runDxmSmtWorkflow({
       id: "dxm_smt_prepare",
-      params: { workOrderId: seed.id, sourceRecordId: "R1", shopId: "S1", shopName: "店铺甲" },
+      params: { workOrderId: seed.id, sourceRecordId: "R1", shopId: "S1", shopName: "店铺甲", claimConsent: "认领" },
       port: port(),
     })).rejects.toThrow(/ledger/);
     resetDxmSmtRuntime();
@@ -641,7 +644,7 @@ describe("R1-7 文字翻译和分类", () => {
       id: "dxm_smt_prepare",
       params: {
         workOrderId: order.id,
-        paidConsent: { confirmId: issued.confirmId, feature: "图片翻译", scope: "主图", fee: "1元" },
+        paidConsent: { confirmId: issued.confirmId, feature: "图片翻译", group: issued.group, scope: issued.scope, fee: "1元" },
       },
       port: basePort(dir, {
         quotedFee: "1元",

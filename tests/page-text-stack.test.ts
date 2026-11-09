@@ -2,9 +2,8 @@ import { describe, expect, it } from "vitest";
 import { FreeSoul } from "../src/main/agent/free-soul.js";
 
 /**
- * T56 结论（只证明，不修；修复另立 T63）：
- * page_text 单次最多 80000 字，送进模型前 serializeResult 把单条压到约 2.4 万字。
- * 压过的正文每一轮都追加进 messages，旧轮不淘汰，一轮任务里没有字符预算。
+ * T56 结论：page_text 单次最多 80000 字，serializeResult 把单条压到约 2.4 万字。
+ * T63：三轮合计仍低于 15 万字符预算，所以这里仍能看到三份截断正文；超预算才从最老的开始折叠。
  */
 describe("T56 page_text 入栈", () => {
   it("截断后的正文每轮追加，旧轮还在", async () => {

@@ -31,6 +31,7 @@ export function readySnapshot(): FieldSnapshot {
       variant: [{ src: "v1.jpg", status: "verified" }],
       description: [{ src: "d1.jpg", status: "verified" }],
     },
+    description: "A cotton hat for daily wear",
     freightTemplate: "默认运费",
     brand: "Nike",
     qualification: "已有资质",
@@ -49,6 +50,7 @@ export function editProbe(): PageProbe {
     shops: [{ id: "S1", name: "店铺甲" }],
     recordId: "R1",
     draftId: "D1",
+    draftShopId: "S1",
     missingFields: [],
     online: [],
   };

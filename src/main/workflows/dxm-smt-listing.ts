@@ -18,6 +18,7 @@ import {
 import {
   acceptBusinessValue,
   alignSkus,
+  skuContinuityIssues,
   textReadbackIssues,
   translationRisks,
   type FieldDef,
@@ -31,10 +32,12 @@ import {
   decidePaidAction,
   dismissMayCancel,
   imageEvidenceStatus,
+  imageScopeSummary,
   resetPaidConfirms,
 } from "./dxm-smt-images.js";
 import { commitOrder, loadOrder, replayOrders } from "./dxm-smt-journal.js";
-import { classifyPage, editTabWritable, entersSmtQa, publishIdentityMatches, resolveIdentity, type PageProbe } from "./dxm-smt-page.js";
+import { classifyPage, crawlEditUrlId, editTabWritable, entersSmtQa, publishIdentityMatches, resolveIdentity, type PageProbe } from "./dxm-smt-page.js";
+import { loadShopBaseline, saveShopBaseline, type ShopRead } from "./dxm-smt-shops.js";
 import { isDxmSmtWorkflowId } from "./dxm-smt-preview.js";
 import { evaluateQa, prepareSummary, qaStillValid } from "./dxm-smt-qa.js";
 
@@ -42,6 +45,8 @@ export type DraftLookup = {
   status: "found" | "absent" | "ambiguous" | "unknown";
   draftId?: string;
   shopId?: string;
+  recordId?: string;
+  reason?: string;
 };
 
 export type DxmSmtPort = {
@@ -55,14 +60,19 @@ export type DxmSmtPort = {
   /** 测试用：准备持锁后、写回前暂停。 */
   hold?: () => Promise<void>;
   beforeClick?: () => void;
+  /** 测试用：点击已经成功返回、回执尚未落账。 */
+  afterClick?: () => void;
+  /** 测试用：认领调用已经返回、草稿尚未落账。 */
+  afterClaim?: () => void;
   readProbe: (tabId: string) => Promise<PageProbe>;
   listTabs: () => Promise<Array<{ id: string; url: string; closed?: boolean }>>;
-  lookupDraft?: (input: { recordId?: string; shopId?: string; tabId: string }) => Promise<DraftLookup>;
+  lookupDraft?: (input: { recordId?: string; shopId?: string; tabId: string; title?: string }) => Promise<DraftLookup>;
   claim: (input: { recordId?: string; shopId?: string; shopName?: string; tabId: string }) => Promise<{
     ok: boolean;
     draftId?: string;
     shopId?: string;
     shopName?: string;
+    recordId?: string;
     message: string;
     blocker?: "auth" | "entry" | "timeout" | "not_found";
   }>;
@@ -87,19 +97,26 @@ export type DxmSmtPort = {
     receipt?: DxmListingWorkOrder["receipt"];
   }>;
   queryStatus: (order: DxmListingWorkOrder) => Promise<{
-    submitRecord?: { text: string; productId?: string };
-    failureRecord?: { text: string; field?: string };
+    submitRecord?: { text: string; productId?: string; draftId?: string; shopId?: string; sourceRecordId?: string };
+    submitRecords?: Array<{ text: string; productId?: string; draftId?: string; shopId?: string; sourceRecordId?: string }>;
+    failureRecord?: { text: string; field?: string; draftId?: string; shopId?: string; sourceRecordId?: string };
+    failureRecords?: Array<{ text: string; field?: string; draftId?: string; shopId?: string; sourceRecordId?: string }>;
     platformProductId?: string;
     online?: { productId: string; shopId: string; url: string };
+    onlineItems?: Array<{ productId: string; shopId: string; url: string }>;
   }>;
   selectCategory?: (tabId: string, categoryId: string) => Promise<{ ok: boolean; message: string }>;
+  /** 只读刷新店铺基线。编辑页上不得导航当前标签。 */
+  readShops?: () => Promise<ShopRead>;
 };
 
 const tails = new Map<string, Promise<void>>();
+const identityTails = new Map<string, Promise<void>>();
 const publishBusy = new Set<string>();
 
 export function resetDxmSmtRuntime(): void {
   tails.clear();
+  identityTails.clear();
   publishBusy.clear();
   resetPaidConfirms();
 }
@@ -116,6 +133,7 @@ export async function runDxmSmtWorkflow(input: {
   if (input.id === "dxm_smt_probe") return runProbe(input.port);
   if (input.id === "dxm_smt_prepare") return runPrepare(input.port, params);
   if (input.id === "dxm_smt_status") return runStatus(input.port, params);
+  if (input.id === "dxm_smt_shops") return runShops(input.port);
   return runPublish(input.port, params);
 }
 
@@ -126,12 +144,26 @@ function withOrder<T>(id: string, job: () => Promise<T>): Promise<T> {
   return run;
 }
 
+function withIdentity<T>(key: string, job: () => Promise<T>): Promise<T> {
+  const prev = identityTails.get(key) ?? Promise.resolve();
+  const run = prev.then(job, job);
+  identityTails.set(key, run.then(() => undefined, () => undefined));
+  return run;
+}
+
 async function runProbe(port: DxmSmtPort): Promise<ToolResult> {
   const probe = await port.readProbe(port.tabId);
   const page = classifyPage(probe);
-  const identity = resolveIdentity(probe, {});
-  const state = page.blocker || !identity.ok ? "waiting_human" : "observed";
-  const reason = !identity.ok ? identity.reason : page.reason;
+  const identity = resolveIdentity(probe, {}, loadShopBaseline(port.journalDir));
+  const pageFirst = Boolean(page.blocker) || page.kind === "not_dianxiaomi";
+  const state = pageFirst || !identity.ok ? "waiting_human" : "observed";
+  const reason = pageFirst
+    ? page.reason
+    : !identity.ok
+      ? identity.reason
+      : identity.note
+        ? `${page.reason}。${identity.note}`
+        : page.reason;
   return {
     ok: true,
     message: reason,
@@ -139,12 +171,79 @@ async function runProbe(port: DxmSmtPort): Promise<ToolResult> {
   };
 }
 
+async function runShops(port: DxmSmtPort): Promise<ToolResult> {
+  if (!port.readShops) {
+    return { ok: true, message: "没有店铺读取入口，已停等", data: { state: "waiting_human", refused: true } };
+  }
+  const read = await port.readShops();
+  if (!read.shops.length) {
+    return {
+      ok: true,
+      message: read.reason || "已授权店铺为 0",
+      data: { state: "waiting_human", shops: [], badRows: read.badRows },
+    };
+  }
+  const saved = saveShopBaseline(port.journalDir, read.shops);
+  const names = saved.shops.map((shop) => shop.name).join("、");
+  return {
+    ok: true,
+    message: `已刷新店铺基线，共 ${saved.shops.length} 家：${names}`,
+    data: {
+      state: "observed",
+      fetchedAt: saved.fetchedAt,
+      badRows: read.badRows,
+      shops: saved.shops.map((shop) => ({ shopId: shop.shopId, name: shop.name, aliId: shop.aliId })),
+    },
+  };
+}
+
 async function runPrepare(port: DxmSmtPort, params: Record<string, unknown>): Promise<ToolResult> {
-  const sourceRecordId = text(params.sourceRecordId);
-  const shopId = text(params.shopId);
+  const bound = await resolveBound(port, params);
+  if (!bound.ok) {
+    return { ok: true, message: bound.reason, data: { state: "waiting_human", refused: true } };
+  }
+  return withIdentity(`${bound.source}::${bound.shop}`, () => openPrepare(port, params, bound));
+}
+
+async function resolveBound(
+  port: DxmSmtPort,
+  params: Record<string, unknown>,
+): Promise<{ ok: true; source: string; shop: string } | { ok: false; reason: string }> {
+  const source = text(params.sourceRecordId);
+  const shop = text(params.shopId);
+  if (source && shop) return { ok: true, source, shop };
+  let probe: PageProbe;
+  try {
+    probe = await port.readProbe(port.tabId);
+  } catch (error) {
+    const reason = error instanceof Error && error.message ? error.message : "探针异常";
+    return { ok: false, reason: `页面探针失败（${reason}），已停等，不会建单` };
+  }
+  const identity = resolveIdentity(probe, {
+    sourceRecordId: source || undefined,
+    shopId: shop || undefined,
+    shopName: text(params.shopName) || undefined,
+    useCurrentEditPage: Boolean(params.useCurrentEditPage),
+  }, loadShopBaseline(port.journalDir));
+  if (!identity.ok || !identity.recordId || !identity.shopId) {
+    return {
+      ok: false,
+      reason: !identity.ok ? identity.reason : "来源或店铺不完整，已停等，不会建单",
+    };
+  }
+  return { ok: true, source: identity.recordId, shop: identity.shopId };
+}
+
+async function openPrepare(
+  port: DxmSmtPort,
+  params: Record<string, unknown>,
+  bound?: { source: string; shop: string },
+): Promise<ToolResult> {
+  const sourceRecordId = text(params.sourceRecordId) || bound?.source || "";
+  const shopId = text(params.shopId) || bound?.shop || "";
   const requestedId = text(params.workOrderId);
-  let id = requestedId;
-  if (!id) {
+  let id = "";
+  if (sourceRecordId && shopId) {
     const match = openOrderMatch(replayOrders(port.journalDir), sourceRecordId, shopId);
     if (match.kind === "ambiguous") {
       return {
@@ -155,7 +254,7 @@ async function runPrepare(port: DxmSmtPort, params: Record<string, unknown>): Pr
     }
     if (match.kind === "one") id = match.order.id;
   }
-  if (!id) id = `dxm-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 8)}`;
+  if (!id) id = requestedId || `dxm-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 8)}`;
   return withOrder(id, () => prepareLocked(port, params, id));
 }
 
@@ -182,7 +281,14 @@ async function prepareLocked(port: DxmSmtPort, params: Record<string, unknown>, 
   }
   order = bindTabs(order, { sourceTabId: port.sourceTabId, editTabId: port.tabId });
   if (order.tabs.editTabId && port.tabId !== order.tabs.editTabId) {
-    return finishStop(port, order, base, "当前执行标签不是工作单的编辑标签，已停等，不会在新标签继续", `回到工作单 ${order.id} 的原编辑标签`);
+    const rebound = await reboundSameRecord(port, order);
+    if (!rebound.ok) {
+      return finishStop(port, order, base, "当前执行标签不是工作单的编辑标签，已停等，不会在新标签继续", `回到工作单 ${order.id} 的原编辑标签`);
+    }
+    const saved = await persist(port, rebound.order, base);
+    if (saved.stale) return latestResult(saved.order);
+    order = saved.order;
+    base = saved.base;
   }
   if (halted(port)) return finishStop(port, order, base, "任务已取消或暂停", `从工作单 ${order.id} 的断点续跑，不继续副作用`);
 
@@ -196,8 +302,14 @@ async function prepareLocked(port: DxmSmtPort, params: Record<string, unknown>, 
     shopId: shopId || order.target.shopId,
     shopName: shopName || order.target.shopNameSnapshot,
     useCurrentEditPage: Boolean(params.useCurrentEditPage),
-  });
+  }, loadShopBaseline(port.journalDir));
   if (!identity.ok) return finishStop(port, order, base, identity.reason, `工作单 ${order.id}：请明确唯一商品和唯一店铺`);
+  if (
+    (order.target.shopId && identity.shopId && order.target.shopId !== identity.shopId) ||
+    (order.source.crawlRecordId && identity.recordId && order.source.crawlRecordId !== identity.recordId)
+  ) {
+    return finishStop(port, order, base, "工作单来源或店铺和当前页不一致，已停等，不会认领", `工作单 ${order.id} 先核对来源和店铺`);
+  }
   order = {
     ...order,
     source: { ...order.source, crawlRecordId: order.source.crawlRecordId || identity.recordId, productId: order.source.productId || identity.recordId },
@@ -208,26 +320,54 @@ async function prepareLocked(port: DxmSmtPort, params: Record<string, unknown>, 
     },
   };
 
-  const knownDraft = order.claimedDraftId || probe.draftId;
-  if (!knownDraft) {
+  const targetShop = identity.shopId;
+  const targetRecord = identity.recordId;
+  const probeDraft = probe.draftId
+    ? exactDraft(probe.draftId, probe.draftShopId, probe.recordId, targetShop, targetRecord)
+    : undefined;
+  if (probe.draftId && !probeDraft) {
+    return finishStop(port, order, base, "当前草稿和目标店铺或来源不一致，已停等，不会编辑", `工作单 ${order.id} 先核对草稿、店铺和来源`);
+  }
+  if (probeDraft && order.claimedDraftId && order.claimedDraftId !== probeDraft) {
+    return finishStop(port, order, base, "当前草稿和工作单已认领草稿不一致，已停等，不会编辑", `工作单 ${order.id} 先核对草稿`);
+  }
+  if (order.claimedDraftId && !probeDraft) {
+    return finishStop(port, order, base, "当前页面没有读回已认领草稿的草稿号、店铺和来源，已停等，不会编辑", `工作单 ${order.id} 先回到已认领草稿核对`);
+  }
+  if (!probeDraft) {
     const looked = await lookupClaim(port, order, identity.recordId, identity.shopId);
     if (looked.status === "ambiguous" || looked.status === "unknown") {
-      return finishStop(port, order, base, "目标采集箱无法判重，已停等，不会认领", `工作单 ${order.id} 先确认是否已有同源草稿`);
+      const detail = looked.reason ? `（${looked.reason}）` : "";
+      return finishStop(port, order, base, `目标采集箱无法判重${detail}，已停等，不会认领`, `工作单 ${order.id} 先确认是否已有同源草稿`);
     }
-    if (looked.status === "found" && looked.draftId) {
-      if (looked.shopId && identity.shopId && looked.shopId !== identity.shopId) {
-        return finishStop(port, order, base, "查到的草稿店铺和目标不一致，不会进入编辑", `工作单 ${order.id} 先核对店铺`);
-      }
+    const foundDraft = looked.status === "found"
+      ? exactDraft(looked.draftId, looked.shopId, looked.recordId, targetShop, targetRecord)
+      : undefined;
+    if (looked.status === "found" && !foundDraft) {
+      const shopMismatch = Boolean(looked.shopId && targetShop && looked.shopId !== targetShop);
+      return finishStop(
+        port,
+        order,
+        base,
+        shopMismatch ? "查到的草稿店铺和目标不一致，不会进入编辑" : "查到的草稿缺少店铺、来源或草稿号，已停等，不会编辑",
+        `工作单 ${order.id} 先核对草稿、店铺和来源`,
+      );
+    }
+    if (foundDraft) {
       order = {
         ...order,
-        claimedDraftId: looked.draftId,
-        claim: { startedAt: order.claim?.startedAt, resolved: true, draftId: looked.draftId },
+        claimedDraftId: foundDraft,
+        claim: { startedAt: order.claim?.startedAt, resolved: true, draftId: foundDraft },
       };
-      order = evidence(order, "claim", looked, { draftId: looked.draftId }, true);
+      order = evidence(order, "claim", looked, { draftId: foundDraft, shopId: looked.shopId, recordId: looked.recordId }, true);
     } else if (order.claim?.startedAt && !order.claim.resolved) {
       return finishStop(port, order, base, "上次认领结果未落账，目标箱也查不到草稿，不会再次认领", `工作单 ${order.id} 先到采集箱核对`);
     } else {
       if (halted(port)) return finishStop(port, order, base, "认领前已取消或暂停", `从工作单 ${order.id} 续跑，不继续副作用`);
+      const claimConsent = text(params.claimConsent);
+      if (!claimConsent) {
+        return finishStop(port, order, base, "认领需要你当场确认，已停等，没有点保存并认领", `工作单 ${order.id}：用户明确说认领后，把原话放进这一次准备`);
+      }
       order = {
         ...evidence(order, "claim_attempt_started", { recordId: identity.recordId, shopId: identity.shopId }, { started: true }, false),
         claim: { startedAt: Date.now(), resolved: false },
@@ -242,23 +382,42 @@ async function prepareLocked(port: DxmSmtPort, params: Record<string, unknown>, 
         shopName: identity.shopName,
         tabId: port.tabId,
       });
-      if (claimed.draftId) order = { ...order, claimedDraftId: claimed.draftId };
+      port.afterClaim?.();
       const shopOk = Boolean(claimed.shopId && identity.shopId && claimed.shopId === identity.shopId);
-      order = evidence(order, "claim", { recordId: identity.recordId, shopId: identity.shopId }, claimed, Boolean(claimed.ok && claimed.draftId && shopOk));
+      const sourceOk = Boolean(claimed.recordId && identity.recordId && claimed.recordId === identity.recordId);
+      const claimVerified = Boolean(claimed.ok && !claimed.blocker && claimed.draftId && shopOk && sourceOk);
+      order = evidence(order, "claim", { recordId: identity.recordId, shopId: identity.shopId }, claimed, claimVerified);
       if (halted(port)) return finishStop(port, order, base, "认领后已取消或暂停", `从工作单 ${order.id} 续跑，不继续保存或发布`);
-      if (!claimed.ok || claimed.blocker) {
-        return finishStop(port, order, base, claimed.message || "认领停等", `工作单 ${order.id}：排除授权、入口或超时后再续跑`);
+      if (!claimVerified) {
+        const reason = !claimed.ok || claimed.blocker
+          ? claimed.message || "认领停等"
+          : !claimed.draftId
+            ? "认领后读回不到草稿，不得进入编辑完成"
+            : !shopOk
+              ? "认领返回的店铺和目标不一致，不会进入编辑"
+              : "认领后来源关系没有读回，不会把草稿写成已认领";
+        return finishStop(port, order, base, reason, `工作单 ${order.id}：先核对目标箱，不会把失败结果当成已认领`);
       }
-      if (!claimed.draftId) {
-        return finishStop(port, order, base, "认领后读回不到草稿，不得进入编辑完成", `工作单 ${order.id}：先确认草稿是否出现`);
+      order = {
+        ...order,
+        claimedDraftId: claimed.draftId,
+        claim: { startedAt: order.claim?.startedAt, resolved: true, draftId: claimed.draftId },
+      };
+      order = climb(order, "claimed");
+      const landed = await port.listTabs();
+      const current = landed.find((tab) => tab.id === port.tabId);
+      if (!claimed.draftId || !current?.url.includes(claimed.draftId)) {
+        return finishStop(
+          port,
+          order,
+          base,
+          `认领已提交，但没有进入草稿编辑页，已停等。草稿号 ${claimed.draftId || ""}`,
+          `工作单 ${order.id}：不要刷新，先打开已认领草稿`,
+        );
       }
-      if (!shopOk) {
-        return finishStop(port, order, base, "认领返回的店铺和目标不一致，不会进入编辑", `工作单 ${order.id} 先核对店铺`);
-      }
-      order = { ...order, claim: { startedAt: order.claim?.startedAt, resolved: true, draftId: claimed.draftId } };
     }
   } else {
-    order = { ...order, claimedDraftId: knownDraft };
+    order = { ...order, claimedDraftId: probeDraft };
   }
 
   const tabs = await port.listTabs();
@@ -319,15 +478,15 @@ async function prepareLocked(port: DxmSmtPort, params: Record<string, unknown>, 
   const issues = textReadbackIssues({
     title: reread.title,
     description: reread.description,
-    skuTokens: reread.skus.flatMap((row) => Object.values(row.specs)),
+    skuTokens: [
+      ...snapshot.skus.flatMap((row) => Object.values(row.specs)),
+      ...reread.skus.flatMap((row) => Object.values(row.specs)),
+    ],
   });
-  const textOk = Boolean(translated.ok && translated.verified && !issues.length && String(reread.title || "").trim());
+  const skuIssues = skuContinuityIssues(snapshot.skus, reread.skus);
+  const textOk = Boolean(translated.ok && translated.verified && !issues.length && String(reread.title || "").trim() && String(reread.description || "").trim());
   order = evidence(order, "translate_text", { ok: translated.ok }, { title: reread.title, description: reread.description, issues }, textOk);
-  for (const field of fields) {
-    const live = reread.fields.find((item) => item.key === field.key);
-    if (!field.verified) continue;
-    if (live && live.value !== undefined) field.value = live.value;
-  }
+  const textFields = projectTranslatedFields(fields, reread.fields);
   if (!textOk) {
     missing.push({
       field: "文字翻译",
@@ -335,51 +494,65 @@ async function prepareLocked(port: DxmSmtPort, params: Record<string, unknown>, 
       action: "请重新翻译并读回标题、属性和描述。文字翻译失败不能用图片翻译抵消。",
     });
   }
-  const residue = translationRisks(reread.title || snapshot.title || "", [reread.brand || snapshot.brand || ""]);
+  const residue = translationRisks(reread.title || "", [reread.brand || ""]);
 
   let images = cloneImages(reread.images.main.length || reread.images.variant.length || reread.images.description.length ? reread.images : snapshot.images);
   let paidNote = "";
   const consent = asConsent(params.paidConsent);
   if (consent) {
-    const decision = decidePaidAction({
-      feature: consent.feature,
-      text: consent.text,
-      workOrderId: order.id,
-      scope: consent.scope,
-      fee: consent.fee,
-      confirmId: consent.confirmId,
-      quotedFee: port.quotedFee,
-    });
-    const group = groupFromScope(consent.scope);
-    if (!decision.execute || !decision.confirmId) {
-      images = markGroup(images, group, "pending");
+    const group = consent.group;
+    if (!group) {
       paidNote = `工作单 ${order.id}：收费图片未确认或范围已变化，对应图片项未完成`;
-      order = evidence(order, "translate_images", consent, { executed: false, reason: decision.reason }, false);
-    } else if (consent.feature === "图片翻译" || consent.feature === "图片白底") {
-      if (halted(port)) return finishStop(port, order, base, "收费动作前已取消", `工作单 ${order.id} 不扣费，图片项保持未完成`);
-      consumePaidConfirm(decision.confirmId);
-      if (!dismissMayCancel(true)) await port.dismissPopups(port.tabId, true);
-      const doneImages = await port.translateImages(port.tabId, group, consent.feature);
-      const verified = Boolean(doneImages.ok && doneImages.verified);
-      images = markGroup(images, group, verified ? "verified" : imageEvidenceStatus(false));
-      order = evidence(order, "translate_images", { feature: consent.feature, scope: consent.scope }, doneImages, verified);
-      if (!verified) paidNote = `工作单 ${order.id}：图片处理已发起，尚未读回验证`;
+      order = evidence(order, "translate_images", consent, { executed: false, reason: "没有显式图片组，不执行收费动作" }, false);
+    } else {
+      const decision = decidePaidAction({
+        feature: consent.feature,
+        text: consent.text,
+        workOrderId: order.id,
+        group,
+        scope: consent.scope,
+        fee: consent.fee,
+        confirmId: consent.confirmId,
+        quotedFee: port.quotedFee,
+        liveScope: imageScopeSummary(images[group].map((item) => item.src)),
+      });
+      if (!decision.execute || !decision.confirmId) {
+        images = markGroup(images, group, "pending");
+        paidNote = `工作单 ${order.id}：收费图片未确认或范围已变化，对应图片项未完成`;
+        order = evidence(order, "translate_images", consent, { executed: false, reason: decision.reason }, false);
+      } else if (consent.feature === "图片翻译" || consent.feature === "图片白底") {
+        if (halted(port)) return finishStop(port, order, base, "收费动作前已取消", `工作单 ${order.id} 不扣费，图片项保持未完成`);
+        consumePaidConfirm(decision.confirmId);
+        if (!dismissMayCancel(true)) await port.dismissPopups(port.tabId, true);
+        const doneImages = await port.translateImages(port.tabId, group, consent.feature);
+        const verified = Boolean(doneImages.ok && doneImages.verified);
+        images = markGroup(images, group, verified ? "verified" : imageEvidenceStatus(false));
+        order = evidence(order, "translate_images", { feature: consent.feature, group, scope: consent.scope }, doneImages, verified);
+        if (!verified) paidNote = `工作单 ${order.id}：图片处理已发起，尚未读回验证`;
+      }
     }
   }
 
-  const skuAlign = alignSkus(reread.skus.length ? reread.skus : snapshot.skus);
+  const skuAlign = alignSkus(reread.skus);
   if (!skuAlign.ok) missing.push({ field: "SKU", reason: skuAlign.reason, action: "请核对规格、价格和库存，不能串行" });
+  for (const field of textFields) {
+    if (!field.required || (String(field.value || "").trim() && field.verified)) continue;
+    if (missing.some((item) => item.field === field.key)) continue;
+    missing.push({ field: field.key, reason: "翻译后的读回没有验证", action: `请重新翻译并读回${field.key}` });
+  }
   const view: FieldSnapshot = {
-    ...reread,
-    ...snapshot,
-    title: reread.title || snapshot.title,
-    description: reread.description || snapshot.description,
-    categoryId: reread.categoryId || snapshot.categoryId,
-    fields,
+    categoryId: reread.categoryId,
+    title: reread.title,
+    description: reread.description,
+    currency: reread.currency ?? snapshot.currency,
+    fields: textFields,
     images,
-    skus: skuAlign.ok ? skuAlign.rows : snapshot.skus,
+    skus: skuAlign.ok ? skuAlign.rows : [],
     freightTemplate: reread.freightTemplate ?? snapshot.freightTemplate,
-    brand: reread.brand ?? snapshot.brand,
+    brand: reread.brand,
+    qualification: reread.qualification ?? snapshot.qualification,
+    weight: reread.weight ?? snapshot.weight,
+    size: reread.size ?? snapshot.size,
   };
   const fingerprint = fingerprintFromSnapshot({
     shopId: order.target.shopId,
@@ -391,13 +564,14 @@ async function prepareLocked(port: DxmSmtPort, params: Record<string, unknown>, 
     pageUrl: probe.url,
     snapshot: view,
   });
-  const qa = evaluateQa({ identityOk: true, fields, images, missing });
+  const qa = evaluateQa({ identityOk: true, fields: textFields, images, missing, skuProblems: skuIssues });
+  const reportedMissing = qa.result === "pass" ? [] : qa.missing;
   order = {
     ...order,
     draftFingerprint: fingerprint,
     qa: { result: qa.result, checkedAt: Date.now(), draftFingerprint: fingerprint },
-    missing,
-    fields: Object.fromEntries(fields.map((field) => [field.key, {
+    missing: reportedMissing,
+    fields: Object.fromEntries(storeFields(fields, textFields).map((field) => [field.key, {
       value: field.value,
       provenance: storeProvenance(field.provenance),
       verified: field.verified,
@@ -405,13 +579,13 @@ async function prepareLocked(port: DxmSmtPort, params: Record<string, unknown>, 
   };
   const summary = prepareSummary({
     shop: order.target.shopNameSnapshot || order.target.shopId || "未知",
-    title: view.title || order.source.titleSnapshot || "未知",
+    title: view.title || "未知",
     category: view.categoryId || "未知",
     priceRange: priceRange(view),
     stockTotal: stockTotal(view),
     images: imagesPassText(images),
     translation: textOk ? "文字翻译已读回" : "文字翻译失败",
-    risks: [...missing.map((item) => item.action), ...residue.risks, paidNote].filter(Boolean).join("；") || "无",
+    risks: [...reportedMissing.map((item) => item.action), ...residue.risks, paidNote].filter(Boolean).join("；") || "无",
   });
   if (qa.result !== "pass") {
     const parked = parkHuman(order, "发布前 QA 未通过", `工作单 ${order.id}：补齐缺项或读回后再准备`);
@@ -491,6 +665,10 @@ async function publishLocked(port: DxmSmtPort, id: string, fingerprint: string):
       return { ok: true, message: "草稿指纹或 QA 已失效，请重新准备", data: { state: loaded.state, refused: true } };
     }
     const probe = await port.readProbe(port.tabId);
+    const page = classifyPage(probe);
+    if (page.kind !== "smt_edit" || page.blocker) {
+      return finishStop(port, loaded, base, page.reason, "处理页面后再发布，不会点击");
+    }
     const tabs = await port.listTabs();
     const identity = publishIdentityMatches(loaded, port.tabId, tabs, probe);
     if (!identity.ok) return refuse(identity.reason, loaded.state);
@@ -508,7 +686,10 @@ async function publishLocked(port: DxmSmtPort, id: string, fingerprint: string):
       pageUrl: probe.url,
       snapshot: fields,
     });
-    const missing = humanMissing(fields);
+    const missing = [
+      ...humanMissing(fields),
+      ...probe.missingFields.map((field) => ({ field, reason: "页面缺少必填", action: `请补齐${field}` })),
+    ];
     const qa = evaluateQa({ identityOk: true, fields: fields.fields, images: fields.images, missing });
     if (qa.result !== "pass") return refuse("点击前重新 QA 未通过，请重新准备", loaded.state);
     if (live !== fingerprint) return refuse("当前草稿和确认指纹不一致，请重新准备", loaded.state);
@@ -522,6 +703,7 @@ async function publishLocked(port: DxmSmtPort, id: string, fingerprint: string):
     if (wrote.stale) return latestResult(wrote.order);
     port.beforeClick?.();
     const clicked = await port.clickPublish(port.tabId);
+    port.afterClick?.();
     let withClick: DxmListingWorkOrder = {
       ...evidence(wrote.order, "publish", { fingerprint }, clicked, Boolean(clicked.receipt)),
       publish: { ...wrote.order.publish!, clickedAt: Date.now() },
@@ -574,12 +756,25 @@ function statusMessage(order: DxmListingWorkOrder, found: { submitRecord?: unkno
   return `${unknown ? "提交结果未知，只允许状态查询。" : `${stateLabel(order.state)}。`}查询不到结果，不推断成败`;
 }
 
-async function lookupClaim(port: DxmSmtPort, order: DxmListingWorkOrder, recordId?: string, shopId?: string): Promise<DraftLookup> {
-  if (!port.lookupDraft) {
-    if (order.claim?.startedAt && !order.claim.resolved) return { status: "unknown" };
-    return { status: "absent" };
+async function lookupClaim(port: DxmSmtPort, _order: DxmListingWorkOrder, recordId?: string, shopId?: string): Promise<DraftLookup> {
+  if (!port.lookupDraft) return { status: "unknown", reason: "没有查重入口" };
+  let title = "";
+  try {
+    const fields = await port.readFields(port.tabId);
+    title = typeof fields.title === "string" ? fields.title.trim() : "";
+  } catch {
+    title = "";
   }
-  return port.lookupDraft({ recordId, shopId, tabId: port.tabId });
+  try {
+    return await port.lookupDraft({ recordId, shopId, tabId: port.tabId, title });
+  } catch (error) {
+    const reason = error instanceof Error && error.message
+      ? error.message
+      : typeof error === "string" && error.trim()
+        ? error.trim()
+        : "查重异常";
+    return { status: "unknown", reason };
+  }
 }
 
 async function persist(
@@ -619,6 +814,29 @@ function halted(port: DxmSmtPort): boolean {
   return Boolean(port.signal?.aborted || port.isPaused?.());
 }
 
+async function reboundSameRecord(
+  port: DxmSmtPort,
+  order: DxmListingWorkOrder,
+): Promise<{ ok: true; order: DxmListingWorkOrder } | { ok: false }> {
+  let probe: PageProbe;
+  try {
+    probe = await port.readProbe(port.tabId);
+  } catch {
+    return { ok: false };
+  }
+  const urlId = crawlEditUrlId(probe.url || "");
+  const sourceId = order.source.crawlRecordId || "";
+  if (!urlId || !sourceId || urlId !== sourceId) return { ok: false };
+  const next = evidence(
+    { ...order, tabs: { ...order.tabs, editTabId: port.tabId } },
+    "tab_rebound",
+    { from: order.tabs.editTabId, to: port.tabId, recordId: urlId },
+    { reason: "同记录编辑页，改绑当前标签" },
+    true,
+  );
+  return { ok: true, order: next };
+}
+
 function evidence(order: DxmListingWorkOrder, action: string, observed: unknown, changed: unknown, verified: boolean): DxmListingWorkOrder {
   return {
     ...order,
@@ -638,6 +856,35 @@ function climb(order: DxmListingWorkOrder, target: DxmListingState): DxmListingW
     current = moved.order;
   }
   return current;
+}
+
+function projectTranslatedFields(previous: FieldDef[], reread: FieldDef[]): FieldDef[] {
+  const out: FieldDef[] = [];
+  const seen = new Set<string>();
+  for (const live of reread) {
+    seen.add(live.key);
+    const value = String(live.value ?? "");
+    const old = previous.find((item) => item.key === live.key);
+    out.push({
+      ...live,
+      value,
+      verified: Boolean(live.verified && value.trim()),
+      provenance: live.provenance || old?.provenance,
+    });
+  }
+  for (const old of previous) {
+    if (seen.has(old.key)) continue;
+    out.push({ ...old, value: "", verified: false });
+  }
+  return out;
+}
+
+function storeFields(previous: FieldDef[], latest: FieldDef[]): FieldDef[] {
+  return latest.map((live) => {
+    const old = previous.find((item) => item.key === live.key);
+    if (old && old.provenance === "suggestion" && !old.verified) return { ...live, provenance: "suggestion" };
+    return live;
+  });
 }
 
 function humanMissing(snapshot: FieldSnapshot): Array<{ field: string; reason: string; action: string }> {
@@ -673,10 +920,18 @@ function asWrites(value: unknown): Array<{ key: string; value: string; provenanc
   });
 }
 
-function asConsent(value: unknown): { feature: string; scope: string; text: string; fee: string; confirmId: string } | null {
+function asConsent(value: unknown): { feature: string; group: ImageGroupName | ""; scope: string; text: string; fee: string; confirmId: string } | null {
   if (!value || typeof value !== "object") return null;
   const row = value as Record<string, unknown>;
-  return { feature: text(row.feature), scope: text(row.scope), text: text(row.text), fee: text(row.fee), confirmId: text(row.confirmId) };
+  const group = row.group === "main" || row.group === "variant" || row.group === "description" ? row.group : "";
+  return {
+    feature: text(row.feature),
+    group,
+    scope: text(row.srcDigest || row.scope),
+    text: text(row.text),
+    fee: text(row.fee),
+    confirmId: text(row.confirmId),
+  };
 }
 
 function asProvenance(value: string): FieldDef["provenance"] {
@@ -689,10 +944,16 @@ function storeProvenance(value: FieldDef["provenance"]): FieldProvenance {
   return "suggestion";
 }
 
-function groupFromScope(scope: string): ImageGroupName {
-  if (scope.includes("变种")) return "variant";
-  if (scope.includes("描述")) return "description";
-  return "main";
+function exactDraft(
+  draftId: string | undefined,
+  shopId: string | undefined,
+  recordId: string | undefined,
+  targetShop: string | undefined,
+  targetRecord: string | undefined,
+): string | undefined {
+  if (!draftId || !shopId || !recordId || !targetShop || !targetRecord) return undefined;
+  if (shopId !== targetShop || recordId !== targetRecord) return undefined;
+  return draftId;
 }
 
 function cloneImages(images: FieldSnapshot["images"]): FieldSnapshot["images"] {

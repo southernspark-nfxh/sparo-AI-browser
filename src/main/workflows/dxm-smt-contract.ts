@@ -264,68 +264,105 @@ export function openOrderMatch(orders: DxmListingWorkOrder[], recordId?: string,
   return closed ? { kind: "one", order: closed } : { kind: "none" };
 }
 
+export type StatusLink = {
+  text?: string;
+  productId?: string;
+  draftId?: string;
+  shopId?: string;
+  sourceRecordId?: string;
+  field?: string;
+};
+
 export type StatusEvidence = {
-  submitRecord?: { text: string; productId?: string };
-  failureRecord?: { text: string; field?: string };
+  submitRecord?: StatusLink;
+  submitRecords?: StatusLink[];
+  failureRecord?: StatusLink;
+  failureRecords?: StatusLink[];
+  /** 裸平台商品 ID 不能改变状态。 */
   platformProductId?: string;
   online?: { productId: string; shopId: string; url: string };
+  onlineItems?: Array<{ productId: string; shopId: string; url: string }>;
 };
 
 /**
  * 用提交记录、失败记录和在线读回迁移工作单。
  * 平台商品 ID 只来自提交记录或平台 ID 读回，不把别的在线商品算到本单。
  */
+function evidenceLinks(found: StatusEvidence): { submits: StatusLink[]; failures: StatusLink[]; online: Array<{ productId: string; shopId: string; url: string }> } {
+  return {
+    submits: [...(found.submitRecords || []), ...(found.submitRecord ? [found.submitRecord] : [])],
+    failures: [...(found.failureRecords || []), ...(found.failureRecord ? [found.failureRecord] : [])],
+    online: [...(found.onlineItems || []), ...(found.online ? [found.online] : [])],
+  };
+}
+
+function linkMatches(order: DxmListingWorkOrder, link: StatusLink): boolean {
+  const draftId = nonempty(link.draftId);
+  const shopId = nonempty(link.shopId);
+  if (!draftId || !shopId) return false;
+  if (!order.claimedDraftId || draftId !== order.claimedDraftId) return false;
+  if (!order.target.shopId || shopId !== order.target.shopId) return false;
+  const source = nonempty(link.sourceRecordId);
+  if (source && source !== nonempty(order.source.crawlRecordId)) return false;
+  return true;
+}
+
+function oneLinked<T extends StatusLink>(order: DxmListingWorkOrder, records: T[]): T | undefined {
+  const hits = records.filter((record) => linkMatches(order, record));
+  if (hits.length !== 1) return undefined;
+  return hits[0];
+}
+
 export function applyStatusEvidence(order: DxmListingWorkOrder, found: StatusEvidence): DxmListingWorkOrder {
   if (order.state === "published_online") return order;
-  let current = order;
-  if (found.failureRecord?.text) {
-    const base = unwrapPark(current);
+  const links = evidenceLinks(found);
+  const failure = oneLinked(order, links.failures.filter((record) => nonempty(record.text)));
+  if (failure?.text) {
+    const base = unwrapPark(order);
     return parkFailed(
       {
         ...base,
-        receipt: { kind: "rejected", text: found.failureRecord.text, productId: current.platformProductId },
-        publish: current.publish ? { ...current.publish, resolved: true } : current.publish,
+        receipt: { kind: "rejected", text: failure.text, productId: order.platformProductId },
+        publish: order.publish ? { ...order.publish, resolved: true } : order.publish,
       },
-      found.failureRecord.text,
+      failure.text,
       "修改资料后重新准备，旧指纹不能直接重发",
     );
   }
 
-  const readId = nonempty(found.submitRecord?.productId) || nonempty(found.platformProductId);
-  if (readId && current.platformProductId && readId !== current.platformProductId) {
-    return parkIfUnknown(current);
-  }
-  if (readId && !current.platformProductId) current = { ...current, platformProductId: readId };
-
-  if (found.submitRecord?.text && current.state !== "submitted_pending_review") {
-    const base = unwrapPark(current);
-    if (base.state === "draft_ready" || base.state === "saved_draft") {
-      const moved = applyTransition(
-        { ...base, platformProductId: current.platformProductId },
-        "submitted_pending_review",
-        { receipt: { kind: "submitted", text: found.submitRecord.text, productId: current.platformProductId } },
-      );
-      if (moved.ok) {
-        current = {
-          ...moved.order,
-          platformProductId: current.platformProductId || moved.order.platformProductId,
-          publish: current.publish ? { ...current.publish, resolved: true } : current.publish,
-        };
+  let current = order;
+  const submit = oneLinked(current, links.submits.filter((record) => nonempty(record.text) && nonempty(record.productId)));
+  const readId = nonempty(submit?.productId);
+  if (submit && readId) {
+    if (current.platformProductId && readId !== current.platformProductId) return parkIfUnknown(current);
+    if (!current.platformProductId) current = { ...current, platformProductId: readId };
+    if (current.state !== "submitted_pending_review") {
+      const base = unwrapPark(current);
+      if (base.state === "draft_ready" || base.state === "saved_draft" || hasOpenPublishAttempt(base) || base.state === "waiting_human") {
+        const moved = applyTransition(
+          { ...base, platformProductId: readId },
+          "submitted_pending_review",
+          { receipt: { kind: "submitted", text: submit.text || "已提交", productId: readId } },
+        );
+        if (moved.ok) {
+          current = {
+            ...moved.order,
+            platformProductId: readId,
+            publish: current.publish ? { ...current.publish, resolved: true } : current.publish,
+          };
+        }
       }
     }
   }
 
-  const online = found.online;
-  if (
-    current.state === "submitted_pending_review" &&
-    online?.productId &&
-    online.shopId &&
-    online.url &&
-    current.platformProductId &&
-    online.productId === current.platformProductId &&
-    online.shopId === current.target.shopId
-  ) {
-    const moved = applyTransition(current, "published_online", { online });
+  const onlineHits = links.online.filter((item) => item.productId && item.shopId && /^https?:\/\//i.test(item.url || ""));
+  const online = onlineHits.filter(
+    (item) => current.platformProductId && item.productId === current.platformProductId && item.shopId === current.target.shopId,
+  );
+  if (online.length === 1 && current.state === "submitted_pending_review" && current.platformProductId) {
+    const hit = online[0];
+    if (!hit) return parkIfUnknown(current);
+    const moved = applyTransition(current, "published_online", { online: hit });
     if (moved.ok) {
       return {
         ...moved.order,

@@ -5595,6 +5595,16 @@ export class SparkBrowser {
           closeTab: (tabId) => {
             this.closeTab(tabId);
           },
+          activateTab: (tabId) => {
+            if (!this.tabs.has(tabId)) return;
+            this.activeTabId = tabId;
+            const tab = this.tabs.get(tabId);
+            if (tab) tab.lastActiveAt = Date.now();
+            this.layout();
+            this.pushChromeState();
+          },
+          getActiveTabId: () => this.activeTabId,
+          hasTab: (tabId) => this.tabs.has(tabId),
         }),
       });
     }

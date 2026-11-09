@@ -284,8 +284,7 @@ describe("T8 发布、回执与防重复", () => {
       params: { workOrderId: order.id },
       port: publishPort(dir, {
         queryStatus: async () => ({
-          submitRecord: { text: "审核中", productId: "P1" },
-          platformProductId: "P1",
+          submitRecord: { text: "审核中", productId: "P1", draftId: "D1", shopId: "S1", sourceRecordId: "R1" },
           online: { productId: "P1", shopId: "S1", url: "https://www.aliexpress.com/item/1001.html" },
         }),
       }),

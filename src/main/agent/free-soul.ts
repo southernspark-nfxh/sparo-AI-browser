@@ -1,5 +1,10 @@
 import type { ToolResult } from "../../shared/types.js";
-import { registerPaidConfirmFromArgs } from "../workflows/dxm-smt-images.js";
+import {
+  beginPaidConfirmRun,
+  endPaidConfirmRun,
+  peekPaidConfirmHandoff,
+  registerPaidConfirmFromArgs,
+} from "../workflows/dxm-smt-images.js";
 import { CAPTURE_PROMPT, CAPTURE_RUN_LIMIT, RUN_CAPTURE_FULL } from "../captures.js";
 import { pageTextGrowthNote } from "./deepseek.js";
 import { traceArgs, type SoulRunTrace, type SoulTraceStep } from "./distill.js";
@@ -166,6 +171,10 @@ const TOOLS = [
     {
       action: { type: "string", description: "准备做的不可逆动作" },
       detail: { type: "string", description: "让用户确认的具体内容" },
+      paid: {
+        type: "object",
+        description: "只有收费图片才填。feature 是图片翻译或图片白底，另带 workOrderId、group（main、variant 或 description）、srcDigest（该组图片 src 摘要）和 fee。不能用变种图或描述图这几个字代替 group。",
+      },
     },
     ["action", "detail"],
   ),
@@ -234,7 +243,7 @@ const TOOLS = [
   ),
   tool(
     "run_workflow",
-    "执行店小秘到速卖通上架白名单。id 只能是 dxm_smt_probe、dxm_smt_prepare、dxm_smt_status、dxm_smt_publish。收费图片和逐步确认模式下的发布，必须先 request_confirm。不要把 tabId 放进参数。其他 id 会拒绝。",
+    "执行店小秘到速卖通上架白名单。id 只能是 dxm_smt_probe、dxm_smt_prepare、dxm_smt_status、dxm_smt_publish、dxm_smt_shops。用户说刷新店铺基线时用 dxm_smt_shops，它没有参数，每次调用都重新抓取店铺列表。dxm_smt_prepare 指定目标店铺用参数 shopName。用户明确说「认领」或「保存并认领」后，才把用户原话放进 claimConsent 再跑 prepare；用户没说就不带。claimConsent 不是店铺名，不能自己编。dxm_smt 工作流返回停等（ok:false 或 waiting_human）时就是停等。禁止绕过工作流用 click_text、execute_primitives 或任何页面工具去手动点『保存并认领』『保存』『认领』『发布』类按钮；停等后只向用户说明原因并等待指示，不得替用户完成写操作。收费图片和逐步确认模式下的发布，必须先 request_confirm。不要把 tabId 放进参数。其他 id 会拒绝。",
     {
       id: { type: "string" },
       params: { type: "object" },
@@ -401,6 +410,81 @@ function serializeResult(result: ToolResult): string {
   return `${text.slice(0, 16000)}\n…[工具结果过长，中间已省略]…\n${text.slice(-7000)}`;
 }
 
+/** 一轮任务里全部 tool 结果的字符上限。超了从最老的大结果开始折叠。要改只改这个数，不做设置项。 */
+export const TOOL_RESULT_BUDGET = 150_000;
+/** 带进本轮的历史对话字符上限。每条都要落在预算内，超长的只保留末尾。 */
+export const HISTORY_CHAR_BUDGET = 32_000;
+
+const toolRounds = new WeakMap<ChatMessage, number>();
+const FOLDABLE_TOOLS = new Set(["page_text", "save_shot", "save_image"]);
+
+export function noteToolRound(message: ChatMessage, round: number): void {
+  toolRounds.set(message, round);
+}
+
+function capHistoryText(text: string, budget: number): string {
+  if (text.length <= budget) return text;
+  return text.slice(text.length - budget);
+}
+
+export function limitHistory<T extends { text: string }>(history: T[], budget = HISTORY_CHAR_BUDGET): T[] {
+  const kept: T[] = [];
+  let used = 0;
+  let dropped = 0;
+  let clipped = false;
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const turn = history[index];
+    if (!turn?.text.trim()) continue;
+    let text = turn.text;
+    if (text.length > budget - used) {
+      if (kept.length === 0 && budget > 0) {
+        text = capHistoryText(text, budget);
+        clipped = text.length !== turn.text.length;
+        kept.push(text === turn.text ? turn : { ...turn, text });
+        used = text.length;
+        continue;
+      }
+      dropped += 1;
+      continue;
+    }
+    kept.push(turn);
+    used += text.length;
+  }
+  if (dropped > 0 || clipped) {
+    console.log(`[free-soul] history trim kept=${kept.length} dropped=${dropped} chars=${used}/${budget}`);
+  }
+  return kept.reverse();
+}
+
+/** 只折叠 page_text / save_shot / save_image，而且折叠后必须更短。不删消息。 */
+export function foldToolResults(
+  messages: ChatMessage[],
+  budget = TOOL_RESULT_BUDGET,
+  rounds: WeakMap<ChatMessage, number> = toolRounds,
+): void {
+  const lengthOf = (message: ChatMessage) => (typeof message.content === "string" ? message.content.length : 0);
+  const used = () => messages.reduce((sum, message) => sum + (message.role === "tool" ? lengthOf(message) : 0), 0);
+  let total = used();
+  if (total <= budget) return;
+  for (const message of messages) {
+    if (total <= budget) break;
+    if (message.role !== "tool") continue;
+    const name = message.name || "";
+    if (!FOLDABLE_TOOLS.has(name)) continue;
+    const content = typeof message.content === "string" ? message.content : "";
+    if (!content || content.startsWith("[早期工具结果已折叠")) continue;
+    const round = rounds.get(message) ?? 0;
+    const next = `[早期工具结果已折叠 r${round} ${name} 原 ${content.length} 字符]\n${content.slice(0, 200)}`;
+    if (next.length >= content.length) continue;
+    message.content = next;
+    total = used();
+    console.log(`[free-soul] fold r${round} ${name} ${content.length}→${next.length} chars budget=${total}/${budget}`);
+  }
+  if (total > budget) {
+    console.log(`[free-soul] fold stop chars budget=${total}/${budget}`);
+  }
+}
+
 export class FreeSoul {
   constructor(
     private config: freeSoulConfig,
@@ -427,19 +511,31 @@ export class FreeSoul {
     onRound?: (round: number) => void;
     onSidebar?: (text: string) => void;
     onTrace?: (trace: SoulRunTrace) => void;
-  }): Promise<{ ok: boolean; text: string; awaitingConfirm?: boolean; interrupted?: boolean }> {
+  }): Promise<{ ok: boolean; text: string; awaitingConfirm?: boolean; interrupted?: boolean; data?: Record<string, unknown> }> {
     if (!this.config.apiKey && this.config.mode !== "cloud") {
       return { ok: false, text: "请先在设置里配置模型 Key。" };
     }
 
+    const confirmRunId = beginPaidConfirmRun();
+    let confirmRunClosed = false;
+    const closeConfirmRun = () => {
+      if (confirmRunClosed) return;
+      confirmRunClosed = true;
+      endPaidConfirmRun(confirmRunId);
+    };
+    const handed = peekPaidConfirmHandoff();
     const messages: ChatMessage[] = [
       {
         role: "system",
-        content: systemPrompt(input.url, input.title, input.execMode === "auto" ? "auto" : "step"),
+        content: [
+          systemPrompt(input.url, input.title, input.execMode === "auto" ? "auto" : "step"),
+          handed
+            ? `内部收费确认句柄是 ${handed}。只有用户这一条是明确同意时，调用 dxm_smt_prepare 才把这个句柄原样放进 paidConsent.confirmId，并带上同一张请求里的 group 和 srcDigest。不要把句柄写给用户。`
+            : "",
+        ].filter(Boolean).join("\n"),
       },
     ];
-    for (const turn of input.history || []) {
-      if (!turn.text.trim()) continue;
+    for (const turn of limitHistory(input.history || [])) {
       messages.push({ role: turn.role, content: turn.text });
     }
     messages.push({ role: "user", content: input.input });
@@ -457,7 +553,8 @@ export class FreeSoul {
     let budgetSent = false;
     let savedCaptures = 0;
     const trace: SoulTraceStep[] = [];
-    const end = (result: { ok: boolean; text: string; awaitingConfirm?: boolean; interrupted?: boolean }) => {
+    const end = (result: { ok: boolean; text: string; awaitingConfirm?: boolean; interrupted?: boolean; data?: Record<string, unknown> }) => {
+      closeConfirmRun();
       if (result.ok && !result.awaitingConfirm && !result.interrupted) {
         input.onTrace?.({ input: input.input, trace: trace.slice() });
       }
@@ -514,8 +611,13 @@ export class FreeSoul {
           parseError = "工具参数不是合法 JSON，请修正后重试。";
         }
         if (name === "request_confirm") {
-          registerPaidConfirmFromArgs(args);
-          return end({ ok: true, text: confirmText(args), awaitingConfirm: true });
+          const confirmId = registerPaidConfirmFromArgs(args);
+          return end({
+            ok: true,
+            text: confirmText(args),
+            awaitingConfirm: true,
+            data: confirmId ? { confirmId, pending: true } : undefined,
+          });
         }
         const overCaptureBudget =
           (name === "save_shot" || name === "save_image") && savedCaptures >= CAPTURE_RUN_LIMIT;
@@ -564,12 +666,15 @@ export class FreeSoul {
         console.log(
           `[free-soul] r${round} ${name} ok=${reported.ok} ${(reported.message || "").slice(0, 120).replace(/\s+/g, " ")}`,
         );
-        messages.push({
+        const toolMessage: ChatMessage = {
           role: "tool",
           tool_call_id: call.id,
           name,
           content: serializeResult(reported),
-        });
+        };
+        toolRounds.set(toolMessage, round);
+        messages.push(toolMessage);
+        foldToolResults(messages);
         if (input.signal?.aborted) return end(interruptedResult());
         if (name === "page_text" && result.ok && samePageCount >= 3) {
           console.log(`[free-soul] r${round} PAGE_SAME_HINT`);
