@@ -53,7 +53,7 @@ function harness(run: (input: RunInput) => Promise<{ ok: boolean; text: string; 
   dirs.push(dir);
   const browser = Object.create(SparkBrowser.prototype) as SparkBrowser & {
     chatLog: Array<{ role: string; text: string }>;
-    settings: { locale: string; execMode: "step" | "auto" };
+    settings: { locale: string; execMode: "step" | "auto"; apiKey?: string };
     activeTabId: string;
     taskPool: TaskPool;
     pushSidebarState: () => void;
@@ -68,7 +68,7 @@ function harness(run: (input: RunInput) => Promise<{ ok: boolean; text: string; 
     abortAgentRuns: () => void;
   };
   browser.chatLog = [];
-  browser.settings = { locale: "zh-CN", execMode: "step" };
+  browser.settings = { locale: "zh-CN", execMode: "step", apiKey: "test-key" };
   browser.activeTabId = "user-tab";
   browser.taskPool = new TaskPool();
   browser.pushSidebarState = () => undefined;

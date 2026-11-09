@@ -45,7 +45,7 @@ function harness() {
   dirs.push(dir);
   const browser = Object.create(SparkBrowser.prototype) as SparkBrowser & {
     chatLog: Array<{ role: string; text: string }>;
-    settings: { locale: string; execMode: "step" | "auto" };
+    settings: { locale: string; execMode: "step" | "auto"; apiKey?: string };
     activeTabId: string;
     taskPool: TaskPool;
     pushSidebarState: () => void;
@@ -59,7 +59,7 @@ function harness() {
     freeSoul: { run: () => Promise<{ ok: boolean; text: string }> };
   };
   browser.chatLog = [];
-  browser.settings = { locale: "zh-CN", execMode: "step" };
+  browser.settings = { locale: "zh-CN", execMode: "step", apiKey: "test-key" };
   browser.activeTabId = "user-tab";
   browser.taskPool = new TaskPool();
   browser.pushSidebarState = () => undefined;

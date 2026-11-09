@@ -63,7 +63,7 @@ function harness() {
     freeSoul: { run: () => Promise<{ ok: boolean; text: string }> };
   };
   browser.chatLog = [];
-  browser.settings = { locale: "zh-CN", execMode: "step", llmMode: "byok", apiKey: "" };
+  browser.settings = { locale: "zh-CN", execMode: "step", llmMode: "byok", apiKey: "test-key" };
   browser.activeTabId = "user-tab";
   browser.taskPool = new TaskPool();
   browser.approvals = new Map();

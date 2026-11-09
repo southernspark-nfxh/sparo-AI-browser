@@ -1,6 +1,6 @@
-﻿# 多 Agent 并行缺陷修复任务书（T73–T81）
+﻿# 多 Agent 并行缺陷修复任务书（T73–T82）
 
-状态：T73–T78 已执行并验收（2026-11-07）。T77 验收数据：空闲拍 26500→11340、稳态分钟均值 11340–12039，序号续排修复生效；T78 真机全链路通过（用户标签不被征用、侧栏工位独立标签、当前页豁免、第二句开站复用）。**T79 代码已交，白屏没有复现出来。T80、T81 代码已交，隔离实例都没复跑。**
+状态：T73–T78 已执行并验收（2026-11-07）。T77 验收数据：空闲拍 26500→11340、稳态分钟均值 11340–12039，序号续排修复生效；T78 真机全链路通过（用户标签不被征用、侧栏工位独立标签、当前页豁免、第二句开站复用）。**T79 代码已交，白屏没有复现出来。T80、T81 已执行并验收（2026-11-09，真机数据见各自完成记录）。T82 代码已交，隋/清真机未跑。**
 
 ---
 
@@ -454,7 +454,9 @@ QA 脚本重跑场景 B：两个任务各有标签（`list_tabs` 里同 owner �
 - 改动：`src/main/agent/mcp-sessions.ts`、`src/main/browser.ts`。决策点 #47 写在登记册工作区里；那份文件还有未提交的店小秘条目，这次提交没有把登记册卷进去。
 - 做法：绑定仍看这个 client 最近一张标签。只有本 client 另一个 running / queued / waiting_human 任务占着它，才新建。任务结束这张标签就空了，下一句复用，不开第三张。别的 client 占着候选标签时不新建。同一 client 的第二张标签另给工位号，第一张和 client 自己的工位号不变。侧栏仍是工位 0。绑定打 `[agent-tab] client= task= bind= reused|new`。不抢焦点，池上限没动。
 - 测试：`tests/agent-tab-busy.test.ts`。活任务另开、结束后复用、不同 client 各绑各的、别人占用不新建、侧栏不占甲的序号。
-- 真机未跑。没有用隔离实例重跑元朝+明朝。
+- 真机（验收方 2026-11-09 补跑，3922 隔离实例）：同 client 连发元朝+明朝 → `[agent-tab] client=ce5297 task=… bind=a65772b3 new` 与 `bind=c9213b5c new`（两张不同标签、seat2/seat3）、双双 done、用户标签全程 active 不被动；隋朝+清朝复跑同样两张标签。
+- **遗留（登记为 T82，见文末）**：同 client 并行任务共享会话历史——清朝任务 r1 先导航去了隋朝页面，最终汇报把隋朝内容也答了。标签隔离了，对话没隔离。
+- 纪律备注：`850be5e` 混入了 `createLiveDxmSmtPort` 的 navigate/openTab/closeTab 三行（为未提交的店小秘改动配套），与 T80 无关，下次分开提交。
 
 ---
 
@@ -508,6 +510,73 @@ QA 脚本重跑场景 B：两个任务各有标签（`list_tabs` 里同 owner �
   - `{"taskId":"","status":"failed","error":"no-model","message":"还没配置模型 Key，请在侧栏设置里填写"}`
   - 日志 `[task] reject no-model`。没有 Key 时顺手清掉已经建过的 freeSoul。模型调用抛错，或外层作用域抛错，都会 `settleMcpTask` 落到 failed，`lastAssistant` 带原因。
 - 测试：`tests/mcp-receipt.test.ts`。
-- 真机未跑。没有拿干净目录起实例，也没有在 1 秒内打满 12 个请求。
+- 真机（验收方 2026-11-09 补跑）：① 3922 实例 14 个并发请求 → 4 个 429，实测响应体可 `JSON.parse`、`error.data:"rate_limited"`、`code:-32029`、`Retry-After: 1`；② 3923 无 key 干净实例 submit → `{"taskId":"","status":"failed","error":"no-model","message":"还没配置模型 Key，请在侧栏设置里填写"}`，日志有 `[task] reject no-model`，黑洞消失。
+- 验收方补的测试装配修复：T81 预检打翻了 13 个没配模型的旧测试（全部 `[task] reject no-model` 后 failed），已在 `tests/agent-chrome-sync / agent-roster / agent-task-queue / background-exec / mcp-agent / multi-agent-isolation` 六个文件的 settings 装配里补 `apiKey:"test-key"`，全量 869 项恢复全绿。这六个文件随 T82 一起提交。
+
+---
+
+# T82 同一 client 并行任务共享会话历史（T80 验收时发现）
+
+## 现象
+
+T80 修完后标签各用各的，但同 client 两个并行任务的**对话历史仍是一个池子**：清朝任务第 1 轮先导航去了隋朝页面（日志 06:03:10 两条 `r1 navigate 隋朝`，第二个任务是看到另一个任务的用户指令才走岔的），最终汇报把隋朝导言也总结了。用户看到的就是「答非所问的乱」。
+
+## 根因（已定位，验收方 2026-11-09 复核）
+
+`runAgentTask` 的作用域 chatKey 是 `agent:<clientId>`（browser.ts 约 L7838，`runScoped(..., \`agent:${clientId}\`)`）。chatLog 是按 chatKey 分卷的（`sessionKey()` → `chatBook().get(key)`），**同 client 的所有任务共用同一卷**：
+
+- L7794 任务指令 push 进这卷；
+- L7801 给 freeSoul 的 history 是 `this.chatLog.slice(0, -1).slice(-12)` ——并行时切到的是「对方任务的指令 + 自己刚 push 的这句」。
+
+所以隋朝任务的用户指令就躺在清朝任务的 history 里。不同 client 的 chatKey 不同，互不污染（QA 场景 A 通过与此一致）。
+
+## 方向（已定）
+
+**并行隔离、串行续聊**：另一个任务 live 时走独立 history；前序任务都已结束的后续任务保持现有续聊语义。不采用「同 client 排队串行」——那会把 T80 刚做出来的并行能力废掉。
+
+## 改哪
+
+`src/main/browser.ts`（runAgentTask / pruneDeadAgentChats / 镜像追加辅助函数）、`src/main/agent/mcp-sessions.ts`（agentClientFromScope）、`src/main/profile/chat-memory.ts`（ChatTurn 加可选字段）。
+
+## 怎么做
+
+1. **chatKey 按 task 分卷**：`runAgentTask` 里 `runScoped` 的 chatKey 从 `agent:${clientId}` 改为 `agent:${clientId}/${task.taskId}`。任务内所有 `this.chatLog.push` 自动落进自己这卷，L7801 的 history 天然干净。
+2. **开跑时 fork 种子**：进作用域前，从 client 级 key（`agent:${clientId}`）拷贝最近约 16 轮做种子写进任务卷。**必须过滤掉属于其他 live 任务的轮次**（见第 3 条的标记），否则「同 client 连发」时后跑的还是会吸到先跑任务的中间轮——这是本条最容易翻车的点。轮对象按 `{role, text}` 拷贝，不共享引用。
+3. **live 镜像到 client 卷**：任务内每条 push（用户指令 / onSidebar / 最终汇报 / 报错）同时追加到 client 级 key，轮上带 `task: task.taskId` 标记（ChatTurn 加可选字段 `task?: string`）。client 卷 cap 60 轮。这样：侧栏工位视图（`sessionViews` / `focusTask` 选的就是 `agent:<clientId>`）在任务跑动中仍实时有内容；串行的下一个任务 fork 时自然带上前序问答；并行任务的轮在 client 卷里按完成顺序交织，属预期。
+4. **消费方适配**（chatKey 格式变了，这两处会静默坏，必须一起改）：
+   - `agentClientFromScope`（mcp-sessions.ts L157）：现在 `chatKey.slice("agent:".length)` 会把 `clientId/taskId` 整个当 clientId。改为截到 `/` 之前。
+   - `pruneDeadAgentChats`（browser.ts L896）：`agent:<clientId>/<taskId>` 形态的 key 按「该 taskId 是否还 live」判死；`agent:<clientId>` 形态维持现状（无活任务 + 无打开标签才删）。删除时 `selectedSession` 复位逻辑两形态都要管。任务卷在任务结束即可删（镜像已进 client 卷，不留副本）。
+5. **不动的东西**：T80 的标签绑定（bindAgentTab）、tab ownership（`ownerForTab` 仍按 client）、`sessionViews`/`focusTask`/`selectSession` 的 key 形态（仍是 `agent:<clientId>`）、freeSoul 的入参结构、侧栏 user 会话。
+
+## 测试
+
+- 单测（建议放 `tests/agent-task-queue.test.ts` 或新文件）：
+  - 同 client 双任务并行：捕获两次 `freeSoul.run` 的 `input.history`，互相不含对方任务的用户指令（隋/清的单测版）；
+  - 串行续聊：任务 1 完成后同 client 提交任务 2，任务 2 的 history 含任务 1 的问答；
+  - 并行结束后提交第三个任务：history 含两个已结束任务的轮，但都不在对方跑动中途混入；
+  - fork 种子过滤：client 卷里带 live 任务标记的轮不进新任务的种子；
+  - prune：任务卷在任务结束后被清；client 卷在无活任务 + 无标签时被清；`selectedSession` 复位；
+  - `agentClientFromScope("agent:ab12cd/ef3456")` 返回 `ab12cd`。
+- 真机：复跑 `%TEMP%\sparo-t80-content.mjs` 场景（隋+清同 client 并行，get_task 取双方汇报）：清朝汇报不含隋朝内容、隋朝汇报不含清朝内容；侧栏点任务卡仍能看到各自对话。
+
+## 红线
+
+1. 不改 T80 的标签绑定和工位语义。
+2. `agentClientFromScope` 和 `pruneDeadAgentChats` 必须与 chatKey 改动同一提交——漏一个就是工具路由错标签 / 死会话泄漏。
+3. 侧栏 user 会话、chat-memory 落盘格式不动（`task` 字段只进内存卷，agent 卷本来就不落盘）。
+4. 遵守本任务书全局红线（typecheck 0 + 测试全绿、逐文件 git add）。
+
+## 验收
+
+真机隋+清复跑互不混答，`[agent-tab]` 日志仍是 reused/new 各归各位；串行第三问能续上前面两问的上下文。完成记录贴 get_task 双方汇报摘录。
+
+### T82（2026-11-09）
+
+- 改动：`src/main/browser.ts`、`src/main/agent/mcp-sessions.ts`、`src/main/profile/chat-memory.ts`。标签绑定没动。
+- 做法：任务作用域改成 `agent:<clientId>/<taskId>`。开跑前从 client 卷拷最近 16 轮做种子，拷贝只有 `role` 和 `text`，带其他活任务 `task` 标记的轮不进种子。任务里每次 `push` 再镜像回 `agent:<clientId>`，标上 `task`，这份最多 60 轮。任务结束删掉任务卷。`agentClientFromScope` 截到 `/` 之前。`pruneDeadAgentChats` 对任务卷看这个 taskId 还在不在跑；client 卷仍是没活任务、也没打开的标签才删。选中的是被删的那卷时回到「我」。
+- 测试：`tests/agent-task-history.test.ts`。并行 history 互不包含对方指令、串行续聊、第三句看得到两份已结束问答、活任务标记不进种子、任务卷和 client 卷的清理、`agent:ab12cd/ef3456` 取出 `ab12cd`。
+- 顺带提交：T81 预检打翻的六个测试文件，settings 里补了 `apiKey:"test-key"`。
+- 真机未跑。没有复跑 `%TEMP%\sparo-t80-content.mjs`。
+- 决策点 #49 写在登记册工作区里。那份文件还有未提交的店小秘条目，这次提交没有把登记册卷进去。
 
 ---

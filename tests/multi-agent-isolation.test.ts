@@ -75,7 +75,7 @@ function harness(existingDir?: string) {
     };
   };
   browser.chatLog = [];
-  browser.settings = { locale: "zh-CN", execMode: "step", llmMode: "byok", apiKey: "" };
+  browser.settings = { locale: "zh-CN", execMode: "step", llmMode: "byok", apiKey: "test-key" };
   browser.approvals = new Map();
   browser.skillsCache = [];
   browser.recording = false;

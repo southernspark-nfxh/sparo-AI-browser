@@ -895,19 +895,86 @@ export class SparkBrowser {
   /** 没有在跑、没有排队、没有等人、也没有打开的标签，就把这份对话丢掉。 */
   private pruneDeadAgentChats(): void {
     const pool = this.taskPool?.tasks || [];
+    const live = (state: string) => state === "running" || state === "queued" || state === "waiting_human";
     for (const key of [...this.chatBook().keys()]) {
       if (!key.startsWith("agent:")) continue;
-      const clientId = key.slice("agent:".length);
-      const liveTask = pool.some(
-        (task) =>
-          task.clientId === clientId &&
-          (task.state === "running" || task.state === "queued" || task.state === "waiting_human"),
-      );
+      const rest = key.slice("agent:".length);
+      const slash = rest.indexOf("/");
+      if (slash >= 0) {
+        const taskId = rest.slice(slash + 1);
+        const still = pool.some((task) => task.id === taskId && live(task.state));
+        if (still) continue;
+        this.chatBook().delete(key);
+        if (this.selectedSession === key) this.selectedSession = "user";
+        continue;
+      }
+      const clientId = rest;
+      const liveTask = pool.some((task) => task.clientId === clientId && live(task.state));
       const openTab = [...(this.tabs?.keys() || [])].some((id) => ownerForTab(id) === key);
       if (liveTask || openTab) continue;
       this.chatBook().delete(key);
       if (this.selectedSession === key) this.selectedSession = "user";
     }
+  }
+
+  private agentClientChatKey(clientId: string): string {
+    return `agent:${clientId}`;
+  }
+
+  private agentTaskChatKey(clientId: string, taskId: string): string {
+    return `agent:${clientId}/${taskId}`;
+  }
+
+  /** 这个 client 上还在跑的别的任务。自己这张不滤。 */
+  private otherLiveTaskIds(clientId: string, taskId: string): Set<string> {
+    const ids = new Set<string>();
+    for (const task of this.taskPool?.tasks || []) {
+      if (task.clientId !== clientId || task.id === taskId) continue;
+      if (task.state === "running" || task.state === "queued" || task.state === "waiting_human") ids.add(task.id);
+    }
+    return ids;
+  }
+
+  /**
+   * 开跑前从 client 卷拷最近 16 轮当种子。别的活任务标过的轮不带进来。
+   * 随后这卷的 push 会镜像回 client 卷，侧栏工位和下一句串行续聊都看那一份。
+   */
+  private seedAgentTaskChat(clientId: string, taskId: string): void {
+    const live = this.otherLiveTaskIds(clientId, taskId);
+    const source = this.turnsFor(this.agentClientChatKey(clientId));
+    const list: ChatTurn[] = source
+      .filter((turn) => !turn.task || !live.has(turn.task))
+      .slice(-16)
+      .map((turn) => ({ role: turn.role, text: turn.text }));
+    const raw = list.push.bind(list);
+    list.push = ((...items: ChatTurn[]) => {
+      for (const item of items) {
+        raw(item);
+        this.mirrorAgentTurn(clientId, taskId, item);
+      }
+      return list.length;
+    }) as ChatTurn[]["push"];
+    this.chatBook().set(this.agentTaskChatKey(clientId, taskId), list);
+  }
+
+  private mirrorAgentTurn(clientId: string, taskId: string, turn: ChatTurn): void {
+    const key = this.agentClientChatKey(clientId);
+    const book = this.chatBook();
+    let client = book.get(key);
+    if (!client) {
+      client = [];
+      book.set(key, client);
+    }
+    const copy: ChatTurn = { role: turn.role, text: turn.text, task: taskId };
+    if (turn.doc) copy.doc = turn.doc;
+    client.push(copy);
+    if (client.length > 60) client.splice(0, client.length - 60);
+  }
+
+  private dropAgentTaskChat(clientId: string, taskId: string): void {
+    const key = this.agentTaskChatKey(clientId, taskId);
+    this.chatBook().delete(key);
+    if (this.selectedSession === key) this.selectedSession = "user";
   }
 
   private sessionViews(): Array<{ key: string; label: string; color: string; running: number; seat?: number }> {
@@ -7774,6 +7841,7 @@ export class SparkBrowser {
     this.freeSoulRunning = true;
     this.engageBackgroundRender();
     try {
+      this.seedAgentTaskChat(clientId, task.taskId);
       // 并发时标签、计量、对话都走这份作用域，退出后自动回到用户当前页，不再手写还原 agentTabId。
       await this.runScoped(
         "background",
@@ -7835,7 +7903,7 @@ export class SparkBrowser {
           }
         },
         undefined,
-        `agent:${clientId}`,
+        `agent:${clientId}/${task.taskId}`,
       );
     } catch (error) {
       const message = `执行失败：${error instanceof Error ? error.message : String(error)}`;
@@ -7856,6 +7924,7 @@ export class SparkBrowser {
       if (finishedTab) finishedTab.agentStatus = "done";
       const stillThere = this.taskPool?.tasks?.some((item) => item.id === task.taskId);
       if (stillThere) this.taskPool?.finish?.(task.taskId, stopped || task.status === "failed" ? "failed" : "done");
+      this.dropAgentTaskChat(clientId, task.taskId);
       this.pumpAgent();
       this.syncTaskChrome();
       this.pushSidebarState();

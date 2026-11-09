@@ -146,7 +146,7 @@ describe("后台点击与截图", () => {
     let minimized = true;
     const browser = Object.create(SparkBrowser.prototype) as SparkBrowser & {
       chatLog: Array<{ role: string; text: string }>;
-      settings: { locale: string; execMode: "step" };
+      settings: { locale: string; execMode: "step"; apiKey?: string };
       activeTabId: string;
       taskPool: TaskPool;
       pushSidebarState: () => void;
@@ -170,7 +170,7 @@ describe("后台点击与截图", () => {
       freeSoul: { run: (input: { onRound?: (n: number) => void }) => Promise<{ ok: boolean; text: string }> };
     };
     browser.chatLog = [];
-    browser.settings = { locale: "zh-CN", execMode: "step" };
+    browser.settings = { locale: "zh-CN", execMode: "step", apiKey: "test-key" };
     browser.activeTabId = "user";
     browser.taskPool = new TaskPool();
     browser.pushSidebarState = () => undefined;

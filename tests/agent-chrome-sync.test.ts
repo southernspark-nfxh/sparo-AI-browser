@@ -54,7 +54,7 @@ function harness() {
   dirs.push(dir);
   const browser = Object.create(SparkBrowser.prototype) as SparkBrowser & {
     chatLog: Array<{ role: string; text: string }>;
-    settings: { locale: string; execMode: "step" | "auto" };
+    settings: { locale: string; execMode: "step" | "auto"; apiKey?: string };
     activeTabId: string;
     tabs: Map<string, TabStub>;
     taskPool: TaskPool;
@@ -73,7 +73,7 @@ function harness() {
     ["user-tab", { id: "user-tab", title: "用户", url: "about:blank", view: dead }],
   ]);
   browser.chatLog = [];
-  browser.settings = { locale: "zh-CN", execMode: "auto" };
+  browser.settings = { locale: "zh-CN", execMode: "auto", apiKey: "test-key" };
   browser.activeTabId = "user-tab";
   browser.taskPool = new TaskPool();
   browser.pushSidebarState = () => undefined;
