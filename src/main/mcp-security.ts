@@ -85,3 +85,25 @@ export function jsonError(
   }
   res.end(JSON.stringify(body));
 }
+
+/** 限流回执必须是带正文的 JSON-RPC error。空 body 会让调用方以为提交成功了。 */
+export function writeRateLimitResponse(res: http.ServerResponse, retryAfterMs?: number): void {
+  const body = JSON.stringify({
+    jsonrpc: "2.0",
+    id: null,
+    error: {
+      code: -32029,
+      message: "Too Many Requests",
+      data: "rate_limited",
+    },
+  });
+  const headers: Record<string, string | number> = {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": Buffer.byteLength(body),
+  };
+  if (retryAfterMs !== undefined) {
+    headers["Retry-After"] = String(Math.max(1, Math.ceil(retryAfterMs / 1000)));
+  }
+  if (!res.headersSent) res.writeHead(429, headers);
+  res.end(body);
+}

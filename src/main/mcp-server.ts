@@ -13,6 +13,7 @@ import {
   applyCors,
   checkRateLimit,
   jsonError,
+  writeRateLimitResponse,
   logMcpRequest,
 } from "./mcp-security.js";
 
@@ -869,10 +870,7 @@ export async function startMcpServer(handlers: ToolHandlers): Promise<{
 
     const limit = checkRateLimit(token);
     if (!limit.ok) {
-      if (limit.retryAfterMs !== undefined) {
-        res.setHeader("Retry-After", String(Math.max(1, Math.ceil(limit.retryAfterMs / 1000))));
-      }
-      jsonError(res, 429, "Too Many Requests", "rate_limited");
+      writeRateLimitResponse(res, limit.retryAfterMs);
       return;
     }
 

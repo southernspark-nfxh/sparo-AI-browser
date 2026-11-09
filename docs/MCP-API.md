@@ -48,6 +48,16 @@ Page tools take an optional `tabId`: `navigate`, `snapshot`, `click`, `fill`, `p
 ## 多 Agent 并行
 
 `initialize` 的响应里带 `clientId`（也在响应头 `x-sparo-client`）。之后每次请求带上这个头。同一个 client 不传 `tabId` 的页面操作落在它自己最近使用的标签上；还没有就新建后台标签，**不会改用户正在看的那一页**。显式 `tabId` 照传（休眠的标签会先唤醒）。每个 client 的后台任务算进全局池上限 3，满了返回 `pool_full`。登录墙仍然 `waiting_human`。
+
+## 限流
+
+默认每个 token **10 次请求 / 秒**（令牌桶）。环境变量 `SPARO_MCP_RATE_LIMIT` 可改这个速率，不改突发上限的算法。超限时 HTTP **429**，响应头带 `Retry-After`（秒），正文是可解析的 JSON-RPC error：
+
+```json
+{ "jsonrpc": "2.0", "id": null, "error": { "code": -32029, "message": "Too Many Requests", "data": "rate_limited" } }
+```
+
+客户端应按 `Retry-After` 再试。空正文不代表提交成功。没配置模型 Key 时 `submit_task` 直接拒绝，不会返回 `running`。
 - `discard_inactive_tabs()` → sleep background tabs (destroy renderers; click a tab to reload). Skips the current tab and tabs playing sound.
 
 ---

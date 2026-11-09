@@ -5355,6 +5355,7 @@ export class SparkBrowser {
     this.llmRuntime = "byok";
     if (!byokKey) {
       this.deepseek = null;
+      this.freeSoul = null;
       return;
     }
     this.applyDeepSeekCfg({
@@ -7300,7 +7301,7 @@ export class SparkBrowser {
   submitTask(
     text: string,
     opts?: { execMode?: "step" | "auto"; clientId?: string },
-  ): { taskId: string; status: "running" | "queued" | "pool_full"; error?: "pool_full" } {
+  ): { taskId: string; status: "running" | "queued" | "pool_full" | "failed"; error?: "pool_full" | "no-model"; message?: string } {
     const clean = text.trim();
     const task = {
       taskId: randomBytes(8).toString("hex"),
@@ -7676,7 +7677,16 @@ export class SparkBrowser {
   private submitAgentTask(
     task: (typeof this.mcpTasks)[number],
     clientId: string,
-  ): { taskId: string; status: "running" | "queued" } {
+  ): { taskId: string; status: "running" | "queued" | "failed"; error?: "no-model"; message?: string } {
+    if (!this.modelReady()) {
+      console.log("[task] reject no-model");
+      return {
+        taskId: "",
+        status: "failed",
+        error: "no-model",
+        message: "还没配置模型 Key，请在侧栏设置里填写",
+      };
+    }
     task.clientId = clientId;
     console.log(
       formatLane({
@@ -7827,6 +7837,13 @@ export class SparkBrowser {
         undefined,
         `agent:${clientId}`,
       );
+    } catch (error) {
+      const message = `执行失败：${error instanceof Error ? error.message : String(error)}`;
+      console.error("[task] fail", task.taskId, message);
+      if (task.status !== "failed" && task.status !== "done" && task.status !== "interrupted") {
+        task.status = "running";
+        this.settleMcpTask(task, { ok: false, text: message }, tabId);
+      }
     } finally {
       this.releaseBackgroundRender();
       this.agentAborts.delete(controller);
