@@ -47,4 +47,4 @@ https://github.com/southernspark-nfxh/sparo-agent-browser/releases/latest
 
 | 文件 | SHA256 |
 |---|---|
-| `Sparo-Setup.exe` | `A0D9061D268B4F6EF9841634DBD0EFEE9DC918E976C45F7B1D420B6D29B4AECE` |
+| `Sparo-Setup.exe` | `E8F5BF9E629C89213FF27E5CBD587A59BF2E1AD59C3C13C369037AC7DAC2E7F5` |
