@@ -527,6 +527,8 @@ type TabInfo = {
   lastActiveAt: number;
   /** Agent 后台标签：不可见时不节流定时器。用户自己的标签保持节流。 */
   agentOwned?: boolean;
+  /** 归属窗口。多开时一扇窗口一组标签；单开时全是 "main"。 */
+  winId?: string;
 };
 
 type ApprovalRequest = {
@@ -684,9 +686,21 @@ export class SparkBrowser {
   private get win(): BrowserWindow {
     return this.wins.get(this.activeWinId) || this.window;
   }
+  /** 按 winId 取窗口；取不到时退回主窗口，避免旧调用点炸。 */
+  private winOf(winId: string): BrowserWindow {
+    return this.wins.get(winId) || this.window;
+  }
   /** @deprecated use active tab via pageView getter */
   private tabs = new Map<string, TabInfo>();
-  private activeTabId = "";
+  /** 每扇窗口各自激活的标签：winId → tabId。 */
+  private activeTabs = new Map<string, string>();
+  /** 当前窗口激活的标签。多开时按窗口分开记，单开时就是唯一那扇。 */
+  private get activeTabId(): string {
+    return this.activeTabs.get(this.activeWinId) || "";
+  }
+  private set activeTabId(value: string) {
+    this.activeTabs.set(this.activeWinId, value);
+  }
   private shellReady = false;
   private lastSnapshot: PageSnapshot | null = null;
   /** Cross-origin CDP frames from last snapshot (x{i}.* refs) */
@@ -1639,6 +1653,7 @@ export class SparkBrowser {
     );
     const agentOwned = opts?.agentOwned === true || Boolean(clientId);
     const view = this.makePageView(undefined, { agentOwned });
+    const winId = this.activeWinId;
     const tab: TabInfo = {
       id,
       view,
@@ -1646,12 +1661,13 @@ export class SparkBrowser {
       url,
       lastActiveAt: Date.now(),
       agentOwned,
+      winId,
     };
     this.tabs.set(id, tab);
     if (clientId) claimTabForClient(clientId, id);
     if (activate) this.activeTabId = id;
     this.pinViewBeforeMount(view);
-    this.win.contentView.addChildView(view);
+    this.winOf(winId).contentView.addChildView(view);
     this.bindPageWebContents(tab);
     this.layout();
     void view.webContents.loadURL(normalizeUrl(url));
@@ -1677,10 +1693,11 @@ export class SparkBrowser {
       url,
       envId,
       lastActiveAt: Date.now(),
+      winId: this.activeWinId,
     };
     this.tabs.set(id, tab);
     this.pinViewBeforeMount(view);
-    this.win.contentView.addChildView(view);
+    this.winOf(this.activeWinId).contentView.addChildView(view);
     this.bindPageWebContents(tab);
     this.layout();
     void view.webContents.loadURL(normalizeUrl(url));
@@ -2880,6 +2897,8 @@ export class SparkBrowser {
     const hidePage = this.overlay !== "none";
     for (const [id, tab] of this.tabs) {
       if (!tab.view) continue;
+      // 别的窗口的标签由那扇窗口自己排；这里只摆本窗口的。
+      if ((tab.winId || "main") !== this.activeWinId) continue;
       const active = id === this.activeTabId && !hidePage;
       try {
         if (active) this.mountPageView(tab.view, bounds, !followUp);
@@ -2955,7 +2974,9 @@ export class SparkBrowser {
 
   /** 活动页先修，避免同一拍的去抖把真正盖住壳层的活动页让给后台页。 */
   private chromeWatchOrder(): string[] {
-    const ids = [...this.tabs.keys()];
+    const ids = [...this.tabs.entries()]
+      .filter(([, tab]) => (tab.winId || "main") === this.activeWinId)
+      .map(([id]) => id);
     ids.sort((left, right) => {
       if (left === this.activeTabId) return -1;
       if (right === this.activeTabId) return 1;
