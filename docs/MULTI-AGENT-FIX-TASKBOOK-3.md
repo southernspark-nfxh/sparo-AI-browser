@@ -1,6 +1,6 @@
 ﻿# 多 Agent 并行缺陷修复任务书（T73–T81）
 
-状态：T73–T78 已执行并验收（2026-11-07）。T77 验收数据：空闲拍 26500→11340、稳态分钟均值 11340–12039，序号续排修复生效；T78 真机全链路通过（用户标签不被征用、侧栏工位独立标签、当前页豁免、第二句开站复用）。**T79 代码已交，白屏没有复现出来。T80 代码已交，场景 B 真机未跑。T81 待执行。**
+状态：T73–T78 已执行并验收（2026-11-07）。T77 验收数据：空闲拍 26500→11340、稳态分钟均值 11340–12039，序号续排修复生效；T78 真机全链路通过（用户标签不被征用、侧栏工位独立标签、当前页豁免、第二句开站复用）。**T79 代码已交，白屏没有复现出来。T80、T81 代码已交，隔离实例都没复跑。**
 
 ---
 
@@ -498,5 +498,16 @@ QA 脚本重跑场景 B：两个任务各有标签（`list_tabs` 里同 owner �
 ## 验收
 
 两条真机步骤都拿到「看得见的拒绝」；完成记录贴 429 响应体原文和无 key 实例的 submit 回执原文。
+
+### T81（2026-11-09）
+
+- 改动：`src/main/mcp-security.ts`、`src/main/mcp-server.ts`、`src/main/browser.ts`、`docs/MCP-API.md`。限流默认 10 次/秒没改。停止链路没动。
+- 429：限流现在写出带 `Content-Length` 的 JSON-RPC 正文，并保留 `Retry-After`。原来日志末尾那个 `0` 是耗时毫秒，不是正文字节；正文以前也不是 JSON-RPC，朴素客户端解析不到 `rate_limited`。现在的正文是：
+  - `{"jsonrpc":"2.0","id":null,"error":{"code":-32029,"message":"Too Many Requests","data":"rate_limited"}}`
+- 没配模型：`submitAgentTask` 入口直接拒绝，不进任务池、不进 mcpTasks、不开标签。回执：
+  - `{"taskId":"","status":"failed","error":"no-model","message":"还没配置模型 Key，请在侧栏设置里填写"}`
+  - 日志 `[task] reject no-model`。没有 Key 时顺手清掉已经建过的 freeSoul。模型调用抛错，或外层作用域抛错，都会 `settleMcpTask` 落到 failed，`lastAssistant` 带原因。
+- 测试：`tests/mcp-receipt.test.ts`。
+- 真机未跑。没有拿干净目录起实例，也没有在 1 秒内打满 12 个请求。
 
 ---
