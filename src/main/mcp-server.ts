@@ -126,9 +126,17 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
         .union([z.number(), z.string()])
         .optional()
         .describe("CDP frame index (0 for x0) or frameId — required for cross-origin iframe DOM"),
+      tabId: tabIdField,
     },
-    async ({ script, frame }) =>
-      textResult(await handlers.execute(script, frame !== undefined ? { frame } : undefined)),
+    async ({ script, frame, tabId }) => {
+      const t = bind(tabId);
+      return textResult(
+        await handlers.execute(script, {
+          ...(frame !== undefined ? { frame } : {}),
+          ...(t ? { tabId: t } : {}),
+        }),
+      );
+    },
   );
 
   server.tool(
@@ -138,9 +146,10 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
       ref: z.string().optional().describe("Element ref from snapshot"),
       selector: z.string().optional().describe("CSS selector fallback"),
       value: z.string().min(1).describe("Option label or value to select"),
+      tabId: tabIdField,
     },
-    async ({ ref, selector, value }) =>
-      textResult(await handlers.select({ ref, selector }, value)),
+    async ({ ref, selector, value, tabId }) =>
+      textResult(await handlers.select({ ref, selector }, value, bind(tabId))),
   );
 
   server.tool(
@@ -153,9 +162,10 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
         .array(z.string().min(1))
         .min(1)
         .describe("Absolute file path(s) to upload"),
+      tabId: tabIdField,
     },
-    async ({ ref, selector, files }) =>
-      textResult(await handlers.upload({ ref, selector }, files)),
+    async ({ ref, selector, files, tabId }) =>
+      textResult(await handlers.upload({ ref, selector }, files, bind(tabId))),
   );
 
   server.tool(
@@ -166,9 +176,17 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
       exact: z.boolean().optional(),
       withinPortal: z.boolean().optional(),
       caret: z.boolean().optional(),
+      tabId: tabIdField,
     },
-    async ({ text, exact, withinPortal, caret }) =>
-      textResult(await handlers.click_text(text, { exact, withinPortal, caret })),
+    async ({ text, exact, withinPortal, caret, tabId }) =>
+      textResult(
+        await handlers.click_text(text, {
+          exact,
+          withinPortal,
+          caret,
+          tabId: bind(tabId),
+        }),
+      ),
   );
 
   server.tool(
@@ -177,8 +195,10 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
     {
       trigger: z.string().min(1).describe("Trigger button text, e.g. 编辑图片"),
       item: z.string().min(1).describe("Menu item text, e.g. 图片翻译"),
+      tabId: tabIdField,
     },
-    async ({ trigger, item }) => textResult(await handlers.menu_click(trigger, item)),
+    async ({ trigger, item, tabId }) =>
+      textResult(await handlers.menu_click(trigger, item, bind(tabId))),
   );
 
   server.tool(

@@ -33,21 +33,24 @@ export function createToolHandlers(browser: SparkBrowser) {
         () => fillTool(browser, target, value, tabId),
         tabId,
       ),
-    execute: (script: string, opts?: { frame?: number | string }) =>
+    execute: (script: string, opts?: { frame?: number | string; tabId?: string }) =>
       browser.execute(script, opts),
-    select: (target: { ref?: string; selector?: string }, value: string) =>
-      browser.select(target, value),
-    upload: (target: { ref?: string; selector?: string }, files: string[]) =>
-      browser.upload(target, files),
+    select: (target: { ref?: string; selector?: string }, value: string, tabId?: string) =>
+      browser.select(target, value, tabId),
+    upload: (target: { ref?: string; selector?: string }, files: string[], tabId?: string) =>
+      browser.upload(target, files, tabId),
     click_text: (
       text: string,
-      opts?: { exact?: boolean; withinPortal?: boolean; caret?: boolean },
+      opts?: { exact?: boolean; withinPortal?: boolean; caret?: boolean; tabId?: string },
     ) =>
-      browser.watchPageTool("click_text", { text, ...opts }, () =>
-        browser.clickText(text, opts),
+      browser.watchPageTool(
+        "click_text",
+        { text, ...opts },
+        () => browser.clickText(text, opts),
+        opts?.tabId,
       ),
-    menu_click: (trigger: string, item: string) =>
-      browser.menuClick(trigger, item),
+    menu_click: (trigger: string, item: string, tabId?: string) =>
+      browser.menuClick(trigger, item, tabId),
     dismiss_overlays: () => browser.dismissOverlays(),
     list_portals: () => browser.listPortals(),
   list_skills: () => browser.listSkillsTool(),
