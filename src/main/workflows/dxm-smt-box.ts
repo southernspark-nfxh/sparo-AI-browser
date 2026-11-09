@@ -3,6 +3,11 @@ import type { DraftLookup } from "./dxm-smt-listing.js";
 
 export const SMT_BOX_URL = "https://www.dianxiaomi.com/web/smt/smtProductList/draft";
 
+/** 判重轮询总预算。采样间隔仍是 400ms，两次一致后再隔 800ms 做确认读。 */
+export const BOX_POLL_BUDGET_MS = 30_000;
+export const BOX_POLL_INTERVAL_MS = 400;
+export const BOX_SETTLE_CONFIRM_MS = 800;
+
 export type BoxRow = {
   title: string;
   productId: string;
@@ -122,6 +127,32 @@ export function lookupFromLoad(input: { rowCount: number; emptyRendered: boolean
 export function boxSearchAttempt(found: { input: boolean; button: boolean }): { filled: boolean; clicked: boolean } {
   if (!found.input || !found.button) return { filled: false, clicked: false };
   return { filled: true, clicked: true };
+}
+
+/** 稳定窗只比这四项。行数相同即可，不比标题正文。 */
+export function sameBoxRead(a: BoxListRead, b: BoxListRead): boolean {
+  return a.loaded === b.loaded
+    && a.rows.length === b.rows.length
+    && a.emptyRendered === b.emptyRendered
+    && a.searchValue === b.searchValue;
+}
+
+export type BoxWindow = {
+  previous?: BoxListRead;
+  streak: number;
+  sawLoaded: boolean;
+};
+
+/** 连续两次全等后，下一次等待改为确认间隔。只有 loaded 的第三次一致才采纳。 */
+export function advanceBoxWindow(
+  window: BoxWindow,
+  sample: BoxListRead,
+): { window: BoxWindow; stable: boolean; waitMs: number } {
+  const sawLoaded = window.sawLoaded || sample.loaded;
+  const streak = window.previous && sameBoxRead(window.previous, sample) ? window.streak + 1 : 1;
+  const stable = sample.loaded && streak >= 3;
+  const waitMs = !stable && sample.loaded && streak === 2 ? BOX_SETTLE_CONFIRM_MS : BOX_POLL_INTERVAL_MS;
+  return { window: { previous: sample, streak, sawLoaded }, stable, waitMs };
 }
 
 /** 标题只能当线索。对上一条或多条都停等人看，第一版不产生 found。 */

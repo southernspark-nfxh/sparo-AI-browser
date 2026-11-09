@@ -16,12 +16,16 @@ import type { DxmSmtPort } from "./dxm-smt-listing.js";
 import { PROBE_SCRIPT, crawlEditUrlId, type PageProbe } from "./dxm-smt-page.js";
 import { READ_SHOPS_SCRIPT, SMT_AUTH_URL, assessShopRows, type RawShopRow, type ShopRead } from "./dxm-smt-shops.js";
 import {
+  BOX_POLL_BUDGET_MS,
   READ_BOX_SCRIPT,
   SMT_BOX_URL,
+  advanceBoxWindow,
+  boxPollExhausted,
   boxSearchScript,
   decideBoxLookup,
   type BoxListRead,
   type BoxRow,
+  type BoxWindow,
 } from "./dxm-smt-box.js";
 import type { DraftLookup } from "./dxm-smt-listing.js";
 
@@ -153,10 +157,11 @@ async function lookupDraft(
       return { status: "unknown", reason: "采集箱列表没有加载出来，无法判重" };
     }
     const first = await pollBox(surface, tabId);
-    if (!first.loaded || (!first.rows.length && !first.emptyRendered)) {
+    if (!first.settled) return first.gaveUp;
+    if (!first.read.loaded || (!first.read.rows.length && !first.read.emptyRendered)) {
       return { status: "unknown", reason: "采集箱列表没有加载出来，无法判重" };
     }
-    if (!first.rows.length) return { status: "absent" };
+    if (!first.read.rows.length) return { status: "absent" };
     if (!title) return { status: "unknown", reason: "编辑页读不到标题，无法判重" };
     return await searchBox(surface, tabId, title);
   } catch {
@@ -338,8 +343,13 @@ async function searchBox(surface: DxmSmtLiveSurface, tabId: string, title: strin
     const nav = await surface.navigate(`${SMT_BOX_URL}?title=${encodeURIComponent(title)}`, tabId);
     if (nav.ok) {
       const viaUrl = await pollBox(surface, tabId);
-      if (viaUrl.loaded && viaUrl.searchValue.trim() === title && (viaUrl.rows.length > 0 || viaUrl.emptyRendered)) {
-        return decideBoxLookup({ loaded: true, rows: viaUrl.rows, title });
+      if (
+        viaUrl.settled
+        && viaUrl.read.loaded
+        && viaUrl.read.searchValue.trim() === title
+        && (viaUrl.read.rows.length > 0 || viaUrl.read.emptyRendered)
+      ) {
+        return decideBoxLookup({ loaded: true, rows: viaUrl.read.rows, title });
       }
     }
   }
@@ -349,30 +359,51 @@ async function searchBox(surface: DxmSmtLiveSurface, tabId: string, title: strin
     return { status: "unknown", reason: "采集箱搜索框或搜索按钮对不上，已停等，没有改别的输入框" };
   }
   const viaClick = await pollBox(surface, tabId);
-  if (!viaClick.loaded || (!viaClick.rows.length && !viaClick.emptyRendered)) {
+  if (!viaClick.settled) return viaClick.gaveUp;
+  if (!viaClick.read.loaded || (!viaClick.read.rows.length && !viaClick.read.emptyRendered)) {
     return { status: "unknown", reason: "采集箱搜索没有加载出来，无法判重" };
   }
-  return decideBoxLookup({ loaded: true, rows: viaClick.rows, title });
+  return decideBoxLookup({ loaded: true, rows: viaClick.read.rows, title });
 }
 
-async function pollBox(surface: DxmSmtLiveSurface, tabId: string): Promise<BoxListRead> {
-  const deadline = Date.now() + 10_000;
-  let last: BoxListRead = { loaded: false, emptyRendered: false, rows: [], searchValue: "" };
-  while (Date.now() <= deadline) {
-    if (surface.signal?.aborted) return last;
-    if (surface.hasTab && !surface.hasTab(tabId)) return last;
-    try {
-      const result = await surface.execute(READ_BOX_SCRIPT, tabId);
-      last = mapBox(result.data?.result);
-      if (last.loaded) return last;
-    } catch {
-      last = { loaded: false, emptyRendered: false, rows: [], searchValue: "" };
-    }
-    if (surface.hasTab && !surface.hasTab(tabId)) return last;
-    if (Date.now() >= deadline) break;
-    await new Promise((resolve) => setTimeout(resolve, 400));
+export type BoxPollResult = {
+  settled: boolean;
+  read: BoxListRead;
+  gaveUp: DraftLookup;
+};
+
+const EMPTY_BOX: BoxListRead = { loaded: false, emptyRendered: false, rows: [], searchValue: "" };
+
+/** 三次一致的 loaded 样本才返回。预算用尽时不把未稳定的表体当成 absent。 */
+export async function pollBox(surface: DxmSmtLiveSurface, tabId: string): Promise<BoxPollResult> {
+  const deadline = Date.now() + BOX_POLL_BUDGET_MS;
+    let last = EMPTY_BOX;
+    let window: BoxWindow = { streak: 0, sawLoaded: false };
+    while (Date.now() <= deadline) {
+      if (surface.signal?.aborted) return unfinished(window, last);
+      if (surface.hasTab && !surface.hasTab(tabId)) return unfinished(window, last);
+      try {
+        const result = await surface.execute(READ_BOX_SCRIPT, tabId);
+        last = mapBox(result.data?.result);
+      } catch {
+        last = EMPTY_BOX;
+      }
+      const step = advanceBoxWindow(window, last);
+      window = step.window;
+      if (step.stable) return { settled: true, read: last, gaveUp: boxPollExhausted(["ready"]) };
+      if (surface.hasTab && !surface.hasTab(tabId)) return unfinished(window, last);
+      if (Date.now() >= deadline || Date.now() + step.waitMs > deadline) break;
+      await new Promise((resolve) => setTimeout(resolve, step.waitMs));
   }
-  return last;
+  return unfinished(window, last);
+}
+
+function unfinished(window: BoxWindow, read: BoxListRead): BoxPollResult {
+  return {
+    settled: false,
+    read,
+    gaveUp: boxPollExhausted(window.sawLoaded ? ["ready"] : ["loading"]),
+  };
 }
 
 function mapBox(value: unknown): BoxListRead {

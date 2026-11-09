@@ -45,7 +45,7 @@ describe("R9B 判重激活和 live 认领", () => {
     });
     const result = await port.lookupDraft?.({ recordId: "sample-record", shopId: "S1", tabId: "edit", title: "示例夹子风扇草稿" });
     expect(result?.status).toBe("absent");
-    expect(order).toEqual(["activate:box-tab", "read", "close:box-tab", "activate:edit"]);
+    expect(order).toEqual(["activate:box-tab", "read", "read", "read", "close:box-tab", "activate:edit"]);
   });
 
   it("原标签已经不在时，关掉采集箱后不再切回去", async () => {

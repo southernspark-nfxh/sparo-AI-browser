@@ -1075,3 +1075,26 @@ HEAD `5f2b12a` 加未提交改动。没有提交 Git，没有运行 `npm run dis
 - `npm run build`：通过。`out/main/index.js` 1,439.86 kB。
 
 未跑：同记录 prepare 真机复验、用户当场授权后的认领、成功落点 DOM、E1–E12、真实写字段 / 翻译 / 保存 / 发布 / 选分类、安装包。
+
+### Cursor R10 完成记录（2026-11-09）
+
+HEAD `fa7394d` 加未提交改动。没有提交 Git，没有打包，没有重启开发版，没有跑真机 prepare，没有点认领。`decideBoxLookup`、#45、#48 的激活时序没改。`parkPageView` 和 `browser.ts` 没改。认领弹窗轮询和店铺表轮询仍是 10 秒。`[dxm-smt] claim click` 两行日志没改。写字段、翻译、保存、发布、选分类仍停等。
+
+**不声称判重已修好。** 真机复验是规划方的事：同记录 ambiguous 至少 6 轮、absent 至少 3 轮。
+
+- `dxm-smt-box.ts` +31。新增 `BOX_POLL_BUDGET_MS = 30_000`、`BOX_POLL_INTERVAL_MS = 400`、`BOX_SETTLE_CONFIRM_MS = 800`、`sameBoxRead`、`advanceBoxWindow`。四项全等才算同一次读：`loaded`、`rows.length`、`emptyRendered`、`searchValue`。行数相同即可，不比标题正文。
+- `dxm-smt-live.ts` +48/−17。`pollBox` 不再在第一次 `loaded=true` 时返回。连续两次 loaded 样本全等后，再等 800ms 做第三次确认；三次一致才返回。任一项不同就清零重计。没加载完的样本即使连着三次相同也不提前返回，避免空白页在 1.6 秒时被说成没加载出来。预算用尽：窗口里出现过 loaded 就走 `boxPollExhausted`，原因是「采集箱还有一次读到了表体，不能把整段轮询当成没加载」，状态是 unknown，不判 absent；一次都没 loaded 才是「采集箱列表没有加载出来」。
+- `tests/dxm-smt-r7.test.ts` +5/−4。搜索结果的模拟改成按阶段给稳定读，仍是先走 URL、对不上再点一次搜索。另开标签的读取次数从 1 次改为 3 次。
+- `tests/dxm-smt-r9b.test.ts` +1/−1。激活顺序仍是先激活、读完再关、再回到原标签，中间的读取按稳定窗记 3 次。
+- `tests/dxm-smt-r10.test.ts` 新文件 177 行、6 项。
+- `docs/DECISION-POINTS.md` +2/−1。#50 原文已在，只把页脚范围补上 #50。没有新编号。
+
+当场结果：
+
+- 定向 `tests/dxm-smt-r10.test.ts`、`r9b`、`r7`、`r9`：4 个文件、31 项通过。
+- `npm test`：119 个文件、890 项。889 通过，1 个失败。失败是 `tests/chrome-hole.test.ts:493`，期望 x=-20000，实际 30。这个文件和 `browser.ts` 都没有改，断言没有改。单独再跑该文件 15 项通过。和停放位时序抖动同一处，本轮没有改停放逻辑。
+- `npm run typecheck`：通过。
+- `npm run lint`：0 error、19 个既有 warning。
+- `npm run build`：通过。`out/main/index.js` 1,441.51 kB。
+
+未跑：真机 ambiguous / absent 复验、认领、E1–E12、安装包。不得把判重说成已修好。
