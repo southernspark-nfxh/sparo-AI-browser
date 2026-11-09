@@ -153,11 +153,17 @@ export function claimTabForClient(clientId: string, tabId: string): void {
   rememberClientTab(id, tab);
 }
 
+/** `agent:<clientId>` 或任务卷 `agent:<clientId>/<taskId>`，都只取出 clientId。 */
+function clientIdFromAgentKey(value?: string): string {
+  if (!value?.startsWith("agent:")) return "";
+  const rest = value.slice("agent:".length);
+  const slash = rest.indexOf("/");
+  return (slash >= 0 ? rest.slice(0, slash) : rest).trim();
+}
+
 /** 任务作用域优先；没有作用域时，从打开它的那张 agent 页继承。用户自己开的页两边都空。 */
 export function agentClientFromScope(chatKey?: string, openerOwner?: string): string {
-  if (chatKey?.startsWith("agent:")) return chatKey.slice("agent:".length);
-  if (openerOwner?.startsWith("agent:")) return openerOwner.slice("agent:".length);
-  return "";
+  return clientIdFromAgentKey(chatKey) || clientIdFromAgentKey(openerOwner);
 }
 
 /** initialize 响应里带回的 6 位 clientId。 */

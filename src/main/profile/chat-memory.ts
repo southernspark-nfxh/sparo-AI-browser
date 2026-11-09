@@ -21,6 +21,8 @@ export type ChatTurn = {
   cortex?: { mode: "ask" | "propose" | "loop"; need?: string; approach?: string };
   /** 门岗登记卡。用户点「记住」才写入触发语。 */
   pendingTrigger?: { skillId: string; text: string };
+  /** 这条轮次属于哪个 agent 任务。只活在内存里的 client 卷上，落盘会丢掉。 */
+  task?: string;
 };
 
 const CAP = 40;
@@ -44,7 +46,7 @@ export function loadChatMemory(configDir: string): ChatTurn[] {
           typeof (t as ChatTurn).text === "string",
       )
       .map((t) => {
-        const { images: _imgs, ...base } = t as ChatTurn;
+        const { images: _imgs, task: _task, ...base } = t as ChatTurn;
         const doc = base.doc;
         const kept =
           doc && typeof doc.title === "string" && typeof doc.path === "string"
@@ -67,7 +69,7 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function saveChatMemory(configDir: string, log: ChatTurn[]): void {
     const trimmed = log.slice(-CAP).map((t) => {
-      const { images: _drop, ...rest } = t;
+      const { images: _drop, task: _task, ...rest } = t;
       return rest;
     });
   if (saveTimer) clearTimeout(saveTimer);
