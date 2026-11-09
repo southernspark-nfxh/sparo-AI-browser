@@ -115,9 +115,9 @@ $chat | Where-Object { $_.text -like "*$($want.Substring(0, [Math]::Min(12, $wan
 
 | 场景 | npm run start | 安装包 | 底账摘录 |
 |---|---|---|---|
-| G1 | 未跑 | 未跑 | |
-| G2 | 未跑 | 未跑 | |
-| G3 | 未跑 | 未跑 | |
+| G1 | 未跑 | 过（2026-11-09） | 关闭残留 weibo 标签后重发原句，chat-memory（seq 185-186）助手句确认已打开 `https://weibo.com/`、标题「微博 – 随时随地发现新鲜事」、已登录状态、首页正文读回 760 字。注：首一次发送因残留 weibo 标签走了「已打开」状态应答（行为正确但非新开），关标签重发才算新开。 |
+| G2 | 未跑 | 过（2026-11-09） | 前置：活动标签停在 `weibo.com/n/汪海林`（uid 1497714867）主页。原句发出后产出文档 `%APPDATA%\sparo-store\docs\2026-11-09T09-59-58-汪海林微博摘录_20261107-1109.md`（6133 字节，17:59:58），共 11 条按时间倒序保留原文；因主页懒加载未取全 11-07/11-08，文档与回复均如实标注、未假完成。 |
+| G3 | 未跑 | 过（2026-11-09） | G2 关单后紧接原句「把最近 3 天微博逐条复制下来」：未被误判为改写上一份文档，新开一轮执行并换策略走 `m.weibo.cn/u/1497714867` 抓到 20 条更完整，产出新文档 `2026-11-09T10-02-25-汪海林微博逐条_20261107-1109.md`（9991 字节，18:02:25）；剩余缺段（11-07 全天、11-08 20:29 前白天）如实说明。 |
 | G4 | 未跑 | 未跑 | |
 | G5 | 未跑 | 未跑 | |
 | G6 | 未跑 | 未跑 | |
@@ -125,6 +125,13 @@ $chat | Where-Object { $_.text -like "*$($want.Substring(0, [Math]::Min(12, $wan
 | G8 | 未跑 | 未跑 | |
 
 安装包复测至少 G1、G2、G3。记下 `git rev-parse --short HEAD` 和 `release\Sparo-Setup.exe` 的修改时间。开发窗绿了，不能代替安装包。
+
+### 2026-11-09 安装包 G1–G3 复测环境备注
+
+- 测试对象：安装版 **0.3.2**（`D:\Program Files\Sparo`，app.asar 2026-11-09 15:30:44，即交接单 15:30:48 打包批次），3921 属主 `Sparo.exe`（17:21:53 启动），`/health` 200、toolCount 76。发送通道：MCP `sidebar_chat`（hands:true，UTF-8）。
+- **底账口径变更**：0.3.0 起侧栏换成 Free Soul 内核（`src/main/browser.ts` handleChat → `freeSoul.run`），侧栏句子**不再写 `missions.jsonl`**；旧验收（新 op=open、brainPlan、realSteps）对侧栏句已不可得。本表 G1–G3 按「chat-memory 助手句 + docs 落盘产物」取证，二者均在本文档底账清单内。G4–G8 及「共用核对」脚本的 missions 期望需按新内核修订后再跑。
+- 版本漂移：仓库 HEAD 已由交接单的 `dcbe9d3`（0.3.2 文档收尾）推进到 `dcf7d19`（**0.4.0**，Trae 收官版，47 条脏文件已随该提交入库，工作区现已干净）；`release\Sparo-Setup.exe` 已被重打包为 0.4.0（2026-11-09 17:23:09）。**本次复测的安装版仍是 0.3.2 批次**；0.4.0 安装包的 G1–G3 需另跑一轮。
+- missions.jsonl 遗留：底账现存约 190 张未关单（含交接单所列 4 张僵尸单，均从未执行：无 turn、无 findings）。0.3.2 的 `pickInterruptedMission` 只挑「实际执行过」的单，且 `sidebarOffersRecovery()` 恒为 false——僵尸单不会弹恢复提示，侧栏也无正规关单路径（isCancelText 需 ctx.active）。本次未手改底账以免污染证据，G1–G3 验证不受其影响（G 测试前经 `list_agents` 确认侧栏空闲）。
 
 ## 店小秘到速卖通第一阶段（E1–E12）
 
