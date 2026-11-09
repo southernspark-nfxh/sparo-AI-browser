@@ -13,6 +13,11 @@ export type DxmSmtLiveSurface = {
   execute: (script: string, tabId?: string) => Promise<ExecuteResult>;
   getUrl: (tabId?: string) => string;
   listTabs: () => Array<{ id: string; url: string }>;
+  /** 当前标签不是采集编辑页时，才允许在这个标签上打开授权页。 */
+  navigate?: (url: string, tabId: string) => Promise<{ ok: boolean; message?: string }>;
+  /** 当前标签是采集编辑页时，必须走这里，读完再关掉。 */
+  openTab?: (url: string) => Promise<string>;
+  closeTab?: (tabId: string) => Promise<void> | void;
 };
 
 export function createLiveDxmSmtPort(surface: DxmSmtLiveSurface): DxmSmtPort {
