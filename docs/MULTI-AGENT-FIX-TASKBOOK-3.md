@@ -1,6 +1,6 @@
-﻿# 多 Agent 并行缺陷修复任务书（T73–T79）
+﻿# 多 Agent 并行缺陷修复任务书（T73–T81）
 
-状态：T73–T78 已执行并验收（2026-11-07）。T77 验收数据：空闲拍 26500→11340、稳态分钟均值 11340–12039，序号续排修复生效；T78 真机全链路通过（用户标签不被征用、侧栏工位独立标签、当前页豁免、第二句开站复用）。**T79 代码已交，白屏没有复现出来。**
+状态：T73–T78 已执行并验收（2026-11-07）。T77 验收数据：空闲拍 26500→11340、稳态分钟均值 11340–12039，序号续排修复生效；T78 真机全链路通过（用户标签不被征用、侧栏工位独立标签、当前页豁免、第二句开站复用）。**T79 代码已交，白屏没有复现出来。T80 代码已交，场景 B 真机未跑。T81 待执行。**
 
 ---
 
@@ -392,5 +392,111 @@ flush 路径（`browser.ts` 约 L3944，`getSidebarPayload(true)` 调用处）�
 - 修法：`display-metrics-changed`、`display-removed`、`unlock-screen` 时，窗口不在任一工作区就拉回主屏工作区，不 show、不 focus、不把最小化窗口弹出来。`display-added` 只记日志并重算。每次事件都 `requestHoleReport`，120ms 和 400ms 再排一次，没有轮询。
 - 测试：`tests/window-visible.test.ts`。屏幕外拉回且不 focus；屏幕内不动；第二块屏不拉回主屏；最小化不弹。
 - 真机白屏未复现。验收「一周内不再出现」还没开始算。
+
+---
+
+# T80 同一 agent 的多个任务挤同一张标签（多开隔离 QA 场景 B）
+
+## 现象（2026-11-09 隔离实例真机实测，HEAD 40f61dc）
+
+同一 client（MCP 会话）连发两个任务，回执都是 `running`，但两个任务**先后把同一张标签导航走**：
+
+- 丁 client 连发「元朝导言」+「明朝导言」，元朝 04:39:43 先导航，12 秒后明朝把**同一张标签**（330419）导航到明朝页面；
+- 之后两个任务都没有再出现正常的小节阅读轮，双双草草收场——第一个任务的页面上下文被第二个任务顶掉，互相污染；
+- 对照组（场景 A）：两个**不同** client 并行（甲唐朝 / 乙宋朝），各自持有独立标签、浏览记录交错并行、互不串扰、双双正常完成——跨 client 隔离是好的，**坏在同 client**。
+
+这正是用户「同一个 agent 的不同任务使用窗口也不干扰」的要求：不成立。
+
+## 根因（已定位）
+
+- [browser.ts](file:///d:/download/sparo上架应用商店版/src/main/browser.ts#L7721-L7729) `bindAgentTab(clientId)` → [mcp-sessions.ts](file:///d:/download/sparo上架应用商店版/src/main/agent/mcp-sessions.ts#L127-L144) `bindClientTab`：不带 tabId 的任务落在 `sessions.get(clientId)?.tabId`——**按 client 记「最近一张」**（`rememberClientTab` 单值覆盖），同一个 client 的第二个任务启动时无条件复用第一张，不管上面有没有活儿在干。
+- `runAgentTask`（browser.ts 约 L7731）`let tabId = pooled?.tabId || ""; if (!tabId) tabId = this.bindAgentTab(clientId)`——任务卡上有 tabId 字段但只在已绑过后沿用，绑定的粒度是 client 不是任务。
+
+## 期望行为（验收标准）
+
+- 同一 client 的两个并行任务**各用各的标签**：第二个任务开工时，若 client 当前标签被本 client 另一个 live 任务（running / queued / waiting_human）占着，新建一张 agent 标签再开工；
+- 第一个任务结束后，该 client 后续新任务可以复用其中任意一张（保持现有复用语义，不泄漏标签）；
+- 不同 client 之间互不影响（现状不回退）；
+- 两张同 client 标签各有横幅 / 色点，工位号不冲突；
+- 用户标签照旧不碰、不抢焦点；侧栏工位（`agent:sidebar`，工位 0）行为不变。
+
+## 改哪
+
+`src/main/agent/mcp-sessions.ts`（bindClientTab / 会话结构）、`src/main/browser.ts`（bindAgentTab / runAgentTask 的绑定时机）、必要时 `src/renderer/shell.html`（工位号分配确认）。
+
+## 怎么做
+
+1. `bindAgentTab` 增加占用感知：候选标签 = `sessions.get(clientId)?.tabId`；若该标签正被同 client 的**另一个 live 任务**占用（任务卡 `pooled.tabId === 候选` 且其状态 live），则调 `createAgentTab()` 新建并 claim，否则复用。占用判定基于任务状态，任务结束自然解除，不需要显式释放钩子。
+2. `bindClientTab` 纯函数部分保持可测：把「候选是否被占」作为入参传入，不在 mcp-sessions 里反向查任务池（避免循环依赖）。
+3. 首个任务照旧：client 没有标签或标签空闲 → 复用 / 新建（现状路径）。
+4. 工位号（agentSeat）分配确认：同 client 两张标签拿到不同工位号，横幅渲染不串。
+
+## 测试
+
+- 单测：
+  - 同 client 任务 A 绑了 tab X 且 live，任务 B 绑定 → 拿到新 tab Y ≠ X；A 结束（done/failed）后任务 C → 复用 X 或 Y 之一，不新建第三张；
+  - 不同 client 各绑各的，互不干扰（现状回归）；
+  - 候选标签被**别的 client** 占用（异常数据）→ 不新建，照常返回候选（防御路径）。
+- 真机（复现 QA 现场）：同一 MCP client 连发「元朝导言」+「明朝导言」→ 两张 agent 标签、各自完成小节阅读、最终汇报各答各的朝代；全程用户标签 URL 不变且保持 active。
+
+## 红线
+
+- 不抢用户标签、不抢焦点（`focusPageForInput` 语义不动）。
+- `TASK_POOL_LIMIT = 3` 不动；排队语义不动（queued 任务在空位释放后照跑）。
+- 侧栏 `agent:sidebar` 固定工位 0 不受影响（侧栏任务串行，天然不触发占用分支）。
+
+## 验收
+
+QA 脚本重跑场景 B：两个任务各有标签（`list_tabs` 里同 owner 两张、工位号不同），收尾汇报内容各答各的朝代。日志贴绑定行（建议加一行 `[agent-tab] client=<id> task=<taskId> bind=<tabId> reused|new`）。
+
+### T80（2026-11-09）
+
+- 改动：`src/main/agent/mcp-sessions.ts`、`src/main/browser.ts`。决策点 #47 写在登记册工作区里；那份文件还有未提交的店小秘条目，这次提交没有把登记册卷进去。
+- 做法：绑定仍看这个 client 最近一张标签。只有本 client 另一个 running / queued / waiting_human 任务占着它，才新建。任务结束这张标签就空了，下一句复用，不开第三张。别的 client 占着候选标签时不新建。同一 client 的第二张标签另给工位号，第一张和 client 自己的工位号不变。侧栏仍是工位 0。绑定打 `[agent-tab] client= task= bind= reused|new`。不抢焦点，池上限没动。
+- 测试：`tests/agent-tab-busy.test.ts`。活任务另开、结束后复用、不同 client 各绑各的、别人占用不新建、侧栏不占甲的序号。
+- 真机未跑。没有用隔离实例重跑元朝+明朝。
+
+---
+
+# T81 MCP 提交链路回执不诚实（429 空响应吞任务 + 无模型配置谎报 running）
+
+## 现象（2026-11-09 隔离实例真机实测，两条独立证据）
+
+1. **429 空响应**：client 短时间突发请求（initialize + register + list_tabs + 两次 submit，约 10 个请求 / 1 秒内）触发 token-bucket 限流，日志 `POST /mcp 429 0`——HTTP 429、**响应体 0 字节**。调用方拿不到任何 JSON-RPC 错误，以为提交成功；任务实际根本没进系统。标准 MCP 客户端靠 Retry-After 重试能活，但朴素客户端（包括我们自己的 QA 脚本）直接被骗。
+2. **无模型配置任务黑洞**（本轮 QA 前置排障发现）：干净 config dir 的 `settings.json` `apiKey:""` 时，`submit_task` 回执 `{status:"running"}`，但任务永不执行：`get_task` 永远 `unknown`、rounds=0、零模型调用日志、无任何错误提示。用户 / agent 侧完全无感知。
+
+## 根因（已定位）
+
+- 限流：[mcp-security.ts](file:///d:/download/sparo上架应用商店版/src/main/mcp-security.ts#L36-L39) token-bucket 默认 10 req/s；[mcp-server.ts](file:///d:/download/sparo上架应用商店版/src/main/mcp-server.ts#L870-L875) 有限 `jsonError(res, 429, ...)` 调用，但实测响应体为空——需查 jsonError 在限流路径是否真的写出 body（日志 0 字节说明没写出来或写晚）。
+- 黑洞：`submitAgentTask`（browser.ts 约 L7680–L7718）不检查模型配置就回 `running`；`runAgentTask` 里模型调用失败被静默吞掉，任务记录不落到任何终态。
+
+## 改哪
+
+`src/main/mcp-server.ts`（429 响应体）、`src/main/mcp-security.ts`（如需）、`src/main/browser.ts`（submitAgentTask 预检 + 失败落态）、`docs/MCP-API.md`（限流说明）。
+
+## 怎么做
+
+1. **429 回执修成可解析**：确认并修复限流路径的响应体——返回标准 JSON-RPC error（带 `code` / `message` / `data: "rate_limited"`），保留 `Retry-After` 头。MCP-API.md 补一段：默认限流 10 req/s，环境变量 `SPARO_MCP_RATE_LIMIT` 可调，客户端应按 Retry-After 重试。
+2. **submit 预检模型配置**：`submitAgentTask` 入口检查当前模型配置（apiKey 为空且无可用渠道）→ 不进 taskPool，直接返回明确错误（说人话：「还没配置模型 Key，请在侧栏设置里填写」），日志打一行 `[task] reject <reason>no-model`。侧栏 handleChat 路径已有 UI 引导，不在本条范围。
+3. **黑洞兜底**：`runAgentTask` 里模型调用抛错 / 配置缺失时，任务必须落 failed 终态（复用 T73 的 settleMcpTask + taskPool.finish 链路），侧栏 / get_task 能看到失败原因，不许静默。
+4. 不改限流默认值、不放宽 burst（限流本身是保护，问题只在回执不可见）。
+
+## 测试
+
+- 单测：
+  - 空 apiKey 时 submit_task 返回明确错误、不创建任务卡、不进 mcpTasks；
+  - 限流路径返回带 body 的 JSON-RPC error（非空、可 JSON.parse、含 rate_limited）；
+  - 模型调用抛错 → 任务 failed 且 lastAssistant 有原因。
+- 真机：
+  - `SPARO_CONFIG_DIR` 指向无 key 的干净目录起实例，submit → 拿到明确报错（不再 running 黑洞）；
+  - 1 秒内打满 12 个请求 → 429 且响应体是可解析的 JSON 错误。
+
+## 红线
+
+- 不动 T73 停止链路；不动限流默认值；不把模型 Key 写进客户端。
+
+## 验收
+
+两条真机步骤都拿到「看得见的拒绝」；完成记录贴 429 响应体原文和无 key 实例的 submit 回执原文。
 
 ---
