@@ -24,11 +24,13 @@ export type ClientSession = {
 
 const sessions = new Map<string, ClientSession>();
 const owners = new Map<string, string>();
+const tabSeats = new Map<string, number>();
 let nextSeat = 1;
 
 export function resetMcpSessions(): void {
   sessions.clear();
   owners.clear();
+  tabSeats.clear();
   nextSeat = 1;
 }
 
@@ -97,6 +99,50 @@ function rememberClientTab(clientId: string, tabId: string): void {
   session.tabId = tabId;
   if (!session.color) session.color = colorForClient(clientId);
   owners.set(tabId, clientId);
+  assignTabSeat(clientId, tabId);
+}
+
+/** 第一张用 client 自己的工位。同一 client 再开一张才另给号，侧栏工位 0 不占序号。 */
+function assignTabSeat(clientId: string, tabId: string): void {
+  if (tabSeats.has(tabId)) return;
+  const session = sessions.get(clientId);
+  if (!session || session.seat === 0) {
+    tabSeats.set(tabId, session?.seat ?? 0);
+    return;
+  }
+  const hasOther = [...owners.entries()].some(
+    ([id, owner]) => owner === clientId && id !== tabId && tabSeats.has(id),
+  );
+  if (!hasOther) {
+    tabSeats.set(tabId, session.seat);
+    return;
+  }
+  const seat = nextSeat;
+  nextSeat += 1;
+  tabSeats.set(tabId, seat);
+}
+
+export function seatForTab(tabId: string): number | undefined {
+  return tabSeats.has(tabId) ? tabSeats.get(tabId) : undefined;
+}
+
+export function clientTabId(clientId: string): string | undefined {
+  return sessions.get(String(clientId || "").trim())?.tabId;
+}
+
+const LIVE_TAB_STATES = new Set(["running", "queued", "waiting_human"]);
+
+/** 只有本 client 自己的活任务占着这张标签才算忙。别人占着不算。 */
+export function candidateTabBusy(input: {
+  clientId: string;
+  candidateTabId: string;
+  live: Array<{ clientId?: string; tabId?: string; state?: string }>;
+}): boolean {
+  const tabId = String(input.candidateTabId || "").trim();
+  if (!tabId) return false;
+  return input.live.some(
+    (task) => task.clientId === input.clientId && task.tabId === tabId && LIVE_TAB_STATES.has(String(task.state || "")),
+  );
 }
 
 /** 一个 client 可以拥有多张标签。最近一次登记的是主标签。 */
@@ -129,6 +175,8 @@ export function bindClientTab(opts: {
   tabId?: string;
   knownTabIds: string[];
   createAgentTab: () => string;
+  /** 候选标签正被本 client 另一个活任务占着。别的 client 占着时调用方传 false。 */
+  candidateBusy?: boolean;
 }): string | undefined {
   const explicit = String(opts.tabId || "").trim();
   if (!opts.clientId) return explicit || undefined;
@@ -137,7 +185,7 @@ export function bindClientTab(opts: {
     return explicit;
   }
   const current = sessions.get(opts.clientId)?.tabId;
-  if (current && opts.knownTabIds.includes(current)) return current;
+  if (current && opts.knownTabIds.includes(current) && !opts.candidateBusy) return current;
   const created = opts.createAgentTab();
   rememberClientTab(opts.clientId, created);
   return created;

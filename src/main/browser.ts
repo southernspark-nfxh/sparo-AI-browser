@@ -38,11 +38,14 @@ import {
   agentClientFromScope,
   backgroundPoolDecision,
   bindClientTab,
+  candidateTabBusy,
   claimTabForClient,
+  clientTabId,
   ensureSidebarClient,
   listClientSessions,
   ownerForTab,
   registerClientName,
+  seatForTab,
 } from "./agent/mcp-sessions.js";
 import { SIDEBAR_CLIENT_ID, sidebarStaysOnUserTab, sidebarToolNeedsPage } from "./agent/sidebar-tab.js";
 import { capturesSince, ledgerCloseReason, reportSince, type LedgerClose } from "./agent/task-result.js";
@@ -1826,7 +1829,7 @@ export class SparkBrowser {
             ? {
                 agentName: session?.name || poolTask?.agentName,
                 agentColor: session?.color || poolTask?.color,
-                agentSeat: session?.seat,
+                agentSeat: seatForTab(t.id) ?? session?.seat,
                 agentState,
                 lastLine: poolTask?.lastLine,
                 agentStep: poolTask?.step,
@@ -5516,6 +5519,14 @@ export class SparkBrowser {
           execute: (script, tabId) => this.execute(script, { tabId }),
           getUrl: (tabId) => this.getUrl(tabId),
           listTabs: () => this.listTabs().tabs.map((tab) => ({ id: tab.id, url: tab.url })),
+          navigate: async (url, tabId) => {
+            const result = await this.navigate(url, { tabId });
+            return { ok: result.ok, message: result.message };
+          },
+          openTab: async (url) => this.createTab(url, false, { agentOwned: true }),
+          closeTab: (tabId) => {
+            this.closeTab(tabId);
+          },
         }),
       });
     }
@@ -7679,7 +7690,7 @@ export class SparkBrowser {
       }),
     );
     const before = this.activeTabId;
-    const tabId = this.bindAgentTab(clientId) || "";
+    const tabId = this.bindAgentTab(clientId, task.taskId) || "";
     const reused = tabId ? this.tabs?.get(tabId) : undefined;
     if (reused) delete reused.agentStatus;
     if (before && this.activeTabId !== before && typeof this.switchTab === "function") this.switchTab(before);
@@ -7710,21 +7721,30 @@ export class SparkBrowser {
     return { taskId: task.taskId, status: "running" };
   }
 
-  private bindAgentTab(clientId: string): string | undefined {
+  private bindAgentTab(clientId: string, taskId = ""): string | undefined {
     if (typeof this.createAgentTab !== "function") return undefined;
     const known = this.listTabs?.().tabs?.map((tab) => tab.id) ?? [];
-    return bindClientTab({
+    const candidate = clientTabId(clientId) || "";
+    const live = (this.taskPool?.tasks || []).filter(
+      (item) => item.state === "running" || item.state === "queued" || item.state === "waiting_human",
+    );
+    const busy = Boolean(candidate) && candidateTabBusy({ clientId, candidateTabId: candidate, live });
+    const tabId = bindClientTab({
       clientId,
       knownTabIds: known,
       createAgentTab: () => this.createAgentTab(),
+      candidateBusy: busy,
     });
+    const mode = tabId && candidate && tabId === candidate ? "reused" : "new";
+    console.log(`[agent-tab] client=${clientId} task=${taskId} bind=${tabId || ""} ${mode}`);
+    return tabId;
   }
 
   private async runAgentTask(task: (typeof this.mcpTasks)[number], clientId: string): Promise<void> {
     const before = this.activeTabId;
     const pooled = this.taskPool?.tasks?.find((item) => item.id === task.taskId);
     let tabId = pooled?.tabId || "";
-    if (!tabId) tabId = this.bindAgentTab(clientId) || "";
+    if (!tabId) tabId = this.bindAgentTab(clientId, task.taskId) || "";
     if (before && this.activeTabId !== before && typeof this.switchTab === "function") this.switchTab(before);
     if (!tabId) {
       this.settleMcpTask(task, { ok: false, text: "无法为这个 agent 创建独立标签。" });
