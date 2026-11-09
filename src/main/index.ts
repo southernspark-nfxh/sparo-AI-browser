@@ -19,6 +19,8 @@ type DiagBrowser = {
   diagShellMemLine: () => Promise<string>;
   takePushStatsLine: () => string;
   diagSnapshot: () => { tabs: number; running: number };
+  /** 开一扇新窗口（多开）。 */
+  openWindow: () => string;
 };
 
 /** Reuse mcp-auth.json token unless SPARO_MCP_TOKEN_TTL (seconds) says rotate. */
@@ -189,6 +191,15 @@ async function main(): Promise<void> {
     return;
   }
   app.on("second-instance", () => {
+    // 再点一次图标 = 再开一扇窗口，共用登录态和标签池；不再把用户拽回原来那扇。
+    try {
+      if (liveBrowser) {
+        liveBrowser.openWindow();
+        return;
+      }
+    } catch (error) {
+      console.error("[sparo] open second window failed:", error);
+    }
     const w = BrowserWindow.getAllWindows()[0];
     if (!w) return;
     if (w.isMinimized()) w.restore();

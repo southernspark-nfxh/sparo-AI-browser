@@ -680,6 +680,8 @@ export class SparkBrowser {
   readonly window: BrowserWindow;
   /** 全部窗口：winId → BrowserWindow。多开时一扇窗口一条。 */
   private wins = new Map<string, BrowserWindow>();
+  /** 新窗口编号，从 w1 起。 */
+  private winSeq = 0;
   /** 当前正在服务的窗口。单开时恒为 "main"。 */
   private activeWinId = "main";
   /** 当前操作的窗口；单开时就是主窗口。多开时按 activeWinId 取。 */
@@ -701,7 +703,8 @@ export class SparkBrowser {
   private set activeTabId(value: string) {
     this.activeTabs.set(this.activeWinId, value);
   }
-  private shellReady = false;
+  /** 已经挂过壳层的窗口。多开时每扇窗口各挂一次。 */
+  private shellReadyWins = new Set<string>();
   private lastSnapshot: PageSnapshot | null = null;
   /** Cross-origin CDP frames from last snapshot (x{i}.* refs) */
   private cdpFrames: CdpFrameInfo[] = [];
@@ -1167,10 +1170,10 @@ export class SparkBrowser {
     return this.configDir();
   }
 
-  constructor() {
-    Menu.setApplicationMenu(null);
+  /** 建一扇壳窗口。多开时每扇窗口调用一次，登录态来自同一个 defaultSession。 */
+  private buildWindow(): BrowserWindow {
     const iconPath = resolveAppIconPath();
-    this.window = new BrowserWindow({
+    const win = new BrowserWindow({
       width: 1360,
       height: 900,
       minWidth: 800,
@@ -1198,6 +1201,14 @@ export class SparkBrowser {
         preload: this.shellPreload(),
       },
     });
+    if (iconPath) win.setIcon(iconPath);
+    return win;
+  }
+
+  constructor() {
+    Menu.setApplicationMenu(null);
+    const iconPath = resolveAppIconPath();
+    this.window = this.buildWindow();
     this.wins.set("main", this.window);
     this.win.setMenuBarVisibility(false);
     traceMainWindow(this.window);
@@ -2089,7 +2100,7 @@ export class SparkBrowser {
   }
 
   /** First show only. Later calls must not center() — that fights the user dragging the window. */
-  private didPlaceWindow = false;
+  private placedWins = new Set<string>();
   presentWindow(): void {
     if (this.win.isDestroyed()) return;
     try {
@@ -2097,16 +2108,123 @@ export class SparkBrowser {
       if (iconPath) this.win.setIcon(iconPath);
       this.layout();
       // 只有第一次摆上屏幕才拉窗口。之后（含任务入口）不再 restore。
-      if (this.didPlaceWindow) return;
+      if (this.placedWins.has(this.activeWinId)) return;
       this.ensureWindowVisible(true);
-      this.didPlaceWindow = true;
+      this.placedWins.add(this.activeWinId);
+      const winId = this.activeWinId;
       setTimeout(() => {
-        if (this.win.isDestroyed() || this.win.isMinimized()) return;
-        this.ensureWindowVisible(false);
+        this.withWin(winId, () => {
+          if (this.win.isDestroyed() || this.win.isMinimized()) return;
+          this.ensureWindowVisible(false);
+        });
       }, 1600);
     } catch (error) {
       console.error("[shell] presentWindow failed:", error);
     }
+  }
+
+  /**
+   * 开一扇新窗口。共用同一个 profile（登录态、cookie）与同一个标签池，
+   * 每扇窗口有自己的标签组和激活项，互不抢页面；Agent 仍按 clientId 认领标签。
+   */
+  openWindow(): string {
+    const winId = `w${++this.winSeq}`;
+    const win = this.buildWindow();
+    this.wins.set(winId, win);
+    this.bindWindow(win, winId);
+    this.activeWinId = winId;
+    this.withWin(winId, () => {
+      this.attachShell();
+      this.createTab(DEFAULT_URL, true);
+      this.presentWindow();
+    });
+    console.log(`[window] opened ${winId} (total ${this.wins.size})`);
+    return winId;
+  }
+
+  /** 在指定窗口的上下文里跑一段同步逻辑，跑完恢复原窗口。 */
+  private withWin<T>(winId: string, fn: () => T): T {
+    const prev = this.activeWinId;
+    this.activeWinId = winId;
+    try {
+      return fn();
+    } finally {
+      this.activeWinId = prev;
+    }
+  }
+
+  /** 给新窗口绑最小事件集：布局、聚焦切窗口、关闭清理。 */
+  private bindWindow(win: BrowserWindow, winId: string): void {
+    const use = <T>(fn: () => T): T => this.withWin(winId, fn);
+    const relayout = () => use(() => this.layout());
+    win.on("focus", () => {
+      this.activeWinId = winId;
+      use(() => {
+        this.clearTaskbarFlash();
+        this.returnWindowIfUserFocused();
+      });
+    });
+    win.on("resize", () =>
+      use(() => {
+        this.rememberUserWindowBounds();
+        this.resetChromeCoverState();
+        const [w, h] = win.getContentSize();
+        if (
+          this.lastLayoutContent &&
+          Math.abs(w - this.lastLayoutContent.width) <= 1 &&
+          Math.abs(h - this.lastLayoutContent.height) <= 1
+        ) {
+          return;
+        }
+        this.lastLayoutContent = { width: w, height: h };
+        this.layout();
+      }),
+    );
+    win.on("maximize", relayout);
+    win.on("unmaximize", relayout);
+    win.on("enter-full-screen", relayout);
+    win.on("leave-full-screen", relayout);
+    win.on("restore", () =>
+      use(() => {
+        this.resetChromeCoverState();
+        this.scheduleLayout(150);
+        this.armChromeGuard();
+        this.setShellBackgroundThrottling(true);
+      }),
+    );
+    win.on("show", () => use(() => this.scheduleLayout(150)));
+    win.on("closed", () => this.closeWindow(winId));
+    win.webContents.on("context-menu", (_e, params) => {
+      const template: MenuItemConstructorOptions[] = [];
+      if (params.selectionText) {
+        template.push({ role: "copy" });
+      }
+      template.push({ role: "selectAll" });
+      Menu.buildFromTemplate(template).popup({ window: win });
+    });
+  }
+
+  /** 关窗口：把这扇窗口名下的标签一起释放，别把别人的窗口带走。 */
+  private closeWindow(winId: string): void {
+    this.wins.delete(winId);
+    this.shellReadyWins.delete(winId);
+    this.placedWins.delete(winId);
+    this.activeTabs.delete(winId);
+    for (const [id, tab] of [...this.tabs]) {
+      if ((tab.winId || "main") !== winId) continue;
+      this.tabs.delete(id);
+      try {
+        tab.view?.webContents.close();
+      } catch {
+        /* 已销毁 */
+      }
+    }
+    if (this.activeWinId === winId) {
+      const next = [...this.wins.keys()][0];
+      if (next) this.activeWinId = next;
+      else this.activeWinId = "main";
+    }
+    console.log(`[window] closed ${winId} (left ${this.wins.size})`);
   }
 
   /**
@@ -2275,7 +2393,7 @@ export class SparkBrowser {
   private noteSidebarMessages(): void {
     const userLog = this.userTurns();
     const n = userLog.length;
-    if (this.lastNotifiedChat < 0 || !this.didPlaceWindow) {
+    if (this.lastNotifiedChat < 0 || !this.placedWins.has(this.activeWinId)) {
       this.lastNotifiedChat = n;
       return;
     }
@@ -3343,8 +3461,8 @@ export class SparkBrowser {
 
   /** Load unified shell (address bar + sidebar) as the window page. */
   attachShell(): void {
-    if (this.shellReady) return;
-    this.shellReady = true;
+    if (this.shellReadyWins.has(this.activeWinId)) return;
+    this.shellReadyWins.add(this.activeWinId);
     this.win.webContents.on("console-message", (_e, _level, message) => {
       console.log(`[shell-console] ${message}`);
     });
