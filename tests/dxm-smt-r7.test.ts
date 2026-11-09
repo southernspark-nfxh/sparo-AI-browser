@@ -48,21 +48,22 @@ describe("R7 判重真读采集箱", () => {
   it("有草稿但标题精确搜索没有对上时，判重通过", async () => {
     const navigated: string[] = [];
     const searches: string[] = [];
-    let reads = 0;
+    let phase = "list";
     const port = createLiveDxmSmtPort(liveSurface({
       journalDir: tempDir(),
       navigate: async (url: string, tabId: string) => {
         navigated.push(`${tabId} ${url}`);
+        phase = "url";
         return { ok: true };
       },
       execute: async (script: string, tabId?: string) => {
         if (script.includes("sparo-box-search")) {
           searches.push(tabId || "");
           expect(script).not.toMatch(/创建产品|批量操作|快捷操作|保存并认领/);
+          phase = "clicked";
           return { ok: true, data: { result: { clicked: true } } };
         }
-        reads += 1;
-        const searchValue = reads >= 3 ? "不存在的标题" : "";
+        const searchValue = phase === "clicked" ? "不存在的标题" : "";
         return { ok: true, data: { result: { marker: "sparo-box-list", loaded: true, rows: twoRows, searchValue } } };
       },
     }));
@@ -164,7 +165,7 @@ describe("R7 判重真读采集箱", () => {
     expect(opened).toEqual([SMT_BOX_URL]);
     expect(closed).toEqual(["box-tab"]);
     expect(navigated).toEqual([]);
-    expect(executed).toEqual(["box-tab"]);
+    expect(executed).toEqual(["box-tab", "box-tab", "box-tab"]);
   });
 
   it("判重通过后点一次保存并认领，弹窗没打开就不点确定", async () => {

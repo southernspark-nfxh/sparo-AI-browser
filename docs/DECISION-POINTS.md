@@ -57,7 +57,9 @@
 | 47 | 同一 agent 的活任务不共用一张标签 | `mcp-sessions.ts` `candidateTabBusy`；`browser.ts` `bindAgentTab` | 本 client 最近一张标签上还有自己的 running / queued / waiting_human 任务时，新任务另开一张后台标签。任务结束后这张标签空闲，后来的任务可以复用，不为此再开第三张。别的 client 占着候选标签时不新开 | 任务卡上的 clientId、tabId 和状态。不是原句路由 | 保留。只选标签，不结束任务，不改池上限，不抢用户标签。侧栏工位 0 不走这条 |
 | 48 | 判重期间临时激活采集箱标签 | `dxm-smt-live.ts` `lookupOrder`；`browser.ts` `createLiveDxmSmtPort` 新增 `activateTab` / `getActiveTabId` | 判重 openTab 拿到 boxTabId 后，记下当前活动标签 prevActive，临时 `activateTab(boxTabId)` 让 vxe 表体渲染并 pollBox 读取；finally 里关掉 boxTabId 后若 prevActive 仍在则恢复。全程不 `window.focus()`、不闪任务栏、不抢前台 | R9 真机验收三角插桩实证：后台/被盖住的标签 vxe 表体永不渲染，只有激活才渲染（R7 假 absent 的完整根因）。pollBox 10 秒预算不动，实测激活后 100 行秒级出 | 保留。只改标签激活态、只读列表，不点任何页面按钮，读完必关必恢复。用户若正看窗口会看到标签短暂切换，属可接受代价 |
 | 49 | 同 client 并行任务各看各的对话 | `browser.ts` `seedAgentTaskChat`；`mcp-sessions.ts` `agentClientFromScope` | 另一个活任务写过的轮不进这次 history。前序任务都结束后，下一句仍带上那些问答。不改成同 client 排队 | 任务卷 `agent:<clientId>/<taskId>`，client 卷上的 `task` 标记。活任务的标记在 fork 时滤掉 | 保留。只切对话，不改标签绑定，不结束任务，不抢用户标签 |
+| 50 | 判重读取需三次一致才定论 | `dxm-smt-box.ts` 稳定窗纯函数；`dxm-smt-live.ts` `pollBox` | 单次 loaded 样本不再直接采纳：连续两次样本全等（loaded、rows.length、emptyRendered、searchValue）后，再隔 800ms 做第三次确认读，三次一致才返回；预算 10s→30s。预算耗尽时只要窗口内出现过任一次 loaded=true 就 unknown 停等，不判 absent | R10 实测抖动（交接单 §4.2）：单场景约 50% 概率渲染反复，10 秒内 loaded 翻转 4 次；部分渲染窗口的单次样本可能漏行误判 absent，是 R7 假 absent 的同类风险 | 保留。只加轮询节奏与预算，不改 `decideBoxLookup` 语义、不动 activateTab 时序（#48）、不放宽 #45 |
+| 51 | 判重数据源改读采集箱列表接口 | 新增 `workflows/dxm-smt-api.ts`；`dxm-smt-live.ts` `lookupDraft`/`searchBox` | 页面上下文直接 fetch 列表接口，判重不再依赖表体渲染，窗口最小化也能判；正常路径不再开/激活采集箱标签（标签闪切消失）。接口不可用即 `unknown` 停等，绝不由接口路径产生 `absent` | R10 真机 0/6 实证：窗口隐藏时页面不取数不建 DOM，DOM 判重与「后台跑」根本冲突 | 保留。`absent` 须过三重门（200 + 结构完整 + 过滤生效且分页覆盖全量）；DOM 路径降级为可见态 fallback，只产生既有结论。合码前须完成附录 C 采样 |
 
 模型把采集句编成「一步 navigate + 只有 answer」时，第 1 条仍会当成只是开站。这是信脑区计划的残留，不是词表漏洞。无计划又带「复制」的句子在过期日前仍走第 2 条。
 
-店小秘到速卖通新链路的本地停等是 #35–#48。状态核验和动作读回本身不另开路线判断。逐步确认模式下的发布同意、收费功能同意，仍由模型看对话历史调用 `request_confirm`，不在本地用布尔值代替。收费图片要另有 #40 的一次性句柄。
+店小秘到速卖通新链路的本地停等是 #35–#48、#50 与 #51。状态核验和动作读回本身不另开路线判断。逐步确认模式下的发布同意、收费功能同意，仍由模型看对话历史调用 `request_confirm`，不在本地用布尔值代替。收费图片要另有 #40 的一次性句柄。
