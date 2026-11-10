@@ -84,7 +84,8 @@ describe("R10 判重稳定窗", () => {
   it("稳定空表三次一致后判 absent", async () => {
     vi.useFakeTimers();
     const empty = sample(0, "", true, true);
-    let reads = 0;
+    let domReads = 0;
+    let apiCalls = 0;
     const port = createLiveDxmSmtPort({
       tabId: "edit",
       isPaused: () => false,
@@ -93,8 +94,12 @@ describe("R10 判重稳定窗", () => {
       listTabs: () => [],
       openTab: async () => "box-tab",
       closeTab: () => undefined,
-      execute: async () => {
-        reads += 1;
+      execute: async (script) => {
+        if (script.includes("pageList.json")) {
+          apiCalls += 1;
+          return { ok: true, data: { result: { status: 404, ok: false, json: null } } };
+        }
+        domReads += 1;
         return { ok: true, data: { result: empty } };
       },
     });
@@ -105,7 +110,8 @@ describe("R10 判重稳定窗", () => {
       title: "示例夹子风扇草稿",
     }) ?? Promise.resolve(undefined));
     expect(result?.status).toBe("absent");
-    expect(reads).toBe(3);
+    expect(apiCalls).toBe(1);
+    expect(domReads).toBe(3);
     expect(JSON.stringify(empty)).not.toMatch(secret);
   });
 
@@ -122,7 +128,10 @@ describe("R10 判重稳定窗", () => {
       listTabs: () => [],
       openTab: async () => "box-tab",
       closeTab: () => undefined,
-      execute: async () => {
+      execute: async (script) => {
+        if (script.includes("pageList.json")) {
+          return { ok: true, data: { result: { status: 404, ok: false, json: null } } };
+        }
         const next = flipping[reads % 2] || sample(0, "", false, false);
         reads += 1;
         return { ok: true, data: { result: next } };
@@ -136,7 +145,8 @@ describe("R10 判重稳定窗", () => {
     }) ?? Promise.resolve(undefined));
     expect(result?.status).toBe("unknown");
     expect(result?.status).not.toBe("absent");
-    expect(result?.reason).toBe(boxPollExhausted(["ready"]).reason);
+    expect(result?.reason).toContain("接口：");
+    expect(result?.reason).toContain(boxPollExhausted(["ready"]).reason);
     expect(result?.reason).not.toMatch(/absent|没有草稿/);
     expect(reads).toBeGreaterThan(2);
   });
