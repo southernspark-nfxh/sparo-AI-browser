@@ -29,7 +29,7 @@ import {
   windowOnScreen,
   type Rect,
 } from "./window-visible.js";
-import { coPresenceMayRestore } from "./shell-focus.js";
+import { coPresenceMayRestore, mustNotStealFocus } from "./shell-focus.js";
 import { traceMainWindow } from "./focus-trace.js";
 import { laneForText, type TaskLane } from "./agent/task-class.js";
 import { formatFillFailure, formatLane, formatLearnSwallow } from "./agent/parallel-log.js";
@@ -47,7 +47,7 @@ import {
   registerClientName,
   seatForTab,
 } from "./agent/mcp-sessions.js";
-import { SIDEBAR_CLIENT_ID, sidebarStaysOnUserTab, sidebarToolNeedsPage } from "./agent/sidebar-tab.js";
+import { SIDEBAR_CLIENT_ID, sidebarToolNeedsPage } from "./agent/sidebar-tab.js";
 import { capturesSince, ledgerCloseReason, reportSince, type LedgerClose } from "./agent/task-result.js";
 import type {
   ClickConfirm,
@@ -133,6 +133,7 @@ import {
   wantsFillForm,
   wantsPublish,
   wantsReply,
+  agentShouldOpenOwnSurface,
 } from "./agent/intent-router.js";
 import { isPauseText, isResumeText } from "./agent/slots.js";
 import {
@@ -1497,6 +1498,10 @@ export class SparkBrowser {
           child.hide();
           return;
         }
+        if (this.stealBlocked(id)) {
+          child.showInactive();
+          return;
+        }
         child.show();
         child.focus();
       } catch {
@@ -2290,6 +2295,10 @@ export class SparkBrowser {
    */
   private ensureWindowVisible(recenter = false): void {
     if (this.win.isDestroyed()) return;
+    if (this.stealBlocked()) {
+      this.showWithoutStealing();
+      return;
+    }
     try {
       if (this.win.isMinimized()) this.win.restore();
       const wa = screen.getPrimaryDisplay().workArea;
@@ -2497,10 +2506,11 @@ export class SparkBrowser {
   }
 
   /**
-   * BrowserWindow.focus() / webContents.focus() 在 Windows 上会把最小化窗口 restore。
-   * 后台点击和填写不再抢焦点。前台任务已在入口拉回一次，窗口在前台时才补焦点。
+   * 后台填写不再抢焦点。allowFocus 默认 false：只让调用方对 webContents 注入事件。
+   * 传入 true 时，也只在窗口已经在前台、且标签属于当前 agent 时才 focus。
    */
-  private focusPageForInput(wc: WebContents): void {
+  private focusPageForInput(wc: WebContents, allowFocus = false): void {
+    if (!allowFocus || this.stealBlocked()) return;
     if (this.win.isDestroyed()) return;
     let hidden = true;
     try {
@@ -2512,6 +2522,34 @@ export class SparkBrowser {
     this.win.focus();
     try {
       wc.focus();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private agentClientNow(): string {
+    return agentClientFromScope(this.taskStore()?.chatKey);
+  }
+
+  /** 当前 agent 不拥有这张标签，或用户正在看别的窗口。 */
+  private stealBlocked(tabId?: string): boolean {
+    let windowFocused = false;
+    try {
+      windowFocused = Boolean(this.win && !this.win.isDestroyed() && this.win.isFocused());
+    } catch {
+      windowFocused = false;
+    }
+    return mustNotStealFocus({
+      clientId: this.agentClientNow(),
+      owner: ownerForTab(tabId || this.activeTabId || ""),
+      windowFocused,
+    });
+  }
+
+  private showWithoutStealing(): void {
+    if (!this.win || this.win.isDestroyed()) return;
+    try {
+      this.win.showInactive();
     } catch {
       /* ignore */
     }
@@ -3015,7 +3053,10 @@ export class SparkBrowser {
     try {
       this.win.setOpacity(0);
       hid = true;
-      if (this.win.isMinimized()) this.win.restore();
+      if (this.win.isMinimized()) {
+        if (this.stealBlocked()) this.win.showInactive();
+        else this.win.restore();
+      }
       this.win.setBounds(size);
       this.win.showInactive();
     } catch {
@@ -7566,7 +7607,7 @@ export class SparkBrowser {
       return { ok: true, message: "已记下，当前任务汇报后接着做。" };
     }
 
-    const stayOnUser = sidebarStaysOnUserTab(clean, cleanQuotes);
+    const stayOnUser = !agentShouldOpenOwnSurface(clean, ownerForTab(this.activeTabId || ""), cleanQuotes);
     const previousAgentTab = this.agentTabId;
     this.sidebarOwnTab = !stayOnUser;
     this.agentTabId = stayOnUser ? this.activeTabId || "" : "";
@@ -12637,7 +12678,7 @@ export class SparkBrowser {
   /** Insert Unicode text via CDP Input.insertText (avoids char-event Mojibake). */
   private async insertTextUnicode(text: string, tabId?: string): Promise<void> {
     const wc = this.viewForTab(tabId || this.activeTabId).webContents;
-    this.focusPageForInput(wc);
+    this.focusPageForInput(wc, false);
     await withDebugger(wc, async (send) => {
       await send("Input.insertText", { text });
     });
@@ -12649,7 +12690,7 @@ export class SparkBrowser {
     if (blocked) return blocked;
     try {
       const wc = this.viewForTab(tabId || this.activeTabId).webContents;
-      this.focusPageForInput(wc);
+      this.focusPageForInput(wc, false);
       const keyCode = key === "Enter" || key === "Return" ? "Return" : key === "Escape" ? "Escape" : key;
       wc.sendInputEvent({ type: "keyDown", keyCode } as Electron.KeyboardInputEvent);
       wc.sendInputEvent({ type: "char", keyCode: key === "Enter" ? "\r" : key } as Electron.KeyboardInputEvent);
@@ -12673,7 +12714,7 @@ export class SparkBrowser {
       return;
     }
     const wc = this.viewForTab(tabId || this.activeTabId).webContents;
-    this.focusPageForInput(wc);
+    this.focusPageForInput(wc, false);
 
     wc.sendInputEvent({
       type: "keyDown",

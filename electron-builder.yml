@@ -43,7 +43,7 @@ nsis:
   installerIcon: resources/icon.ico
   uninstallerIcon: resources/icon.ico
   include: scripts/installer.nsh
-  artifactName: Sparo-Setup.exe
+  artifactName: Sparo-Setup-${version}.exe
   runAfterFinish: true
   deleteAppDataOnUninstall: false
   installerLanguages:
