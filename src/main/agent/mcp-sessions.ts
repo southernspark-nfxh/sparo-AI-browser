@@ -173,16 +173,18 @@ export function issueClientId(): string {
 
 /**
  * 有 clientId 时，不带 tabId 的操作落在该 client 最近的标签上。
- * 还没有就新建后台标签，绝不返回空去抢用户的 activeTabId。
+ * 还没有就新建标签。侧栏独占窗口时新标签切到前台；其余 client 不抢用户当前页。
  * 没有 clientId 时保持旧行为：显式 tabId 照传，否则 undefined（当前激活标签）。
  */
 export function bindClientTab(opts: {
   clientId?: string;
   tabId?: string;
   knownTabIds: string[];
-  createAgentTab: () => string;
+  createAgentTab: (activate?: boolean) => string;
   /** 候选标签正被本 client 另一个活任务占着。别的 client 占着时调用方传 false。 */
   candidateBusy?: boolean;
+  /** 同一扇窗上、除了当前 client 之外的 clientId。缺省当这扇窗没有别人。 */
+  otherClientsOnWindow?: string[];
 }): string | undefined {
   const explicit = String(opts.tabId || "").trim();
   if (!opts.clientId) return explicit || undefined;
@@ -192,7 +194,9 @@ export function bindClientTab(opts: {
   }
   const current = sessions.get(opts.clientId)?.tabId;
   if (current && opts.knownTabIds.includes(current) && !opts.candidateBusy) return current;
-  const created = opts.createAgentTab();
+  const others = (opts.otherClientsOnWindow || []).filter((id) => id && id !== opts.clientId);
+  const activate = opts.clientId === SIDEBAR_CLIENT_ID && others.length === 0;
+  const created = opts.createAgentTab(activate);
   rememberClientTab(opts.clientId, created);
   return created;
 }
