@@ -6,3 +6,19 @@ export function coPresenceMayRestore(minimized: boolean): boolean {
   if (minimized) return false;
   return false;
 }
+
+/**
+ * agent 正在操作时，不许把用户当前的前台拽过来。
+ * 没有 agent 在操作（clientId 为空）时返回 false，调用方保持原来的前台行为。
+ * 标签不是这个 agent 的，或者窗口现在不在前台，都返回 true。
+ */
+export function mustNotStealFocus(input: {
+  clientId: string;
+  owner: string;
+  windowFocused: boolean;
+}): boolean {
+  const clientId = String(input.clientId || "").trim();
+  if (!clientId) return false;
+  if (input.owner !== `agent:${clientId}`) return true;
+  return !input.windowFocused;
+}

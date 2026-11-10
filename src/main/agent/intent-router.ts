@@ -169,6 +169,26 @@ export function wantsReply(text: string): boolean {
   return /一键回复|帮我回|回复客户|回留言|回评论|客服回复|自动回复/i.test(text);
 }
 
+const STAY_ON_FRONT_RE =
+  /总结当前页|读这一页|读这页|这一页|这是什么网站|当前页|这个页面|本页|这页|当前窗口|这个窗口|就用这个窗口/;
+
+/**
+ * 用户没指定要用眼前这扇，且当前是用户自己的前台标签时，另开标签，不征用。
+ * 划词、当前页、当前窗口仍留在眼前。已经在 agent 标签上、又没点名眼前这一页时，也走自己的工位。
+ */
+export function agentShouldOpenOwnSurface(
+  text: string,
+  activeOwner: string,
+  quotes?: Array<{ text?: string }> | null,
+): boolean {
+  if (quotes && quotes.length > 0) return false;
+  const raw = String(text || "");
+  if (/新窗口|另开一扇|再开一扇/.test(raw)) return true;
+  if (STAY_ON_FRONT_RE.test(raw)) return false;
+  if (activeOwner === "user" || !String(activeOwner || "").trim()) return true;
+  return true;
+}
+
 export function wantsSummarize(text: string): boolean {
   return /总结(当前)?页|列\s*\d+\s*件要对齐|这一页(说了啥|讲了什么)|读这页|页面摘要|帮我看这页|summarize|页面显示什么|这页(上|里|面)?(的)?(英文|内容|字)|翻译|英文.{0,16}(意思|含义|啥意思)|左侧.{0,12}(英文|文字|内容|网页)|这段(英文|话)|里面的英文|网页.{0,8}(英文|什么意思|啥意思)|商店状态.{0,12}(英文|意思)|这是(个|什么)?网站/i.test(
     text,
