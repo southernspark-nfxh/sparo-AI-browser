@@ -1,12 +1,24 @@
 # Sparo 现行产品任务书
 
 > 持续更新。与原版 **同一份正文**，便于两边对照。上一版见 [archive/2026-08/PRODUCT-TASKBOOK-20260811.md](./archive/2026-08/PRODUCT-TASKBOOK-20260811.md)。  
-> 版本：**v0.3.8 · 2026-10-27**（对外包仍是 **0.1.19**，10-27 这批未打安装包）  
-> 状态：**进行中**（云订阅 M1 代码已落地并人测过登录/付款；上架未完；飞书网页已做；侧栏大脑已让模型编手；10-26 采集闭环与白屏四修已进代码并打包；10-27 任务循环对账已进代码，安装包未打）  
+> 版本：**v0.5.0 · 2026-11-10**（安装包 `release\Sparo-Setup-0.5.0.exe` 已打，92,343,962 字节）  
+> 状态：**进行中**（云订阅 M1 代码已落地并人测过登录/付款；上架未完；飞书网页已做；侧栏大脑已让模型编手；0.5.0 新 agent 接入自述 + 店小秘技能可执行化 + ensure_render 已提交打包）  
 > 产品文案仍以 [PRODUCT.md](./PRODUCT.md) 为准，不要把任务书当商店上架稿。  
-> 先读：[ARCHITECTURE.md](./ARCHITECTURE.md) · [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) · [CHANGELOG.md](../CHANGELOG.md) 0.1.19 · 根目录 [AGENTS.md](../AGENTS.md)
+> 先读：[ARCHITECTURE.md](./ARCHITECTURE.md) · [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) · [CHANGELOG.md](../CHANGELOG.md) 0.5.0 · 根目录 [AGENTS.md](../AGENTS.md)
 >
 > **大脑进度（0.1.19）：** 听整句、站点表换站、模型编 `handbook` / 写下一步已进代码。10-26 起任务循环硬规则：新任务出确认卡、关单必有声、跑完计划步才许收摊、挂起答复接得回。10-27 起同能力多段逐段对账，最小化不再把窗口拉回前台。`absorb`（页上价格对约束）未开工。9 月交接稿见 [archive/2026-09/TRAE-PROMPT-AGENT-BRAIN.md](./archive/2026-09/TRAE-PROMPT-AGENT-BRAIN.md)，以 changelog 和测试为准。
+
+## 2026-11-10 已落地（0.5.0：新 Agent 接入自述、店小秘可执行化、ensure_render）
+
+任务书：[AGENT-ONBOARD-SELF-DESCRIBE-TASKBOOK.md](./AGENT-ONBOARD-SELF-DESCRIBE-TASKBOOK.md)。对外变更见 [CHANGELOG.md](../CHANGELOG.md) 0.5.0。提交：`a31e852`（主改动）+ `869836f`（版本与 CHANGELOG）。已推送 origin/master。安装包：`release\Sparo-Setup-0.5.0.exe`（92,343,962 字节，2026-11-10 20:58）。
+
+- A0-P0：MCP 握手文本开头指向 `sparo_info` 和技能三件套（`list_skills → get_skill → run_skill`），仍 < 500 字。新 Cursor / 新 Trae 窗口连上就知道有技能，不再要人提醒
+- A0-P1：`sparo_info` 技能目录 20 条上限 → 40 条全量；新增 MCP prompt `sparo_skills`（id、标题、别名、步数、意图）
+- A1-P2：技能 `dxm-crawl-prep` 从纯说明书（route）升级为 15 步可执行：打开编辑页、填标题、包装重量克→千克、变种库存封顶（不足 8 个补 dummy 防中断）、只点 `btn-orange`「保存」、reload 回读三项核对、必填缺失如实报错不假 done。「保存并认领」永远不点。两条真机记录实测落库（含窗口最小化场景）
+- 新通道 `ensure_render` / `release_render`：窗口最小化时 agent 可申请后台排版成可见尺寸再做点击、读表，不夺焦不弹窗，按 clientId 计数归还。媒体发布 R3 附录 C 验收由执行窗口自跑（C1–C5、百家号定时三项回读、头条广告回读），结果待回报
+- 判重线：R11-B 改走采集箱接口（`7f1cbf4`），页面读表降级仅在接口判不清时走一次；真机四条仍待规划方补跑
+- 安装包复测：G1/G2/G3 已过（2026-11-10，0.4.1 包）；0.5.0 包的 G1–G3 与 R3 验收待跑
+- 已知：打包末步 `GitHub Personal Access Token is not set` 是发布草稿那步缺 `GH_TOKEN`，产物本身已签名产出，不影响本地安装
 
 ## 2026-11-07 现行（任务卡死、侧栏推送、并行取证、侧栏停止、侧栏标签、窗口白屏、同 agent 标签、MCP 回执、同 agent 对话隔离，T73–T82）
 
