@@ -1,0 +1,46 @@
+{
+  "id": "social-media-publish",
+  "title": "一稿多发：头条 / 百家 / 大鱼 / 搜狐（四平台统一入口）",
+  "intent": "一稿多平台分发，后台完成填稿、插图、封面、铁律勾选、发布/定时、回执核验",
+  "aliases": ["发头条", "发百家号", "发大鱼号", "发搜狐号", "头条发布", "百家号发布", "大鱼号发布", "搜狐号发布", "social-media-publish"],
+  "platform": "multi-site",
+  "version": 1,
+  "source": "seeded",
+  "enabled": true,
+  "productModel": {
+    "ai": ["只做 run_skill 调用", "参数校验", "match_skill 匹配"],
+    "script": ["scripts/publish.mjs --platform <平台> --article <目录>"],
+    "forbid": ["loop fill", "逐字输入字段", "同时操作多个平台的标签"]
+  },
+  "params": {
+    "platform": { "type": "string", "required": true, "enum": ["toutiao", "baijiahao", "dayu", "sohu"] },
+    "articleDir": { "type": "string", "required": true, "note": "目录内必须有 title.txt / body.md / cover.jpg / images/" },
+    "schedule": { "type": "string", "optional": true, "note": "格式 YYYY-MM-DD HH:mm" },
+    "dryRun": { "type": "boolean", "optional": true, "default": false },
+    "aiImages": { "type": "boolean", "optional": true, "default": false, "note": "封面或正文含 AI 图时加大鱼信息来源选 AI生成" }
+  },
+  "pitfalls": [
+    { "milestone": 0, "note": "网易号已剔除默认清单，不要用户发就硬做" },
+    { "milestone": 0, "note": "验证码 / 滑块 / 登录失效必须停手交人，不自动续作" },
+    { "milestone": 3, "note": "头条必勾「投放广告赚收益」；百家绝不勾「AI 生成」" },
+    { "milestone": 4, "note": "搜狐定时入口找不到就停手报告，不硬改点发布" }
+  ],
+  "steps": [
+    {
+      "id": "dispatch",
+      "tool": "execute",
+      "args": {
+        "script": "node C:/Users/60914/.trae-cn/skills/social-media-publish/scripts/publish.mjs --platform {{platform}} --article {{articleDir}}{{#if schedule}} --schedule \"{{schedule}}\"{{/if}}{{#if dryRun}} --dry-run{{/if}}{{#if aiImages}} --ai-images{{/if}}"
+      },
+      "note": "publish.mjs 内部会 openBlank → fillTitle → fillBody → insertImages → setCover → setOptions → publishOrSchedule → verify，任一步失败停手"
+    }
+  ],
+  "agentPlaybook": [
+    "1. 用户说「发头条/发百家号/发大鱼号/发搜狐号」或提到 social-media-publish 时，先 match_skill 再 run_skill",
+    "2. platform 参数必须是 toutiao / baijiahao / dayu / sohu 之一，不支持网易号（已剔除）",
+    "3. articleDir 目录结构：title.txt（纯文本）、body.md（Markdown）、cover.jpg（封面图）、images/（插图）",
+    "4. 不要逐字 fill 标题/正文，让 publish.mjs 统一注入",
+    "5. 多平台顺序：先发头条、百家，再发大鱼、搜狐",
+    "6. 回执必须核验列表页状态 / 公开链接 / 图片数，不认点击成功"
+  ]
+}
