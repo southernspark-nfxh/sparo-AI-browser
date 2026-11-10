@@ -151,6 +151,9 @@ describe("R7 判重真读采集箱", () => {
       },
       execute: async (script: string, tabId?: string) => {
         executed.push(tabId || "");
+        if (script.includes("pageList.json")) {
+          return { ok: true, data: { result: { status: 404, ok: false, json: null } } };
+        }
         expect(script).toContain("sparo-box-list");
         return { ok: true, data: { result: { marker: "sparo-box-list", loaded: true, emptyRendered: true, rows: [], searchValue: "" } } };
       },
@@ -165,7 +168,7 @@ describe("R7 判重真读采集箱", () => {
     expect(opened).toEqual([SMT_BOX_URL]);
     expect(closed).toEqual(["box-tab"]);
     expect(navigated).toEqual([]);
-    expect(executed).toEqual(["box-tab", "box-tab", "box-tab"]);
+    expect(executed).toEqual(["edit", "box-tab", "box-tab", "box-tab"]);
   });
 
   it("判重通过后点一次保存并认领，弹窗没打开就不点确定", async () => {

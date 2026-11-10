@@ -28,6 +28,7 @@ import {
   type BoxWindow,
 } from "./dxm-smt-box.js";
 import type { DraftLookup } from "./dxm-smt-listing.js";
+import { BOX_API_PAGE_SIZE, boxApiScript, collectBoxApiVerdict, type BoxApiQuery } from "./dxm-smt-api.js";
 
 const SKU_HEAD = ["颜色", "尺寸", "SKU", "货源价格(CNY)", "折扣价", "价格(USD)", "促销价", "库存", "包裹尺寸", "包裹重量"];
 
@@ -125,13 +126,52 @@ async function readProbe(surface: DxmSmtLiveSurface, tabId: string): Promise<Pag
   }
 }
 
-async function lookupDraft(
+type SourcedLookup = DraftLookup & { source: "api" | "dom" };
+
+function apiFetcher(surface: DxmSmtLiveSurface, tabId: string) {
+  return async (query: BoxApiQuery) => {
+    const out = await surface.execute(boxApiScript(query), tabId);
+    return out.data?.result;
+  };
+}
+
+function onDianxiaomi(url: string): boolean {
+  try {
+    return new URL(url).hostname === "www.dianxiaomi.com";
+  } catch {
+    return false;
+  }
+}
+
+async function lookupViaApi(
   surface: DxmSmtLiveSurface,
   input: { recordId?: string; shopId?: string; tabId: string; title?: string },
+  title: string,
+  home: string,
+  note: { reason: string },
+): Promise<SourcedLookup | undefined> {
+  if (!title) return undefined;
+  const tabId = input.tabId || home;
+  if (!onDianxiaomi(surface.getUrl(tabId))) return undefined;
+  try {
+    const verdict = await collectBoxApiVerdict(
+      { title, pageSize: BOX_API_PAGE_SIZE },
+      apiFetcher(surface, tabId),
+    );
+    if (verdict.status === "absent" || verdict.status === "ambiguous") return { ...verdict, source: "api" };
+    note.reason = verdict.reason || "采集箱接口没有判出来，无法判重";
+    return undefined;
+  } catch {
+    note.reason = "采集箱接口没有返回 200，无法判重";
+    return undefined;
+  }
+}
+
+async function lookupViaDom(
+  surface: DxmSmtLiveSurface,
+  input: { recordId?: string; shopId?: string; tabId: string; title?: string },
+  title: string,
 ): Promise<DraftLookup> {
-  if (surface.isPaused()) return { status: "unknown", reason: "任务已暂停，无法判重" };
-  if (!input.recordId || !input.shopId) return { status: "unknown", reason: "来源或店铺不完整，无法判重" };
-  const title = (input.title || "").trim();
   const home = input.tabId || surface.tabId;
   const editing = Boolean(crawlEditUrlId(surface.getUrl(home)));
   let tabId = home;
@@ -182,6 +222,25 @@ async function lookupDraft(
       }
     }
   }
+}
+
+async function lookupDraft(
+  surface: DxmSmtLiveSurface,
+  input: { recordId?: string; shopId?: string; tabId: string; title?: string },
+): Promise<DraftLookup> {
+  if (surface.isPaused()) return { status: "unknown", reason: "任务已暂停，无法判重" };
+  if (!input.recordId || !input.shopId) return { status: "unknown", reason: "来源或店铺不完整，无法判重" };
+  const title = (input.title || "").trim();
+  const home = input.tabId || surface.tabId;
+  const apiNote = { reason: "" };
+  const viaApi = await lookupViaApi(surface, input, title, home, apiNote);
+  if (viaApi) return viaApi as DraftLookup;
+  const viaDom = await lookupViaDom(surface, input, title);
+  if (apiNote.reason && viaDom.status === "unknown") {
+    const reason = `接口：${apiNote.reason}；页面：${viaDom.reason || ""}`;
+    return { status: "unknown", reason: reason.length <= 200 ? reason : reason.slice(0, 200), source: "dom" } as DraftLookup;
+  }
+  return { ...viaDom, source: "dom" } as DraftLookup;
 }
 
 async function claimDraft(

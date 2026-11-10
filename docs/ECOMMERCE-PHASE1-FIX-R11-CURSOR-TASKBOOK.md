@@ -275,3 +275,27 @@ npm run build
 - 交证据：命令、通过数、`git status --short`。
 - 一个 commit：`feat(dxm): R11-B 判重改走采集箱接口，页面读表降级`。
 
+## Part B 完成记录
+
+动工前 `git status --short`：
+
+```text
+?? .workbuddy/
+```
+
+HEAD `0981375`。`.workbuddy/` 未碰。
+
+代码：`lookupDraft` 先做暂停和来源/店铺检查，再 `lookupViaApi`，失败才 `lookupViaDom`。查询只传 trim 后的标题和 `BOX_API_PAGE_SIZE`，不传 `shopId`。域名用 `new URL(...).hostname === "www.dianxiaomi.com"`。`lookupViaDom` 不是整函数逐字搬家：暂停检查、来源/店铺检查留在主流程；标题 trim 改由参数传入，调用处仍是 `(input.title || "").trim()`。从 `const home` 到 `finally` 关标签，语句未改。
+
+未提交。定向测试没有全绿，R7 / R10 的原断言按 §11.7.9 没有改。冲突是接口先 `execute` 一次，这两处仍按「只读页面」计数：
+
+- `tests/dxm-smt-r7.test.ts`「当前标签是采集编辑页」：`executed` 实际是 `["edit", "box-tab", "box-tab", "box-tab"]`，断言仍是三下 `box-tab`。
+- `tests/dxm-smt-r10.test.ts`「稳定空表」：`reads` 实际是 4（1 次接口 + 3 次稳定窗），断言仍是 3。
+- 同文件「预算内反复翻转」：两条都 unknown，reason 按 §11.5 拼成 `接口：…；页面：…`，断言仍要页面原因原文。
+
+定向第二次：5 文件里 3 通过、2 失败；40 项里 37 通过、3 失败。R9B 8 项、R11 11 项、R11B 8 项通过。全量 `npm test`：121 文件里 118 通过、3 失败；912 项里 908 通过、4 失败。多出的 `tests/mcp-task.test.ts` 是 `submit` 用了 131ms、断言小于 100ms；单独重跑 6/6 通过，未改该文件。`typecheck` 通过。`lint` 0 error、19 warning。`build` 通过，`out/main/index.js` 1,469.04 kB。
+
+没有跑真机。上面四条真机核对仍归规划方。
+
+§11.7.9 由规划方 2026-11-10 批准变更为上述四处，理由为「接口先执行改变了执行计数语义」。
+
