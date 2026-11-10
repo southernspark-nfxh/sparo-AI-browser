@@ -8,6 +8,7 @@ import {
   boxApiPageCount,
   boxApiScript,
   boxApiVerdict,
+  buildBoxListBody,
   collectBoxApiVerdict,
   parseBoxApiPage,
   type BoxApiQuery,
@@ -20,55 +21,134 @@ function envelope(json: unknown, status = 200, ok = status === 200) {
   return { status, ok, json };
 }
 
-function rows(count: number, start = 0) {
-  return Array.from({ length: count }, (_, index) => ({
-    title: `示例草稿${start + index + 1}`,
-    productId: String(3_000_000 + start + index),
-  }));
+function titles(count: number, start = 0) {
+  return Array.from({ length: count }, (_, index) => `示例草稿${start + index + 1}`);
 }
 
-function pageBody(total: number, page: number, pageSize: number, echoTitle = "") {
+function asRows(list: string[]) {
+  return list.map((title) => ({ title, productId: "" }));
+}
+
+function realJson(total: number, list: string[], searchValue = "", pageNo = 1, pageSize = BOX_API_PAGE_SIZE) {
+  return {
+    code: 0,
+    msg: "Successful",
+    data: {
+      page: {
+        list: list.map((subject) => ({ subject, productId: null })),
+        pageNo,
+        totalPage: Math.max(1, Math.ceil(total / pageSize)),
+        pageSize,
+        totalSize: total,
+      },
+      productParam: { searchValue },
+    },
+  };
+}
+
+function pageTitles(total: number, page: number, pageSize: number) {
   const start = (page - 1) * pageSize;
-  const count = Math.min(pageSize, Math.max(0, total - start));
-  return { total, list: rows(count, start), echoTitle };
+  return titles(Math.min(pageSize, Math.max(0, total - start)), start);
 }
 
-describe("R11 Part A 采集箱接口契约", () => {
-  it("解析正常页、空列表和未翻完的页，坏结构不抛", () => {
-    const normal = parseBoxApiPage(envelope({
-      total: 2,
-      list: [
-        { title: wanted, productId: "3000001" },
-        { title: "示例另一草稿", productId: "3000002" },
-      ],
-      echoTitle: wanted,
-    }));
+describe("R11-A2 采集箱接口契约", () => {
+  it("请求体按实测字段顺序拼装，标题先 trim", () => {
+    const body = buildBoxListBody({ title: "  示例夹子风扇草稿  ", page: 2, pageSize: 50, shopId: "  9001  " });
+    const params = new URLSearchParams(body);
+    expect([...params.keys()]).toEqual([
+      "pageNo",
+      "pageSize",
+      "total",
+      "searchType",
+      "searchValue",
+      "shopId",
+      "dxmState",
+      "dxmOfflineState",
+    ]);
+    expect(params.get("pageNo")).toBe("2");
+    expect(params.get("pageSize")).toBe("50");
+    expect(params.get("total")).toBe("0");
+    expect(params.get("searchType")).toBe("0");
+    expect(params.get("searchValue")).toBe(wanted);
+    expect(params.get("shopId")).toBe("9001");
+    expect(params.get("dxmState")).toBe("draft");
+    expect(params.get("dxmOfflineState")).toBe("");
+    expect(body).not.toContain("searchType=1");
+    expect(body).not.toContain("searchType=2");
+    const defaults = new URLSearchParams(buildBoxListBody({}));
+    expect(defaults.get("shopId")).toBe("-1");
+    expect(defaults.get("pageNo")).toBe("1");
+    expect(defaults.get("pageSize")).toBe("100");
+    expect(defaults.get("searchValue")).toBe("");
+  });
+
+  it("解析真实页、空列表和未翻完的页，坏结构不抛", () => {
+    const normal = parseBoxApiPage(envelope(realJson(2, [wanted, "示例另一草稿"], wanted)));
     expect(normal.shapeOk).toBe(true);
     expect(normal.httpOk).toBe(true);
     expect(normal.total).toBe(2);
-    expect(normal.rows.map((row) => row.title)).toEqual([wanted, "示例另一草稿"]);
+    expect(normal.echoTitle).toBe(wanted);
+    expect(normal.rows).toEqual(asRows([wanted, "示例另一草稿"]));
+    expect(normal.rows[0]?.productId).toBe("");
     expect(JSON.stringify(normal)).not.toMatch(secret);
 
-    const empty = parseBoxApiPage(envelope({ total: 0, list: [], echoTitle: "" }));
-    expect(empty).toMatchObject({ total: 0, rows: [], httpOk: true, shapeOk: true });
+    const catalog = parseBoxApiPage(envelope(realJson(136, pageTitles(136, 1, 100), "")));
+    expect(catalog.total).toBe(136);
+    expect(catalog.rows).toHaveLength(100);
+    expect(catalog.shapeOk).toBe(true);
 
-    const partial = parseBoxApiPage(envelope({ total: 250, list: rows(100), echoTitle: "" }));
+    const empty = parseBoxApiPage(envelope(realJson(0, [], "")));
+    expect(empty).toMatchObject({ total: 0, rows: [], httpOk: true, shapeOk: true, echoTitle: "" });
+
+    const partial = parseBoxApiPage(envelope(realJson(250, pageTitles(250, 1, 100), "")));
     expect(partial.shapeOk).toBe(true);
     expect(partial.rows).toHaveLength(100);
     expect(partial.total).toBeGreaterThan(partial.rows.length);
 
-    expect(parseBoxApiPage(envelope({ total: 1, list: [{ productId: "3000001" }] })).shapeOk).toBe(false);
-    expect(parseBoxApiPage(envelope({ total: 1, list: { title: wanted } })).shapeOk).toBe(false);
+    expect(parseBoxApiPage(envelope(realJson(1, ["   "]))).shapeOk).toBe(false);
+    expect(parseBoxApiPage(envelope({
+      code: 0,
+      data: { page: { totalSize: 1, list: [{ productId: null }] } },
+    })).shapeOk).toBe(false);
+    expect(parseBoxApiPage(envelope({
+      code: 0,
+      data: { page: { totalSize: 1, list: { subject: wanted } } },
+    })).shapeOk).toBe(false);
+    expect(parseBoxApiPage(envelope({ ...realJson(0, []), code: 1 })).shapeOk).toBe(false);
     expect(parseBoxApiPage(null).shapeOk).toBe(false);
     expect(parseBoxApiPage(envelope(null)).shapeOk).toBe(false);
-    expect(parseBoxApiPage(envelope({ total: "250", list: [] })).shapeOk).toBe(false);
-    expect(parseBoxApiPage(envelope({ total: 1, rows: [{ title: wanted }] })).shapeOk).toBe(false);
+    expect(parseBoxApiPage(envelope({
+      code: 0,
+      data: { page: { totalSize: "136", list: [] } },
+    })).shapeOk).toBe(false);
+    expect(parseBoxApiPage(envelope({
+      total: 1,
+      list: [{ title: wanted, productId: "3000001" }],
+      echoTitle: wanted,
+    })).shapeOk).toBe(false);
+  });
+
+  it("回显只认 productParam.searchValue", () => {
+    const echoed = parseBoxApiPage(envelope(realJson(1, [wanted], wanted)));
+    expect(echoed.echoTitle).toBe(wanted);
+    const misplaced = parseBoxApiPage(envelope({
+      code: 0,
+      echoTitle: wanted,
+      data: { page: { totalSize: 0, list: [] }, echoTitle: wanted },
+    }));
+    expect(misplaced.shapeOk).toBe(true);
+    expect(misplaced.echoTitle).toBe("");
   });
 
   it("非 200、结构不对、只读了 100/250 都不判 absent", () => {
-    const denied = boxApiVerdict([parseBoxApiPage(envelope({ total: 0, list: [] }, 404, false))], { title: wanted });
-    const broken = boxApiVerdict([parseBoxApiPage(envelope({ total: 1, list: "不是数组" }))], { title: wanted });
-    const short = boxApiVerdict([parseBoxApiPage(envelope(pageBody(250, 1, 100, wanted)))], { title: wanted });
+    const denied = boxApiVerdict([parseBoxApiPage(envelope(realJson(0, []), 404, false))], { title: wanted });
+    const broken = boxApiVerdict([parseBoxApiPage(envelope({
+      code: 0,
+      data: { page: { totalSize: 1, list: "不是数组" } },
+    }))], { title: wanted });
+    const short = boxApiVerdict([
+      parseBoxApiPage(envelope(realJson(250, pageTitles(250, 1, 100), wanted))),
+    ], { title: wanted });
     for (const result of [denied, broken, short]) {
       expect(result.status).toBe("unknown");
       expect(result.status).not.toBe("absent");
@@ -84,7 +164,8 @@ describe("R11 Part A 采集箱接口契约", () => {
     const seen: number[] = [];
     const full = await collectBoxApiVerdict({ title: wanted, pageSize: 100 }, async (query) => {
       seen.push(query.page || 0);
-      return envelope(pageBody(250, query.page || 1, 100, wanted));
+      const page = query.page || 1;
+      return envelope(realJson(250, pageTitles(250, page, 100), wanted, page));
     });
     expect(seen).toEqual([1, 2, 3]);
     expect(full.status).toBe("absent");
@@ -93,7 +174,8 @@ describe("R11 Part A 采集箱接口契约", () => {
     const missing = await collectBoxApiVerdict({ title: wanted, pageSize: 100 }, async (query) => {
       stopped.push(query.page || 0);
       if (query.page === 3) return envelope(null, 500, false);
-      return envelope(pageBody(250, query.page || 1, 100, wanted));
+      const page = query.page || 1;
+      return envelope(realJson(250, pageTitles(250, page, 100), wanted, page));
     });
     expect(stopped).toEqual([1, 2, 3]);
     expect(missing.status).toBe("unknown");
@@ -101,7 +183,7 @@ describe("R11 Part A 采集箱接口契约", () => {
   });
 
   it("没有回显且 total 等于全量时不直接 absent，改读全量", async () => {
-    const filtered = parseBoxApiPage(envelope({ total: 250, list: rows(250), echoTitle: "" }));
+    const filtered = parseBoxApiPage(envelope(realJson(250, titles(250), "")));
     expect(boxApiFilterProven(filtered, wanted, 250)).toBe(false);
     const direct = boxApiVerdict([filtered], { title: wanted }, { catalogTotal: 250 });
     expect(direct.status).toBe("unknown");
@@ -110,8 +192,8 @@ describe("R11 Part A 采集箱接口契约", () => {
     const calls: Array<{ title: string; page: number }> = [];
     const result = await collectBoxApiVerdict({ title: wanted, pageSize: 100 }, async (query) => {
       calls.push({ title: query.title || "", page: query.page || 0 });
-      if (query.title) return envelope(pageBody(250, 1, 100, ""));
-      return envelope(pageBody(250, query.page || 1, 100, ""));
+      const page = query.title ? 1 : (query.page || 1);
+      return envelope(realJson(250, pageTitles(250, page, 100), "", page));
     });
     expect(calls).toEqual([
       { title: wanted, page: 1 },
@@ -121,59 +203,104 @@ describe("R11 Part A 采集箱接口契约", () => {
     ]);
     expect(result).toEqual(decideBoxLookup({
       loaded: true,
-      rows: [...rows(100, 0), ...rows(100, 100), ...rows(50, 200)],
+      rows: asRows([...titles(100, 0), ...titles(100, 100), ...titles(50, 200)]),
       title: wanted,
     }));
     expect(result.status).toBe("absent");
   });
 
-  it("空箱 200 且结构正确时判 absent", () => {
-    const page = parseBoxApiPage(envelope({ total: 0, list: [], echoTitle: "" }));
+  it("空结果配合回显可以判 absent，没有回显不能", () => {
+    const page = parseBoxApiPage(envelope(realJson(0, [], "")));
     expect(boxApiVerdict([page], {}).status).toBe("absent");
-    const echoed = parseBoxApiPage(envelope({ total: 0, list: [], echoTitle: wanted }));
+    const echoed = parseBoxApiPage(envelope(realJson(0, [], wanted)));
+    expect(echoed.echoTitle).toBe(wanted);
     expect(boxApiVerdict([echoed], { title: wanted }).status).toBe("absent");
-    const unproven = parseBoxApiPage(envelope({ total: 0, list: [], echoTitle: "" }));
+    const unproven = parseBoxApiPage(envelope(realJson(0, [], "")));
     expect(boxApiVerdict([unproven], { title: wanted }).status).toBe("unknown");
   });
 
+  it("第二页 36 行和首页 total 一致，命中仍是 ambiguous", async () => {
+    const page2 = [...titles(35, 100), wanted];
+    const seen: number[] = [];
+    const result = await collectBoxApiVerdict({ title: wanted, pageSize: 100 }, async (query) => {
+      const page = query.page || 1;
+      seen.push(page);
+      const list = page === 1 ? pageTitles(136, 1, 100) : page2;
+      return envelope(realJson(136, list, wanted, page));
+    });
+    expect(seen).toEqual([1, 2]);
+    expect(result.status).toBe("ambiguous");
+    expect(result.status).not.toBe("found");
+    expect(result.reason).toContain("标题精确匹配 1 条");
+    expect(result).toEqual(decideBoxLookup({
+      loaded: true,
+      rows: asRows([...pageTitles(136, 1, 100), ...page2]),
+      title: wanted,
+    }));
+  });
+
   it("近似标题按 decideBoxLookup 精确比对，不放宽", () => {
-    const near = [
-      { title: "示例夹子风扇  草稿", productId: "3000001" },
-      { title: "示例夹子风扇草稿（备注）", productId: "3000002" },
-      { title: "示例DraftA", productId: "3000003" },
-    ];
-    const missed = parseBoxApiPage(envelope({ total: near.length, list: near, echoTitle: wanted }));
+    const near = ["示例夹子风扇  草稿", "示例夹子风扇草稿（备注）", "示例DraftA"];
+    const missed = parseBoxApiPage(envelope(realJson(near.length, near, wanted)));
     const miss = boxApiVerdict([missed], { title: wanted });
-    expect(miss).toEqual(decideBoxLookup({ loaded: true, rows: near, title: wanted }));
+    expect(miss).toEqual(decideBoxLookup({ loaded: true, rows: asRows(near), title: wanted }));
     expect(miss.status).toBe("absent");
 
-    const hitRows = [...near, { title: wanted, productId: "3000004" }];
-    const hit = boxApiVerdict(
-      [parseBoxApiPage(envelope({ total: hitRows.length, list: hitRows, echoTitle: wanted }))],
-      { title: wanted },
-    );
-    expect(hit).toEqual(decideBoxLookup({ loaded: true, rows: hitRows, title: wanted }));
+    const hitTitles = [...near, wanted];
+    const hit = boxApiVerdict([parseBoxApiPage(envelope(realJson(hitTitles.length, hitTitles, wanted)))], { title: wanted });
+    expect(hit).toEqual(decideBoxLookup({ loaded: true, rows: asRows(hitTitles), title: wanted }));
     expect(hit.status).toBe("ambiguous");
     expect(hit.status).not.toBe("found");
     expect(hit.reason).toContain("标题精确匹配 1 条");
     expect(JSON.stringify(near)).not.toMatch(secret);
   });
 
-  it("页面脚本只交 status、ok、json，端点未采样时不发请求", () => {
-    const query: BoxApiQuery = { title: wanted, shopId: "9001", page: 2, draftsOnly: true };
+  it("预算耗尽时说明没读完，不说成没有返回 200", async () => {
+    vi.useFakeTimers();
+    try {
+      const start = Date.now();
+      const result = await collectBoxApiVerdict({ title: wanted, pageSize: 100 }, async (query) => {
+        vi.setSystemTime(start + BOX_API_BUDGET_MS + 1);
+        const page = query.page || 1;
+        return envelope(realJson(136, pageTitles(136, page, 100), wanted, page));
+      });
+      expect(result.status).toBe("unknown");
+      expect(result.reason).toContain("预算内没读完");
+      expect(result.reason ?? "").not.toContain("没有返回 200");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("页面脚本按实测 POST，测试里不发出真实请求", async () => {
+    const query: BoxApiQuery = { title: `  ${wanted}  `, shopId: "9001", page: 2, pageSize: 50, draftsOnly: true };
+    const body = buildBoxListBody(query);
     const script = boxApiScript(query);
-    expect(BOX_API_ENDPOINT).toBe("");
-    expect(script).toContain("fetch");
-    expect(script).toContain("status");
-    expect(script).toContain("ok");
-    expect(script).toContain("json");
-    expect(script).not.toMatch(/absent|ambiguous|dianxiaomi|smtProductList|searchParams/);
+    expect(BOX_API_ENDPOINT).toBe("/api/smtProduct/pageList.json");
+    expect(script).toContain("POST");
+    expect(script).toContain("application/x-www-form-urlencoded; charset=UTF-8");
+    expect(script).toContain("AbortController");
+    expect(script).toContain("if (!request.endpoint) return failed");
+    expect(script).toContain(JSON.stringify(body));
+    expect(new URLSearchParams(body).get("searchValue")).toBe(wanted);
+    expect(script).not.toContain(`  ${wanted}  `);
+    expect(script).not.toMatch(/absent|ambiguous|dianxiaomi|searchType=1|searchType=2/);
     expect(script).not.toMatch(secret);
-    const fetchSpy = vi.fn();
+    const fetchSpy = vi.fn(async () => ({
+      status: 200,
+      ok: true,
+      json: async () => ({ code: 0, data: { page: { list: [], totalSize: 0 } } }),
+    }));
     vi.stubGlobal("fetch", fetchSpy);
-    const value = new Function(`return ${script}`)() as { status: number; ok: boolean; json: unknown };
-    expect(value).toEqual({ status: 0, ok: false, json: null });
-    expect(fetchSpy).not.toHaveBeenCalled();
-    vi.unstubAllGlobals();
+    try {
+      const value = await new Function(`return ${script}`)() as { status: number; ok: boolean; json: unknown };
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(fetchSpy.mock.calls[0]?.[0]).toBe(BOX_API_ENDPOINT);
+      expect(fetchSpy.mock.calls[0]?.[1]).toMatchObject({ method: "POST", credentials: "same-origin", body });
+      expect(value.status).toBe(200);
+      expect(value.ok).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
