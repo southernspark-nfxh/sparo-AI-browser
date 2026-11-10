@@ -884,6 +884,15 @@ export class SparkBrowser {
   private get clientWindows(): Map<string, string> {
     return (this._clientWindows ??= new Map());
   }
+
+  /** 当前绑定到指定窗口的 agent clientId。侧栏是否独占焦点看这个集合。 */
+  getClientsOnWindow(winId: string): Set<string> {
+    const set = new Set<string>();
+    for (const [cid, wid] of this.clientWindows) {
+      if (wid === winId) set.add(cid);
+    }
+    return set;
+  }
   /** 当前异步任务绑定的窗口。只在任务回调里看得见，用户快捷键不在这条链上。 */
   private _clientWindowScope?: AsyncLocalStorage<{ clientId: string; winId: string }>;
 
@@ -1254,10 +1263,10 @@ export class SparkBrowser {
     return tab.view;
   }
 
-  /** 开一个不抢焦点的后台标签。activeTabId 保持不变。关闭渲染节流，最小化时定时器照跑。 */
-  createAgentTab(url?: string): string {
+  /** 开一个后台标签。activate=false 时 activeTabId 保持不变，不抢焦点。关闭渲染节流，最小化时定时器照跑。 */
+  createAgentTab(url?: string, activate = false): string {
     const target = url && url.trim() ? url : DEFAULT_URL;
-    return this.createTab(target, false, { agentOwned: true });
+    return this.createTab(target, activate, { agentOwned: true });
   }
 
   /**
@@ -1731,6 +1740,10 @@ export class SparkBrowser {
       tab.lastActiveAt = Date.now();
       this.layout();
       void view.webContents.loadURL(normalizeUrl(tab.url || DEFAULT_URL));
+      view.webContents.once("dom-ready", () => {
+        // WebContents 没有 ready-to-show。文档可画时再补排，且只补仍在前台的标签。
+        if (this.activeTabId === tab.id) this.armChromeGuard();
+      });
     } catch (err) {
       console.error("[sparo] wakeTab failed:", err);
     }
@@ -2099,17 +2112,37 @@ export class SparkBrowser {
 
   switchTab(id: string): ToolResult {
     if (!this.tabs.has(id)) return { ok: false, message: `Tab not found: ${id}` };
+    const tab = this.tabs.get(id);
+    const wasDiscarded = tab?.discarded === true;
+
     this.resetChromeCoverState();
     this.wakeTab(id);
     this.activeTabId = id;
-    const tab = this.tabs.get(id);
     if (tab) tab.lastActiveAt = Date.now();
     this.lastSnapshot = null;
     this.layout();
     this.focusActivePage();
-    this.pushChromeState();
-    this.requestHoleReport();
-    this.pushSidebarState();
+
+    if (wasDiscarded && tab?.view?.webContents && !tab.view.webContents.isDestroyed()) {
+      const wc = tab.view.webContents;
+      // 等内容开始加载再推状态，避免壳层先画、内容还没回来
+      const pushOnStart = () => {
+        this.pushChromeState();
+        this.pushSidebarState();
+      };
+      const pushOnDone = () => {
+        this.pushChromeState();
+        this.requestHoleReport();
+        this.pushSidebarState();
+      };
+      wc.once("did-start-loading", pushOnStart);
+      wc.once("did-finish-load", pushOnDone);
+    } else {
+      this.pushChromeState();
+      this.requestHoleReport();
+      this.pushSidebarState();
+    }
+
     return { ok: true, message: `Switched to tab ${id}`, data: this.listTabs() };
   }
 
@@ -5918,13 +5951,15 @@ export class SparkBrowser {
 
   /**
    * 侧栏开站任务第一次碰到页面时，开或复用「侧栏」工位。
-   * 不改用户正在看的标签。划词和读当前页不走这里。
+   * 侧栏独占这扇窗时切到新标签；同窗还有别的 agent 时不抢当前页。划词和读当前页不走这里。
    */
   private ensureSidebarWorkTab(): string {
     ensureSidebarClient();
     const before = this.activeTabId;
     const tabId = this.bindAgentTab(SIDEBAR_CLIENT_ID) || "";
-    if (before && this.activeTabId !== before && typeof this.switchTab === "function") this.switchTab(before);
+    const winId = (tabId && this.tabs?.get(tabId)?.winId) || this.activeWinId || "main";
+    const alone = [...this.getClientsOnWindow(winId)].every((id) => id === SIDEBAR_CLIENT_ID);
+    if (!alone && before && this.activeTabId !== before && typeof this.switchTab === "function") this.switchTab(before);
     if (!tabId) return "";
     const tab = this.tabs?.get(tabId);
     if (tab?.agentStatus === "done") delete tab.agentStatus;
@@ -8273,11 +8308,14 @@ export class SparkBrowser {
       (item) => item.state === "running" || item.state === "queued" || item.state === "waiting_human",
     );
     const busy = Boolean(candidate) && candidateTabBusy({ clientId, candidateTabId: candidate, live });
+    const winId = this.activeWinId || "main";
+    const others = [...this.getClientsOnWindow(winId)].filter((id) => id !== clientId);
     const tabId = bindClientTab({
       clientId,
       knownTabIds: known,
-      createAgentTab: () => this.createAgentTab(),
+      createAgentTab: (activate = false) => this.createAgentTab(undefined, activate),
       candidateBusy: busy,
+      otherClientsOnWindow: others,
     });
     if (tabId) this.bindClientWindow(clientId, this.tabs?.get(tabId)?.winId || this.activeWinId || "main");
     const mode = tabId && candidate && tabId === candidate ? "reused" : "new";
