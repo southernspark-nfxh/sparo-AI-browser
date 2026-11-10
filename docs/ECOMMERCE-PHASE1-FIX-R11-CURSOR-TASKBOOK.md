@@ -185,3 +185,93 @@ Part B 才写的：
 - 实测响应与 Part A 契约不符，先做 [R11-A2 契约修正](./ECOMMERCE-PHASE1-FIX-R11A2-CONTRACT-TASKBOOK.md)，全绿后才放 Part B。
 - Part B 步骤仍以本文 Part B 段为准。
 
+## 11. Part B 执行细则（规划方 2026-11-10 放行）
+
+放行依据：A2 已在 `5c9e08e` 复核通过（定向 4 文件 32 项、全量 120 文件、typecheck 0）。本段把 Part B 的接法钉死，执行方按本段做，不再自己设计。
+
+### 11.1 只加一条链路
+
+`lookupDraft` 拆成两个内部函数：
+
+- `lookupViaApi(surface, input, title, home)`：新链路，失败返回 `undefined` 表示降级；
+- `lookupViaDom(surface, input, title)`：**现有实现整体搬进去，逻辑一字不改**（含 openTab / activateTab / pollBox / searchBox / finally 关标签）。
+
+主流程顺序：暂停检查 → `recordId/shopId` 完整性 → **接口** → 失败才 **页面**。前两步保持原样。
+
+### 11.2 在哪个标签上发请求
+
+- `home = input.tabId || surface.tabId`，直接 `surface.execute(script, home)`。
+- 前置校验：`new URL(surface.getUrl(home)).hostname === "www.dianxiaomi.com"`（用 URL 解析，不许用 `includes` 判断域名）。不满足 → 跳过接口，直接页面路径，`source` 记 `"dom"`。
+- 标题 trim 后为空 → 不发请求，直接页面路径（页面给「编辑页读不到标题」）。
+- 接口路径上**零** `openTab` / `activateTab` / `navigate` / `closeTab`。
+
+### 11.3 查询参数
+
+- `title`：trim 后的标题；`pageSize = BOX_API_PAGE_SIZE`。
+- **不传 `shopId`**：保持全箱比对，和 `decideBoxLookup` 现在「不按店铺过滤」的口径一致。
+- 不传 `draftsOnly`：`buildBoxListBody` 已固定 `dxmState=draft`、`searchType=0`。
+
+### 11.4 fetchPage 适配
+
+```ts
+function apiFetcher(surface: DxmSmtLiveSurface, tabId: string) {
+  return async (query: BoxApiQuery) => {
+    const out = await surface.execute(boxApiScript(query), tabId);
+    return out.data?.result;
+  };
+}
+```
+
+调用 `collectBoxApiVerdict({ title, pageSize: BOX_API_PAGE_SIZE }, apiFetcher(surface, home))`。
+
+### 11.5 谁说了算
+
+- 接口 `absent` / `ambiguous`（`found` 本版不会出现）→ **直接返回**，不碰页面路径。
+- 接口 `unknown` → **降级页面路径一次**，不重试接口。
+- 两条都 unknown → 最终 reason 写成 `接口：<接口原因>；页面：<页面原因>`，两段原样保留，总长不超过 200 字；不许出现 absent 语义。
+- 返回对象带 `source: "api" | "dom"`：内部类型 `DraftLookup & { source: "api" | "dom" }`，出口 `as DraftLookup`。**不许改** `dxm-smt-listing.ts` 里的 `DraftLookup` 定义（白名单外）。`source` 只进 evidence，不参与判定。
+
+### 11.6 白名单
+
+- 改：`src/main/workflows/dxm-smt-live.ts`（只动 `lookupDraft` 拆分 + 新增 `lookupViaApi` / `lookupViaDom` / `apiFetcher`）
+- 新建：`tests/dxm-smt-r11b.test.ts`
+- 只许追加：本文末「Part B 完成记录」
+- 不许动：`dxm-smt-api.ts`、`dxm-smt-box.ts`、`dxm-smt-listing.ts`、`dxm-smt-contract.ts`、`browser.ts`、`mcp-server.ts`、`tools/index.ts`、`docs/DECISION-POINTS.md`、`.workbuddy/`
+
+### 11.7 测试（`tests/dxm-smt-r11b.test.ts`，夹具编造）
+
+1. 编辑页 + 接口 `absent` → 返回 `absent`，`source: "api"`，fake surface 的 `openTab` / `activateTab` / `navigate` / `closeTab` 计数全为 0。
+2. 接口 `ambiguous` → 同上，reason 含「标题精确匹配」。
+3. 接口 404 → 页面路径被调用一次（计数 1），结论与单独跑页面路径一致，`source: "dom"`。
+4. 两条都 unknown → reason 同时含「接口」和「页面」，且不含 absent 语义。
+5. host 不是 `www.dianxiaomi.com` → `execute` 收到的脚本里从不出现 `pageList.json`，走页面路径。
+6. 暂停 / 缺 `recordId` / 缺 `shopId` → 原样 unknown，surface 调用 0 次。
+7. 标题 trim 后为空 → 不发接口，页面返回「编辑页读不到标题」。
+8. `JSON.parse(JSON.stringify(result)).source` 仍是 `"api"` / `"dom"`（evidence 可序列化）。
+9. 既有 R7 / R9B / R10 / R11 测试断言一字不改。
+
+### 11.8 真机双向验证归规划方
+
+执行方**不跑真机**，只交离线证据。规划方拿到代码后验四条：
+
+1. 现存草稿标题 → `ambiguous`；
+2. 编造的标题 → `absent`；
+3. 窗口最小化重复 1、2 → 结论不变（证明不依赖渲染）；
+4. 断网或登录失效 → `unknown`，且文案能区分接口失败与页面失败。
+
+零 `openTab` / 零 `activateTab` 由运行日志核对。
+
+### 11.9 验收
+
+```text
+npx vitest run tests/dxm-smt-r11b.test.ts tests/dxm-smt-r11.test.ts tests/dxm-smt-r10.test.ts tests/dxm-smt-r9b.test.ts tests/dxm-smt-r7.test.ts
+npm test
+npm run typecheck
+npm run lint
+npm run build
+```
+
+- 定向 5 文件全绿；全量无新增失败；typecheck 0；lint 0 error；build 通过。
+- 交证据：命令、通过数、`git status --short`。
+- 一个 commit：`feat(dxm): R11-B 判重改走采集箱接口，页面读表降级`。
+
