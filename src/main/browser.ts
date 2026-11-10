@@ -679,7 +679,10 @@ function namedSkillId(configDir: string, query: string): string | null {
 export class SparkBrowser {
   readonly window: BrowserWindow;
   /** 全部窗口：winId → BrowserWindow。多开时一扇窗口一条。 */
-  private wins = new Map<string, BrowserWindow>();
+  private _wins?: Map<string, BrowserWindow>;
+  private get wins(): Map<string, BrowserWindow> {
+    return (this._wins ??= new Map());
+  }
   /** 新窗口编号，从 w1 起。 */
   private winSeq = 0;
   /** 当前正在服务的窗口。单开时恒为 "main"。 */
@@ -695,7 +698,10 @@ export class SparkBrowser {
   /** @deprecated use active tab via pageView getter */
   private tabs = new Map<string, TabInfo>();
   /** 每扇窗口各自激活的标签：winId → tabId。 */
-  private activeTabs = new Map<string, string>();
+  private _activeTabs?: Map<string, string>;
+  private get activeTabs(): Map<string, string> {
+    return (this._activeTabs ??= new Map());
+  }
   /** 当前窗口激活的标签。多开时按窗口分开记，单开时就是唯一那扇。 */
   private get activeTabId(): string {
     return this.activeTabs.get(this.activeWinId) || "";
@@ -704,7 +710,10 @@ export class SparkBrowser {
     this.activeTabs.set(this.activeWinId, value);
   }
   /** 已经挂过壳层的窗口。多开时每扇窗口各挂一次。 */
-  private shellReadyWins = new Set<string>();
+  private _shellReadyWins?: Set<string>;
+  private get shellReadyWins(): Set<string> {
+    return (this._shellReadyWins ??= new Set());
+  }
   private lastSnapshot: PageSnapshot | null = null;
   /** Cross-origin CDP frames from last snapshot (x{i}.* refs) */
   private cdpFrames: CdpFrameInfo[] = [];
@@ -772,13 +781,25 @@ export class SparkBrowser {
   /** 报告和阅读模式共用的标签。用户关掉后置空。手动新开的研究页不记在这里。 */
   private readerTabId: string | null = null;
   /** 每扇窗口各自的页面洞（壳层报上来的视口缺口）。多开时不能串用。 */
-  private holeBoundsByWin = new Map<string, { x: number; y: number; width: number; height: number } | null>();
-  private sidebarWByWin = new Map<string, number>();
+  private _holeBoundsByWin?: Map<string, { x: number; y: number; width: number; height: number } | null>;
+  private get holeBoundsByWin(): Map<string, { x: number; y: number; width: number; height: number } | null> {
+    return (this._holeBoundsByWin ??= new Map());
+  }
+  private _sidebarWByWin?: Map<string, number>;
+  private get sidebarWByWin(): Map<string, number> {
+    return (this._sidebarWByWin ??= new Map());
+  }
   // 最近一次正常的窗口客户区尺寸。最小化→恢复瞬间 getContentSize 会短暂返回 0，
   // 不能拿 0 去算页面 bounds（会把视图夹到 100px 并残留）。
-  private lastGoodContentByWin = new Map<string, { width: number; height: number }>();
+  private _lastGoodContentByWin?: Map<string, { width: number; height: number }>;
+  private get lastGoodContentByWin(): Map<string, { width: number; height: number }> {
+    return (this._lastGoodContentByWin ??= new Map());
+  }
   /** 上次真正排过版的客户区。1px 抖动不再重排。 */
-  private lastLayoutContentByWin = new Map<string, { width: number; height: number }>();
+  private _lastLayoutContentByWin?: Map<string, { width: number; height: number }>;
+  private get lastLayoutContentByWin(): Map<string, { width: number; height: number }> {
+    return (this._lastLayoutContentByWin ??= new Map());
+  }
 
   private get holeBounds(): { x: number; y: number; width: number; height: number } | null {
     return this.holeBoundsByWin.get(this.activeWinId) ?? null;
@@ -2127,7 +2148,10 @@ export class SparkBrowser {
   }
 
   /** First show only. Later calls must not center() — that fights the user dragging the window. */
-  private placedWins = new Set<string>();
+  private _placedWins?: Set<string>;
+  private get placedWins(): Set<string> {
+    return (this._placedWins ??= new Set());
+  }
   presentWindow(): void {
     if (this.win.isDestroyed()) return;
     try {
