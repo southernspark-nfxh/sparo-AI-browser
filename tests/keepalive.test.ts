@@ -48,6 +48,7 @@ vi.mock("electron", () => ({
 }));
 
 import { SparkBrowser } from "../src/main/browser.js";
+import { bindWindow } from "./helpers/browser-fixture.js";
 
 type KeepBrowser = SparkBrowser & {
   makePageView: (envId?: string, opts?: { agentOwned?: boolean }) => { webContents: { setBackgroundThrottling: (on: boolean) => void } };
@@ -158,9 +159,8 @@ describe("background tasks do not steal the window", () => {
     browser.coPresenceRestored = false;
     browser.lastNotifiedChat = -1;
     browser.taskbarFlashing = false;
-    browser.didPlaceWindow = true;
     browser.chatLog = [];
-    browser.window = {
+    bindWindow(browser, {
       isDestroyed: () => false,
       isMinimized: () => minimized,
       isFocused: () => focused,
@@ -170,7 +170,7 @@ describe("background tasks do not steal the window", () => {
         isDestroyed: () => false,
         setBackgroundThrottling: (on: boolean) => throttle.push(on),
       },
-    };
+    });
     browser.ensureWindowVisible = () => {
       restores.push(1);
     };
