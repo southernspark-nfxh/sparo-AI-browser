@@ -78,6 +78,42 @@ export const SITE_CAPS: SiteCap[] = [
     homeUrl: "https://map.baidu.com",
   },
   {
+    id: "toutiao",
+    label: "今日头条",
+    re: /头条|toutiao|jinritoutiao/i,
+    homeUrl: "https://mp.toutiao.com",
+    writeUrl: "https://mp.toutiao.com/profile_v4/graphic/publish",
+    skillId: "social-media-publish",
+    skillQuery: "今日头条发布",
+  },
+  {
+    id: "baijiahao",
+    label: "百家号",
+    re: /百家|baijiahao/i,
+    homeUrl: "https://baijiahao.baidu.com",
+    writeUrl: "https://baijiahao.baidu.com/builder/rc/home",
+    skillId: "social-media-publish",
+    skillQuery: "百家号发布",
+  },
+  {
+    id: "dayu",
+    label: "大鱼号",
+    re: /大鱼|dayu|uc大鱼/i,
+    homeUrl: "https://mp.dayu.com",
+    writeUrl: "https://mp.dayu.com",
+    skillId: "social-media-publish",
+    skillQuery: "大鱼号发布",
+  },
+  {
+    id: "sohu",
+    label: "搜狐号",
+    re: /搜狐|sohu|搜狐号/i,
+    homeUrl: "https://mp.sohu.com",
+    writeUrl: "https://mp.sohu.com",
+    skillId: "social-media-publish",
+    skillQuery: "搜狐号发布",
+  },
+  {
     id: "baidu",
     label: "百度",
     re: /百度|baidu/i,
@@ -157,11 +193,11 @@ export function wantsPublish(text: string): boolean {
   return (
     /发帖|发布|发文|发一篇|去发|帮我发(?!现)|post\s*(to|on)?|publish/i.test(text) ||
     /发\s*\d+\s*条/.test(text) ||
-    /发(小红书|知乎|微博|朋友圈)/.test(text) ||
-    /(发|写).{0,20}(微博|知乎|小红书|zhihu|weibo)/i.test(text) ||
-    /(微博|知乎).{0,12}(博主|发帖|发文|写文章)/.test(text) ||
+    /发(小红书|知乎|微博|朋友圈|头条|百家号?|大鱼号?|搜狐号?)/.test(text) ||
+    /(发|写).{0,20}(微博|知乎|小红书|zhihu|weibo|头条|百家号?|大鱼号?|搜狐号?|toutiao|baijiahao)/i.test(text) ||
+    /(微博|知乎|头条|百家号?|大鱼号?|搜狐号?).{0,12}(博主|发帖|发文|写文章)/.test(text) ||
     /写(一篇|个)?(文章|回答|帖子|长文)/.test(text) ||
-    /在.{0,8}(知乎|微博|小红书|zhihu|weibo).{0,8}(发|写|贴)/i.test(text)
+    /在.{0,8}(知乎|微博|小红书|zhihu|weibo|头条|百家号?|大鱼号?|搜狐号?).{0,8}(发|写|贴)/i.test(text)
   );
 }
 
