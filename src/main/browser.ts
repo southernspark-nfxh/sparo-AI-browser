@@ -695,6 +695,84 @@ export class SparkBrowser {
   private winOf(winId: string): BrowserWindow {
     return this.wins.get(winId) || this.window;
   }
+
+  /** 把 agent 绑到一扇窗口。侧栏可以改绑到发消息的那扇；别的 client 第一次绑死。 */
+  private bindClientWindow(clientId: string, winId: string, rebind = false): void {
+    const client = String(clientId || "").trim();
+    const win = String(winId || "").trim();
+    if (!client || !win) return;
+    if (!rebind && this.clientWindows.has(client)) return;
+    this.clientWindows.set(client, win);
+  }
+
+  private focusActor(): { clientId: string; winId: string } | undefined {
+    const als = this._clientWindowScope;
+    if (!als || typeof als.getStore !== "function") return undefined;
+    const store = als.getStore();
+    if (!store?.clientId || !store.winId) return undefined;
+    return store;
+  }
+
+  /**
+   * 这个 client 能不能动这扇窗。
+   * 没有 client（人在操作）放行。还没登记且只有一扇窗时，就是这一扇。
+   * 多扇窗还没登记，不猜当前焦点窗。
+   */
+  private clientOwnsWindow(clientId: string, winId: string): boolean {
+    const client = String(clientId || "").trim();
+    const win = String(winId || "").trim() || this.activeWinId || "main";
+    if (!client) return true;
+    const actor = this.focusActor();
+    if (actor && actor.clientId === client) return actor.winId === win;
+    const bound = this.clientWindows.get(client);
+    if (!bound) return this.wins.size <= 1;
+    return bound === win;
+  }
+
+  /**
+   * 只聚焦 agent 自己的窗口。
+   * 是自己的：restore + focus。
+   * 不是自己的：showInactive，不把别人的窗口拉到前台。
+   */
+  private safeFocusClientWindow(winId: string, clientId?: string): void {
+    const id = String(winId || this.activeWinId || "main");
+    const actor = this.focusActor();
+    const client = String(clientId || actor?.clientId || "");
+    const win = this.winOf(id);
+    if (!win || (typeof win.isDestroyed === "function" && win.isDestroyed())) return;
+    try {
+      if (this.clientOwnsWindow(client, id)) {
+        if (typeof win.isMinimized === "function" && win.isMinimized()) win.restore();
+        win.show();
+        win.focus();
+        return;
+      }
+      console.log(`[window] skip focus win=${id} client=${client || "-"} bound=${this.clientWindows.get(client) || "-"}`);
+      win.showInactive();
+    } catch {
+      /* 窗口状态不挡任务 */
+    }
+  }
+
+  /** 壳层或页面要焦点时先看归属。不是自己的窗口就静默露出，不调用 webContents.focus。 */
+  private focusContentsIfOwn(focus: () => void): void {
+    const winId = this.activeWinId || "main";
+    const actor = this.focusActor();
+    if (actor && !this.clientOwnsWindow(actor.clientId, winId)) {
+      this.safeFocusClientWindow(winId, actor.clientId);
+      return;
+    }
+    focus();
+  }
+
+  /** 把这一段异步任务标成「只许动这扇窗」。用户的快捷键不在这条链上。 */
+  private runWithClientWindow<T>(clientId: string, winId: string, fn: () => Promise<T>): Promise<T> {
+    const client = String(clientId || "").trim();
+    const win = String(winId || "").trim() || this.activeWinId || "main";
+    if (client) this.bindClientWindow(client, win, client === SIDEBAR_CLIENT_ID);
+    if (!this._clientWindowScope) this._clientWindowScope = new AsyncLocalStorage();
+    return this._clientWindowScope.run({ clientId: client, winId: win }, fn);
+  }
   /** @deprecated use active tab via pageView getter */
   private tabs = new Map<string, TabInfo>();
   /** 每扇窗口各自激活的标签：winId → tabId。 */
@@ -800,6 +878,13 @@ export class SparkBrowser {
   private get lastLayoutContentByWin(): Map<string, { width: number; height: number }> {
     return (this._lastLayoutContentByWin ??= new Map());
   }
+  /** clientId → 绑定的 winId。一个 agent 只认一扇窗。惰性，空壳测试首次访问才建。 */
+  private _clientWindows?: Map<string, string>;
+  private get clientWindows(): Map<string, string> {
+    return (this._clientWindows ??= new Map());
+  }
+  /** 当前异步任务绑定的窗口。只在任务回调里看得见，用户快捷键不在这条链上。 */
+  private _clientWindowScope?: AsyncLocalStorage<{ clientId: string; winId: string }>;
 
   private get holeBounds(): { x: number; y: number; width: number; height: number } | null {
     return this.holeBoundsByWin.get(this.activeWinId) ?? null;
@@ -1497,6 +1582,12 @@ export class SparkBrowser {
           child.hide();
           return;
         }
+        const actor = this.focusActor();
+        const ownerWin = tab.winId || this.activeWinId || "main";
+        if (actor && !this.clientOwnsWindow(actor.clientId, ownerWin)) {
+          child.showInactive();
+          return;
+        }
         child.show();
         child.focus();
       } catch {
@@ -1705,6 +1796,10 @@ export class SparkBrowser {
   }
 
   private createTab(url = DEFAULT_URL, activate = true, opts?: { agentOwned?: boolean; openerTabId?: string }): string {
+    const actor = this.focusActor();
+    if (actor?.winId && actor.winId !== this.activeWinId && this.wins.has(actor.winId)) {
+      return this.withWin(actor.winId, () => this.createTab(url, activate, opts));
+    }
     const id = randomBytes(4).toString("hex");
     const clientId = agentClientFromScope(
       this.taskStore()?.chatKey,
@@ -1723,7 +1818,10 @@ export class SparkBrowser {
       winId,
     };
     this.tabs.set(id, tab);
-    if (clientId) claimTabForClient(clientId, id);
+    if (clientId) {
+      claimTabForClient(clientId, id);
+      this.bindClientWindow(clientId, winId);
+    }
     if (activate) this.activeTabId = id;
     this.pinViewBeforeMount(view);
     this.winOf(winId).contentView.addChildView(view);
@@ -2265,6 +2363,9 @@ export class SparkBrowser {
     this.sidebarWByWin.delete(winId);
     this.lastGoodContentByWin.delete(winId);
     this.lastLayoutContentByWin.delete(winId);
+    for (const [client, bound] of this.clientWindows) {
+      if (bound === winId) this.clientWindows.delete(client);
+    }
     for (const [id, tab] of [...this.tabs]) {
       if ((tab.winId || "main") !== winId) continue;
       this.tabs.delete(id);
@@ -2289,6 +2390,12 @@ export class SparkBrowser {
    * 后台任务路径禁止调用。
    */
   private ensureWindowVisible(recenter = false): void {
+    const winId = this.activeWinId || "main";
+    const actor = this.focusActor();
+    if (actor && !this.clientOwnsWindow(actor.clientId, winId)) {
+      this.safeFocusClientWindow(winId, actor.clientId);
+      return;
+    }
     if (this.win.isDestroyed()) return;
     try {
       if (this.win.isMinimized()) this.win.restore();
@@ -2305,8 +2412,7 @@ export class SparkBrowser {
           height,
         });
       }
-      this.win.show();
-      this.win.focus();
+      this.safeFocusClientWindow(winId, actor?.clientId);
       // restore/setBounds 后客户区尺寸可能下一帧才有效，补一次延迟布局。
       this.scheduleLayout(120);
       this.scheduleLayout(400);
@@ -2502,6 +2608,12 @@ export class SparkBrowser {
    */
   private focusPageForInput(wc: WebContents): void {
     if (this.win.isDestroyed()) return;
+    const winId = this.activeWinId || "main";
+    const actor = this.focusActor();
+    if (actor && !this.clientOwnsWindow(actor.clientId, winId)) {
+      this.safeFocusClientWindow(winId, actor.clientId);
+      return;
+    }
     let hidden = true;
     try {
       hidden = this.win.isMinimized() || !this.win.isFocused();
@@ -2698,7 +2810,7 @@ export class SparkBrowser {
   private focusOmnibox(): void {
     try {
       if (this.windowIsMinimized()) return;
-      this.win.webContents.focus();
+      this.focusContentsIfOwn(() => this.win.webContents.focus());
       void this.win.webContents.executeJavaScript(
         `(() => { const el = document.getElementById("url"); if (!el) return; el.focus(); el.select(); })()`,
       );
@@ -2798,7 +2910,7 @@ export class SparkBrowser {
     if (this.overlay === "history") this.closeHistory();
     this.findOpen = true;
     try {
-      if (!this.windowIsMinimized()) this.win.webContents.focus();
+      if (!this.windowIsMinimized()) this.focusContentsIfOwn(() => this.win.webContents.focus());
       this.win.webContents.send("spark:open-find");
     } catch {
       /* ignore */
@@ -2857,7 +2969,7 @@ export class SparkBrowser {
     this.overlay = "history";
     this.layout();
     try {
-      if (!this.windowIsMinimized()) this.win.webContents.focus();
+      if (!this.windowIsMinimized()) this.focusContentsIfOwn(() => this.win.webContents.focus());
       this.win.webContents.send("spark:history", {
         items: loadHistory(this.configDir()),
       });
@@ -3004,6 +3116,12 @@ export class SparkBrowser {
     if (!this.win || this.win.isDestroyed()) return;
     const [rawW, rawH] = this.win.getContentSize();
     if (!viewportTooSmall(this.win.isMinimized(), rawW, rawH)) return;
+    const actor = this.focusActor();
+    const winId = this.activeWinId || "main";
+    if (actor && !this.clientOwnsWindow(actor.clientId, winId)) {
+      this.safeFocusClientWindow(winId, actor.clientId);
+      return;
+    }
     this.rememberUserWindowBounds();
     const size = offscreenAgentBounds(
       this.lastGoodContent.width || this.lastUserWindowBounds?.width || rawW,
@@ -3502,7 +3620,7 @@ export class SparkBrowser {
   private focusShell(): void {
     try {
       if (this.win.isDestroyed() || this.windowIsMinimized()) return;
-      this.win.webContents.focus();
+      this.focusContentsIfOwn(() => this.win.webContents.focus());
     } catch {
       /* ignore */
     }
@@ -3513,6 +3631,12 @@ export class SparkBrowser {
       if (this.win.isMinimized()) return;
       const tab = this.getActiveTab();
       if (!tab || !tab.view || tab.view.webContents.isDestroyed()) return;
+      const ownerWin = tab.winId || this.activeWinId || "main";
+      const actor = this.focusActor();
+      if (actor && !this.clientOwnsWindow(actor.clientId, ownerWin)) {
+        this.safeFocusClientWindow(ownerWin, actor.clientId);
+        return;
+      }
       tab.view.webContents.focus();
     } catch {
       /* ignore */
@@ -7576,7 +7700,8 @@ export class SparkBrowser {
     this.pushSidebarState();
 
     try {
-      if (!this.freeSoul) {
+      const soul = this.freeSoul;
+      if (!soul) {
         const message = "请先在设置里配置模型。";
         this.chatLog.push({ role: "assistant", text: message });
         this.finishMcpTask({ ok: false, text: message });
@@ -7601,7 +7726,8 @@ export class SparkBrowser {
       this.freeSoulRunning = true;
       this.activePiAbort = new AbortController();
       const cloudTaskId = this.cloudTaskId;
-      const result = await this.freeSoul.run({
+      const homeWin = this.activeWinId || "main";
+      const result = await this.runWithClientWindow(SIDEBAR_CLIENT_ID, homeWin, () => soul.run({
         input: prompt,
         url: this.getUrl(this.agentTabId),
         title: this.getTitle(this.agentTabId),
@@ -7619,7 +7745,7 @@ export class SparkBrowser {
         onTrace: (trace) => {
           this.lastRunTrace = trace;
         },
-      });
+      }));
       if (this.takeSidebarManualStop()) return { ok: false, message: "已手动停止" };
       this.chatLog.push({ role: "assistant", text: result.text });
       this.finishMcpTask(result);
@@ -7755,11 +7881,21 @@ export class SparkBrowser {
     }
   }
 
+  /** 这一轮后台渲染拉起来的是哪扇窗。结束时最小化同一扇，不碰用户正在看的另一扇。 */
+  private backgroundRenderWinId = "";
+
   /** 任务执行期：最小化窗口只恢复渲染，不置前、不夺焦。结束时回到最小化。 */
-  private engageBackgroundRender(): void {
+  private engageBackgroundRender(clientId?: string): void {
     this.renderHoldCount = (this.renderHoldCount || 0) + 1;
     if (this.renderHoldCount > 1) return;
-    const win = this.win as {
+    const client = String(clientId || this.focusActor()?.clientId || "").trim();
+    const bound = client ? this.clientWindows.get(client) || "" : "";
+    const winId = bound || this.activeWinId || "main";
+    if (client && !this.clientOwnsWindow(client, winId)) {
+      this.safeFocusClientWindow(this.activeWinId || winId, client);
+      return;
+    }
+    const win = (bound ? this.winOf(winId) : this.win) as {
       isDestroyed?: () => boolean;
       isMinimized?: () => boolean;
       restore?: () => void;
@@ -7774,6 +7910,7 @@ export class SparkBrowser {
     }
     if (!minimized) return;
     this.wasMinimizedForTask = true;
+    this.backgroundRenderWinId = winId;
     try { win.restore?.(); } catch { /* 不因窗口状态中断任务 */ }
     try { win.showInactive?.(); } catch { /* showInactive 才是后台恢复 */ }
   }
@@ -7783,7 +7920,9 @@ export class SparkBrowser {
     if (this.renderHoldCount > 0) return;
     if (!this.wasMinimizedForTask) return;
     this.wasMinimizedForTask = false;
-    const win = this.win as { isDestroyed?: () => boolean; minimize?: () => void } | undefined;
+    const held = this.backgroundRenderWinId;
+    this.backgroundRenderWinId = "";
+    const win = (held ? this.winOf(held) : this.win) as { isDestroyed?: () => boolean; minimize?: () => void } | undefined;
     if (!win || win.isDestroyed?.()) return;
     try { win.minimize?.(); } catch { /* 用户原来就是最小化 */ }
   }
@@ -8097,6 +8236,7 @@ export class SparkBrowser {
       createAgentTab: () => this.createAgentTab(),
       candidateBusy: busy,
     });
+    if (tabId) this.bindClientWindow(clientId, this.tabs?.get(tabId)?.winId || this.activeWinId || "main");
     const mode = tabId && candidate && tabId === candidate ? "reused" : "new";
     console.log(`[agent-tab] client=${clientId} task=${taskId} bind=${tabId || ""} ${mode}`);
     return tabId;
@@ -8124,14 +8264,17 @@ export class SparkBrowser {
     this.agentAborts.add(controller);
     this.agentAbortByTask.set(task.taskId, controller);
     this.freeSoulRunning = true;
-    this.engageBackgroundRender();
+    const homeWin = this.tabs?.get(tabId)?.winId || this.activeWinId || "main";
+    this.bindClientWindow(clientId, homeWin);
+    this.engageBackgroundRender(clientId);
     try {
       this.seedAgentTaskChat(clientId, task.taskId);
       // 并发时标签、计量、对话都走这份作用域，退出后自动回到用户当前页，不再手写还原 agentTabId。
       await this.runScoped(
         "background",
         tabId,
-        async () => {
+        async () =>
+          this.runWithClientWindow(clientId, homeWin, async () => {
           try {
             if (!this.freeSoul) {
               this.settleMcpTask(task, { ok: false, text: "请先在设置里配置模型。" }, tabId);
@@ -8186,7 +8329,7 @@ export class SparkBrowser {
           } finally {
             if (this.cloudTaskId) void this.finishCloudTask();
           }
-        },
+          }),
         undefined,
         `agent:${clientId}/${task.taskId}`,
       );
