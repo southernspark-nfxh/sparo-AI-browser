@@ -1098,3 +1098,30 @@ HEAD `fa7394d` 加未提交改动。没有提交 Git，没有打包，没有重�
 - `npm run build`：通过。`out/main/index.js` 1,441.51 kB。
 
 未跑：真机 ambiguous / absent 复验、认领、E1–E12、安装包。不得把判重说成已修好。
+
+### Cursor R11 完成记录（2026-11-10，仅 Part A）
+
+动工前 `git status --short` 原文：
+
+```
+?? .workbuddy/
+```
+
+HEAD `9f78f6c`。没有提交 Git，没有打包进安装包，没有跑真机，没有改 `lookupDraft`。`.workbuddy/` 是动工前就有的未跟踪目录，本轮没碰。
+
+**Part A 做完。Part B 没做。** 接口地址仍是空字符串，页面脚本在端点为空时直接返回 `{ status: 0, ok: false, json: null }`，不发请求。判重现在走的还是原来的 DOM 路径。不声称判重已修好。
+
+- 新建 `src/main/workflows/dxm-smt-api.ts`，191 行。契约类型、`boxApiScript`、`parseBoxApiPage`、`boxApiFilterProven`、`boxApiPageCount`、`boxApiVerdict`、`collectBoxApiVerdict`。预算常量 `BOX_API_BUDGET_MS = 20_000`，每页 `BOX_API_PAGE_SIZE = 100`。解析只认 `status` / `ok` / `json.total` / `json.list[].title`，不猜店小秘字段名。
+- `absent` 只在 HTTP 200、结构可识别、行数覆盖 total，并且标题过滤已被回显或明确小于全量时，才交给原来的 `decideBoxLookup`。没翻完、非 200、结构不对、过滤没回显，都是 unknown，原因不带 absent。
+- 过滤没被证明时，`collectBoxApiVerdict` 改读不带标题的全量页，再做精确比对。这是离线纯函数，没有接进 `lookupDraft`。
+- 新建 `tests/dxm-smt-r11.test.ts`，179 行、7 项。R7 / R9B / R10 的断言没改。`dxm-smt-box.ts`、`dxm-smt-live.ts`、`browser.ts`、`mcp-server.ts`、`tools/index.ts`、`DECISION-POINTS.md` 都没改。
+
+当场结果：
+
+- `npx vitest run tests/dxm-smt-r11.test.ts tests/dxm-smt-r10.test.ts tests/dxm-smt-r9b.test.ts tests/dxm-smt-r7.test.ts`：4 个文件、28 项通过。
+- `npm test`：120 个文件、897 项，897 通过。本轮 `tests/chrome-hole.test.ts` 通过，文件没有改。
+- `npm run typecheck`：通过。
+- `npm run lint`：0 error、19 个既有 warning。
+- `npm run build`：通过。`out/main/index.js` 1,441.96 kB。新模块还没有被运行路径引用。
+
+未跑：附录 C 采样、Part B 接线、真机、认领、E1–E12、安装包。
