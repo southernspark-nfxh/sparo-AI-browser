@@ -95,3 +95,12 @@ npm run dist        → release\Sparo-Setup.exe
 - 不放宽 `agentInstructions()` 的 `< 500` 字测试；要装更多内容走 `sparo_skills` 通道。
 - 不动 `docs/listings/`。
 - 主进程不热更：改 `src/main/**` 后必须重启或重打包才生效，真机验收前先确认跑的是新代码。
+
+---
+
+## 完成记录（2026-11-10）
+
+- P0 / P1：随 ` a31e852 ` 提交（含 ensure_render）。` npx tsc --noEmit ` 0 error；` tests/mcp-agent.test.ts ` 6 passed。
+- P2：` dxm-crawl-prep.json ` 升 v7，15 个 steps 落进同一提交；两条真机记录实测保存落库（含窗口最小化）。
+- P3：` 869836f ` 补 CHANGELOG 0.5.0 与 QA 底账，已推送 origin/master；安装包 ` release\Sparo-Setup-0.5.0.exe `（92,343,962 字节）已产出并签名。打包末步 GitHub 草稿发布因缺 ` GH_TOKEN ` 失败，不影响产物。
+- 待办：0.5.0 安装包 G1–G3 复测；媒体发布 R3 附录 C 验收（C1–C5 + 百家号定时三项 + 头条广告）由执行窗口回报；R11-B 真机四条。
