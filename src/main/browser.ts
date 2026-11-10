@@ -527,6 +527,8 @@ type TabInfo = {
   lastActiveAt: number;
   /** Agent 后台标签：不可见时不节流定时器。用户自己的标签保持节流。 */
   agentOwned?: boolean;
+  /** 归属窗口。多开时一扇窗口一组标签；单开时全是 "main"。 */
+  winId?: string;
 };
 
 type ApprovalRequest = {
@@ -676,10 +678,42 @@ function namedSkillId(configDir: string, query: string): string | null {
 
 export class SparkBrowser {
   readonly window: BrowserWindow;
+  /** 全部窗口：winId → BrowserWindow。多开时一扇窗口一条。 */
+  private _wins?: Map<string, BrowserWindow>;
+  private get wins(): Map<string, BrowserWindow> {
+    return (this._wins ??= new Map());
+  }
+  /** 新窗口编号，从 w1 起。 */
+  private winSeq = 0;
+  /** 当前正在服务的窗口。单开时恒为 "main"。 */
+  private activeWinId = "main";
+  /** 当前操作的窗口；单开时就是主窗口。多开时按 activeWinId 取。 */
+  private get win(): BrowserWindow {
+    return this.wins.get(this.activeWinId) || this.window;
+  }
+  /** 按 winId 取窗口；取不到时退回主窗口，避免旧调用点炸。 */
+  private winOf(winId: string): BrowserWindow {
+    return this.wins.get(winId) || this.window;
+  }
   /** @deprecated use active tab via pageView getter */
   private tabs = new Map<string, TabInfo>();
-  private activeTabId = "";
-  private shellReady = false;
+  /** 每扇窗口各自激活的标签：winId → tabId。 */
+  private _activeTabs?: Map<string, string>;
+  private get activeTabs(): Map<string, string> {
+    return (this._activeTabs ??= new Map());
+  }
+  /** 当前窗口激活的标签。多开时按窗口分开记，单开时就是唯一那扇。 */
+  private get activeTabId(): string {
+    return this.activeTabs.get(this.activeWinId) || "";
+  }
+  private set activeTabId(value: string) {
+    this.activeTabs.set(this.activeWinId, value);
+  }
+  /** 已经挂过壳层的窗口。多开时每扇窗口各挂一次。 */
+  private _shellReadyWins?: Set<string>;
+  private get shellReadyWins(): Set<string> {
+    return (this._shellReadyWins ??= new Set());
+  }
   private lastSnapshot: PageSnapshot | null = null;
   /** Cross-origin CDP frames from last snapshot (x{i}.* refs) */
   private cdpFrames: CdpFrameInfo[] = [];
@@ -746,13 +780,52 @@ export class SparkBrowser {
   private memoryTimer: ReturnType<typeof setInterval> | null = null;
   /** 报告和阅读模式共用的标签。用户关掉后置空。手动新开的研究页不记在这里。 */
   private readerTabId: string | null = null;
-  private holeBounds: { x: number; y: number; width: number; height: number } | null = null;
-  private sidebarW = SIDEBAR_W;
+  /** 每扇窗口各自的页面洞（壳层报上来的视口缺口）。多开时不能串用。 */
+  private _holeBoundsByWin?: Map<string, { x: number; y: number; width: number; height: number } | null>;
+  private get holeBoundsByWin(): Map<string, { x: number; y: number; width: number; height: number } | null> {
+    return (this._holeBoundsByWin ??= new Map());
+  }
+  private _sidebarWByWin?: Map<string, number>;
+  private get sidebarWByWin(): Map<string, number> {
+    return (this._sidebarWByWin ??= new Map());
+  }
   // 最近一次正常的窗口客户区尺寸。最小化→恢复瞬间 getContentSize 会短暂返回 0，
   // 不能拿 0 去算页面 bounds（会把视图夹到 100px 并残留）。
-  private lastGoodContent = { width: 0, height: 0 };
+  private _lastGoodContentByWin?: Map<string, { width: number; height: number }>;
+  private get lastGoodContentByWin(): Map<string, { width: number; height: number }> {
+    return (this._lastGoodContentByWin ??= new Map());
+  }
   /** 上次真正排过版的客户区。1px 抖动不再重排。 */
-  private lastLayoutContent: { width: number; height: number } | null = null;
+  private _lastLayoutContentByWin?: Map<string, { width: number; height: number }>;
+  private get lastLayoutContentByWin(): Map<string, { width: number; height: number }> {
+    return (this._lastLayoutContentByWin ??= new Map());
+  }
+
+  private get holeBounds(): { x: number; y: number; width: number; height: number } | null {
+    return this.holeBoundsByWin.get(this.activeWinId) ?? null;
+  }
+  private set holeBounds(v: { x: number; y: number; width: number; height: number } | null) {
+    this.holeBoundsByWin.set(this.activeWinId, v);
+  }
+  private get sidebarW(): number {
+    return this.sidebarWByWin.get(this.activeWinId) ?? SIDEBAR_W;
+  }
+  private set sidebarW(v: number) {
+    this.sidebarWByWin.set(this.activeWinId, v);
+  }
+  private get lastGoodContent(): { width: number; height: number } {
+    return this.lastGoodContentByWin.get(this.activeWinId) || { width: 0, height: 0 };
+  }
+  private set lastGoodContent(v: { width: number; height: number }) {
+    this.lastGoodContentByWin.set(this.activeWinId, v);
+  }
+  private get lastLayoutContent(): { width: number; height: number } | null {
+    return this.lastLayoutContentByWin.get(this.activeWinId) ?? null;
+  }
+  private set lastLayoutContent(v: { width: number; height: number } | null) {
+    if (v) this.lastLayoutContentByWin.set(this.activeWinId, v);
+    else this.lastLayoutContentByWin.delete(this.activeWinId);
+  }
   /** 最小化之前，用户真正看见的窗口位置。代理把窗口挪到屏幕外时不覆盖它。 */
   private lastUserWindowBounds: { x: number; y: number; width: number; height: number } | null = null;
   /** 当前窗口是为了保持页面尺寸而放在屏幕外，不是用户拉到前台。 */
@@ -1145,10 +1218,10 @@ export class SparkBrowser {
     return this.configDir();
   }
 
-  constructor() {
-    Menu.setApplicationMenu(null);
+  /** 建一扇壳窗口。多开时每扇窗口调用一次，登录态来自同一个 defaultSession。 */
+  private buildWindow(): BrowserWindow {
     const iconPath = resolveAppIconPath();
-    this.window = new BrowserWindow({
+    const win = new BrowserWindow({
       width: 1360,
       height: 900,
       minWidth: 800,
@@ -1176,32 +1249,41 @@ export class SparkBrowser {
         preload: this.shellPreload(),
       },
     });
-    this.window.setMenuBarVisibility(false);
+    if (iconPath) win.setIcon(iconPath);
+    return win;
+  }
+
+  constructor() {
+    Menu.setApplicationMenu(null);
+    const iconPath = resolveAppIconPath();
+    this.window = this.buildWindow();
+    this.wins.set("main", this.window);
+    this.win.setMenuBarVisibility(false);
     traceMainWindow(this.window);
-    this.window.webContents.on("render-process-gone", (_e, details) => {
+    this.win.webContents.on("render-process-gone", (_e, details) => {
       console.error("[shell] render-process-gone", details.reason);
       noteHang("shell-render-gone", this.diagCrashContext(details));
       if (details.reason !== "clean-exit" && details.reason !== "killed") {
         try {
-          this.window.webContents.reload();
+          this.win.webContents.reload();
         } catch {
           /* 已销毁 */
         }
       }
     });
-    this.window.webContents.on("unresponsive", () => this.onShellUnresponsive());
-    this.attachChromeShortcuts(this.window.webContents);
+    this.win.webContents.on("unresponsive", () => this.onShellUnresponsive());
+    this.attachChromeShortcuts(this.win.webContents);
     this.attachDownloads(session.defaultSession);
-    this.window.webContents.on("context-menu", (_e, params) => {
+    this.win.webContents.on("context-menu", (_e, params) => {
       const template: MenuItemConstructorOptions[] = [];
       if (params.selectionText) {
         template.push({ role: "copy" });
       }
       template.push({ role: "selectAll" });
-      Menu.buildFromTemplate(template).popup({ window: this.window });
+      Menu.buildFromTemplate(template).popup({ window: this.win });
     });
     if (iconPath) {
-      this.window.setIcon(iconPath);
+      this.win.setIcon(iconPath);
     }
 
     this.bookmarks = loadSavedBookmarks(this.configDir());
@@ -1214,10 +1296,10 @@ export class SparkBrowser {
       .then(() => this.pushSidebarState());
     this.chatLog = loadChatMemory(this.configDir());
     this.offerMissionRecovery();
-    this.window.on("resize", () => {
+    this.win.on("resize", () => {
       this.rememberUserWindowBounds();
       this.resetChromeCoverState();
-      const [w, h] = this.window.getContentSize();
+      const [w, h] = this.win.getContentSize();
       if (
         this.lastLayoutContent &&
         Math.abs(w - this.lastLayoutContent.width) <= 1 &&
@@ -1228,29 +1310,29 @@ export class SparkBrowser {
       this.lastLayoutContent = { width: w, height: h };
       this.layout();
     });
-    this.window.on("maximize", () => this.layout());
-    this.window.on("unmaximize", () => this.layout());
-    this.window.on("enter-full-screen", () => this.layout());
-    this.window.on("leave-full-screen", () => this.layout());
+    this.win.on("maximize", () => this.layout());
+    this.win.on("unmaximize", () => this.layout());
+    this.win.on("enter-full-screen", () => this.layout());
+    this.win.on("leave-full-screen", () => this.layout());
     // Windows 上最小化→恢复不一定补一次有效 resize（事件可能在尺寸还是 0 时触发）。
     // Electron 没有 unminimize；restore 就是从最小化还原。延迟补排，防止页面视图停在 100px 窄条。
-    this.window.on("restore", () => {
+    this.win.on("restore", () => {
       this.resetChromeCoverState();
       this.scheduleLayout(150);
       this.armChromeGuard();
       // 壳层回到前台就恢复节流。Agent 标签是独立 webContents，不受这条影响。
       this.setShellBackgroundThrottling(true);
     });
-    this.window.on("minimize", () => this.syncShellKeepalive());
-    this.window.on("focus", () => {
+    this.win.on("minimize", () => this.syncShellKeepalive());
+    this.win.on("focus", () => {
       this.clearTaskbarFlash();
       this.returnWindowIfUserFocused();
     });
-    this.window.on("show", () => this.scheduleLayout(150));
+    this.win.on("show", () => this.scheduleLayout(150));
     this.registerDisplayWatch();
-    this.window.once("ready-to-show", () => this.presentWindow());
-    this.window.webContents.once("did-finish-load", () => this.presentWindow());
-    this.window.webContents.on("did-fail-load", (_e, code, desc, url) => {
+    this.win.once("ready-to-show", () => this.presentWindow());
+    this.win.webContents.once("did-finish-load", () => this.presentWindow());
+    this.win.webContents.on("did-fail-load", (_e, code, desc, url) => {
       console.error("[shell] did-fail-load", code, desc, url);
       this.presentWindow();
     });
@@ -1259,7 +1341,7 @@ export class SparkBrowser {
     this.createTab(DEFAULT_URL, true);
     this.memoryTimer = setInterval(() => this.autoDiscardIdleTabs(), 30_000);
     this.startChromeHoleWatch();
-    this.window.on("closed", () => {
+    this.win.on("closed", () => {
       if (this.memoryTimer) {
         clearInterval(this.memoryTimer);
         this.memoryTimer = null;
@@ -1288,12 +1370,12 @@ export class SparkBrowser {
     const file = "shell.html";
     const rendererUrl = process.env.ELECTRON_RENDERER_URL;
     if (rendererUrl) {
-      void this.window.loadURL(`${rendererUrl.replace(/\/$/, "")}/${file}`);
+      void this.win.loadURL(`${rendererUrl.replace(/\/$/, "")}/${file}`);
       return;
     }
     const built = join(__dirname, `../renderer/${file}`);
     const src = join(__dirname, `../../src/renderer/${file}`);
-    void this.window.loadFile(existsSync(built) ? built : src);
+    void this.win.loadFile(existsSync(built) ? built : src);
   }
 
   private navCanGoBack(wc: WebContents): boolean {
@@ -1377,8 +1459,8 @@ export class SparkBrowser {
       print: () => this.printPage(),
       find: () => this.openFind(),
       onQuote: (payload) => {
-        if (this.window.isDestroyed() || this.window.webContents.isDestroyed()) return;
-        this.window.webContents.send("spark:quote-from-page", {
+        if (this.win.isDestroyed() || this.win.webContents.isDestroyed()) return;
+        this.win.webContents.send("spark:quote-from-page", {
           text: payload.text,
           url: payload.url,
           title: payload.title,
@@ -1484,7 +1566,7 @@ export class SparkBrowser {
     wc.on("did-stop-loading", () => this.pushChromeState());
     wc.on("found-in-page", (_e, result) => {
       try {
-        this.window.webContents.send("spark:find-result", {
+        this.win.webContents.send("spark:find-result", {
           active: result.activeMatchOrdinal,
           total: result.matches,
         });
@@ -1518,7 +1600,7 @@ export class SparkBrowser {
       /* ignore */
     }
     try {
-      this.window.contentView.removeChildView(view);
+      this.win.contentView.removeChildView(view);
     } catch {
       /* ignore */
     }
@@ -1551,7 +1633,7 @@ export class SparkBrowser {
       const view = this.makePageView(tab.envId, { agentOwned: tab.agentOwned === true });
       tab.view = view;
       this.pinViewBeforeMount(view);
-      this.window.contentView.addChildView(view);
+      this.win.contentView.addChildView(view);
       this.bindPageWebContents(tab);
       tab.discarded = false;
       tab.lastActiveAt = Date.now();
@@ -1630,6 +1712,7 @@ export class SparkBrowser {
     );
     const agentOwned = opts?.agentOwned === true || Boolean(clientId);
     const view = this.makePageView(undefined, { agentOwned });
+    const winId = this.activeWinId;
     const tab: TabInfo = {
       id,
       view,
@@ -1637,12 +1720,13 @@ export class SparkBrowser {
       url,
       lastActiveAt: Date.now(),
       agentOwned,
+      winId,
     };
     this.tabs.set(id, tab);
     if (clientId) claimTabForClient(clientId, id);
     if (activate) this.activeTabId = id;
     this.pinViewBeforeMount(view);
-    this.window.contentView.addChildView(view);
+    this.winOf(winId).contentView.addChildView(view);
     this.bindPageWebContents(tab);
     this.layout();
     void view.webContents.loadURL(normalizeUrl(url));
@@ -1668,10 +1752,11 @@ export class SparkBrowser {
       url,
       envId,
       lastActiveAt: Date.now(),
+      winId: this.activeWinId,
     };
     this.tabs.set(id, tab);
     this.pinViewBeforeMount(view);
-    this.window.contentView.addChildView(view);
+    this.winOf(this.activeWinId).contentView.addChildView(view);
     this.bindPageWebContents(tab);
     this.layout();
     void view.webContents.loadURL(normalizeUrl(url));
@@ -1711,7 +1796,7 @@ export class SparkBrowser {
     const meter = this.ensurePushMeter();
     let bounds = "unknown";
     try {
-      const box = this.window?.getBounds?.();
+      const box = this.win?.getBounds?.();
       if (box) bounds = `${box.x},${box.y},${box.width}x${box.height}`;
     } catch {
       bounds = "unknown";
@@ -1781,7 +1866,7 @@ export class SparkBrowser {
       metrics = [];
     }
     try {
-      const wc = this.window?.webContents as WebContents & {
+      const wc = this.win?.webContents as WebContents & {
         getOSProcessId?: () => number;
         getProcessMemoryInfo?: () => Promise<{ private?: number; shared?: number; residentSet?: number }>;
       };
@@ -2006,7 +2091,7 @@ export class SparkBrowser {
     }
     if (tab.view) {
       try {
-        this.window.contentView.removeChildView(tab.view);
+        this.win.contentView.removeChildView(tab.view);
       } catch {
         /* ignore */
       }
@@ -2029,7 +2114,7 @@ export class SparkBrowser {
 
   private windowIsMinimized(): boolean {
     try {
-      return Boolean(this.window && !this.window.isDestroyed() && this.window.isMinimized());
+      return Boolean(this.win && !this.win.isDestroyed() && this.win.isMinimized());
     } catch {
       return false;
     }
@@ -2063,24 +2148,138 @@ export class SparkBrowser {
   }
 
   /** First show only. Later calls must not center() — that fights the user dragging the window. */
-  private didPlaceWindow = false;
+  private _placedWins?: Set<string>;
+  private get placedWins(): Set<string> {
+    return (this._placedWins ??= new Set());
+  }
   presentWindow(): void {
-    if (this.window.isDestroyed()) return;
+    if (this.win.isDestroyed()) return;
     try {
       const iconPath = resolveAppIconPath();
-      if (iconPath) this.window.setIcon(iconPath);
+      if (iconPath) this.win.setIcon(iconPath);
       this.layout();
       // 只有第一次摆上屏幕才拉窗口。之后（含任务入口）不再 restore。
-      if (this.didPlaceWindow) return;
+      if (this.placedWins.has(this.activeWinId)) return;
       this.ensureWindowVisible(true);
-      this.didPlaceWindow = true;
+      this.placedWins.add(this.activeWinId);
+      const winId = this.activeWinId;
       setTimeout(() => {
-        if (this.window.isDestroyed() || this.window.isMinimized()) return;
-        this.ensureWindowVisible(false);
+        this.withWin(winId, () => {
+          if (this.win.isDestroyed() || this.win.isMinimized()) return;
+          this.ensureWindowVisible(false);
+        });
       }, 1600);
     } catch (error) {
       console.error("[shell] presentWindow failed:", error);
     }
+  }
+
+  /**
+   * 开一扇新窗口。共用同一个 profile（登录态、cookie）与同一个标签池，
+   * 每扇窗口有自己的标签组和激活项，互不抢页面；Agent 仍按 clientId 认领标签。
+   */
+  openWindow(): string {
+    const winId = `w${++this.winSeq}`;
+    const win = this.buildWindow();
+    this.wins.set(winId, win);
+    this.bindWindow(win, winId);
+    this.activeWinId = winId;
+    this.withWin(winId, () => {
+      this.attachShell();
+      this.createTab(DEFAULT_URL, true);
+      this.presentWindow();
+    });
+    console.log(`[window] opened ${winId} (total ${this.wins.size})`);
+    return winId;
+  }
+
+  /** 在指定窗口的上下文里跑一段同步逻辑，跑完恢复原窗口。 */
+  private withWin<T>(winId: string, fn: () => T): T {
+    const prev = this.activeWinId;
+    this.activeWinId = winId;
+    try {
+      return fn();
+    } finally {
+      this.activeWinId = prev;
+    }
+  }
+
+  /** 给新窗口绑最小事件集：布局、聚焦切窗口、关闭清理。 */
+  private bindWindow(win: BrowserWindow, winId: string): void {
+    const use = <T>(fn: () => T): T => this.withWin(winId, fn);
+    const relayout = () => use(() => this.layout());
+    win.on("focus", () => {
+      this.activeWinId = winId;
+      use(() => {
+        this.clearTaskbarFlash();
+        this.returnWindowIfUserFocused();
+      });
+    });
+    win.on("resize", () =>
+      use(() => {
+        this.rememberUserWindowBounds();
+        this.resetChromeCoverState();
+        const [w, h] = win.getContentSize();
+        if (
+          this.lastLayoutContent &&
+          Math.abs(w - this.lastLayoutContent.width) <= 1 &&
+          Math.abs(h - this.lastLayoutContent.height) <= 1
+        ) {
+          return;
+        }
+        this.lastLayoutContent = { width: w, height: h };
+        this.layout();
+      }),
+    );
+    win.on("maximize", relayout);
+    win.on("unmaximize", relayout);
+    win.on("enter-full-screen", relayout);
+    win.on("leave-full-screen", relayout);
+    win.on("restore", () =>
+      use(() => {
+        this.resetChromeCoverState();
+        this.scheduleLayout(150);
+        this.armChromeGuard();
+        this.setShellBackgroundThrottling(true);
+      }),
+    );
+    win.on("show", () => use(() => this.scheduleLayout(150)));
+    win.on("closed", () => this.closeWindow(winId));
+    win.webContents.on("context-menu", (_e, params) => {
+      const template: MenuItemConstructorOptions[] = [];
+      if (params.selectionText) {
+        template.push({ role: "copy" });
+      }
+      template.push({ role: "selectAll" });
+      Menu.buildFromTemplate(template).popup({ window: win });
+    });
+  }
+
+  /** 关窗口：把这扇窗口名下的标签一起释放，别把别人的窗口带走。 */
+  private closeWindow(winId: string): void {
+    this.wins.delete(winId);
+    this.shellReadyWins.delete(winId);
+    this.placedWins.delete(winId);
+    this.activeTabs.delete(winId);
+    this.holeBoundsByWin.delete(winId);
+    this.sidebarWByWin.delete(winId);
+    this.lastGoodContentByWin.delete(winId);
+    this.lastLayoutContentByWin.delete(winId);
+    for (const [id, tab] of [...this.tabs]) {
+      if ((tab.winId || "main") !== winId) continue;
+      this.tabs.delete(id);
+      try {
+        tab.view?.webContents.close();
+      } catch {
+        /* 已销毁 */
+      }
+    }
+    if (this.activeWinId === winId) {
+      const next = [...this.wins.keys()][0];
+      if (next) this.activeWinId = next;
+      else this.activeWinId = "main";
+    }
+    console.log(`[window] closed ${winId} (left ${this.wins.size})`);
   }
 
   /**
@@ -2090,24 +2289,24 @@ export class SparkBrowser {
    * 后台任务路径禁止调用。
    */
   private ensureWindowVisible(recenter = false): void {
-    if (this.window.isDestroyed()) return;
+    if (this.win.isDestroyed()) return;
     try {
-      if (this.window.isMinimized()) this.window.restore();
+      if (this.win.isMinimized()) this.win.restore();
       const wa = screen.getPrimaryDisplay().workArea;
-      const b = this.window.getBounds();
+      const b = this.win.getBounds();
       const onScreen = windowOnScreen(b, wa);
       if (recenter || !onScreen) {
         const width = Math.min(1360, Math.max(800, wa.width - 48));
         const height = Math.min(900, Math.max(560, wa.height - 48));
-        this.window.setBounds({
+        this.win.setBounds({
           x: wa.x + Math.round((wa.width - width) / 2),
           y: wa.y + Math.round((wa.height - height) / 2),
           width,
           height,
         });
       }
-      this.window.show();
-      this.window.focus();
+      this.win.show();
+      this.win.focus();
       // restore/setBounds 后客户区尺寸可能下一帧才有效，补一次延迟布局。
       this.scheduleLayout(120);
       this.scheduleLayout(400);
@@ -2129,7 +2328,7 @@ export class SparkBrowser {
     screen.on("display-added", onAdded);
     screen.on("display-removed", onRemoved);
     if (typeof powerMonitor?.on === "function") powerMonitor.on("unlock-screen", onUnlock);
-    this.window.on("closed", () => {
+    this.win.on("closed", () => {
       screen.removeListener("display-metrics-changed", onMetrics);
       screen.removeListener("display-added", onAdded);
       screen.removeListener("display-removed", onRemoved);
@@ -2138,12 +2337,12 @@ export class SparkBrowser {
   }
 
   private handleDisplayEvent(event: string): void {
-    if (this.window.isDestroyed()) return;
+    if (this.win.isDestroyed()) return;
     let bounds: Rect;
     let minimized = false;
     try {
-      bounds = this.window.getBounds();
-      minimized = this.window.isMinimized();
+      bounds = this.win.getBounds();
+      minimized = this.win.isMinimized();
     } catch {
       return;
     }
@@ -2157,7 +2356,7 @@ export class SparkBrowser {
     const clampEvents = event === "display-metrics-changed" || event === "display-removed" || event === "unlock-screen";
     if (clampEvents) {
       try {
-        const result = applyDisplayClamp(this.window, displays.map((item) => item.workArea), home);
+        const result = applyDisplayClamp(this.win, displays.map((item) => item.workArea), home);
         if (result.moved) console.log(formatDisplayClamp(bounds, result.bounds));
       } catch (error) {
         console.error("[display] clamp failed", error);
@@ -2166,7 +2365,7 @@ export class SparkBrowser {
     this.requestHoleReport();
     this.scheduleLayout(120);
     setTimeout(() => {
-      if (this.window.isDestroyed()) return;
+      if (this.win.isDestroyed()) return;
       this.requestHoleReport();
       this.layout();
     }, 400);
@@ -2179,10 +2378,10 @@ export class SparkBrowser {
   private restoreForCoPresence(): void {
     if (this.coPresenceRestored) return;
     this.coPresenceRestored = true;
-    if (this.window.isDestroyed()) return;
+    if (this.win.isDestroyed()) return;
     let minimized = true;
     try {
-      minimized = this.window.isMinimized();
+      minimized = this.win.isMinimized();
     } catch {
       return;
     }
@@ -2219,9 +2418,14 @@ export class SparkBrowser {
   }
 
   private setShellBackgroundThrottling(throttle: boolean): void {
+    for (const [, win] of this.liveWins()) {
+      this.setWinThrottling(win, throttle);
+    }
+  }
+
+  private setWinThrottling(win: BrowserWindow, throttle: boolean): void {
     try {
-      if (this.window.isDestroyed() || this.window.webContents.isDestroyed()) return;
-      this.window.webContents.setBackgroundThrottling(throttle);
+      win.webContents.setBackgroundThrottling(throttle);
     } catch {
       /* older Electron */
     }
@@ -2229,27 +2433,27 @@ export class SparkBrowser {
 
   /** 最小化且还有 Agent 任务时，壳层定时器不节流；任务结束或窗口恢复后回到节流。 */
   private syncShellKeepalive(): void {
-    if (this.window.isDestroyed()) return;
-    let minimized = false;
-    try {
-      minimized = this.window.isMinimized();
-    } catch {
-      return;
-    }
+    const wins = this.liveWins();
+    if (!wins.length) return;
     const running = this.agentTasksRunning();
     if (!running) this.coPresenceRestored = false;
-    if (!minimized) {
-      this.setShellBackgroundThrottling(true);
-      return;
+    for (const [, win] of wins) {
+      let minimized = false;
+      try {
+        minimized = win.isMinimized();
+      } catch {
+        continue;
+      }
+      // 这扇窗口最小化且还有活干：不节流，让它继续收推送。
+      this.setWinThrottling(win, !(minimized && running));
     }
-    this.setShellBackgroundThrottling(!running);
   }
 
   /** 侧栏新消息在窗口最小化或未聚焦时只闪任务栏，不把窗口弹回来。 */
   private noteSidebarMessages(): void {
     const userLog = this.userTurns();
     const n = userLog.length;
-    if (this.lastNotifiedChat < 0 || !this.didPlaceWindow) {
+    if (this.lastNotifiedChat < 0 || !this.placedWins.has(this.activeWinId)) {
       this.lastNotifiedChat = n;
       return;
     }
@@ -2264,18 +2468,18 @@ export class SparkBrowser {
   }
 
   private flashTaskbarIfHidden(): void {
-    if (this.window.isDestroyed()) return;
+    if (this.win.isDestroyed()) return;
     let minimized = false;
     let focused = true;
     try {
-      minimized = this.window.isMinimized();
-      focused = this.window.isFocused();
+      minimized = this.win.isMinimized();
+      focused = this.win.isFocused();
     } catch {
       return;
     }
     if (!minimized && focused) return;
     try {
-      this.window.flashFrame(true);
+      this.win.flashFrame(true);
       this.taskbarFlashing = true;
     } catch {
       /* ignore */
@@ -2283,10 +2487,10 @@ export class SparkBrowser {
   }
 
   private clearTaskbarFlash(): void {
-    if (!this.taskbarFlashing || this.window.isDestroyed()) return;
+    if (!this.taskbarFlashing || this.win.isDestroyed()) return;
     this.taskbarFlashing = false;
     try {
-      this.window.flashFrame(false);
+      this.win.flashFrame(false);
     } catch {
       /* ignore */
     }
@@ -2297,15 +2501,15 @@ export class SparkBrowser {
    * 后台点击和填写不再抢焦点。前台任务已在入口拉回一次，窗口在前台时才补焦点。
    */
   private focusPageForInput(wc: WebContents): void {
-    if (this.window.isDestroyed()) return;
+    if (this.win.isDestroyed()) return;
     let hidden = true;
     try {
-      hidden = this.window.isMinimized() || !this.window.isFocused();
+      hidden = this.win.isMinimized() || !this.win.isFocused();
     } catch {
       return;
     }
     if (hidden) return;
-    this.window.focus();
+    this.win.focus();
     try {
       wc.focus();
     } catch {
@@ -2319,7 +2523,7 @@ export class SparkBrowser {
     const tab = tabId || this.activeTabId || "";
     let focused = false;
     try {
-      focused = Boolean(this.window && !this.window.isDestroyed() && this.window.isFocused());
+      focused = Boolean(this.win && !this.win.isDestroyed() && this.win.isFocused());
     } catch {
       focused = false;
     }
@@ -2388,11 +2592,11 @@ export class SparkBrowser {
       return true;
     }
     if (key === "f3" || (ctrl && !alt && !shift && key === "g")) {
-      this.window.webContents.send("spark:find-again", { forward: !shift });
+      this.win.webContents.send("spark:find-again", { forward: !shift });
       return true;
     }
     if (ctrl && shift && key === "g") {
-      this.window.webContents.send("spark:find-again", { forward: false });
+      this.win.webContents.send("spark:find-again", { forward: false });
       return true;
     }
     if (ctrl && !alt && !shift && key === "p") {
@@ -2460,7 +2664,7 @@ export class SparkBrowser {
       return true;
     }
     if (key === "f11") {
-      this.window.setFullScreen(!this.window.isFullScreen());
+      this.win.setFullScreen(!this.win.isFullScreen());
       return true;
     }
     if (key === "f12") {
@@ -2494,8 +2698,8 @@ export class SparkBrowser {
   private focusOmnibox(): void {
     try {
       if (this.windowIsMinimized()) return;
-      this.window.webContents.focus();
-      void this.window.webContents.executeJavaScript(
+      this.win.webContents.focus();
+      void this.win.webContents.executeJavaScript(
         `(() => { const el = document.getElementById("url"); if (!el) return; el.focus(); el.select(); })()`,
       );
     } catch {
@@ -2524,9 +2728,9 @@ export class SparkBrowser {
   }
 
   toggleMaximize(): ToolResult {
-    if (this.window.isMaximized()) this.window.unmaximize();
-    else this.window.maximize();
-    return { ok: true, message: this.window.isMaximized() ? "maximized" : "restored" };
+    if (this.win.isMaximized()) this.win.unmaximize();
+    else this.win.maximize();
+    return { ok: true, message: this.win.isMaximized() ? "maximized" : "restored" };
   }
 
   private attachDownloads(ses: Electron.Session): void {
@@ -2549,9 +2753,9 @@ export class SparkBrowser {
   }
 
   private sendToast(text: string, path?: string, duration?: number, undo?: boolean): void {
-    if (this.window.isDestroyed() || this.window.webContents.isDestroyed()) return;
+    if (this.win.isDestroyed() || this.win.webContents.isDestroyed()) return;
     try {
-      this.window.webContents.send("spark:toast", {
+      this.win.webContents.send("spark:toast", {
         text,
         path: path || "",
         duration: duration || 0,
@@ -2583,8 +2787,8 @@ export class SparkBrowser {
       wc.stop();
       return true;
     }
-    if (this.window.isFullScreen()) {
-      this.window.setFullScreen(false);
+    if (this.win.isFullScreen()) {
+      this.win.setFullScreen(false);
       return true;
     }
     return false;
@@ -2594,8 +2798,8 @@ export class SparkBrowser {
     if (this.overlay === "history") this.closeHistory();
     this.findOpen = true;
     try {
-      if (!this.windowIsMinimized()) this.window.webContents.focus();
-      this.window.webContents.send("spark:open-find");
+      if (!this.windowIsMinimized()) this.win.webContents.focus();
+      this.win.webContents.send("spark:open-find");
     } catch {
       /* ignore */
     }
@@ -2624,7 +2828,7 @@ export class SparkBrowser {
       /* ignore */
     }
     try {
-      this.window.webContents.send("spark:close-find");
+      this.win.webContents.send("spark:close-find");
     } catch {
       /* ignore */
     }
@@ -2653,8 +2857,8 @@ export class SparkBrowser {
     this.overlay = "history";
     this.layout();
     try {
-      if (!this.windowIsMinimized()) this.window.webContents.focus();
-      this.window.webContents.send("spark:history", {
+      if (!this.windowIsMinimized()) this.win.webContents.focus();
+      this.win.webContents.send("spark:history", {
         items: loadHistory(this.configDir()),
       });
     } catch {
@@ -2666,7 +2870,7 @@ export class SparkBrowser {
     this.overlay = "none";
     this.layout();
     try {
-      this.window.webContents.send("spark:history", { items: null });
+      this.win.webContents.send("spark:history", { items: null });
     } catch {
       /* ignore */
     }
@@ -2676,7 +2880,7 @@ export class SparkBrowser {
   clearVisitHistory(): ToolResult {
     clearHistory(this.configDir());
     try {
-      this.window.webContents.send("spark:history", { items: [] });
+      this.win.webContents.send("spark:history", { items: [] });
     } catch {
       /* ignore */
     }
@@ -2742,10 +2946,10 @@ export class SparkBrowser {
   }
 
   private pageBounds(): { x: number; y: number; width: number; height: number } | null {
-    const [rawW, rawH] = this.window.getContentSize();
+    const [rawW, rawH] = this.win.getContentSize();
     let minimized = false;
     try {
-      minimized = this.window.isMinimized();
+      minimized = this.win.isMinimized();
     } catch {
       /* ignore */
     }
@@ -2786,8 +2990,8 @@ export class SparkBrowser {
 
   private rememberUserWindowBounds(): void {
     if (this.agentOffscreen) return;
-    if (!this.window || this.window.isDestroyed() || this.window.isMinimized()) return;
-    const b = this.window.getBounds();
+    if (!this.win || this.win.isDestroyed() || this.win.isMinimized()) return;
+    const b = this.win.getBounds();
     if (b.width < 400 || b.height < 300 || b.x < -4000) return;
     this.lastUserWindowBounds = { x: b.x, y: b.y, width: b.width, height: b.height };
   }
@@ -2797,9 +3001,9 @@ export class SparkBrowser {
    * 保持上次的宽高，不 focus。填值走 DOM，不要调用这里。
    */
   private async ensureOperableViewport(): Promise<void> {
-    if (!this.window || this.window.isDestroyed()) return;
-    const [rawW, rawH] = this.window.getContentSize();
-    if (!viewportTooSmall(this.window.isMinimized(), rawW, rawH)) return;
+    if (!this.win || this.win.isDestroyed()) return;
+    const [rawW, rawH] = this.win.getContentSize();
+    if (!viewportTooSmall(this.win.isMinimized(), rawW, rawH)) return;
     this.rememberUserWindowBounds();
     const size = offscreenAgentBounds(
       this.lastGoodContent.width || this.lastUserWindowBounds?.width || rawW,
@@ -2809,17 +3013,17 @@ export class SparkBrowser {
     this.ignoreFocusUntil = Date.now() + 2500;
     let hid = false;
     try {
-      this.window.setOpacity(0);
+      this.win.setOpacity(0);
       hid = true;
-      if (this.window.isMinimized()) this.window.restore();
-      this.window.setBounds(size);
-      this.window.showInactive();
+      if (this.win.isMinimized()) this.win.restore();
+      this.win.setBounds(size);
+      this.win.showInactive();
     } catch {
       /* ignore */
     } finally {
       if (hid) {
         try {
-          this.window.setOpacity(1);
+          this.win.setOpacity(1);
         } catch {
           /* ignore */
         }
@@ -2832,8 +3036,8 @@ export class SparkBrowser {
   /** 用户之后真正点到这个窗口时，把它放回最小化前的位置。 */
   private returnWindowIfUserFocused(): void {
     if (!this.agentOffscreen || Date.now() < this.ignoreFocusUntil) return;
-    if (!this.window || this.window.isDestroyed()) return;
-    const now = this.window.getBounds();
+    if (!this.win || this.win.isDestroyed()) return;
+    const now = this.win.getBounds();
     const area = screen.getPrimaryDisplay().workArea;
     const alreadyVisible = now.x > area.x - 80 && now.x < area.x + area.width;
     this.agentOffscreen = false;
@@ -2853,7 +3057,7 @@ export class SparkBrowser {
             height: 860,
           };
     try {
-      this.window.setBounds(next);
+      this.win.setBounds(next);
     } catch {
       /* ignore */
     }
@@ -2861,7 +3065,7 @@ export class SparkBrowser {
   }
 
   private applyViewBounds(followUp = true): void {
-    if (this.window.isDestroyed()) return;
+    if (this.win.isDestroyed()) return;
     const bounds = this.pageBounds();
     // 窗口尺寸此刻无效（最小化/恢复/隐藏过渡）：不动任何视图，稍后尺寸回来再排。
     if (!bounds) {
@@ -2871,6 +3075,8 @@ export class SparkBrowser {
     const hidePage = this.overlay !== "none";
     for (const [id, tab] of this.tabs) {
       if (!tab.view) continue;
+      // 别的窗口的标签由那扇窗口自己排；这里只摆本窗口的。
+      if ((tab.winId || "main") !== this.activeWinId) continue;
       const active = id === this.activeTabId && !hidePage;
       try {
         if (active) this.mountPageView(tab.view, bounds, !followUp);
@@ -2923,7 +3129,7 @@ export class SparkBrowser {
 
   private assertChromeHole(): void {
     try {
-      if (!this.window || this.window.isDestroyed()) return;
+      if (!this.win || this.win.isDestroyed()) return;
       const hole = this.reportedPageHole();
       if (!hole) return;
       this.noteUnregisteredPageViews();
@@ -2946,7 +3152,9 @@ export class SparkBrowser {
 
   /** 活动页先修，避免同一拍的去抖把真正盖住壳层的活动页让给后台页。 */
   private chromeWatchOrder(): string[] {
-    const ids = [...this.tabs.keys()];
+    const ids = [...this.tabs.entries()]
+      .filter(([, tab]) => (tab.winId || "main") === this.activeWinId)
+      .map(([id]) => id);
     ids.sort((left, right) => {
       if (left === this.activeTabId) return -1;
       if (right === this.activeTabId) return 1;
@@ -2976,7 +3184,7 @@ export class SparkBrowser {
   private noteUnregisteredPageViews(): void {
     let children: WebContentsView[] = [];
     try {
-      children = (this.window?.contentView?.children || []) as WebContentsView[];
+      children = (this.win?.contentView?.children || []) as WebContentsView[];
     } catch {
       return;
     }
@@ -3099,7 +3307,7 @@ export class SparkBrowser {
   private remountCoveredActiveView(view: WebContentsView): void {
     const bounds = this.pageBounds();
     if (!bounds || bounds.y < CHROME_H || bounds.width < 80 || bounds.height < 80) return;
-    const parent = this.window.contentView;
+    const parent = this.win.contentView;
     try {
       if (parent?.children?.includes(view)) parent.removeChildView(view);
     } catch {
@@ -3176,8 +3384,8 @@ export class SparkBrowser {
     let minimized = false;
     let maximized = false;
     try {
-      minimized = Boolean(this.window && !this.window.isDestroyed() && this.window.isMinimized());
-      maximized = Boolean(this.window && !this.window.isDestroyed() && this.window.isMaximized());
+      minimized = Boolean(this.win && !this.win.isDestroyed() && this.win.isMinimized());
+      maximized = Boolean(this.win && !this.win.isDestroyed() && this.win.isMaximized());
     } catch {
       /* ignore */
     }
@@ -3193,7 +3401,7 @@ export class SparkBrowser {
     for (const timer of this.chromeGuardTimers || []) clearTimeout(timer);
     this.chromeGuardTimers = [100, 450, 1200, 2500].map((delay) =>
       setTimeout(() => {
-        if (this.window.isDestroyed()) return;
+        if (this.win.isDestroyed()) return;
         this.boundsGuard = true;
         try {
           this.applyViewBounds(false);
@@ -3220,7 +3428,7 @@ export class SparkBrowser {
     bounds: { x: number; y: number; width: number; height: number },
     nudge: boolean,
   ): void {
-    const parent = this.window.contentView;
+    const parent = this.win.contentView;
     let actual: { x: number; y: number; width: number; height: number } | null = null;
     try {
       actual = view.getBounds();
@@ -3271,8 +3479,8 @@ export class SparkBrowser {
   /** 向 shell 要一次最新的 page-hole 测量（恢复过渡的回调可能丢过）。 */
   private requestHoleReport(): void {
     try {
-      if (this.window.isDestroyed()) return;
-      this.window.webContents.send("spark:request-hole");
+      if (this.win.isDestroyed()) return;
+      this.win.webContents.send("spark:request-hole");
     } catch {
       /* ignore */
     }
@@ -3293,8 +3501,8 @@ export class SparkBrowser {
 
   private focusShell(): void {
     try {
-      if (this.window.isDestroyed() || this.windowIsMinimized()) return;
-      this.window.webContents.focus();
+      if (this.win.isDestroyed() || this.windowIsMinimized()) return;
+      this.win.webContents.focus();
     } catch {
       /* ignore */
     }
@@ -3302,7 +3510,7 @@ export class SparkBrowser {
 
   private focusActivePage(): void {
     try {
-      if (this.window.isMinimized()) return;
+      if (this.win.isMinimized()) return;
       const tab = this.getActiveTab();
       if (!tab || !tab.view || tab.view.webContents.isDestroyed()) return;
       tab.view.webContents.focus();
@@ -3313,17 +3521,17 @@ export class SparkBrowser {
 
   /** Load unified shell (address bar + sidebar) as the window page. */
   attachShell(): void {
-    if (this.shellReady) return;
-    this.shellReady = true;
-    this.window.webContents.on("console-message", (_e, _level, message) => {
+    if (this.shellReadyWins.has(this.activeWinId)) return;
+    this.shellReadyWins.add(this.activeWinId);
+    this.win.webContents.on("console-message", (_e, _level, message) => {
       console.log(`[shell-console] ${message}`);
     });
-    this.window.webContents.on("did-finish-load", () => {
+    this.win.webContents.on("did-finish-load", () => {
       this.chatResync = true;
       this.pushChromeState();
       this.pushSidebarState();
       this.layout();
-      void this.window.webContents
+      void this.win.webContents
         .executeJavaScript(
           `typeof window.sparkShell === 'object' ? Object.keys(window.sparkShell) : typeof window.sparkShell`,
         )
@@ -3345,6 +3553,26 @@ export class SparkBrowser {
     this.attachShell();
   }
 
+  /** 这条 IPC 是从哪扇窗口发来的。查不到就退回当前窗口。 */
+  private winIdOfSender(e: any): string {
+    const wcId = Number(e?.sender?.id);
+    if (!Number.isFinite(wcId)) return this.activeWinId;
+    for (const [id, win] of this.wins) {
+      try {
+        if (!win.isDestroyed() && win.webContents.id === wcId) return id;
+      } catch {
+        /* 已销毁，跳过 */
+      }
+    }
+    return this.activeWinId;
+  }
+
+  /** 在“发消息那扇窗口”的上下文里跑。多开时别拿焦点窗口顶替。 */
+  private forSender<T>(e: any, fn: () => T): T {
+    const id = this.winIdOfSender(e);
+    return id === this.activeWinId ? fn() : this.withWin(id, fn);
+  }
+
   private registerIpc(): void {
     if (this.ipcReady) return;
     this.ipcReady = true;
@@ -3354,26 +3582,33 @@ export class SparkBrowser {
       } catch {
         /* ignore */
       }
-      ipcMain.handle(channel, listener);
+      ipcMain.handle(channel, async (e, ...args) => {
+        const id = this.winIdOfSender(e);
+        // 同步段按发送窗口跑；返回 Promise 时也把它归到同一扇窗口再跑一次外壳。
+        if (id === this.activeWinId) return listener(e, ...args);
+        return this.withWin(id, () => listener(e, ...args));
+      });
     };
     ipcMain.removeAllListeners("spark:page-hole");
-    ipcMain.on("spark:page-hole", (_e, raw) => this.setPageHoleBounds(raw || {}));
+    ipcMain.on("spark:page-hole", (e, raw) =>
+      this.forSender(e, () => this.setPageHoleBounds(raw || {})),
+    );
     ipcMain.removeAllListeners("spark:set-theme");
-    ipcMain.on("spark:set-theme", (_e, raw) => {
+    ipcMain.on("spark:set-theme", (e, raw) => this.forSender(e, () => {
       const dark = String(raw) === "dark";
       const bg = dark ? "#0d1117" : "#fbfbfd";
       const fg = dark ? "#e8f1f8" : "#12141a";
       try {
-        this.window?.setBackgroundColor?.(bg);
+        this.win?.setBackgroundColor?.(bg);
         if (process.platform !== "darwin") {
-          this.window?.setTitleBarOverlay?.({ color: bg, symbolColor: fg, height: 36 });
+          this.win?.setTitleBarOverlay?.({ color: bg, symbolColor: fg, height: 36 });
         }
       } catch (err) {
         // 老版本 Electron 或非 Windows 下没有这个能力，忽略即可
       }
-    });
+    }));
     ipcMain.removeAllListeners("spark:set-sidebar-width");
-    ipcMain.on("spark:set-sidebar-width", (_e, raw) => {
+    ipcMain.on("spark:set-sidebar-width", (e, raw) => this.forSender(e, () => {
       const w = Math.round(Number(raw));
       if (!Number.isFinite(w)) return;
       // 56 是收起后的工具轨；拖拽宽度仍夹在 300–480。
@@ -3381,9 +3616,11 @@ export class SparkBrowser {
       if (next === this.sidebarW) return;
       this.sidebarW = next;
       this.layout();
-    });
+    }));
     ipcMain.removeAllListeners("spark:focus-shell");
-    ipcMain.on("spark:focus-shell", () => this.focusShell());
+    ipcMain.on("spark:focus-shell", (e) =>
+      this.forSender(e, () => this.focusShell()),
+    );
     handle("spark:navigate", async (_e, url: string) =>
       this.navigate(String(url || ""), { asHuman: true }),
     );
@@ -3599,8 +3836,8 @@ export class SparkBrowser {
       if (!this.senderIsReaderPage(e.sender)) return { ok: false, message: "只能从阅读页问" };
       const text = String(payload?.text || "").trim().slice(0, 4000);
       if (!text) return { ok: false, message: "这一页没有正文" };
-      if (this.window.isDestroyed() || this.window.webContents.isDestroyed()) return { ok: false };
-      this.window.webContents.send("spark:quote-from-page", {
+      if (this.win.isDestroyed() || this.win.webContents.isDestroyed()) return { ok: false };
+      this.win.webContents.send("spark:quote-from-page", {
         text,
         url: String(payload?.url || ""),
         title: String(payload?.title || ""),
@@ -3616,7 +3853,7 @@ export class SparkBrowser {
       return { ok: true };
     });
     handle("spark:pick-file", async () => {
-      const picked = await dialog.showOpenDialog(this.window, {
+      const picked = await dialog.showOpenDialog(this.win, {
         title: "选择本地文件",
         properties: ["openFile"],
         filters: [
@@ -3886,7 +4123,7 @@ export class SparkBrowser {
         label: tx(loc, state.currentBookmarked ? "bookmark.unpage" : "bookmark.page"),
         click: () => {
           const r = this.toggleCurrentBookmark();
-          this.window.webContents
+          this.win.webContents
             .executeJavaScript(
               `window.__sparkToast && window.__sparkToast(${JSON.stringify(r.message)})`,
             )
@@ -3899,7 +4136,7 @@ export class SparkBrowser {
         enabled: state.canImportChrome,
         click: () => {
           void this.importBookmarks("chrome").then((r) => {
-            this.window.webContents
+            this.win.webContents
               .executeJavaScript(
                 `window.__sparkToast && window.__sparkToast(${JSON.stringify(r.message)})`,
               )
@@ -3912,7 +4149,7 @@ export class SparkBrowser {
         enabled: state.canImportEdge,
         click: () => {
           void this.importBookmarks("edge").then((r) => {
-            this.window.webContents
+            this.win.webContents
               .executeJavaScript(
                 `window.__sparkToast && window.__sparkToast(${JSON.stringify(r.message)})`,
               )
@@ -3953,7 +4190,7 @@ export class SparkBrowser {
           this.bookmarks = [];
           saveBookmarks(this.configDir(), this.bookmarks);
           this.pushChromeState();
-          this.window.webContents
+          this.win.webContents
             .executeJavaScript(
               `window.__sparkToast && window.__sparkToast(${JSON.stringify(tx(loc, "bookmark.cleared"))})`,
             )
@@ -3962,14 +4199,14 @@ export class SparkBrowser {
       },
     );
 
-    Menu.buildFromTemplate(template).popup({ window: this.window });
+    Menu.buildFromTemplate(template).popup({ window: this.win });
   }
 
   /** Native popup. A DOM menu under the omnibox sits under the page WebContentsView. */
   openNavMenu(): void {
     const loc = this.settings.locale;
     const toast = (message: string) => {
-      this.window.webContents
+      this.win.webContents
         .executeJavaScript(
           `window.__sparkToast && window.__sparkToast(${JSON.stringify(message)})`,
         )
@@ -3988,7 +4225,7 @@ export class SparkBrowser {
         },
       },
     ];
-    Menu.buildFromTemplate(template).popup({ window: this.window });
+    Menu.buildFromTemplate(template).popup({ window: this.win });
   }
 
   private chromeBookmarkState() {
@@ -4018,12 +4255,27 @@ export class SparkBrowser {
     sidebarBytes: 0,
   };
 
+  /** 某扇窗口的标签栏状态：只算它名下的标签，激活项也用它自己的。 */
+  private chromeStateFor(winId: string) {
+    const all = this.listTabs();
+    const own = all.tabs.filter((t) => (this.tabs.get(t.id)?.winId || "main") === winId);
+    const activeId = this.activeTabs.get(winId) || "";
+    const tab = this.tabs.get(activeId);
+    const wc = tab?.view?.webContents;
+    const live = wc && !wc.isDestroyed() ? wc : undefined;
+    return {
+      tabs: own,
+      activeId,
+      url: live ? live.getURL() : tab?.url || "",
+      canGoBack: Boolean(live && this.navCanGoBack(live)),
+      canGoForward: Boolean(live && this.navCanGoForward(live)),
+      isLoading: Boolean(live && live.isLoading()),
+    };
+  }
+
   /** 100ms 节流。setStep 每轮都推，合并成一次全量重绘，最后一次状态不会丢。 */
   private pushChromeState(): void {
-    const win = this.window as
-      | { isDestroyed?: () => boolean; webContents?: { isDestroyed?: () => boolean } }
-      | undefined;
-    if (!win || win.isDestroyed?.() || win.webContents?.isDestroyed?.()) return;
+    if (!this.liveWins().length) return;
     this.ensurePushMeter().chromeReq += 1;
     if (this.chromePushTimer) return;
     this.chromePushTimer = setTimeout(() => {
@@ -4033,26 +4285,40 @@ export class SparkBrowser {
   }
 
   private flushChromeState(): void {
-    const win = this.window as
-      | { isDestroyed?: () => boolean; webContents?: { isDestroyed?: () => boolean; send?: (channel: string, payload: unknown) => void } }
-      | undefined;
-    if (!win || win.isDestroyed?.() || win.webContents?.isDestroyed?.()) return;
+    if (!this.liveWins().length) return;
     try {
-      const payload = {
-        ...this.listTabs(),
-        ...this.chromeBookmarkState(),
-        memoryBoard: this.memoryBoardLine(),
-      };
       this.ensurePushMeter().chromeFlush += 1;
-      try {
-        this.ensurePushMeter().chromeBytes += JSON.stringify(payload).length;
-      } catch {
-        /* 体积量不到不影响推送 */
+      const bookmarks = this.chromeBookmarkState();
+      const memoryBoard = this.memoryBoardLine();
+      let bytes = 0;
+      for (const [winId, win] of this.liveWins()) {
+        // 每扇窗口只看到自己的标签，激活项也各算各的。
+        const payload = { ...this.chromeStateFor(winId), ...bookmarks, memoryBoard };
+        try {
+          bytes += JSON.stringify(payload).length;
+        } catch {
+          /* 体积量不到不影响推送 */
+        }
+        win.webContents.send("spark:chrome-state", payload);
       }
-      win.webContents?.send?.("spark:chrome-state", payload);
+      this.ensurePushMeter().chromeBytes += bytes;
     } catch (error) {
       console.error("[shell] pushChromeState failed:", error);
     }
+  }
+
+  /** 还活着的窗口。多窗口推送一律走这里，别只推当前那扇。 */
+  private liveWins(): Array<[string, BrowserWindow]> {
+    const out: Array<[string, BrowserWindow]> = [];
+    for (const [id, win] of this.wins) {
+      try {
+        if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+      } catch {
+        continue;
+      }
+      out.push([id, win]);
+    }
+    return out;
   }
 
   /** 任务池状态变了就推壳层，并请壳层重报页面洞。 */
@@ -4062,7 +4328,7 @@ export class SparkBrowser {
   }
 
   private pushSidebarState(): void {
-    if (!this.window || this.window.isDestroyed() || this.window.webContents.isDestroyed()) return;
+    if (!this.win || this.win.isDestroyed() || this.win.webContents.isDestroyed()) return;
     this.ensurePushMeter().sidebarReq += 1;
     try {
       saveChatMemory(this.configDir(), this.userTurns());
@@ -4081,7 +4347,8 @@ export class SparkBrowser {
 
   /** 100ms 内的多次侧栏推送合成一拍。对话只带新增的几条。 */
   private flushSidebarState(): void {
-    if (!this.window || this.window.isDestroyed() || this.window.webContents.isDestroyed()) return;
+    const wins = this.liveWins();
+    if (!wins.length) return;
     try {
       const payload = this.getSidebarPayload(true);
       this.ensurePushMeter().sidebarFlush += 1;
@@ -4090,7 +4357,6 @@ export class SparkBrowser {
       try {
         totalBytes = JSON.stringify(payload).length;
         chatBytes = JSON.stringify(payload.chat ?? []).length;
-        this.ensurePushMeter().sidebarBytes += totalBytes;
       } catch {
         /* 体积量不到不影响推送 */
       }
@@ -4105,7 +4371,16 @@ export class SparkBrowser {
           why: payload.why,
         }),
       );
-      this.window.webContents.send("spark:sidebar-state", payload);
+      // 对话是一份，所有窗口都要收到；地址/标题只属于自己那扇窗口。
+      for (const [winId, win] of wins) {
+        const tid = this.activeTabs.get(winId) || "";
+        const own =
+          winId === this.activeWinId
+            ? payload
+            : { ...payload, url: this.getUrl(tid), title: this.getTitle(tid) };
+        this.ensurePushMeter().sidebarBytes += totalBytes;
+        win.webContents.send("spark:sidebar-state", own);
+      }
       this.noteSidebarMessages();
       queueMicrotask(() => this.syncShellKeepalive());
     } catch (error) {
@@ -4315,7 +4590,7 @@ export class SparkBrowser {
         return { ok: false, message: tx(loc, "dialog.noBookmarksFile", { label }) };
       }
 
-      const prompt = await dialog.showMessageBox(this.window, {
+      const prompt = await dialog.showMessageBox(this.win, {
         type: "question",
         buttons: [tx(loc, "confirm.cancel"), tx(loc, "dialog.import")],
         defaultId: 1,
@@ -4983,7 +5258,7 @@ export class SparkBrowser {
   private senderIsShell(sender?: Electron.WebContents | null): boolean {
     try {
       return Boolean(
-        sender && this.window && !this.window.isDestroyed() && sender === this.window.webContents,
+        sender && this.win && !this.win.isDestroyed() && sender === this.win.webContents,
       );
     } catch {
       return false;
@@ -5085,8 +5360,8 @@ export class SparkBrowser {
         const nav = await this.navigate(url, { asHuman: true });
         if (!nav.ok) return nav;
       }
-      const result = await extractReadable(this.window);
-      const doc = await openReaderModeTab(this.window, result, {
+      const result = await extractReadable(this.win);
+      const doc = await openReaderModeTab(this.win, result, {
         configDir: this.configDir(),
         prefs: this.settings.reader,
         openFile: (abs) => {
@@ -5297,8 +5572,8 @@ export class SparkBrowser {
   }
 
   private openNotesPanel(search?: string): void {
-    if (this.window.isDestroyed()) return;
-    this.window.webContents.send("spark:notes", { search: search || "" });
+    if (this.win.isDestroyed()) return;
+    this.win.webContents.send("spark:notes", { search: search || "" });
   }
 
   private openNoteTab(id: string): ToolResult {
@@ -7465,7 +7740,7 @@ export class SparkBrowser {
   }
 
   private mainWindowMode(): "minimized" | "background" | "foreground" {
-    const win = this.window as {
+    const win = this.win as {
       isDestroyed?: () => boolean;
       isMinimized?: () => boolean;
       isFocused?: () => boolean;
@@ -7484,7 +7759,7 @@ export class SparkBrowser {
   private engageBackgroundRender(): void {
     this.renderHoldCount = (this.renderHoldCount || 0) + 1;
     if (this.renderHoldCount > 1) return;
-    const win = this.window as {
+    const win = this.win as {
       isDestroyed?: () => boolean;
       isMinimized?: () => boolean;
       restore?: () => void;
@@ -7508,7 +7783,7 @@ export class SparkBrowser {
     if (this.renderHoldCount > 0) return;
     if (!this.wasMinimizedForTask) return;
     this.wasMinimizedForTask = false;
-    const win = this.window as { isDestroyed?: () => boolean; minimize?: () => void } | undefined;
+    const win = this.win as { isDestroyed?: () => boolean; minimize?: () => void } | undefined;
     if (!win || win.isDestroyed?.()) return;
     try { win.minimize?.(); } catch { /* 用户原来就是最小化 */ }
   }
@@ -10272,7 +10547,7 @@ export class SparkBrowser {
     }
     const tabId = opts?.tabId;
     const wc = this.viewForTab(tabId || this.activeTabId).webContents;
-    const win = this.window as {
+    const win = this.win as {
       isDestroyed?: () => boolean;
       isMinimized?: () => boolean;
       isVisible?: () => boolean;
@@ -11363,9 +11638,9 @@ export class SparkBrowser {
   }
 
   private ensureWindowVisibleForCapture(): void {
-    if (this.window.isDestroyed()) return;
+    if (this.win.isDestroyed()) return;
     // 任务截图不再 restore / show。最小化时抢焦点会把窗口弹回用户面前。
-    if (this.window.isMinimized()) return;
+    if (this.win.isMinimized()) return;
     this.layout();
   }
 
