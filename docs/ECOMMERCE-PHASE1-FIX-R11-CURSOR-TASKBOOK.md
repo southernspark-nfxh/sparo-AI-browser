@@ -178,3 +178,10 @@ Part B 才写的：
 ## 9. 完成记录位置
 
 `docs/ECOMMERCE-PHASE1-CURSOR-TASKBOOK.md` 末尾追加「Cursor R11 完成记录」。开头必须贴动工前的 `git status --short` 原文。
+
+## 10. 后续（2026-11-10）
+
+- 附录 C 已采完：[ECOMMERCE-PHASE1-APPENDIX-C-BOX-API.md](./ECOMMERCE-PHASE1-APPENDIX-C-BOX-API.md)（commit `f633f53`）。
+- 实测响应与 Part A 契约不符，先做 [R11-A2 契约修正](./ECOMMERCE-PHASE1-FIX-R11A2-CONTRACT-TASKBOOK.md)，全绿后才放 Part B。
+- Part B 步骤仍以本文 Part B 段为准。
+
