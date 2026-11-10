@@ -1,9 +1,9 @@
-/** 采集箱列表接口契约。Part A 只解析和判定，不接 lookupDraft，也不猜店小秘字段名。 */
+/** 采集箱列表接口契约。只解析和判定，不接 lookupDraft。字段路径按附录 C（2026-11-10）。 */
 import { decideBoxLookup, type BoxRow } from "./dxm-smt-box.js";
 import type { DraftLookup } from "./dxm-smt-listing.js";
 
-/** 附录 C 回填前留空。空地址时页面脚本不发请求。 */
-export const BOX_API_ENDPOINT = "";
+/** 附录 C：同源相对路径。空字符串时脚本不发请求。 */
+export const BOX_API_ENDPOINT = "/api/smtProduct/pageList.json";
 export const BOX_API_BUDGET_MS = 20_000;
 export const BOX_API_PAGE_SIZE = 100;
 
@@ -21,6 +21,7 @@ export type BoxApiPage = {
   echoTitle: string;
   httpOk: boolean;
   shapeOk: boolean;
+  timedOut?: boolean;
 };
 
 const BLANK_PAGE: BoxApiPage = {
@@ -31,30 +32,48 @@ const BLANK_PAGE: BoxApiPage = {
   shapeOk: false,
 };
 
+/** 附录 C 表单。searchType 只用 0。searchValue 先 trim，服务端不 trim。 */
+export function buildBoxListBody(query: BoxApiQuery): string {
+  const params = new URLSearchParams();
+  params.set("pageNo", String(query.page ?? 1));
+  params.set("pageSize", String(query.pageSize ?? BOX_API_PAGE_SIZE));
+  params.set("total", "0");
+  params.set("searchType", "0");
+  params.set("searchValue", (query.title ?? "").trim());
+  params.set("shopId", (query.shopId ?? "").trim() || "-1");
+  params.set("dxmState", "draft");
+  params.set("dxmOfflineState", "");
+  return params.toString();
+}
+
 /**
  * 页面上下文里只取 status / ok / json。
- * 参数名和真实路径等附录 C，这里不拼查询串，避免把没采过的字段名发出去。
+ * 空端点直接失败。单页 8 秒超时，中止或网络失败都不猜结果。
  */
 export function boxApiScript(query: BoxApiQuery): string {
   const request = {
     endpoint: BOX_API_ENDPOINT,
-    title: query.title ?? "",
-    shopId: query.shopId ?? "",
-    page: query.page ?? 1,
-    pageSize: query.pageSize ?? BOX_API_PAGE_SIZE,
-    draftsOnly: query.draftsOnly === true,
+    body: buildBoxListBody(query),
   };
   return `(() => {
   const request = ${JSON.stringify(request)};
   const failed = { status: 0, ok: false, json: null };
   if (!request.endpoint) return failed;
-  return fetch(request.endpoint, { method: "GET", credentials: "same-origin" }).then((response) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  return fetch(request.endpoint, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
+    body: request.body,
+    signal: controller.signal
+  }).then((response) => {
     return response.json().then((json) => ({ status: response.status, ok: response.ok, json })).catch(() => ({ status: response.status, ok: false, json: null }));
-  }).catch(() => failed);
+  }).catch(() => failed).finally(() => clearTimeout(timer));
 })()`;
 }
 
-/** 只认契约本身：status/ok/json.total/json.list[].title。认不出就 shapeOk false，不抛、不换字段名。 */
+/** 只认附录 C：code、data.page.totalSize、data.page.list[].subject、data.productParam.searchValue。 */
 export function parseBoxApiPage(raw: unknown): BoxApiPage {
   try {
     if (!raw || typeof raw !== "object") return { ...BLANK_PAGE };
@@ -62,24 +81,33 @@ export function parseBoxApiPage(raw: unknown): BoxApiPage {
     const httpOk = envelope.ok === true && envelope.status === 200;
     const body = envelope.json;
     if (!body || typeof body !== "object" || Array.isArray(body)) return { ...BLANK_PAGE, httpOk };
-    const record = body as { total?: unknown; list?: unknown; echoTitle?: unknown };
-    if (typeof record.total !== "number" || !Number.isFinite(record.total) || record.total < 0) {
-      return { ...BLANK_PAGE, httpOk };
-    }
-    if (!Number.isInteger(record.total)) return { ...BLANK_PAGE, httpOk };
-    if (!Array.isArray(record.list)) return { ...BLANK_PAGE, httpOk };
-    if (record.list.length > record.total) return { ...BLANK_PAGE, httpOk };
+    const record = body as { code?: unknown; data?: unknown };
+    if (record.code !== 0) return { ...BLANK_PAGE, httpOk };
+    const data = record.data;
+    if (!data || typeof data !== "object" || Array.isArray(data)) return { ...BLANK_PAGE, httpOk };
+    const dataRecord = data as { page?: unknown; productParam?: unknown };
+    const page = dataRecord.page;
+    if (!page || typeof page !== "object" || Array.isArray(page)) return { ...BLANK_PAGE, httpOk };
+    const pageRecord = page as { totalSize?: unknown; list?: unknown };
+    const total = pageRecord.totalSize;
+    if (typeof total !== "number" || !Number.isInteger(total) || total < 0) return { ...BLANK_PAGE, httpOk };
+    if (!Array.isArray(pageRecord.list)) return { ...BLANK_PAGE, httpOk };
+    if (pageRecord.list.length > total) return { ...BLANK_PAGE, httpOk };
     const rows: BoxRow[] = [];
-    for (const item of record.list) {
+    for (const item of pageRecord.list) {
       if (!item || typeof item !== "object") return { ...BLANK_PAGE, httpOk };
-      const row = item as { title?: unknown; productId?: unknown };
-      if (typeof row.title !== "string" || row.title.trim() === "") return { ...BLANK_PAGE, httpOk };
-      rows.push({ title: row.title, productId: typeof row.productId === "string" ? row.productId : "" });
+      const row = item as { subject?: unknown; productId?: unknown };
+      if (typeof row.subject !== "string" || row.subject.trim() === "") return { ...BLANK_PAGE, httpOk };
+      rows.push({ title: row.subject, productId: typeof row.productId === "string" ? row.productId : "" });
     }
+    const param = dataRecord.productParam;
+    const searchValue = param && typeof param === "object" && !Array.isArray(param)
+      ? (param as { searchValue?: unknown }).searchValue
+      : undefined;
     return {
-      total: record.total,
+      total,
       rows,
-      echoTitle: typeof record.echoTitle === "string" ? record.echoTitle : "",
+      echoTitle: typeof searchValue === "string" ? searchValue : "",
       httpOk,
       shapeOk: true,
     };
@@ -134,7 +162,7 @@ async function loadPage(
   fetchPage: (query: BoxApiQuery) => Promise<unknown>,
   deadline: number,
 ): Promise<BoxApiPage> {
-  if (Date.now() > deadline) return { ...BLANK_PAGE };
+  if (Date.now() > deadline) return { ...BLANK_PAGE, timedOut: true };
   try {
     return parseBoxApiPage(await fetchPage(query));
   } catch {
@@ -143,6 +171,7 @@ async function loadPage(
 }
 
 function pageFailure(page: BoxApiPage, turned: boolean): DraftLookup {
+  if (page.timedOut) return unknown("采集箱接口预算内没读完，无法判重");
   if (!page.httpOk) return unknown(turned ? "采集箱接口翻页中断，无法判重" : "采集箱接口没有返回 200，无法判重");
   return unknown(turned ? "采集箱接口翻页中断，无法判重" : "采集箱接口结构对不上，无法判重");
 }
