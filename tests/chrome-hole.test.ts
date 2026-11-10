@@ -14,6 +14,7 @@ vi.mock("electron", () => ({
 }));
 
 import { SparkBrowser } from "../src/main/browser.js";
+import { bindWindow, makeBrowser } from "./helpers/browser-fixture.js";
 import {
   CHROME_HEAL_COOLDOWN_MS,
   CHROME_HEAL_STALL_LIMIT,
@@ -47,7 +48,8 @@ afterEach(() => {
 });
 
 function bare(): HoleBrowser {
-  return Object.create(SparkBrowser.prototype) as HoleBrowser;
+  // 空壳实例补成"一扇 main 窗口"：多开后的状态都按窗口存，工装不补就什么都拿不到。
+  return makeBrowser().browser as unknown as HoleBrowser;
 }
 
 describe("常驻页面洞断言", () => {
@@ -63,11 +65,11 @@ describe("常驻页面洞断言", () => {
     browser.boundsGuard = false;
     browser.lastActiveBounds = null;
     browser.chromeHoleTimer = null;
-    browser.window = {
+    bindWindow(browser, {
       isDestroyed: () => false,
       isMinimized: () => false,
       isMaximized: () => false,
-    };
+    });
     let state = resetChromeCoverBudget(1_000);
     for (let i = 0; i < 20; i += 1) {
       const taken = takeChromeCoverFix(state, 1_000);
@@ -140,14 +142,14 @@ function armHole(browser: HoleBrowser, hole: Rect): void {
   browser.lastActiveBounds = null;
   browser.chromeHoleTimer = null;
   browser.chromeCover = resetChromeCoverBudget(Date.now());
-  browser.window = {
+  bindWindow(browser, {
     isDestroyed: () => false,
     isMinimized: () => false,
     isMaximized: () => false,
     getContentSize: () => [1280, 905],
     contentView: { children: [], removeChildView() {}, addChildView() {} },
     webContents: { send() {}, isDestroyed: () => false },
-  } as HoleBrowser["window"];
+  } as HoleBrowser["window"] as object);
   const host = hostOf(browser);
   host.sidebarW = 340;
   host.lastGoodContent = { width: 1280, height: 905 };
