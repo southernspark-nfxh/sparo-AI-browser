@@ -1200,6 +1200,11 @@ export class SparkBrowser {
   private manualStopIds = new Set<string>();
   private renderHoldCount = 0;
   private wasMinimizedForTask = false;
+  /** 按 clientId 持有后台渲染。最后一个归还才把窗口放回最小化。 */
+  private renderClients = new Map<string, number>();
+  private renderRestoredAt = 0;
+  /** 用户在恢复之后亲自把窗口拉到前台。归还时不再压回最小化。 */
+  private userClaimedRenderWindow = false;
 
   private get chatRunning(): boolean {
     const pool = this.taskPool;
@@ -1421,6 +1426,7 @@ export class SparkBrowser {
     this.win.on("minimize", () => this.syncShellKeepalive());
     this.win.on("focus", () => {
       this.clearTaskbarFlash();
+      this.noteUserClaimedRender();
       this.returnWindowIfUserFocused();
     });
     this.win.on("show", () => this.scheduleLayout(150));
@@ -2110,7 +2116,7 @@ export class SparkBrowser {
     };
   }
 
-  switchTab(id: string): ToolResult {
+  switchTab(id: string, opts?: { focus?: boolean }): ToolResult {
     if (!this.tabs.has(id)) return { ok: false, message: `Tab not found: ${id}` };
     const tab = this.tabs.get(id);
     const wasDiscarded = tab?.discarded === true;
@@ -2121,7 +2127,7 @@ export class SparkBrowser {
     if (tab) tab.lastActiveAt = Date.now();
     this.lastSnapshot = null;
     this.layout();
-    this.focusActivePage();
+    if (opts?.focus !== false) this.focusActivePage();
 
     if (wasDiscarded && tab?.view?.webContents && !tab.view.webContents.isDestroyed()) {
       const wc = tab.view.webContents;
@@ -2344,6 +2350,7 @@ export class SparkBrowser {
       this.activeWinId = winId;
       use(() => {
         this.clearTaskbarFlash();
+        this.noteUserClaimedRender();
         this.returnWindowIfUserFocused();
       });
     });
@@ -6320,7 +6327,7 @@ export class SparkBrowser {
 
   sparoInfoTool(): ToolResult {
     this.skillsCache = listSkills(this.configDir());
-    const skills = skillCatalog(this.configDir());
+    const skills = skillCatalog(this.configDir(), 40);
     return {
       ok: true,
       message: "sparo_info",
@@ -7963,13 +7970,13 @@ export class SparkBrowser {
   private backgroundRenderWinId = "";
 
   /** 任务执行期：最小化窗口只恢复渲染，不置前、不夺焦。结束时回到最小化。 */
-  private engageBackgroundRender(clientId?: string): void {
+  private engageBackgroundRender(clientId?: string, quiet = false): void {
     this.renderHoldCount = (this.renderHoldCount || 0) + 1;
     if (this.renderHoldCount > 1) return;
     const client = String(clientId || this.focusActor()?.clientId || "").trim();
     const bound = client ? this.clientWindows.get(client) || "" : "";
     const winId = bound || this.activeWinId || "main";
-    if (client && !this.clientOwnsWindow(client, winId)) {
+    if (!quiet && client && !this.clientOwnsWindow(client, winId)) {
       this.safeFocusClientWindow(this.activeWinId || winId, client);
       return;
     }
@@ -7988,9 +7995,18 @@ export class SparkBrowser {
     }
     if (!minimized) return;
     this.wasMinimizedForTask = true;
+    this.userClaimedRenderWindow = false;
+    this.renderRestoredAt = Date.now();
     this.backgroundRenderWinId = winId;
     try { win.restore?.(); } catch { /* 不因窗口状态中断任务 */ }
     try { win.showInactive?.(); } catch { /* showInactive 才是后台恢复 */ }
+  }
+
+  /** restore / showInactive 后的一瞬间可能带焦点，这段不算用户自己拉回前台。 */
+  private noteUserClaimedRender(): void {
+    if (!this.wasMinimizedForTask || this.userClaimedRenderWindow) return;
+    if (Date.now() - this.renderRestoredAt < 800) return;
+    this.userClaimedRenderWindow = true;
   }
 
   private releaseBackgroundRender(): void {
@@ -7998,11 +8014,60 @@ export class SparkBrowser {
     if (this.renderHoldCount > 0) return;
     if (!this.wasMinimizedForTask) return;
     this.wasMinimizedForTask = false;
+    const claimed = this.userClaimedRenderWindow;
+    this.userClaimedRenderWindow = false;
     const held = this.backgroundRenderWinId;
     this.backgroundRenderWinId = "";
-    const win = (held ? this.winOf(held) : this.win) as { isDestroyed?: () => boolean; minimize?: () => void } | undefined;
+    if (claimed) return;
+    const win = (held ? this.winOf(held) : this.win) as {
+      isDestroyed?: () => boolean;
+      isFocused?: () => boolean;
+      minimize?: () => void;
+    } | undefined;
     if (!win || win.isDestroyed?.()) return;
     try { win.minimize?.(); } catch { /* 用户原来就是最小化 */ }
+  }
+
+  /**
+   * 申请后台渲染：窗口最小化时 restore + showInactive，再切到指定标签。
+   * 不调用 win.show / win.focus。归还时若用户已把窗口拉到前台，不再压回最小化。
+   */
+  ensureRender(clientId: string, tabId?: string): ToolResult {
+    const client = String(clientId || "").trim();
+    if (!client) return { ok: false, message: "缺少 clientId" };
+    const id = String(tabId || "").trim();
+    if (id && !this.tabs.has(id)) return { ok: false, message: "标签不存在" };
+    this.renderClients.set(client, (this.renderClients.get(client) || 0) + 1);
+    this.engageBackgroundRender(client, true);
+    if (id) {
+      const switched = this.switchTab(id, { focus: false });
+      if (!switched.ok) {
+        this.releaseRender(client);
+        return switched;
+      }
+    }
+    return {
+      ok: true,
+      message: "已申请后台渲染",
+      data: { mode: this.mainWindowMode(), client, holds: this.renderHoldCount },
+    };
+  }
+
+  /** 归还这一 client 的一次后台渲染。计数没到 0 时窗口保持现状。 */
+  releaseRender(clientId: string): ToolResult {
+    const client = String(clientId || "").trim();
+    const count = this.renderClients.get(client) || 0;
+    if (!client || count <= 0) {
+      return { ok: true, message: "没有待归还的渲染", data: { held: false } };
+    }
+    if (count <= 1) this.renderClients.delete(client);
+    else this.renderClients.set(client, count - 1);
+    this.releaseBackgroundRender();
+    return {
+      ok: true,
+      message: "已归还后台渲染",
+      data: { mode: this.mainWindowMode(), holds: this.renderHoldCount },
+    };
   }
 
   private writeClickDiag(record: Record<string, unknown>): void {

@@ -17,7 +17,7 @@ export function agentInstructions(clientId: string, docsDir?: string): string {
   const at = docsDir
     ? `完整说明在 ${docsDir}\\AGENTS.md（怎么连、怎么用技能）与 ${docsDir}\\MCP-API.md（全部工具）。安装目录里、和 Sparo.exe 同一层，也有一份 AGENTS.md。`
     : "";
-  return `clientId=${clientId}。${at}多步任务（发布、采集、调研）用 submit_task 一次交完整目标和素材，再用 get_task 轮询。navigate、click、fill 只用来读状态和做轻量校验。支付、删除、客服发送仍由真人点。详细用法读 prompt sparo_agent_guide。不带 tabId 的页面操作落在这个 client 自己的标签上，不要抢用户当前页。后台池满不再返回 pool_full，改为 queued，空出来自动开跑。`;
+  return `clientId=${clientId}。${at}第一次连接先调 sparo_info，一次拿到能力边界、全部技能 id 与最快路径。有技能走 list_skills → get_skill → run_skill，没有技能再用原语。多步任务（发布、采集、调研）用 submit_task 一次交完整目标和素材，再 get_task 轮询；navigate、click、fill 只用来读状态与轻量校验。支付、删除、客服发送由真人点。不带 tabId 的操作落在自己的标签上，不抢用户当前页。后台池满不再返回 pool_full，改为 queued，空出来自动开跑。详细用法读 prompt sparo_agent_guide。`;
 }
 
 type PromptHost = {

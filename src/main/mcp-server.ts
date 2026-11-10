@@ -47,6 +47,43 @@ type McpScope = {
   runningBackground: () => number;
 };
 
+function registerSkillsPrompt(server: McpServer, handlers: ToolHandlers): void {
+  server.prompt(
+    "sparo_skills",
+    "全部技能 id、标题、别名和一句意图。不知道有哪些技能时先读这个，再 match_skill / get_skill / run_skill。",
+    async () => {
+      const info = await handlers.sparo_info();
+      const list =
+        (info.data as {
+          skills?: Array<{
+            id: string;
+            title: string;
+            intent?: string;
+            aliases?: string[];
+            stepCount?: number;
+            distilled?: boolean;
+          }>;
+        })?.skills || [];
+      const text = list
+        .map(
+          (s) =>
+            `- ${s.id} | ${s.title} | 别名:${(s.aliases || []).join("/") || "无"} | ${
+              s.distilled ? "路线型" : `${s.stepCount ?? 0}步`
+            } | ${s.intent || ""}`,
+        )
+        .join("\n");
+      return {
+        messages: [
+          {
+            role: "user" as const,
+            content: { type: "text" as const, text: text || "本机还没有技能包。" },
+          },
+        ],
+      };
+    },
+  );
+}
+
 function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpScope): void {
   const bind = (tabId?: string) =>
     scope
@@ -589,6 +626,21 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
     async ({ id }) => textResult(await handlers.switch_tab(id)),
   );
 
+  server.tool(
+    "ensure_render",
+    "窗口最小化时用 restore 和 showInactive 恢复渲染，不夺焦、不弹窗。release 为 true 时归还；用户已把窗口拉到前台则不再压回最小化。",
+    {
+      tabId: z.string().optional().describe("要排版的标签。申请时传入。"),
+      release: z.boolean().optional().describe("true 时归还这一 client 的一次后台渲染"),
+    },
+    async ({ tabId, release }) =>
+      textResult(
+        release
+          ? await handlers.release_render(scope?.clientId)
+          : await handlers.ensure_render(tabId, scope?.clientId),
+      ),
+  );
+
   server.tool("list_tabs", "List tabs and active tab id/url. Each tab has owner: user or agent:<clientId>.", {}, async () =>
     textResult(await handlers.list_tabs()),
   );
@@ -917,6 +969,7 @@ export async function startMcpServer(handlers: ToolHandlers): Promise<{
         : undefined,
     );
     registerSparoPrompt(server);
+    registerSkillsPrompt(server, handlers);
     registerTools(server, handlers, {
       clientId: clientId || undefined,
       tabIds: () => handlers.tab_ids(),

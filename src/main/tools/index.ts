@@ -145,6 +145,8 @@ export function createToolHandlers(browser: SparkBrowser) {
   },
     close_tab: (id: string) => browser.closeTab(id),
     switch_tab: (id: string) => browser.switchTab(id),
+    ensure_render: (tabId: string | undefined, clientId?: string) => browser.ensureRender(clientId || "", tabId),
+    release_render: (clientId?: string) => browser.releaseRender(clientId || ""),
     list_tabs: async () => {
       const listed = browser.listTabs();
       return {

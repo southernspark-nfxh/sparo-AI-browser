@@ -44,6 +44,7 @@ export type SkillBrowser = {
   pageText(): Promise<ToolResult & { data?: { text?: string } }>;
   setPaused(paused: boolean): void;
   execute?(script: string, opts?: { frame?: number | string }): Promise<ToolResult>;
+  reload?(): Promise<ToolResult>;
   analyzePage?(): Promise<ToolResult>;
   executePrimitives?(input: {
     payload: Record<string, unknown>;
@@ -404,7 +405,7 @@ export function skillCatalogLines(configDir: string, limit = 8): string {
     .join("\n");
 }
 
-export function skillCatalog(configDir: string): Array<{
+export function skillCatalog(configDir: string, limit = 20): Array<{
   id: string;
   title: string;
   intent: string;
@@ -414,7 +415,7 @@ export function skillCatalog(configDir: string): Array<{
   routeLen: number;
 }> {
   return selectableSkills(configDir)
-    .slice(0, 20)
+    .slice(0, limit)
     .map((s) => ({
       ...skillSummary(s),
       intent: s.intent,
@@ -892,6 +893,9 @@ async function runOneStep(
     case "evaluate":
       if (!browser.execute) return { ok: false, message: "execute not available" };
       return wrap(browser.execute(String(args.script || args.code || "")));
+    case "reload":
+      if (!browser.reload) return { ok: false, message: "reload not available" };
+      return wrap(browser.reload());
     case "analyze_page":
       if (!browser.analyzePage) return { ok: false, message: "analyzePage not available" };
       return wrap(browser.analyzePage());
