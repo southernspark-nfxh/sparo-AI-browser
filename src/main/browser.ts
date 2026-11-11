@@ -307,6 +307,7 @@ import {
   saveEnv,
 } from "./envs/store.js";
 import { isProxyAvailable, start as startEnvProxy, stop as stopEnvProxy, stopAll as stopAllEnvProxy } from "./envs/singbox-runner.js";
+import type { EnvConfig } from "./envs/types.js";
 import {
   DeepSeekAgentProvider,
   type AgentToolName,
@@ -2171,9 +2172,12 @@ export class SparkBrowser {
     return { ok: true, message: `已交给系统打开：${abs}` };
   }
 
-  newTab(url?: string): ToolResult {
-    const id = this.createTab(url || DEFAULT_URL, true);
-    return { ok: true, message: `Opened tab ${id}`, data: { id, ...this.listTabs() } };
+  newTab(url?: string, envId?: string): ToolResult {
+    const id = envId
+      ? this.createEnvTab(envId, url || DEFAULT_URL)
+      : this.createTab(url || DEFAULT_URL, true);
+    const suffix = envId ? ` in env ${envId}` : "";
+    return { ok: true, message: `Opened tab ${id}${suffix}`, data: { id, ...this.listTabs() } };
   }
 
   /**
@@ -4942,6 +4946,62 @@ export class SparkBrowser {
     };
   }
 
+  listEnvsTool(): ToolResult {
+    const envs = listEnvs(this.configDir());
+    return {
+      ok: true,
+      message: `envs ${envs.length}`,
+      data: {
+        envs: envs.map((e) => ({
+          id: e.id,
+          name: e.account.name,
+          type: e.account.type,
+          note: e.account.note,
+          homeUrl: e.account.homeUrl,
+          enabled: e.enabled,
+          createdAt: e.createdAt,
+          updatedAt: e.updatedAt,
+        })),
+      },
+    };
+  }
+
+  createEnvTool(input?: {
+    account?: { type?: string; name?: string; note?: string; homeUrl?: string };
+  }): ToolResult {
+    const env = createEnv(this.configDir(), {
+      account: input?.account
+        ? {
+            type: (input.account.type as EnvConfig["account"]["type"]) ?? "other",
+            name: input.account.name ?? "新环境",
+            note: input.account.note,
+            homeUrl: input.account.homeUrl,
+          }
+        : { type: "other", name: "新环境" },
+    });
+    return {
+      ok: true,
+      message: `env created ${env.id}`,
+      data: {
+        id: env.id,
+        name: env.account.name,
+        type: env.account.type,
+      },
+    };
+  }
+
+  deleteEnvTool(envId: string): ToolResult {
+    if (!envId) return { ok: false, message: "envId required" };
+    const env = getEnv(this.configDir(), envId);
+    if (!env) return { ok: false, message: `env ${envId} not found` };
+    stopEnvProxy(envId);
+    const ok = deleteEnvConfig(this.configDir(), envId);
+    return {
+      ok,
+      message: ok ? `env ${envId} deleted` : `env ${envId} delete failed`,
+    };
+  }
+
   /**
    * Universal page analyzer — classify fields/buttons + required markers (红星).
    * Stamps data-spark-ref for subsequent execute_primitives.
@@ -6047,8 +6107,28 @@ export class SparkBrowser {
         data: { path: inspected.path, sizeMB: inspected.sizeMB },
       };
     }
+    if (name === "list_envs") return this.listEnvsTool();
     if (name === "navigate") {
       const requested = String(args.url || "");
+      const envId = args.envId ? String(args.envId) : "";
+      if (envId) {
+        let envTabId = "";
+        try {
+          envTabId = this.createEnvTab(envId, "about:blank");
+        } catch (error) {
+          return { ok: false, message: error instanceof Error ? error.message : String(error) };
+        }
+        const scope = this.taskStore();
+        if (scope) scope.tabId = envTabId;
+        const result = await this.watchPageTool(
+          "navigate",
+          { url: requested, tabId: envTabId, envId },
+          () => this.navigate(requested, { asHuman: true, tabId: envTabId }),
+          envTabId,
+        );
+        if (result.ok) await this.repair12306QueryOnce(requested);
+        return result;
+      }
       const result = await this.runAgentTool(name, args);
       if (result.ok) await this.repair12306QueryOnce(requested);
       return result;
@@ -6229,16 +6309,28 @@ export class SparkBrowser {
           title: args.title != null ? String(args.title) : undefined,
           body: args.body != null ? String(args.body) : undefined,
         });
-      case "run_skill":
+      case "run_skill": {
+        const skillParams =
+          args.params && typeof args.params === "object"
+            ? (args.params as Record<string, unknown>)
+            : undefined;
+        const envId = skillParams?.envId ? String(skillParams.envId) : "";
+        if (envId) {
+          try {
+            const envTabId = this.createEnvTab(envId, "about:blank");
+            const scope = this.taskStore();
+            if (scope) scope.tabId = envTabId;
+          } catch (error) {
+            return { ok: false, message: error instanceof Error ? error.message : String(error) };
+          }
+        }
         return this.runSkillTool({
           id: args.id ? String(args.id) : undefined,
           query: args.query ? String(args.query) : undefined,
-          params:
-            args.params && typeof args.params === "object"
-              ? (args.params as Record<string, unknown>)
-              : undefined,
+          params: skillParams,
           dryRun: Boolean(args.dryRun),
         });
+      }
       default:
         return { ok: false, message: `unsupported tool: ${name}` };
     }
@@ -8440,7 +8532,9 @@ export class SparkBrowser {
               url: this.getUrl(tabId),
               title: this.getTitle(tabId),
               locale: this.settings.locale,
-              history: this.chatLog.slice(0, -1).slice(-12).map((turn) => ({ role: turn.role, text: turn.text.slice(0, 4000) })),
+              history: this.turnsFor(this.agentTaskChatKey(clientId, task.taskId))
+                .slice(-12)
+                .map((turn) => ({ role: turn.role, text: turn.text.slice(0, 4000) })),
               signal: controller.signal,
               execMode: task.execMode === "step" ? "step" : "auto",
               taskId: cloudTaskId,
@@ -12203,9 +12297,12 @@ export class SparkBrowser {
    */
   async navigate(
     url: string,
-    opts?: { asHuman?: boolean; tabId?: string },
+    opts?: { asHuman?: boolean; tabId?: string; envId?: string },
   ): Promise<NavigateConfirm | ToolResult> {
-    const tabId = opts?.tabId;
+    let tabId = opts?.tabId;
+    if (opts?.envId && !tabId) {
+      tabId = this.createEnvTab(opts.envId, url);
+    }
     if (!opts?.asHuman) {
       const blocked = this.assertNotPaused();
       if (blocked) return blocked;
