@@ -373,7 +373,7 @@ describe("T2 降频恢复", () => {
       expect(lines.some((line) => line.includes("give-up"))).toBe(false);
       expect(lines.some((line) => line.includes("reason=width dw=286"))).toBe(true);
       expect(lines.some((line) => /https?:/.test(line))).toBe(false);
-      browser.switchTab("b");
+      browser.switchTab("b", { userAction: true });
       browser.assertChromeHole();
       expect(pulls).toBe(4);
       expect(remounts).toBe(1);

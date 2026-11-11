@@ -5,6 +5,10 @@ export async function navigateTool(
   browser: SparkBrowser,
   url: string,
   tabId?: string,
+  envId?: string,
 ): Promise<ToolResult> {
-  return browser.navigate(url, tabId ? { tabId } : undefined);
+  const opts: { tabId?: string; envId?: string } = {};
+  if (tabId) opts.tabId = tabId;
+  if (envId) opts.envId = envId;
+  return browser.navigate(url, opts);
 }
