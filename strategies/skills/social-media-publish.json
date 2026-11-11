@@ -28,11 +28,14 @@
   "steps": [
     {
       "id": "dispatch",
-      "tool": "execute",
+      "tool": "social_publish",
       "args": {
-        "script": "node C:/Users/60914/.trae-cn/skills/social-media-publish/scripts/publish.mjs --platform {{platform}} --article {{articleDir}}{{#if schedule}} --schedule \"{{schedule}}\"{{/if}}{{#if dryRun}} --dry-run{{/if}}{{#if aiImages}} --ai-images{{/if}}"
+        "platform": "{{platform}}",
+        "article": "{{articleDir}}",
+        "schedule": "{{schedule}}",
+        "dryRun": "{{dryRun}}"
       },
-      "note": "publish.mjs 内部会 openBlank → fillTitle → fillBody → insertImages → setCover → setOptions → publishOrSchedule → verify，任一步失败停手"
+      "note": "publish.mjs 内部 openBlank→fillTitle→fillBody→insertImages→setCover→setOptions→publish→verify。Electron 当 node 跑，不需系统 node。"
     }
   ],
   "agentPlaybook": [
