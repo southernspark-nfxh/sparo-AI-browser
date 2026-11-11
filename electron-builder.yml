@@ -21,6 +21,12 @@ extraResources:
     to: docs/AGENTS.md
   - from: docs/MCP-API.md
     to: docs/MCP-API.md
+  # 发布技能脚本：Electron 当 node 跑时需要能直接读文件，放 app.asar 外面
+  - from: strategies/skills/social-media-publish/scripts
+    to: social-publish-scripts
+    filter:
+      - "**/*.mjs"
+      - "**/*.json"
 extraFiles:
   # 与 Sparo.exe 同一层。Hermes、Cursor、Trae、Codex 打开安装目录就能读到。
   - from: packaging/AGENTS.md

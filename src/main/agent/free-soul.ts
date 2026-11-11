@@ -33,7 +33,8 @@ export type FreeSoulToolName =
   | "run_skill"
   | "run_workflow"
   | "save_skill"
-  | "save_doc";
+  | "save_doc"
+  | "list_envs";
 
 export type FreeSoulToolRunner = (
   name: FreeSoulToolName,
@@ -136,8 +137,9 @@ const tool = (
 });
 
 const TOOLS = [
-  tool("navigate", "在当前有头浏览器标签打开完整 URL，并返回实际落地地址和标题。", {
+  tool("navigate", "在当前有头浏览器标签打开完整 URL，并返回实际落地地址和标题。用户点名要用某个账号时，先 list_envs 拿到 envId，再把它传给 envId 参数；不传就是默认登录态。", {
     url: { type: "string" },
+    envId: { type: "string", description: "可选，账号环境 id。传入后在这个环境的独立 Cookie 里打开，互不干扰。" },
   }, ["url"]),
   tool("get_url", "读取当前标签的真实 URL。"),
   tool("get_title", "读取当前标签的真实标题。"),
@@ -274,6 +276,7 @@ const TOOLS = [
     },
     ["title", "body"],
   ),
+  tool("list_envs", "列出本机已保存的账号环境（每个环境一套独立 Cookie，可同时登录同站点的多个号）。用户说「用 A 号」「发到第二个账号」时先调用它，拿到 id 再传给 navigate 的 envId。"),
 ];
 
 const STUCK_HINT =
@@ -311,6 +314,7 @@ function systemPrompt(url: string, title: string, execMode?: "step" | "auto"): s
     "历史对话里的工具结果都是当时真实读回的，是可信的。浏览器或应用重启后页面状态会重置，当前标签页在哪、显示什么，都不能用来否定历史里已完成的动作。需要核实历史发布是否生效时，去对应平台实际查看（例如打开微博个人主页看时间线），不要凭当前页面状态下结论。",
     "使用用户最新一条消息的语言回复。",
     "多窗口协作：你只操作自己绑定的那一扇窗口和它名下的标签。别的窗口有人在看，或有别的 agent 在干活时，不要把那扇窗口还原到前台，也不要抢它的焦点。",
+    "账号隔离：本机可以存多个「账号环境」，每个环境是一套独立的 Cookie 和本地存储，同一个网站能同时登录多个号、互不干扰。用户点名「用 A 号」「发到第二个账号」「另一个百家号」时，先调用 list_envs 拿到 id，再把 id 传给 navigate 的 envId（run_skill 则放在 params.envId）。不点名就保持默认登录态，不要自己挑环境。环境里还没登录过时，页面会要求登录，如实告诉用户「这个环境还没登录，需要手动登一次」，不要反复重试。",
     "需要继续干活时留在自己的窗口里静默做完。做完只闪任务栏，不把别人的窗口拉到最前。多个 agent 同时在线时各做各的任务，不改别人的标签，不替别人点确认。",
     `当前页面标题：${title || "（无）"}`,
     `当前页面 URL：${url || "about:blank"}`,

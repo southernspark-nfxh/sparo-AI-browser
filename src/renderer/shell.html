@@ -2071,6 +2071,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           </div>
           <div class="ds-tabs" role="tablist">
             <button type="button" class="ds-tab on" data-panel="common" role="tab" aria-selected="true">常用</button>
+            <button type="button" class="ds-tab" data-panel="envs" role="tab" aria-selected="false">账号</button>
             <button type="button" class="ds-tab" data-panel="learn" role="tab" aria-selected="false">经验</button>
             <button type="button" class="ds-tab" data-panel="advanced" role="tab" aria-selected="false">高级</button>
             <button type="button" class="ds-tab" data-panel="notes" role="tab" aria-selected="false">笔记</button>
@@ -2190,6 +2191,26 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
               <h3 data-i18n="trigger.heading">记住的原话</h3>
               <p class="hint" id="triggerEmpty" data-i18n="trigger.empty">还没有记住的原话。一步就能做完的技能跑完后，点「记住」会出现在这里。</p>
               <div id="triggerList"></div>
+            </div>
+          </div>
+          <div class="ds-panel hide" data-panel="envs">
+            <div class="block">
+              <h3>账号环境</h3>
+              <p class="hint">每个环境是一套独立的 Cookie 和本地存储。同一个网站可以同时登录多个号，互不影响。第一次建好点「打开」手动登录一次，以后自动记住。</p>
+              <div class="notes-list" id="envList"></div>
+            </div>
+            <div class="block">
+              <h3>新建环境</h3>
+              <div class="field">
+                <label for="envName">名称</label>
+                <input id="envName" type="text" placeholder="例如：百家号A" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="envHome">主页地址（可选）</label>
+                <input id="envHome" type="text" placeholder="https://baijiahao.baidu.com/builder/rc/home" autocomplete="off" />
+              </div>
+              <button type="button" class="save" id="btnEnvCreate">新建环境</button>
+              <p class="hint" id="envHint"></p>
             </div>
           </div>
           <div class="ds-panel hide" data-panel="notes">
@@ -3653,7 +3674,80 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         if (side) side.classList.toggle("more-open", open);
       }
 
-      const DS_PANELS = ["common", "learn", "advanced", "notes"];
+      const DS_PANELS = ["common", "envs", "learn", "advanced", "notes"];
+      async function renderEnvs() {
+        const list = document.getElementById("envList");
+        if (!list) return;
+        let envs = [];
+        try {
+          const r = await window.sparkShell.listEnvs();
+          envs = (r && r.envs) || [];
+        } catch (err) { envs = []; }
+        list.innerHTML = "";
+        if (!envs.length) {
+          const p = document.createElement("p");
+          p.className = "notes-empty";
+          p.textContent = "还没有账号环境。在下面新建一个。";
+          list.appendChild(p);
+          return;
+        }
+        envs.forEach((env) => {
+          const card = document.createElement("div");
+          card.className = "note-card";
+          const strong = document.createElement("strong");
+          strong.textContent = env.name || env.id;
+          const meta = document.createElement("div");
+          meta.className = "meta";
+          meta.textContent = `${env.type || "other"} · ${env.id}`;
+          const row = document.createElement("div");
+          row.className = "row";
+          const open = document.createElement("button");
+          open.type = "button";
+          open.className = "ghost";
+          open.textContent = "打开";
+          open.onclick = () => { window.sparkShell.openEnv(env.id).catch(() => {}); };
+          const del = document.createElement("button");
+          del.type = "button";
+          del.className = "ghost";
+          del.textContent = "删除";
+          del.onclick = async () => {
+            if (!window.confirm(`删除环境「${env.name || env.id}」？这里的登录状态会一起清掉。`)) return;
+            await window.sparkShell.deleteEnv(env.id).catch(() => {});
+            renderEnvs();
+          };
+          row.append(open, del);
+          card.append(strong, meta, row);
+          list.appendChild(card);
+        });
+      }
+      const btnEnvCreate = document.getElementById("btnEnvCreate");
+      if (btnEnvCreate) {
+        btnEnvCreate.onclick = async () => {
+          const nameEl = document.getElementById("envName");
+          const homeEl = document.getElementById("envHome");
+          const hintEl = document.getElementById("envHint");
+          const name = (nameEl && nameEl.value.trim()) || "";
+          const homeUrl = (homeEl && homeEl.value.trim()) || "";
+          if (!name) {
+            if (hintEl) hintEl.textContent = "先给环境起个名字。";
+            return;
+          }
+          if (hintEl) hintEl.textContent = "正在新建…";
+          try {
+            const r = await window.sparkShell.createEnv({ account: { name, type: "other", ...(homeUrl ? { homeUrl } : {}) } });
+            if (r && r.ok === false) {
+              if (hintEl) hintEl.textContent = r.message || "新建失败。";
+              return;
+            }
+            if (nameEl) nameEl.value = "";
+            if (homeEl) homeEl.value = "";
+            if (hintEl) hintEl.textContent = "已新建。点上面的「打开」去登录一次。";
+            renderEnvs();
+          } catch (err) {
+            if (hintEl) hintEl.textContent = "新建失败：" + (err && err.message ? err.message : String(err));
+          }
+        };
+      }
       function setDsPanel(name) {
         const target = DS_PANELS.indexOf(name) >= 0 ? name : "common";
         document.querySelectorAll(".ds-tab").forEach((b) => {
@@ -3665,6 +3759,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           p.classList.toggle("hide", p.dataset.panel !== target);
         });
         try { localStorage.setItem("sparo.ds.panel", target); } catch (err) { /* ignore */ }
+        if (target === "envs") renderEnvs();
         if (target === "notes" && typeof renderNotes === "function") {
           const input = document.getElementById("settingsNotesSearch");
           renderNotes((input && input.value.trim()) || "", "settingsNotesList");

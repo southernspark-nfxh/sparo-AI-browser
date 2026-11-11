@@ -2,6 +2,9 @@
  * Skill match + execute — turn saved skills into fast browser automation.
  */
 import { existsSync, readFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { PageSnapshot, SnapshotElement, ToolResult } from "../../shared/types.js";
 import {
   getSkill,
@@ -889,6 +892,63 @@ async function runOneStep(
     case "wait":
       await sleep(Number(args.ms || args.timeoutMs || 800));
       return { ok: true, message: "waited" };
+    case "social_publish":
+    case "publish_article": {
+      // 用 Electron 当 node 跑内嵌的 publish.mjs（ELECTRON_RUN_AS_NODE=1）
+      const platform = String(args.platform || args.target || "").trim();
+      const article = String(args.article || args.dir || args.articleDir || "").trim();
+      if (!platform) return { ok: false, message: "缺少 platform 参数（baijiahao|toutiao|dayu|sohu）" };
+      if (!article || article.startsWith("{{")) return { ok: false, message: "缺少 article 参数（稿件目录）" };
+      // 路径：开发时用仓库内 strategies/skills/... ，打包后用 resources/social-publish-scripts/
+      const script = join(
+        process.resourcesPath || dirname(fileURLToPath(import.meta.url)),
+        process.resourcesPath ? "social-publish-scripts" : join("..", "..", "..", "strategies", "skills", "social-media-publish", "scripts"),
+        "publish.mjs",
+      );
+      if (!existsSync(script)) {
+        return { ok: false, message: "publish.mjs 不存在: " + script };
+      }
+      const extraArgs: string[] = [];
+      // 处理可选参数：过滤未解析的模板字符串 "{{xxx}}"
+      const schedule = args.schedule && !String(args.schedule).startsWith("{{") ? String(args.schedule).trim() : "";
+      if (schedule) extraArgs.push("--schedule", schedule);
+      const dryRun = args.dryRun === true || args.dryRun === "true";
+      if (dryRun) extraArgs.push("--dry-run");
+      return await new Promise((resolve) => {
+        const child = spawn(
+          process.execPath,
+          [script, "--platform", platform, "--article", article, ...extraArgs],
+          {
+            env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout: 600_000,
+          },
+        );
+        let out = "";
+        let err = "";
+        child.stdout.on("data", (d) => { out += d.toString(); });
+        child.stderr.on("data", (d) => { err += d.toString(); });
+        child.on("close", (code) => {
+          // 最后一行 JSON 是 publish.mjs 的结果
+          const lines = out.trim().split(/\n+/);
+          const lastJson = [...lines].reverse().find((l: string) => l.startsWith("{") && l.includes("\"ok\""));
+          let parsed: any = null;
+          try { if (lastJson) parsed = JSON.parse(lastJson); } catch {}
+          if (parsed?.ok) {
+            resolve({ ok: true, message: "发布完成", data: parsed });
+          } else {
+            // ToolResult 没有 stderr 字段，把尾部错误并进 data，排障时看得到
+            const data = parsed && typeof parsed === "object" ? { ...parsed, stderr: err.slice(-500) } : { stderr: err.slice(-500) };
+            resolve({
+              ok: false,
+              message: parsed?.reason || parsed?.hint || ("退出码 " + code),
+              data,
+            });
+          }
+        });
+        child.on("error", (e) => resolve({ ok: false, message: "spawn 失败: " + e.message }));
+      });
+    }
     case "execute":
     case "evaluate":
       if (!browser.execute) return { ok: false, message: "execute not available" };
