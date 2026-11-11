@@ -8,6 +8,7 @@ import type { ToolHandlers } from "./tools/index.js";
 import { listNotes } from "./agent/notes.js";
 import { laneForText } from "./agent/task-class.js";
 import { backgroundPoolDecision, bindClientTab, issueClientId } from "./agent/mcp-sessions.js";
+import { bindForWrite as requireWriteTab, switchTabWithoutClient } from "./agent/tab-guard.js";
 import { agentInstructions, registerSparoPrompt } from "./agent/agent-guide.js";
 import {
   applyCors,
@@ -94,6 +95,7 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
           createAgentTab: scope.createAgentTab,
         })
       : tabId;
+  const bindForWrite = (tool: string, tabId?: string): string => requireWriteTab(tool, bind(tabId));
   const tabIdField = z.string().optional().describe("可选标签。带 clientId 时省略则落在该 client 自己的标签，不抢用户当前页。");
   server.tool(
     "sparo_info",
@@ -104,9 +106,13 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
 
   server.tool(
     "navigate",
-    `Open a URL and return confirmed {url, title} after load settles. Always check data.confirmed/url before continuing. ${MCP_HANDOFF_HINT}`,
-    { url: z.string().min(1).describe("URL to open"), tabId: tabIdField },
-    async ({ url, tabId }) => textResult(await handlers.navigate(url, bind(tabId))),
+    `Open a URL and return confirmed {url, title} after load settles. Always check data.confirmed/url before continuing. Pass envId to open inside an isolated account environment (separate cookies/session). ${MCP_HANDOFF_HINT}`,
+    {
+      url: z.string().min(1).describe("URL to open"),
+      tabId: tabIdField,
+      envId: z.string().optional().describe("Optional envId for isolated account session (separate cookies/localStorage)"),
+    },
+    async ({ url, tabId, envId }) => textResult(await handlers.navigate(url, bindForWrite("navigate", tabId), envId)),
   );
 
   server.tool(
@@ -135,7 +141,7 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
       tabId: tabIdField,
     },
     async ({ ref, selector, caret, tabId }) =>
-      textResult(await handlers.click({ ref, selector, caret }, bind(tabId))),
+      textResult(await handlers.click({ ref, selector, caret }, bindForWrite("click", tabId))),
   );
 
   server.tool(
@@ -148,7 +154,7 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
       tabId: tabIdField,
     },
     async ({ ref, selector, value, tabId }) =>
-      textResult(await handlers.fill({ ref, selector }, value, bind(tabId))),
+      textResult(await handlers.fill({ ref, selector }, value, bindForWrite("fill", tabId))),
   );
 
   server.tool(
@@ -166,11 +172,11 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
       tabId: tabIdField,
     },
     async ({ script, frame, tabId }) => {
-      const t = bind(tabId);
+      const t = bindForWrite("execute", tabId);
       return textResult(
         await handlers.execute(script, {
           ...(frame !== undefined ? { frame } : {}),
-          ...(t ? { tabId: t } : {}),
+          tabId: t,
         }),
       );
     },
@@ -186,7 +192,7 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
       tabId: tabIdField,
     },
     async ({ ref, selector, value, tabId }) =>
-      textResult(await handlers.select({ ref, selector }, value, bind(tabId))),
+      textResult(await handlers.select({ ref, selector }, value, bindForWrite("select", tabId))),
   );
 
   server.tool(
@@ -202,7 +208,7 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
       tabId: tabIdField,
     },
     async ({ ref, selector, files, tabId }) =>
-      textResult(await handlers.upload({ ref, selector }, files, bind(tabId))),
+      textResult(await handlers.upload({ ref, selector }, files, bindForWrite("upload", tabId))),
   );
 
   server.tool(
@@ -221,7 +227,7 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
           exact,
           withinPortal,
           caret,
-          tabId: bind(tabId),
+          tabId: bindForWrite("click_text", tabId),
         }),
       ),
   );
@@ -235,7 +241,7 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
       tabId: tabIdField,
     },
     async ({ trigger, item, tabId }) =>
-      textResult(await handlers.menu_click(trigger, item, bind(tabId))),
+      textResult(await handlers.menu_click(trigger, item, bindForWrite("menu_click", tabId))),
   );
 
   server.tool(
@@ -464,6 +470,36 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
   );
 
   server.tool(
+    "list_envs",
+    "List all isolated account environments. Each env has its own Chromium partition (cookies/localStorage fully isolated), fingerprint, and optional proxy. Returns [{id, name, type, enabled}].",
+    {},
+    async () => textResult(await handlers.list_envs()),
+  );
+
+  server.tool(
+    "create_env",
+    "Create a new isolated account environment. Returns the new envId — pass it to navigate/new_tab to open pages logged into that account.",
+    {
+      account: z
+        .object({
+          type: z.string().optional().describe("Account type hint: amazon, ebay, shopee, shopify, tiktok, facebook, google, other"),
+          name: z.string().optional().describe("Human-readable account name, e.g. '百家号A'"),
+          note: z.string().optional(),
+          homeUrl: z.string().optional().describe("Home page URL for quick open"),
+        })
+        .optional(),
+    },
+    async ({ account }) => textResult(await handlers.create_env({ account })),
+  );
+
+  server.tool(
+    "delete_env",
+    "Delete an environment and its partitioned cookies/session permanently. Cannot be undone.",
+    { envId: z.string().min(1).describe("Environment id to delete") },
+    async ({ envId }) => textResult(await handlers.delete_env(envId)),
+  );
+
+  server.tool(
     "analyze_page",
     "FIRST step for unknown forms: classify inputs/buttons/date_picker_button, detect required, stamp data-spark-ref. Custom calendars (X Ads End time) are date_picker_button — not text fill. Then execute_primitives or pick_calendar. Do NOT start with blind fill loops.",
     {},
@@ -489,7 +525,7 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
           url,
           includeOptional,
           maxAttempts,
-          tabId: bind(tabId),
+          tabId: bindForWrite("execute_primitives", tabId),
         }),
       ),
   );
@@ -515,7 +551,7 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
           hours,
           minutes,
           dismiss,
-          tabId: bind(tabId),
+          tabId: bindForWrite("pick_calendar", tabId),
         }),
       ),
   );
@@ -607,9 +643,12 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
 
   server.tool(
     "new_tab",
-    "Open a new browser tab (optional URL). With a client id, page tools stay on that client's tab instead of the user's active tab.",
-    { url: z.string().optional() },
-    async ({ url }) => textResult(await handlers.new_tab(url)),
+    "Open a new browser tab (optional URL). With a client id, page tools stay on that client's tab instead of the user's active tab. Pass envId to open inside an isolated account environment (separate cookies/localStorage).",
+    {
+      url: z.string().optional(),
+      envId: z.string().optional().describe("Optional envId for isolated account session"),
+    },
+    async ({ url, envId }) => textResult(await handlers.new_tab(url, envId)),
   );
 
   server.tool(
@@ -623,7 +662,11 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
     "switch_tab",
     "Switch the active tab by id.",
     { id: z.string().min(1) },
-    async ({ id }) => textResult(await handlers.switch_tab(id)),
+    async ({ id }) => {
+      const missing = switchTabWithoutClient(scope?.clientId);
+      if (missing) return textResult({ ok: false, message: missing });
+      return textResult(await handlers.switch_tab(id, scope?.clientId));
+    },
   );
 
   server.tool(
@@ -775,22 +818,22 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
   );
 
   server.tool("reload", "Reload current page", { tabId: tabIdField }, async ({ tabId }) =>
-    textResult(await handlers.reload(bind(tabId))),
+    textResult(await handlers.reload(bindForWrite("reload", tabId))),
   );
 
   server.tool("go_back", "Browser back", { tabId: tabIdField }, async ({ tabId }) =>
-    textResult(await handlers.go_back(bind(tabId))),
+    textResult(await handlers.go_back(bindForWrite("go_back", tabId))),
   );
 
   server.tool("go_forward", "Browser forward", { tabId: tabIdField }, async ({ tabId }) =>
-    textResult(await handlers.go_forward(bind(tabId))),
+    textResult(await handlers.go_forward(bindForWrite("go_forward", tabId))),
   );
 
   server.tool(
     "press",
     "Press a key in the page. Does not submit a payment or send a post by itself.",
     { key: z.string().min(1), tabId: tabIdField },
-    async ({ key, tabId }) => textResult(await handlers.press(key, bind(tabId))),
+    async ({ key, tabId }) => textResult(await handlers.press(key, bindForWrite("press", tabId))),
   );
 
   server.tool(
@@ -803,7 +846,7 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
       tabId: tabIdField,
     },
     async ({ value, ref, selector, tabId }) =>
-      textResult(await handlers.fill_suggest(value, { ref, selector }, bind(tabId))),
+      textResult(await handlers.fill_suggest(value, { ref, selector }, bindForWrite("fill_suggest", tabId))),
   );
 
   server.tool("pause", "Pause agent control (human takeover)", {}, async () =>

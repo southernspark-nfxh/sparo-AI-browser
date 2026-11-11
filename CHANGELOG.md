@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.1] — 2026-11-11 多 Agent 窗口互不抢占
+
+**你的窗口不会再被别人的 Agent 抢走。** 之前虽然对话记忆按 clientId 隔离了，但切标签、开新标签、后台渲染都没有归属校验：任何连上来的 Agent 都能改你当前窗口的可见标签，甚至把最小化的窗口重新拉出来。现在这些动作统一先过归属门——不属于这扇窗的 client 改不了它的可见标签，也拉不起这扇窗；后台渲染用完会把标签切回你原来那张。
+
+**写工具不再落到你的当前页。** 没带 clientId、也没指定标签的 `navigate` / `click` / `fill` / `execute` / `select` / `upload` / `click_text` / `menu_click` / `press` / `reload` / `go_back` / `go_forward` / `fill_suggest` / `execute_primitives` / `pick_calendar` 直接拒绝，不再默认改你正在看的页面。`switch_tab` 没有身份时同样拒绝。
+
+**修了两处自己埋的坑。** 侧栏新建标签的归属按 `agent:<clientId>` 判定，不会被门误降级为后台；还没提交任务的 client 也能切自己当前窗里的标签，标签在另一扇窗时仍然拒绝。
+
+真机验收 V1–V8 在新进程完成：用户标签与 URL 全程不变、非本窗 `ensure_render` 被拒、无身份写工具返回错误、跨窗切换仍 `other_window`。单测 122 个文件 / 932 条通过。
+
 ## [0.5.0] — 2026-11-10 新 Agent 一接上就会用、店小秘编辑一句话跑完
 
 **新 Agent 接入不再要人教。** 以前换一个 Cursor 窗口或新账号连上 Sparo，它不知道这浏览器能干什么、有哪些技能，得人提醒一次。现在握手时就告诉它「先调 sparo_info 拿技能清单」；`sparo_info` 的技能目录从 20 条上限扩到全部（本机 40 个），另加 `sparo_skills` 清单入口，连上就能看见「店小秘上品」「发小红书」这些技能，自己挑着用。

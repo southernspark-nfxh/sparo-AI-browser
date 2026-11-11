@@ -11,11 +11,11 @@ import {
 
 export function createToolHandlers(browser: SparkBrowser) {
   return {
-    navigate: (url: string, tabId?: string) =>
+    navigate: (url: string, tabId?: string, envId?: string) =>
       browser.watchPageTool(
         "navigate",
-        tabId ? { url, tabId } : { url },
-        () => navigateTool(browser, url, tabId),
+        { url, ...(tabId ? { tabId } : {}), ...(envId ? { envId } : {}) },
+        () => navigateTool(browser, url, tabId, envId),
         tabId,
       ),
     snapshot: (selector?: string, tabId?: string) => snapshotTool(browser, selector, tabId),
@@ -91,6 +91,11 @@ export function createToolHandlers(browser: SparkBrowser) {
   diagnose: (label?: string) => browser.diagnose(label),
   save_sessions: (siteIds?: string[]) => browser.saveSessions(siteIds),
   list_sessions: () => browser.listSessions(),
+  list_envs: () => browser.listEnvsTool(),
+  create_env: (input?: {
+    account?: { type?: string; name?: string; note?: string; homeUrl?: string };
+  }) => browser.createEnvTool(input),
+  delete_env: (envId: string) => browser.deleteEnvTool(envId),
   analyze_page: () => browser.analyzePage(),
   execute_primitives: (input: {
     payload: Record<string, unknown>;
@@ -132,7 +137,7 @@ export function createToolHandlers(browser: SparkBrowser) {
     title?: string;
     body?: string;
   }) => browser.feishuWork(input),
-  new_tab: (url?: string) => browser.newTab(url),
+  new_tab: (url?: string, envId?: string) => browser.newTab(url, envId),
   create_agent_tab: (url?: string) => browser.createAgentTab(url),
   tab_ids: () => browser.listTabs().tabs.map((tab) => tab.id),
   background_running: () => {
@@ -144,7 +149,10 @@ export function createToolHandlers(browser: SparkBrowser) {
     }
   },
     close_tab: (id: string) => browser.closeTab(id),
-    switch_tab: (id: string) => browser.switchTab(id),
+    switch_tab: (id: string, clientId?: string) =>
+      browser.switchTab(id, {
+        actor: clientId ? { clientId, winId: browser.windowOfClient(clientId) } : undefined,
+      }),
     ensure_render: (tabId: string | undefined, clientId?: string) => browser.ensureRender(clientId || "", tabId),
     release_render: (clientId?: string) => browser.releaseRender(clientId || ""),
     list_tabs: async () => {

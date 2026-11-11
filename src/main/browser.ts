@@ -48,6 +48,7 @@ import {
   seatForTab,
 } from "./agent/mcp-sessions.js";
 import { SIDEBAR_CLIENT_ID, sidebarToolNeedsPage } from "./agent/sidebar-tab.js";
+import { mayActivateTab, settleCreateActivate } from "./agent/tab-guard.js";
 import { capturesSince, ledgerCloseReason, reportSince, type LedgerClose } from "./agent/task-result.js";
 import type {
   ClickConfirm,
@@ -727,8 +728,15 @@ export class SparkBrowser {
     const actor = this.focusActor();
     if (actor && actor.clientId === client) return actor.winId === win;
     const bound = this.clientWindows.get(client);
-    if (!bound) return this.wins.size <= 1;
+    if (!bound) return this.getClientsOnWindow(win).size === 0;
     return bound === win;
+  }
+
+  /** 这个 client 已经绑到的窗口。没绑过就是 undefined，不另造一张表。 */
+  windowOfClient(clientId: string): string | undefined {
+    const client = String(clientId || "").trim();
+    if (!client) return undefined;
+    return this.clientWindows.get(client) || undefined;
   }
 
   /**
@@ -1056,7 +1064,7 @@ export class SparkBrowser {
     const card = (this.taskPool?.tasks || []).find((item) => item.id === taskId);
     if (!card) return { ok: false, message: "没有这张任务卡" };
     this.selectedSession = card.clientId ? `agent:${card.clientId}` : "user";
-    if (card.tabId && typeof this.switchTab === "function") this.switchTab(card.tabId);
+    if (card.tabId && typeof this.switchTab === "function") this.switchTab(card.tabId, { userAction: true });
     else this.pushSidebarState();
     return { ok: true, selectedSession: this.selectedSession, activeId: this.activeTabId };
   }
@@ -1206,6 +1214,11 @@ export class SparkBrowser {
   private renderRestoredAt = 0;
   /** 用户在恢复之后亲自把窗口拉到前台。归还时不再压回最小化。 */
   private userClaimedRenderWindow = false;
+  /** 后台渲染切走可见标签之前，按窗口记下用户原来的标签，归还时切回。 */
+  private _renderPrevTab?: Map<string, string>;
+  private get renderPrevTab(): Map<string, string> {
+    return (this._renderPrevTab ??= new Map());
+  }
 
   private get chatRunning(): boolean {
     const pool = this.taskPool;
@@ -1284,7 +1297,7 @@ export class SparkBrowser {
     const tab = this.tabs.get(tabId);
     if (!tab) return;
     if (this.tabAwaitsHuman(tabId)) return;
-    if (tabId === this.activeTabId) return;
+    if (tabId === (this.activeTabs.get(tab?.winId || "main") || "")) return;
     const slept = this.discardTab(tabId);
     if (!slept && !tab.discarded) return;
     tab.agentStatus = "done";
@@ -1440,7 +1453,7 @@ export class SparkBrowser {
     });
     setTimeout(() => this.presentWindow(), 800);
     this.registerIpc();
-    this.createTab(DEFAULT_URL, true);
+    this.createTab(DEFAULT_URL, true, { userAction: true });
     this.memoryTimer = setInterval(() => this.autoDiscardIdleTabs(), 30_000);
     this.startChromeHoleWatch();
     this.win.on("closed", () => {
@@ -1549,8 +1562,8 @@ export class SparkBrowser {
     }
     attachPageContextMenu(wc, {
       openInNewTab: (openUrl) => {
-        if (tab.envId) this.createEnvTab(tab.envId, openUrl);
-        else this.createTab(openUrl, true, { openerTabId: id });
+        if (tab.envId) this.createEnvTab(tab.envId, openUrl, { userAction: true });
+        else this.createTab(openUrl, true, { openerTabId: id, userAction: true });
       },
       t: (key) => tx(this.settings.locale, key),
       canGoBack: () => this.navCanGoBack(wc),
@@ -1628,8 +1641,8 @@ export class SparkBrowser {
       if (openUrl && openUrl !== "about:blank") {
         if (this.windowIsMinimized()) {
           this.createTab(openUrl, false, { agentOwned: tab.agentOwned === true, openerTabId: id });
-        } else if (tab.envId) this.createEnvTab(tab.envId, openUrl);
-        else this.createTab(openUrl, true, { openerTabId: id });
+        } else if (tab.envId) this.createEnvTab(tab.envId, openUrl, { userAction: true });
+        else this.createTab(openUrl, true, { openerTabId: id, userAction: true });
       }
       return { action: "deny" };
     });
@@ -1816,7 +1829,11 @@ export class SparkBrowser {
     return formatTabMemoryBoard(this.settings?.locale, processes, mb);
   }
 
-  private createTab(url = DEFAULT_URL, activate = true, opts?: { agentOwned?: boolean; openerTabId?: string }): string {
+  private createTab(
+    url = DEFAULT_URL,
+    activate = true,
+    opts?: { agentOwned?: boolean; openerTabId?: string; userAction?: boolean },
+  ): string {
     const actor = this.focusActor();
     if (actor?.winId && actor.winId !== this.activeWinId && this.wins.has(actor.winId)) {
       return this.withWin(actor.winId, () => this.createTab(url, activate, opts));
@@ -1843,13 +1860,26 @@ export class SparkBrowser {
       claimTabForClient(clientId, id);
       this.bindClientWindow(clientId, winId);
     }
+    if (activate) {
+      const settled = settleCreateActivate(true, {
+        actor: this.focusActor(),
+        tabWinId: winId || "main",
+        tabOwner: agentOwned && clientId ? `agent:${clientId}` : "user",
+        userAction: opts?.userAction,
+        backgroundRender: false,
+      });
+      if (!settled.activate) {
+        activate = false;
+        console.log("[tab-guard] deny activate reason=" + settled.reason);
+      }
+    }
     if (activate) this.activeTabId = id;
     this.pinViewBeforeMount(view);
     this.winOf(winId).contentView.addChildView(view);
     this.bindPageWebContents(tab);
     this.layout();
     void view.webContents.loadURL(normalizeUrl(url));
-    if (activate) this.switchTab(id);
+    if (activate) this.switchTab(id, { userAction: opts?.userAction, actor: this.focusActor() });
     else this.layout();
     return id;
   }
@@ -1859,7 +1889,7 @@ export class SparkBrowser {
    * (cookies/localStorage isolated), the env's UA, and the env's sing-box
    * proxy if one is running. Fingerprint JS injection is P1, not here.
    */
-  createEnvTab(envId: string, url = DEFAULT_URL): string {
+  createEnvTab(envId: string, url = DEFAULT_URL, opts?: { userAction?: boolean }): string {
     const env = getEnv(this.configDir(), envId);
     if (!env) throw new Error(`环境 ${envId} 不存在`);
     const id = randomBytes(4).toString("hex");
@@ -1879,7 +1909,8 @@ export class SparkBrowser {
     this.bindPageWebContents(tab);
     this.layout();
     void view.webContents.loadURL(normalizeUrl(url));
-    this.switchTab(id);
+    const switched = this.switchTab(id, { userAction: opts?.userAction });
+    if (!switched.ok) console.log("[tab-guard] deny env tab=" + id + " " + switched.message);
     return id;
   }
 
@@ -2117,9 +2148,37 @@ export class SparkBrowser {
     };
   }
 
-  switchTab(id: string, opts?: { focus?: boolean }): ToolResult {
+  switchTab(
+    id: string,
+    opts?: {
+      focus?: boolean;
+      actor?: { clientId?: string; winId?: string };
+      userAction?: boolean;
+      backgroundRender?: boolean;
+    },
+  ): ToolResult {
     if (!this.tabs.has(id)) return { ok: false, message: `Tab not found: ${id}` };
     const tab = this.tabs.get(id);
+    const tabWinId = tab?.winId || "main";
+    const rawActor = opts?.actor ?? this.focusActor() ?? undefined;
+    const clientId = String(rawActor?.clientId || "").trim();
+    // 还没 submit_task 的 client 没有绑定窗。用当前窗补上，才能切自己刚建的标签。
+    // 不能退回 tab.winId，否则人在别的窗也能切走这张标签。
+    const actor =
+      rawActor && clientId && !String(rawActor.winId || "").trim()
+        ? { ...rawActor, winId: this.clientWindows.get(clientId) || this.activeWinId || "main" }
+        : rawActor;
+    const decision = mayActivateTab({
+      actor,
+      tabWinId,
+      tabOwner: ownerForTab(id),
+      userAction: opts?.userAction,
+      backgroundRender: opts?.backgroundRender,
+    });
+    if (!decision.ok) {
+      console.log("[tab-guard] deny tab=" + id + " reason=" + decision.reason);
+      return { ok: false, message: "不切换标签：" + decision.reason };
+    }
     const wasDiscarded = tab?.discarded === true;
 
     this.resetChromeCoverState();
@@ -2174,8 +2233,8 @@ export class SparkBrowser {
 
   newTab(url?: string, envId?: string): ToolResult {
     const id = envId
-      ? this.createEnvTab(envId, url || DEFAULT_URL)
-      : this.createTab(url || DEFAULT_URL, true);
+      ? this.createEnvTab(envId, url || DEFAULT_URL, { userAction: true })
+      : this.createTab(url || DEFAULT_URL, true, { userAction: true });
     const suffix = envId ? ` in env ${envId}` : "";
     return { ok: true, message: `Opened tab ${id}${suffix}`, data: { id, ...this.listTabs() } };
   }
@@ -2194,23 +2253,31 @@ export class SparkBrowser {
   }
 
   private mountReaderTab(fileUrl: string): ToolResult {
+    const actor = this.focusActor();
     const existing = this.readerTabId ? this.tabs.get(this.readerTabId) : undefined;
     if (!existing) {
       this.readerTabId = null;
-      const id = this.createTab(fileUrl, true);
+      const id = this.createTab(fileUrl, true, actor ? undefined : { userAction: true });
       this.readerTabId = id;
-      return { ok: true, message: `Opened tab ${id}`, data: { id, reused: false, ...this.listTabs() } };
+      const activated = this.activeTabId === id;
+      return {
+        ok: true,
+        message: activated ? `Opened tab ${id}` : `报告已放在标签 ${id}，未切换当前页`,
+        data: { id, reused: false, ...this.listTabs() },
+      };
     }
     existing.url = fileUrl;
     const alreadyAwake = Boolean(existing.view) && !existing.discarded;
-    this.switchTab(existing.id);
+    const switched = this.switchTab(existing.id, actor ? { actor } : { userAction: true });
     if (alreadyAwake) {
       const wc = existing.view?.webContents;
       if (wc && !wc.isDestroyed()) void wc.loadURL(normalizeUrl(fileUrl));
     }
     return {
       ok: true,
-      message: `Opened tab ${existing.id}`,
+      message: switched.ok
+        ? `Opened tab ${existing.id}`
+        : `报告已放在标签 ${existing.id}，未切换当前页：${switched.message}`,
       data: { id: existing.id, reused: true, ...this.listTabs() },
     };
   }
@@ -2229,7 +2296,7 @@ export class SparkBrowser {
     this.lastClosed = { url: closedUrl, envId: tab.envId };
     if (this.readerTabId === id) this.readerTabId = null;
     if (this.tabs.size <= 1) {
-      this.createTab("about:blank", true);
+      this.createTab("about:blank", true, { userAction: true });
     }
     if (tab.view) {
       try {
@@ -2328,7 +2395,7 @@ export class SparkBrowser {
     this.activeWinId = winId;
     this.withWin(winId, () => {
       this.attachShell();
-      this.createTab(DEFAULT_URL, true);
+      this.createTab(DEFAULT_URL, true, { userAction: true });
       this.presentWindow();
     });
     console.log(`[window] opened ${winId} (total ${this.wins.size})`);
@@ -2876,13 +2943,13 @@ export class SparkBrowser {
     if (ids.length < 2) return;
     const i = Math.max(0, ids.indexOf(this.activeTabId));
     const next = ids[(i + delta + ids.length) % ids.length];
-    if (next) this.switchTab(next);
+    if (next) this.switchTab(next, { userAction: true });
   }
 
   private switchTabByIndex(index: number): void {
     const ids = [...this.tabs.keys()];
     const id = ids[Math.min(Math.max(0, index), ids.length - 1)];
-    if (id) this.switchTab(id);
+    if (id) this.switchTab(id, { userAction: true });
   }
 
   private focusOmnibox(): void {
@@ -3082,7 +3149,7 @@ export class SparkBrowser {
     if (!last) return { ok: false, message: "nothing to reopen" };
     this.lastClosed = null;
     if (last.envId) {
-      const id = this.createEnvTab(last.envId, last.url);
+      const id = this.createEnvTab(last.envId, last.url, { userAction: true });
       return { ok: true, message: `Reopened ${id}`, data: this.listTabs() };
     }
     return this.newTab(last.url);
@@ -3840,7 +3907,7 @@ export class SparkBrowser {
     handle("spark:toggle-maximize", async () => this.toggleMaximize());
     handle("spark:new-tab", async (_e, url?: string) => this.newTab(url));
     handle("spark:close-tab", async (_e, id: string) => this.closeTab(String(id)));
-    handle("spark:switch-tab", async (_e, id: string) => this.switchTab(String(id)));
+    handle("spark:switch-tab", async (_e, id: string) => this.switchTab(String(id), { userAction: true }));
     handle("spark:list-tabs", async () => this.listTabs());
     handle("spark:discard-inactive-tabs", async () => this.discardInactiveTabs());
     handle("spark:clear-chat", async () => this.clearChat());
@@ -4148,7 +4215,7 @@ export class SparkBrowser {
     });
     handle("spark:open-env", async (_e, envId) => {
       try {
-        const id = this.createEnvTab(String(envId));
+        const id = this.createEnvTab(String(envId), undefined, { userAction: true });
         return { ok: true, tabId: id };
       } catch (e) {
         return { ok: false, message: e instanceof Error ? e.message : String(e) };
@@ -6026,7 +6093,9 @@ export class SparkBrowser {
     const tabId = this.bindAgentTab(SIDEBAR_CLIENT_ID) || "";
     const winId = (tabId && this.tabs?.get(tabId)?.winId) || this.activeWinId || "main";
     const alone = [...this.getClientsOnWindow(winId)].every((id) => id === SIDEBAR_CLIENT_ID);
-    if (!alone && before && this.activeTabId !== before && typeof this.switchTab === "function") this.switchTab(before);
+    if (!alone && before && this.activeTabId !== before && typeof this.switchTab === "function") {
+      this.switchTab(before, { userAction: true });
+    }
     if (!tabId) return "";
     const tab = this.tabs?.get(tabId);
     if (tab?.agentStatus === "done") delete tab.agentStatus;
@@ -8061,37 +8130,38 @@ export class SparkBrowser {
   /** 这一轮后台渲染拉起来的是哪扇窗。结束时最小化同一扇，不碰用户正在看的另一扇。 */
   private backgroundRenderWinId = "";
 
-  /** 任务执行期：最小化窗口只恢复渲染，不置前、不夺焦。结束时回到最小化。 */
-  private engageBackgroundRender(clientId?: string, quiet = false): void {
-    this.renderHoldCount = (this.renderHoldCount || 0) + 1;
-    if (this.renderHoldCount > 1) return;
+  /**
+   * 任务执行期：最小化窗口只恢复渲染，不置前、不夺焦。结束时回到最小化。
+   * quiet 只表示不聚焦。归属不通过时不计数、不 restore、不 showInactive。
+   */
+  private engageBackgroundRender(clientId?: string, quiet = false): boolean {
+    void quiet;
     const client = String(clientId || this.focusActor()?.clientId || "").trim();
-    const bound = client ? this.clientWindows.get(client) || "" : "";
-    const winId = bound || this.activeWinId || "main";
-    if (!quiet && client && !this.clientOwnsWindow(client, winId)) {
-      this.safeFocusClientWindow(this.activeWinId || winId, client);
-      return;
-    }
-    const win = (bound ? this.winOf(winId) : this.win) as {
+    const winId = (client ? this.clientWindows.get(client) || "" : "") || this.activeWinId || "main";
+    if (client && !this.clientOwnsWindow(client, winId)) return false;
+    this.renderHoldCount = (this.renderHoldCount || 0) + 1;
+    if (this.renderHoldCount > 1) return true;
+    const win = this.winOf(winId) as {
       isDestroyed?: () => boolean;
       isMinimized?: () => boolean;
       restore?: () => void;
       showInactive?: () => void;
     } | undefined;
-    if (!win || win.isDestroyed?.()) return;
+    if (!win || win.isDestroyed?.()) return true;
     let minimized = false;
     try {
       minimized = Boolean(win.isMinimized?.());
     } catch {
-      return;
+      return true;
     }
-    if (!minimized) return;
+    if (!minimized) return true;
     this.wasMinimizedForTask = true;
     this.userClaimedRenderWindow = false;
     this.renderRestoredAt = Date.now();
     this.backgroundRenderWinId = winId;
     try { win.restore?.(); } catch { /* 不因窗口状态中断任务 */ }
     try { win.showInactive?.(); } catch { /* showInactive 才是后台恢复 */ }
+    return true;
   }
 
   /** restore / showInactive 后的一瞬间可能带焦点，这段不算用户自己拉回前台。 */
@@ -8099,6 +8169,11 @@ export class SparkBrowser {
     if (!this.wasMinimizedForTask || this.userClaimedRenderWindow) return;
     if (Date.now() - this.renderRestoredAt < 800) return;
     this.userClaimedRenderWindow = true;
+    const winId = this.backgroundRenderWinId || this.activeWinId || "main";
+    const prev = this.renderPrevTab.get(winId) || "";
+    if (!prev) return;
+    this.renderPrevTab.delete(winId);
+    this.switchTab(prev, { userAction: true });
   }
 
   private releaseBackgroundRender(): void {
@@ -8130,9 +8205,21 @@ export class SparkBrowser {
     const id = String(tabId || "").trim();
     if (id && !this.tabs.has(id)) return { ok: false, message: "标签不存在" };
     this.renderClients.set(client, (this.renderClients.get(client) || 0) + 1);
-    this.engageBackgroundRender(client, true);
+    const engaged = this.engageBackgroundRender(client, true);
+    if (!engaged) {
+      const left = (this.renderClients.get(client) || 1) - 1;
+      if (left <= 0) this.renderClients.delete(client);
+      else this.renderClients.set(client, left);
+      return { ok: false, message: "窗口不属于该客户端，未恢复后台渲染" };
+    }
     if (id) {
-      const switched = this.switchTab(id, { focus: false });
+      const winId = this.clientWindows.get(client) || this.activeWinId || "main";
+      if (!this.renderPrevTab.has(winId)) this.renderPrevTab.set(winId, this.activeTabs.get(winId) || "");
+      const switched = this.switchTab(id, {
+        focus: false,
+        actor: { clientId: client, winId },
+        backgroundRender: true,
+      });
       if (!switched.ok) {
         this.releaseRender(client);
         return switched;
@@ -8152,8 +8239,14 @@ export class SparkBrowser {
     if (!client || count <= 0) {
       return { ok: true, message: "没有待归还的渲染", data: { held: false } };
     }
+    const winId = this.clientWindows.get(client) || this.backgroundRenderWinId || this.activeWinId || "main";
     if (count <= 1) this.renderClients.delete(client);
     else this.renderClients.set(client, count - 1);
+    if (count <= 1) {
+      const prev = this.renderPrevTab.get(winId) || "";
+      this.renderPrevTab.delete(winId);
+      if (prev && !this.userClaimedRenderWindow) this.switchTab(prev, { userAction: true });
+    }
     this.releaseBackgroundRender();
     return {
       ok: true,
@@ -8429,7 +8522,9 @@ export class SparkBrowser {
     const tabId = this.bindAgentTab(clientId, task.taskId) || "";
     const reused = tabId ? this.tabs?.get(tabId) : undefined;
     if (reused) delete reused.agentStatus;
-    if (before && this.activeTabId !== before && typeof this.switchTab === "function") this.switchTab(before);
+    if (before && this.activeTabId !== before && typeof this.switchTab === "function") {
+      this.switchTab(before, { userAction: true });
+    }
     const running = this.taskPool?.runningBackground?.() ?? 0;
     const face = listClientSessions().find((item) => item.clientId === clientId) || registerClientName(clientId, "");
     const card = {
@@ -8485,7 +8580,9 @@ export class SparkBrowser {
     const pooled = this.taskPool?.tasks?.find((item) => item.id === task.taskId);
     let tabId = pooled?.tabId || "";
     if (!tabId) tabId = this.bindAgentTab(clientId, task.taskId) || "";
-    if (before && this.activeTabId !== before && typeof this.switchTab === "function") this.switchTab(before);
+    if (before && this.activeTabId !== before && typeof this.switchTab === "function") {
+      this.switchTab(before, { userAction: true });
+    }
     if (!tabId) {
       this.settleMcpTask(task, { ok: false, text: "无法为这个 agent 创建独立标签。" });
       this.agentPoolIds?.delete(task.taskId);
@@ -8504,7 +8601,7 @@ export class SparkBrowser {
     this.freeSoulRunning = true;
     const homeWin = this.tabs?.get(tabId)?.winId || this.activeWinId || "main";
     this.bindClientWindow(clientId, homeWin);
-    this.engageBackgroundRender(clientId);
+    const heldRender = this.engageBackgroundRender(clientId);
     try {
       this.seedAgentTaskChat(clientId, task.taskId);
       // 并发时标签、计量、对话都走这份作用域，退出后自动回到用户当前页，不再手写还原 agentTabId。
@@ -8581,7 +8678,7 @@ export class SparkBrowser {
         this.settleMcpTask(task, { ok: false, text: message }, tabId);
       }
     } finally {
-      this.releaseBackgroundRender();
+      if (heldRender) this.releaseBackgroundRender();
       this.agentAborts.delete(controller);
       this.agentAbortByTask?.delete(task.taskId);
       const stopped = this.manualStopIds?.has(task.taskId) === true;
@@ -8650,7 +8747,7 @@ export class SparkBrowser {
   private openBackgroundTab(): string {
     const before = this.activeTabId;
     const tabId = this.createAgentTab();
-    if (before && this.activeTabId !== before) this.switchTab(before);
+    if (before && this.activeTabId !== before) this.switchTab(before, { userAction: true });
     return tabId;
   }
 
