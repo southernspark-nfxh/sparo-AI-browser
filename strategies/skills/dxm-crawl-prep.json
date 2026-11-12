@@ -2,18 +2,26 @@
   "id": "dxm-crawl-prep",
   "title": "店小秘采集箱：上品前编辑",
   "kind": "site",
-  "version": 7,
+  "version": 8,
   "shareable": false,
   "distilled": false,
   "platform": "dianxiaomi",
   "aliases": ["店小秘上品", "店小秘采集箱", "采集箱编辑", "1688回填", "上品之前", "数据采集", "店小秘目录", "店小秘首页"],
   "createdAt": "2026-10-31T00:00:00.000Z",
-  "updatedAt": "2026-11-10T12:20:00.000Z",
+  "updatedAt": "2026-11-11T00:00:00.000Z",
   "intent": "用户说「编辑这个」或「编辑页面」时，立刻做完上品前编辑，不要只打开页面。对照 1688 改文字、库存、重量和主图尺寸，改完点「保存」并 reload 回读。只点 btn-orange「保存」，不点 btn-green「保存并认领」。",
   "declared_domains": ["www.dianxiaomi.com", "detail.1688.com"],
   "declared_actions": ["page_text", "click_text", "menu_click", "execute", "fill", "click", "reload"],
   "human_gates": ["login", "captcha", "pay", "保存并认领"],
-  "params": {},
+  "params": {
+    "editUrl": { "type": "string", "required": true, "default": "{{__activeTabUrl}}", "desc": "采集箱编辑页地址；默认取当前标签页" },
+    "title": { "type": "string", "required": false, "desc": "标题全文" },
+    "weight": { "type": "string", "required": false, "desc": "重量，千克，如 0.05" },
+    "stock": { "type": "string", "required": false, "desc": "库存上限；只降不升" },
+    "variantCount": { "type": "string", "required": false },
+    "imgShortSide": { "type": "string", "required": false },
+    "category": { "type": "string", "required": false }
+  },
   "steps": [
     {
       "id": "open-edit",
@@ -69,7 +77,7 @@
       "retries": 4,
       "retryDelayMs": 1500,
       "args": {
-        "script": "(() => {\n  const wantTitle = String(\"{{title}}\").trim();\n  const wantWeight = String(\"{{weight}}\").trim();\n  const wantStock = String(\"{{stock}}\").trim();\n  const titleEl = document.querySelector('input[placeholder=\"请填写标题\"]');\n  if (!titleEl) throw new Error(\"回读时编辑页还没出来\");\n  const title = String(titleEl.value || \"\").trim();\n  const weight = String(document.querySelector('input[placeholder^=\"请输入重量\"]')?.value || \"\").trim();\n  const stocks = [];\n  for (const row of document.querySelectorAll(\"tr\")) {\n    const inputs = [...row.querySelectorAll('input[placeholder=\"请输入\"]')];\n    const stock = inputs[5];\n    if (!stock) continue;\n    const raw = String(stock.value || \"\").trim();\n    if (/^\\d+$/.test(raw)) stocks.push(raw);\n  }\n  const weightOk = weight === wantWeight || (wantWeight !== \"\" && Number(weight) === Number(wantWeight));\n  const titleOk = wantTitle === \"\" || title === wantTitle;\n  const stockOk = stocks.length > 0 && stocks.every((value) => value === wantStock);\n  const payload = { title, weight, stocks, ok: titleOk && weightOk && stockOk };\n  if (!payload.ok) throw new Error(\"回读不一致 \" + JSON.stringify(payload));\n  return payload;\n})()"
+        "script": "(() => {\n  const squash = (value) => String(value == null ? \"\" : value).replace(/\\s+/g, \" \").trim();\n  const given = (value) => {\n    const raw = squash(value);\n    return raw !== \"\" && raw.indexOf(\"{{\") !== 0;\n  };\n  const titleEl = document.querySelector('input[placeholder=\"\\u8bf7\\u586b\\u5199\\u6807\\u9898\"]');\n  if (!titleEl) throw new Error(\"\\u56de\\u8bfb\\u65f6\\u7f16\\u8f91\\u9875\\u8fd8\\u6ca1\\u51fa\\u6765\");\n  const title = squash(titleEl.value || \"\");\n  const weightEl = document.querySelector('input[placeholder^=\"\\u8bf7\\u8f93\\u5165\\u91cd\\u91cf\"]');\n  const weight = weightEl ? squash(weightEl.value || \"\") : \"\";\n  const rows = [...document.querySelectorAll('tr[class*=\"skuDataItem_\"]')];\n  const stocks = rows.map((row) => {\n    const inputs = [...row.querySelectorAll('input[placeholder=\"\\u8bf7\\u8f93\\u5165\"]')];\n    const stock = inputs[5];\n    return stock ? squash(stock.value || \"\") : null;\n  });\n  const rowCount = rows.length;\n  const imgEl = document.querySelector(\".img-size\");\n  let imgShortSide = null;\n  if (imgEl) {\n    const found = squash(imgEl.textContent || \"\").match(/(\\d+)\\s*[xX\\u00d7]\\s*(\\d+)/);\n    if (found) imgShortSide = Math.min(Number(found[1]), Number(found[2]));\n  }\n  const category = (() => {\n    const label = [...document.querySelectorAll(\"div.ant-col.ant-form-item-label\")].find((el) => (el.textContent || \"\").indexOf(\"\\u5e97\\u5c0f\\u79d8\\u5206\\u7c7b\") >= 0);\n    if (!label) return null;\n    const row = label.closest(\".ant-row\");\n    if (!row) return null;\n    const control = row.querySelector(\".ant-col.ant-form-item-control\");\n    if (!control) return null;\n    return squash(control.textContent || \"\") || null;\n  })();\n  const diffs = [];\n  const wantTitle = squash(\"{{title}}\");\n  if (wantTitle !== title) diffs.push(\"\\u6807\\u9898(\\u671f\\u671b\" + wantTitle + \"/\\u5b9e\\u9645\" + title + \")\");\n  const wantWeight = squash(\"{{weight}}\");\n  if (given(wantWeight) && !(weight !== \"\" && Number(wantWeight) === Number(weight))) diffs.push(\"\\u91cd\\u91cf(\\u671f\\u671b\" + wantWeight + \"/\\u5b9e\\u9645\" + weight + \")\");\n  const wantVariants = squash(\"{{variantCount}}\");\n  if (given(wantVariants) && Number(wantVariants) !== rowCount) diffs.push(\"\\u53d8\\u79cd\\u884c(\\u671f\\u671b\" + wantVariants + \"/\\u5b9e\\u9645\" + (rowCount > 0 ? String(rowCount) : \"\\u8bfb\\u4e0d\\u5230\") + \")\");\n  const wantStock = squash(\"{{stock}}\");\n  if (given(wantStock)) {\n    stocks.forEach((value, index) => {\n      if (value === null) diffs.push(\"\\u53d8\\u79cd\" + (index + 1) + \"\\u5e93\\u5b58(\\u671f\\u671b\" + wantStock + \"/\\u5b9e\\u9645\\u8bfb\\u4e0d\\u5230)\");\n      else if (!(value !== \"\" && Number(value) === Number(wantStock))) diffs.push(\"\\u53d8\\u79cd\" + (index + 1) + \"\\u5e93\\u5b58(\\u671f\\u671b\" + wantStock + \"/\\u5b9e\\u9645\" + value + \")\");\n    });\n  }\n  const wantShort = squash(\"{{imgShortSide}}\");\n  if (given(wantShort)) {\n    if (imgShortSide === null) diffs.push(\"\\u4e3b\\u56fe\\u77ed\\u8fb9(\\u671f\\u671b\" + wantShort + \"/\\u5b9e\\u9645\\u8bfb\\u4e0d\\u5230)\");\n    else if (Number(imgShortSide) !== Number(wantShort)) diffs.push(\"\\u4e3b\\u56fe\\u77ed\\u8fb9(\\u671f\\u671b\" + wantShort + \"/\\u5b9e\\u9645\" + String(imgShortSide) + \")\");\n  }\n  const wantCategory = squash(\"{{category}}\");\n  if (given(wantCategory)) {\n    if (category === null) diffs.push(\"\\u5206\\u7c7b(\\u671f\\u671b\" + wantCategory + \"/\\u5b9e\\u9645\\u8bfb\\u4e0d\\u5230)\");\n    else if (category !== wantCategory) diffs.push(\"\\u5206\\u7c7b(\\u671f\\u671b\" + wantCategory + \"/\\u5b9e\\u9645\" + category + \")\");\n  }\n  if (diffs.length) throw new Error(\"\\u56de\\u8bfb\\u4e0d\\u4e00\\u81f4\\uff1a\" + diffs.join(\"\\u3001\"));\n  return { title, weight, stocks, rowCount, imgShortSide, category };\n})()"
       }
     }
   ],
@@ -153,7 +161,7 @@
     "页顶一键翻译的箭头有时点在文字上，菜单停在屏幕外，高度为 0。",
     "图片翻译、批量编辑是子菜单，一次 menu_click 可能只打开第一层。",
     "描述区和变种图不一定跟主图一起改到短边 800。",
-    "保存没有可见成功提示，唯一可靠信号是 reload 后回读；图片、描述等其它字段是否一起落库未逐项核对。"
+    "保存没有可见成功提示，唯一可靠信号是 reload 后回读；2026-11-11 起回读已覆盖标题/重量/变种行数/逐行库存/主图短边/分类 6 项；描述与变种图仍未逐项核对。"
   ],
   "notes": [
     "run_skill 按 steps 打开编辑页、填写、只点 btn-orange「保存」、reload 回读。不点保存并认领。",
@@ -163,7 +171,8 @@
     "2026-11-10 复核第二条（记录 167842582602436618，1688 offer/747173572699）：六个变种库存 8341523/2657/945107/936444/7267/14933 全部封顶 2000，窗口最小化下用 button.click() 保存，reload 后六个 2000 全在，列表仍在采集箱。",
     "数据采集总表列：图片、标题、描述、货源价格、折扣价、售价(USD)、责任人、创建时间、操作。页上流程是数据采集、认领产品、编辑数据、完成发布。状态有全部、未认领、已认领、采集失败、采集中。",
     "2026-10-31 已登录账号 LCYC012 看过：总表全部 5495、未认领 1655、已认领 3835。左侧采集箱各平台数量为空。",
-    "变种图和描述图不在采集图片那一次批量尺寸里。变种图有自己的「编辑图片」。描述 HTML 不要整段重写。"
+    "变种图和描述图不在采集图片那一次批量尺寸里。变种图有自己的「编辑图片」。描述 HTML 不要整段重写。",
+    "2026-11-11 真机只读采样（记录 167842582606445464）：6 项全部可读，标题、重量 0.05、3 个变种行、每行库存 2000、.img-size 23 个（首个 800 X 800）、分类「未分类 + 管理分类」；未改页面任何值。"
   ],
   "agentPlaybook": [
     "match_skill({ query: \"店小秘上品\" })，再 get_skill({ id: \"dxm-crawl-prep\" }) 读完整规则。",

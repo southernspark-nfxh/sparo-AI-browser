@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0] — 2026-11-12 多账号环境 + 壳层白屏自愈
+
+**同一个站点可以同时登录多个号。** 新增「账号环境」：每个环境一套独立 Chromium partition（Cookie / localStorage / IndexedDB / 缓存），不是切换登录态。人走 **设置 → 账号** 新建 / 打开 / 删除；Agent 走 `list_envs` 拿 `envId`，再 `navigate({ url, envId })`、`new_tab({ url, envId })`，技能用 `run_skill({ query, params: { envId } })`。不传 `envId` 仍是默认登录态。环境标签会认领给发起它的 client，后续 click / fill / execute 继续停在这个号里。
+
+**修了两处导致「建了环境却串号」的 bug。** 一是 `WebContentsView` 构造参数顶层没有 `session`，原来那么写会被静默忽略，所有环境退回共用默认 session；改为 `webPreferences.partition`。二是带 `envId` 的 `navigate` 在已有标签时被 `if (envId && !tabId)` 跳过，页面落进同一张普通标签；改为目标标签不属于该环境就强制新开。
+
+**实测：** 环境 A 写 cookie + sessionStorage，切到环境 B 读到空值、`null`；回到 A 原值仍在；两次导航落在不同标签 id。真实使用中 A账号 / b账号两个环境分别写入 20 KB、28 KB Cookies，互不覆盖。`typecheck` 0 错误，测试 126 文件 / 950 条通过。细节见 [MULTI-ACCOUNT.md](./docs/MULTI-ACCOUNT.md)，打包事项见 [RELEASE-NOTE-MULTI-ACCOUNT.md](./docs/RELEASE-NOTE-MULTI-ACCOUNT.md)。
+
+**social-media-publish 技能 v0.3.6 同步更新：** 头条立即发布从 `clickLabeled`（JS 合成 click）改为 Sparo CDP 真实点击，必须先回读封面再点按钮；百家号续跑只补编辑器里还在的 `@@IMG` 标记，每张确认成功立刻整篇写回不再等全部传完；两个平台 `publishOrSchedule` 入口加 `assertPublishReady` 质量门（`MARKERS_LEFT` / `IMAGE_COUNT_MISMATCH` / `COVER_REQUIRED` / `OPTIONS_MISMATCH`），任何一项不过就不点发布按钮。`--self-check` 新增 6 条断言锁住。详情见 `docs/NOTICE_SKILL_PUBLISH_PACK_20261112.md`。
+
+**换平台后不用再手动最小化再最大化。** 之前的老毛病：网页照常显示，顶栏和右侧侧栏整块发白、不显示地址栏和输入框，只能最小化再最大化才恢复。这次定位到不是「页面视图盖住壳层」，而是壳层自己的合成停了帧——网页是另一条合成链，所以它还在画。现在壳层每秒报一次这一秒画了几帧，连续 3 拍 0 帧且窗口在前台就主动 `invalidate()` 整窗重绘，等于替你做了那次最小化/最大化；show / restore / 改分辨率 / 拔插显示器 / 解锁 / 休眠回来也各补一次强制重绘。同时修了两个多开漏洞：页面洞断言以前只查当前窗口，另外两扇完全没被看管；`openWindow` 出来的窗口也没有壳层崩溃重载和假死拉回。诊断落 `%APPDATA%\sparo-store\diag\crash.log` 的 `[shell-paint]` / `[chrome-hole]` 行。细节见 [BUG-20261027-P4-WHITESCREEN-3RD.md](./docs/BUG-20261027-P4-WHITESCREEN-3RD.md) 第五轮。
+
 ## [0.5.3] — 2026-11-11 发布链路收口（0.5.1 超集，共同开发基线）
 
 **本版 = 0.5.1 的多 Agent 窗口隔离 + 本次发布链路修复，两者合成后作为后续共同开发的基线。**

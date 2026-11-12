@@ -3,7 +3,6 @@
 // 提交后跳 /graphic/articles，那里看不到定时稿；定时稿只在 /manage/content/all 显示「定时发布中」。
 import {
   blockedCall,
-  clickLabeled,
   confirmCoverScript,
   fail,
   guard,
@@ -18,18 +17,15 @@ import {
   waitEditor,
 } from "../page.mjs";
 import { click, nav } from "../sparo.mjs";
-import { loadProfile } from "../profile.mjs";
 
 const MANAGE_URL = "https://mp.toutiao.com/profile_v4/manage/content/all?enter_from=left_menu";
-const profile = loadProfile("toutiao");
-const AD_LABEL = profile.switches.required.find((item) => item.id === "ad").label;
 
 export const toutiao = {
-  id: profile.id,
-  host: profile.entry.host,
-  writeUrl: profile.entry.writeUrl,
+  id: "toutiao",
+  host: "mp.toutiao.com",
+  writeUrl: "https://mp.toutiao.com/profile_v4/graphic/publish",
   writeMark: "/graphic/publish",
-  listUrl: profile.entry.listUrl,
+  listUrl: "https://mp.toutiao.com/profile_v4/graphic/articles",
 
   async openBlank(ctx) {
     const opened = await openWriteTab(ctx);
@@ -104,8 +100,20 @@ export const toutiao = {
     // 创作助手抽屉的遮罩会抢走段落点击：先关掉，再谈光标和插图。
     const assistant = await closeAiAssistant(ctx);
     if (!assistant.ok) return assistant;
-    // 多图从后往前插，段落位置不被前一张图改变；续跑时保留已经回读到的前几张。
-    for (let index = ctx.images.length - 1; index >= existing; index--) {
+    // 多图从后往前插，段落位置不被前一张图改变。写了 @@IMGn@@ 的稿子按标记是否还在决定插不插；没写标记的仍按已回读张数续跑。
+    for (let index = ctx.images.length - 1; index >= 0; index--) {
+      const markerState = await page(
+        ctx,
+        "(() => { const pm = document.querySelector('.ProseMirror'); const text = pm ? (pm.innerText || '') : ''; const marker = " +
+          JSON.stringify("@@IMG" + (index + 1) + "@@") +
+          "; return JSON.stringify({ hasMarker: text.includes(marker), anyMarker: /@@IMG\\d@@/.test(text) }); })()",
+      );
+      if (markerState.stop) return markerState.stop;
+      if (markerState.value?.anyMarker) {
+        if (!markerState.value.hasMarker) continue;
+      } else if (index < existing) {
+        continue;
+      }
       const file = ctx.images[index];
       const before = await readPgcCount(ctx);
       if (before.stop) return before.stop;
@@ -121,6 +129,8 @@ export const toutiao = {
       if (!ready.ok) return ready;
       const inserted = await confirmImageInsert(ctx, before.value?.count || 0);
       if (!inserted.ok) return inserted;
+      const cleaned = await stripImageMarker(ctx, index + 1);
+      if (!cleaned.ok) return cleaned;
     }
     const count = await readPgcCount(ctx);
     if (count.stop) return count.stop;
@@ -211,7 +221,7 @@ export const toutiao = {
       "const label = input.closest('label');" +
       "return { value: input.value || '', checked: !!input.checked, text: ((label && label.innerText) || '').replace(/\\s+/g, '') };" +
       "});" +
-      "const ad = radios.find((item) => item.text.includes(" + JSON.stringify(AD_LABEL) + "));" +
+      "const ad = radios.find((item) => item.text.includes('投放广告赚收益'));" +
       "const firstLabel = Array.from(document.querySelectorAll('label')).find((el) => (el.innerText || '').replace(/\\s+/g, '').includes('头条首发'));" +
       "const firstInput = firstLabel ? firstLabel.querySelector('input') : null;" +
       "return JSON.stringify({" +
@@ -227,7 +237,7 @@ export const toutiao = {
       "})()";
     const selectScript =
       "(() => {" +
-      "const label = Array.from(document.querySelectorAll('label')).find((el) => (el.innerText || '').includes(" + JSON.stringify(AD_LABEL) + "));" +
+      "const label = Array.from(document.querySelectorAll('label')).find((el) => (el.innerText || '').includes('投放广告赚收益'));" +
       "const input = label ? label.querySelector('input[type=\"radio\"]') : null;" +
       "if (!label || !input) return JSON.stringify({ ok: false });" +
       "if (!input.checked) label.click();" +
@@ -244,7 +254,7 @@ export const toutiao = {
       await sleep(300);
     }
     ctx.options = state;
-    if (!state.adFound) return fail("AD_CONTROL_MISSING", state, "没有找到「" + AD_LABEL + "」");
+    if (!state.adFound) return fail("AD_CONTROL_MISSING", state, "没有找到「投放广告赚收益」");
     if (!state.adChecked) {
       const selected = await page(ctx, selectScript);
       if (selected.stop) return selected.stop;
@@ -258,7 +268,7 @@ export const toutiao = {
       }
     }
     ctx.options = state;
-    if (!state.adChecked) return fail("AD_ASSERT_FAIL", state, AD_LABEL + "没有选中");
+    if (!state.adChecked) return fail("AD_ASSERT_FAIL", state, "投放广告赚收益没有选中");
     return pass(state);
   },
 
@@ -267,15 +277,37 @@ export const toutiao = {
     if (blocked) return blocked;
     const options = await this.setOptions(ctx);
     if (!options.ok) return options;
+    const ready = await assertPublishReady(ctx);
+    if (!ready.ok) return ready;
     if (ctx.schedule) return schedule(ctx);
-    const preview = await clickLabeled(ctx, "预览并发布");
-    if (!preview.ok) return fail("PUBLISH_BUTTON_MISSING", "预览并发布", await pageHint(ctx));
-    await sleep(1200);
+    // 封面没回读到时，真实点击也不会出预览层。读到 0 再等 800ms，仍没有就不点。
+    const coverScript =
+      "(() => {" +
+      "const n = document.querySelectorAll('.article-cover img').length;" +
+      "const box = document.querySelector('.article-cover');" +
+      "const bg = !!(box && Array.from(box.querySelectorAll('*')).some((el) => (getComputedStyle(el).backgroundImage || '').includes('url(')));" +
+      "return JSON.stringify({ n, bg });" +
+      "})()";
+    let cover = await page(ctx, coverScript);
+    if (cover.stop) return cover.stop;
+    if (!(cover.value?.n > 0) && !cover.value?.bg) {
+      await sleep(800);
+      cover = await page(ctx, coverScript);
+      if (cover.stop) return cover.stop;
+    }
+    if (!(cover.value?.n > 0) && !cover.value?.bg) {
+      return fail("COVER_REQUIRED", cover.value, "封面还没回读到，不能点预览并发布");
+    }
+    const preview = await clickTrustedPublish(ctx, "预览并发布", '[data-sparo-publish="预览并发布"]');
+    if (!preview.ok) return preview;
+    const opened = await waitPreviewLayer(ctx);
+    if (!opened.ok) return opened;
     const human = await guard(ctx);
     if (human) return human;
-    const confirm = await clickLabeled(ctx, "确认发布");
-    if (!confirm.ok) return fail("PUBLISH_CONFIRM_MISSING", "确认发布", await pageHint(ctx));
-    await sleep(1500);
+    const confirm = await clickTrustedPublish(ctx, "确认发布", '[data-sparo-publish="确认发布"]');
+    if (!confirm.ok) return confirm;
+    const submitted = await waitPublishLeft(ctx);
+    if (!submitted.ok) return submitted;
     const after = await guard(ctx);
     if (after) return after;
     return pass({ mode: "now" });
@@ -298,13 +330,119 @@ export const toutiao = {
         "body: !!document.querySelector('.ProseMirror')," +
         "image: !!document.querySelector('.syl-toolbar-tool.image .syl-toolbar-button')," +
         "cover: !!document.querySelector('.article-cover-add, .article-cover-img-replace')," +
-        "ad: Array.from(document.querySelectorAll('label')).some((el) => (el.innerText || '').includes(" + JSON.stringify(AD_LABEL) + "))" +
+        "ad: Array.from(document.querySelectorAll('label')).some((el) => (el.innerText || '').includes('投放广告赚收益'))" +
         "}))()",
     );
     if (read.stop) return read.stop;
     return pass(read.value);
   },
 };
+
+/** 发布前回读。不过就不点发布按钮。 */
+async function assertPublishReady(ctx) {
+  const read = await page(
+    ctx,
+    "(() => {" +
+      "const pm = document.querySelector('.ProseMirror');" +
+      "const blob = ((pm && pm.innerText) || '') + ((pm && pm.innerHTML) || '');" +
+      "const markers = blob.includes('@@IMG');" +
+      "const images = pm ? pm.querySelectorAll('.pgc-img').length : 0;" +
+      "const coverImgs = document.querySelectorAll('.article-cover img').length;" +
+      "const group = document.querySelector('.article-cover-radio-group');" +
+      "const single = group ? group.querySelector('input[value=\"2\"]') : null;" +
+      "const radios = Array.from(document.querySelectorAll('input[type=\"radio\"]')).map((input) => {" +
+      "const label = input.closest('label');" +
+      "return { checked: !!input.checked, text: ((label && label.innerText) || '').replace(/\\s+/g, '') };" +
+      "});" +
+      "const ad = radios.find((item) => item.text.includes('投放广告赚收益'));" +
+      "const firstLabel = Array.from(document.querySelectorAll('label')).find((el) => (el.innerText || '').replace(/\\s+/g, '').includes('头条首发'));" +
+      "const firstInput = firstLabel ? firstLabel.querySelector('input') : null;" +
+      "return JSON.stringify({ markers, images, coverImgs, hasGroup: !!group, singleOn: !!(single && single.checked), adChecked: !!(ad && ad.checked), firstChecked: !!(firstInput && firstInput.checked) });" +
+      "})()",
+  );
+  if (read.stop) return read.stop;
+  const state = read.value || {};
+  if (state.markers) return fail("MARKERS_LEFT", state, "正文还有 @@IMG 标记");
+  if (ctx.images.length && state.images !== ctx.images.length) return fail("IMAGE_COUNT_MISMATCH", state, "正文图片张数和文件数不一致");
+  if (state.coverImgs !== 1 || (state.hasGroup && !state.singleOn)) return fail("COVER_REQUIRED", state, "封面不是单图");
+  if (!state.adChecked || state.firstChecked) return fail("OPTIONS_MISMATCH", state, "广告收益未勾或头条首发被勾上");
+  return pass(state);
+}
+
+/** 给唯一按钮打标，再用 Sparo 真实点击。空回执不在这里重试，调用方只看页面结果。 */
+async function clickTrustedPublish(ctx, label, selector) {
+  const marked = await page(
+    ctx,
+    "(() => {" +
+      "const want = " + JSON.stringify(label) + ";" +
+      "const hits = Array.from(document.querySelectorAll('button')).filter((el) => {" +
+      "if ((el.innerText || '').replace(/\\s+/g, '') !== want) return false;" +
+      "const r = el.getBoundingClientRect();" +
+      "return r.width > 2 && r.height > 2;" +
+      "});" +
+      "if (hits.length !== 1) return JSON.stringify({ ok: false, n: hits.length });" +
+      "hits[0].setAttribute('data-sparo-publish', want);" +
+      "return JSON.stringify({ ok: true });" +
+      "})()",
+  );
+  if (marked.stop) return marked.stop;
+  if (!marked.value?.ok) {
+    const code = label === "预览并发布" ? "PUBLISH_BUTTON_MISSING" : "PUBLISH_CONFIRM_MISSING";
+    return fail(code, marked.value, "没有唯一的「" + label + "」");
+  }
+  const raw = await click(selector, ctx.tabId, ctx.host);
+  const stopped = blockedCall(raw);
+  if (stopped) return stopped;
+  return pass({ label, raw: String(raw ?? "").slice(0, 160) });
+}
+
+/** 预览层出现，或底栏已经有「确认发布」，就算点中了。层已在就不再点第二次。 */
+async function waitPreviewLayer(ctx) {
+  let last = null;
+  const deadline = Date.now() + 2500;
+  while (Date.now() <= deadline) {
+    const read = await page(
+      ctx,
+      "(() => {" +
+        "const mask = document.querySelector('.preview-article-mask');" +
+        "const r = mask && mask.getBoundingClientRect();" +
+        "const maskOn = !!(r && r.width > 8 && r.height > 8);" +
+        "const confirm = Array.from(document.querySelectorAll('button')).some((el) => (el.innerText || '').replace(/\\s+/g, '') === '确认发布' && el.getBoundingClientRect().height > 2);" +
+        "return JSON.stringify({ maskOn, confirm });" +
+        "})()",
+    );
+    if (read.stop) return read.stop;
+    last = read.value;
+    if (last?.maskOn || last?.confirm) return pass(last);
+    await sleep(300);
+  }
+  return fail("PUBLISH_BUTTON_MISSING", last, "点了预览并发布，预览层没有出现");
+}
+
+/** 已经离开编辑页就算确认生效。编辑页标题框里本来就有标题，不能拿「看得到标题」当成功。仍在编辑页就停，不再点第二次。 */
+async function waitPublishLeft(ctx) {
+  const title = JSON.stringify(ctx.title || "");
+  let last = null;
+  const deadline = Date.now() + 3000;
+  while (Date.now() <= deadline) {
+    const read = await page(
+      ctx,
+      "(() => {" +
+        "const href = location.href;" +
+        "const left = !/\\/graphic\\/publish/.test(href);" +
+        "const title = " + title + ";" +
+        "const onList = /\\/graphic\\/articles|\\/manage\\/content\\/all/.test(href);" +
+        "const listed = onList && ((document.body && document.body.innerText) || '').includes(title);" +
+        "return JSON.stringify({ href, left, listed });" +
+        "})()",
+    );
+    if (read.stop) return read.stop;
+    last = read.value;
+    if (last?.left || last?.listed) return pass(last);
+    await sleep(400);
+  }
+  return fail("PUBLISH_CONFIRM_MISSING", last, "确认发布后仍在编辑页");
+}
 
 async function readPgcCount(ctx) {
   return page(
@@ -356,6 +494,32 @@ async function closeAiAssistant(ctx) {
   return pass({ closed: true });
 }
 
+/** 锚点段只用于定位，插完图后删掉 @@IMGn@@，避免标记出现在正文里。 */
+async function stripImageMarker(ctx, n) {
+  const read = await page(
+    ctx,
+    "(() => {" +
+      "const pm = document.querySelector('.ProseMirror');" +
+      "if (!pm) return JSON.stringify({ ok: false, code: 'NO_EDITOR' });" +
+      "const marker = " + JSON.stringify("@@IMG" + n + "@@") + ";" +
+      "let removed = 0;" +
+      "pm.querySelectorAll('p').forEach((p) => {" +
+      "const text = (p.innerText || '').replace(/\\s+/g, '');" +
+      "if (text !== marker) return;" +
+      "p.querySelectorAll('span, font').forEach((el) => { if ((el.textContent || '').replace(/\\s+/g, '') === marker) el.textContent = ''; });" +
+      "Array.from(p.childNodes).forEach((node) => { if (node.nodeType === 3 && node.textContent.replace(/\\s+/g, '') === marker) node.textContent = ''; });" +
+      "if (!(p.innerText || '').trim() && !p.querySelector('img, .pgc-img')) p.remove();" +
+      "removed += 1;" +
+      "});" +
+      "const left = (pm.innerText || '').includes(marker);" +
+      "return JSON.stringify({ ok: !left, removed, left });" +
+      "})()",
+  );
+  if (read.stop) return read.stop;
+  if (!read.value?.ok) return fail("IMAGE_MARKER_LEFT", read.value, "插图锚点没有从正文里去掉");
+  return pass(read.value);
+}
+
 async function openImageDrawerAt(ctx, index, total) {
   const marked = await page(
     ctx,
@@ -365,30 +529,44 @@ async function openImageDrawerAt(ctx, index, total) {
       "document.querySelectorAll('[data-sparo-caret]').forEach((el) => el.removeAttribute('data-sparo-caret'));" +
       "const paras = Array.from(pm.querySelectorAll('p')).filter((el) => !el.closest('.pgc-img') && (el.innerText || '').trim());" +
       "if (!paras.length) return JSON.stringify({ ok: false, code: 'NO_PARAGRAPH' });" +
+      "const markerText = " + JSON.stringify("@@IMG" + (index + 1) + "@@") + ";" +
+      "const markedPara = paras.find((el) => (el.innerText || '').replace(/\\s+/g, '') === markerText);" +
       "const at = Math.min(paras.length - 1, Math.max(0, Math.round(((" + (index + 1) + ") * paras.length) / (" + (total + 1) + ")) - 1));" +
-      "const target = paras[at];" +
+      "const target = markedPara || paras[at];" +
       "target.setAttribute('data-sparo-caret', '1');" +
       "target.scrollIntoView({ block: 'center' });" +
+      "const box = target.getBoundingClientRect();" +
+      "if (box.top < 160 || box.bottom > window.innerHeight - 120) {" +
+      "let node = target.parentElement;" +
+      "while (node && node !== document.body) {" +
+      "if (node.scrollHeight > node.clientHeight + 40) { node.scrollTop += box.top - 320; break; }" +
+      "node = node.parentElement;" +
+      "}" +
+      "}" +
       "return JSON.stringify({ ok: true, at, total: paras.length, text: (target.innerText || '').slice(0, 100) });" +
       "})()",
   );
   if (marked.stop) return marked.stop;
   if (!marked.value?.ok) return fail(marked.value?.code || "NO_PARAGRAPH", marked.value, "正文里找不到插图段落");
-  const caret = await click({ selector: "[data-sparo-caret]", caret: true }, ctx.tabId, ctx.host);
-  const caretStopped = blockedCall(caret);
-  if (caretStopped) return caretStopped;
-  if (!/\"ok\"\s*:\s*true/.test(String(caret))) return fail("IMAGE_CARET_CLICK_FAILED", caret, "段落真实点击没有成功");
-  await sleep(300);
-  const selection = await page(
-    ctx,
-    "(() => {" +
-      "const sel = window.getSelection(); const node = sel && sel.rangeCount ? sel.getRangeAt(0).startContainer : null;" +
-      "const el = node ? (node.nodeType === 1 ? node : node.parentElement) : null;" +
-      "return JSON.stringify({ inMarked: !!(el && el.closest('[data-sparo-caret]')), paragraph: (el && el.closest('p')?.innerText || '').slice(0, 100), parent: el ? el.outerHTML.slice(0, 200) : '' });" +
-      "})()",
-  );
-  if (selection.stop) return selection.stop;
-  if (!selection.value?.inMarked) return fail("IMAGE_CARET_UNPROVEN", { target: marked.value, selection: selection.value }, "真实点击后光标不在目标段落，停止插图");
+  let caret = "";
+  let selection = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    caret = await click({ selector: "[data-sparo-caret]", caret: true }, ctx.tabId, ctx.host);
+    const caretStopped = blockedCall(caret);
+    if (caretStopped) return caretStopped;
+    await sleep(300);
+    selection = await page(
+      ctx,
+      "(() => {" +
+        "const sel = window.getSelection(); const node = sel && sel.rangeCount ? sel.getRangeAt(0).startContainer : null;" +
+        "const el = node ? (node.nodeType === 1 ? node : node.parentElement) : null;" +
+        "return JSON.stringify({ inMarked: !!(el && el.closest('[data-sparo-caret]')), paragraph: (el && el.closest('p')?.innerText || '').slice(0, 100), parent: el ? el.outerHTML.slice(0, 200) : '' });" +
+        "})()",
+    );
+    if (selection.stop) return selection.stop;
+    if (selection.value?.inMarked) break;
+  }
+  if (!selection?.value?.inMarked) return fail("IMAGE_CARET_UNPROVEN", { caret, selection: selection?.value }, "真实点击后光标不在目标段落，停止插图");
   const opened = await click(".syl-toolbar-tool.image .syl-toolbar-button", ctx.tabId, ctx.host);
   const openStopped = blockedCall(opened);
   if (openStopped) return openStopped;
@@ -422,6 +600,7 @@ function readImageDrawerScript() {
 async function waitImageConfirm(ctx) {
   let last = null;
   let thumbClicked = false;
+  let disabledSeen = 0;
   for (let i = 0; i < 100; i++) {
     const state = await page(ctx, readImageDrawerScript());
     if (state.stop) return state.stop;
@@ -443,7 +622,10 @@ async function waitImageConfirm(ctx) {
       if (marked.stop) return marked.stop;
       if (marked.value?.ok) return pass({ ...last, thumbClicked });
     }
-    if (last.uploaded && last.thumbs > 0 && c && !enabled && !thumbClicked) {
+    if (last.uploaded && last.thumbs > 0 && c && !enabled) disabledSeen += 1;
+    else disabledSeen = 0;
+    // 上传完成的头几拍「确定」经常还是灰的，先等它自己亮；一直灰再点缩略图。
+    if (disabledSeen >= 8 && last.uploaded && last.thumbs > 0 && c && !enabled && !thumbClicked) {
       const thumb = await page(
         ctx,
         "(() => {" +
@@ -464,7 +646,15 @@ async function waitImageConfirm(ctx) {
       const picked = await click("[data-sparo-image-thumb]", ctx.tabId, ctx.host);
       const pickStopped = blockedCall(picked);
       if (pickStopped) return pickStopped;
-      if (!/\"ok\"\s*:\s*true/.test(String(picked))) return fail("IMAGE_THUMB_CLICK_FAILED", picked, "刚上传的缩略图没有点中");
+      if (!/\"ok\"\s*:\s*true/.test(String(picked))) {
+        const after = await page(ctx, readImageDrawerScript());
+        if (after.stop) return after.stop;
+        const confirm = after.value?.confirm;
+        const enabled = confirm && !confirm.disabled && confirm.aria !== "true" && !/disabled/.test(confirm.cls);
+        if (!(after.value?.uploaded && after.value?.thumbs > 0 && enabled)) {
+          return fail("IMAGE_THUMB_CLICK_FAILED", picked, "刚上传的缩略图没有点中");
+        }
+      }
       thumbClicked = true;
     }
     await sleep(400);

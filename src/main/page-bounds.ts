@@ -62,6 +62,44 @@ export function pageViewCoversChrome(actual: PageRect, hole: PageRect): boolean 
   return chromeCoverReason(actual, hole) !== null;
 }
 
+/**
+ * 壳层（顶栏 + 侧栏）停帧。网页视图是另一条合成链，它还在画，所以窗口里只有
+ * 网页是活的，顶栏和侧栏整块发白；人得最小化再最大化才行。
+ * 壳层每秒报一次「这一秒新画了几帧」，连续几拍是 0 就按停帧处理。
+ */
+export type ShellPaintState = { zeroStreak: number; repaints: number; lastRepaintAt: number };
+
+/** 连续这么多拍一帧没画才算停帧。一拍只是抖动。 */
+export const SHELL_PAINT_STALL_BEATS = 3;
+/** 两次强制重绘的最小间隔，别对着没救回来的窗口每秒打一枪。 */
+export const SHELL_PAINT_REPAINT_COOLDOWN_MS = 3_000;
+/** 连续这么多拍还没恢复就落一次盘，下次复现有账可查。 */
+export const SHELL_PAINT_DIAG_BEATS = 9;
+
+/** 最小化、藏起来、失焦的窗口本来就不出帧，不判白屏。 */
+export function shellPaintStalled(
+  state: ShellPaintState,
+  frames: number,
+  ctx: { focused: boolean; minimized: boolean; visible: boolean; now: number },
+): { state: ShellPaintState; repaint: boolean } {
+  const idle = { zeroStreak: 0, repaints: 0, lastRepaintAt: state.lastRepaintAt };
+  if (ctx.minimized || !ctx.visible || !ctx.focused) return { state: idle, repaint: false };
+  if (frames > 0) return { state: idle, repaint: false };
+  const zeroStreak = state.zeroStreak + 1;
+  const cooled =
+    state.lastRepaintAt === 0 || ctx.now - state.lastRepaintAt >= SHELL_PAINT_REPAINT_COOLDOWN_MS;
+  if (zeroStreak < SHELL_PAINT_STALL_BEATS || !cooled) {
+    return {
+      state: { zeroStreak, repaints: state.repaints, lastRepaintAt: state.lastRepaintAt },
+      repaint: false,
+    };
+  }
+  return {
+    state: { zeroStreak, repaints: state.repaints + 1, lastRepaintAt: ctx.now },
+    repaint: true,
+  };
+}
+
 /** heal 日志里的差值。width 用 dw，正数表示视图比洞宽出多少。 */
 export function chromeCoverDelta(reason: Exclude<CoverReason, null>, actual: PageRect, hole: PageRect): string {
   if (reason === "y") return `dy=${actual.y - hole.y}`;

@@ -43,7 +43,10 @@ export type Skill = {
   /** 沉淀四件套。true 时 run_skill 只回脚手架，不逐字直放。 */
   distilled?: boolean;
   route?: RouteMilestone[];
-  params?: Record<string, { type?: string; required?: boolean }>;
+  params?: Record<
+    string,
+    { type?: string; required?: boolean; default?: unknown; desc?: string }
+  >;
   pitfalls?: Array<{ milestone: number; note: string; from?: string }>;
   contract?: Record<string, unknown>;
 };

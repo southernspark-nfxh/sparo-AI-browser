@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { boundsWithinOnePixel, pageViewCoversChrome, resetChromeCoverBudget, takeChromeCoverFix } from "../src/main/page-bounds.js";
+import {
+  SHELL_PAINT_DIAG_BEATS,
+  SHELL_PAINT_REPAINT_COOLDOWN_MS,
+  SHELL_PAINT_STALL_BEATS,
+  boundsWithinOnePixel,
+  pageViewCoversChrome,
+  resetChromeCoverBudget,
+  shellPaintStalled,
+  takeChromeCoverFix,
+  type ShellPaintState,
+} from "../src/main/page-bounds.js";
 
 const hole = { x: 0, y: 76, width: 1020, height: 780 };
 
@@ -40,5 +50,76 @@ describe("pageViewCoversChrome", () => {
 
   it("ignores a background tab parked offscreen", () => {
     expect(pageViewCoversChrome({ x: -20000, y: 0, width: 1020, height: 780 }, hole)).toBe(false);
+  });
+});
+
+const awake = { focused: true, minimized: false, visible: true };
+
+function feed(frames: number[], start = { zeroStreak: 0, repaints: 0, lastRepaintAt: 0 }, step = 1_000) {
+  let state: ShellPaintState = start;
+  const repaints: boolean[] = [];
+  frames.forEach((frame, i) => {
+    const next = shellPaintStalled(state, frame, { ...awake, now: (i + 1) * step });
+    state = next.state;
+    repaints.push(next.repaint);
+  });
+  return { state, repaints };
+}
+
+describe("壳层停帧", () => {
+  it("有帧就一直不重绘", () => {
+    const { state, repaints } = feed([1, 5, 2, 9, 3]);
+    expect(repaints.some(Boolean)).toBe(false);
+    expect(state.zeroStreak).toBe(0);
+  });
+
+  it("连续三拍 0 帧才重绘，第四拍在冷却里不再打", () => {
+    const { state, repaints } = feed([0, 0, 0, 0]);
+    expect(repaints).toEqual([false, false, true, false]);
+    expect(state.repaints).toBe(1);
+    expect(SHELL_PAINT_STALL_BEATS).toBe(3);
+  });
+
+  it("冷却过后还停帧会再重绘一次，不永久撒手", () => {
+    let state: ShellPaintState = { zeroStreak: 0, repaints: 0, lastRepaintAt: 0 };
+    const beats = 12;
+    const hits: number[] = [];
+    for (let i = 0; i < beats; i += 1) {
+      const now = (i + 1) * 1_000;
+      const next = shellPaintStalled(state, 0, { ...awake, now });
+      state = next.state;
+      if (next.repaint) hits.push(now);
+    }
+    expect(hits.length).toBeGreaterThanOrEqual(2);
+    expect(hits[1] - hits[0]).toBeGreaterThanOrEqual(SHELL_PAINT_REPAINT_COOLDOWN_MS - 1_000);
+  });
+
+  it("最小化 / 不可见 / 失焦的窗口本来就不出帧，不判白屏", () => {
+    const asleep = [
+      { focused: true, minimized: true, visible: true },
+      { focused: true, minimized: false, visible: false },
+      { focused: false, minimized: false, visible: true },
+    ];
+    for (const ctx of asleep) {
+      let state: ShellPaintState = { zeroStreak: 0, repaints: 0, lastRepaintAt: 0 };
+      for (let i = 0; i < 10; i += 1) {
+        const next = shellPaintStalled(state, 0, { ...ctx, now: (i + 1) * 1_000 });
+        expect(next.repaint).toBe(false);
+        state = next.state;
+      }
+    }
+  });
+
+  it("帧恢复后计数归零，下一次停帧重新从第一拍算", () => {
+    const stalled = feed([0, 0]);
+    const recovered = shellPaintStalled(stalled.state, 4, { ...awake, now: 3_000 });
+    expect(recovered.state.zeroStreak).toBe(0);
+    expect(recovered.state.repaints).toBe(0);
+    const again = shellPaintStalled(recovered.state, 0, { ...awake, now: 4_000 });
+    expect(again.repaint).toBe(false);
+  });
+
+  it("长时间停帧的落盘阈值在重绘之后", () => {
+    expect(SHELL_PAINT_DIAG_BEATS).toBeGreaterThan(SHELL_PAINT_STALL_BEATS);
   });
 });

@@ -22,6 +22,10 @@ import { loadTriggers } from "../triggers/store.js";
 
 export type SkillBrowser = {
   getUrl(): string;
+  listTabs?(): {
+    tabs: Array<{ id: string; url?: string }>;
+    activeId: string;
+  };
   navigate(url: string, opts?: { asHuman?: boolean }): Promise<ToolResult>;
   snapshot(selector?: string): Promise<ToolResult & { data?: PageSnapshot }>;
   click(target: {
@@ -450,6 +454,45 @@ function substDeep<T>(value: T, vars: Record<string, string>): T {
   return value;
 }
 
+const ACTIVE_TAB_URL_KEY = "__activeTabUrl";
+
+/** 活动标签 URL：只认 http/https；没有标签或不是网页返回 null。只读，不切标签、不抢焦点。 */
+export function activeTabUrlFrom(
+  tabs: Array<{ id: string; url?: string }>,
+  activeId: string,
+): string | null {
+  const url = String(tabs.find((tab) => tab.id === activeId)?.url || "").trim();
+  return /^https?:\/\//i.test(url) ? url : null;
+}
+
+function currentActiveUrl(browser: SkillBrowser): string | null {
+  try {
+    if (typeof browser.listTabs === "function") {
+      const state = browser.listTabs();
+      return activeTabUrlFrom(state.tabs || [], state.activeId || "");
+    }
+  } catch {
+    /* 没窗口 */
+  }
+  const url = typeof browser.getUrl === "function" ? String(browser.getUrl() || "") : "";
+  return /^https?:\/\//i.test(url) ? url : null;
+}
+
+/** 参数默认值回退；默认值里的 {{__activeTabUrl}} 解析成当前标签页。 */
+export function applyParamDefaults(
+  params: Record<string, unknown>,
+  meta: Record<string, { default?: unknown }> = {},
+  activeUrl: string | null = null,
+): Record<string, unknown> {
+  const out = { ...params };
+  for (const [key, def] of Object.entries(meta)) {
+    if (Object.prototype.hasOwnProperty.call(out, key)) continue;
+    if (typeof def?.default !== "string" || !def.default.trim()) continue;
+    out[key] = subst(def.default, activeUrl ? { [ACTIVE_TAB_URL_KEY]: activeUrl } : {});
+  }
+  return out;
+}
+
 function extractBodyFromMarkdown(md: string): { title?: string; body?: string } {
   const titleMatch =
     md.match(/##\s*标题\s*\n+([^\n#]+)/) ||
@@ -464,6 +507,7 @@ function extractBodyFromMarkdown(md: string): { title?: string; body?: string } 
 function buildVars(
   skill: Skill,
   params: Record<string, unknown> = {},
+  activeUrl: string | null = null,
 ): Record<string, string> {
   const defaults = asRecord(
     (skill as { defaultsFromRecording?: Record<string, unknown> })
@@ -473,6 +517,7 @@ function buildVars(
   const paramMeta = asRecord(
     (skill as { params?: Record<string, ParamDef> }).params,
   ) as Record<string, ParamDef>;
+  const given = applyParamDefaults(params, paramMeta, activeUrl);
   const titleDefault =
     (typeof params.title === "string" && params.title) ||
     (typeof defaults.title === "string" && defaults.title) ||
@@ -515,7 +560,8 @@ function buildVars(
     bodyRef: "",
     autoPublish: String(params.autoPublish ?? false),
   };
-  for (const [k, v] of Object.entries(params)) {
+  if (activeUrl) vars[ACTIVE_TAB_URL_KEY] = activeUrl;
+  for (const [k, v] of Object.entries(given)) {
     if (typeof v === "string") {
       vars[k] = v;
       vars[`${k}Enc`] = encodeURIComponent(v);
@@ -1224,7 +1270,7 @@ export async function runSkill(
   if (!steps.length) {
     return { ok: false, message: `技能「${skill.title}」没有可执行步骤` };
   }
-  const vars = buildVars(skill, input.params || {});
+  const vars = buildVars(skill, input.params || {}, currentActiveUrl(browser));
   if (input.dryRun) {
     return {
       ok: true,

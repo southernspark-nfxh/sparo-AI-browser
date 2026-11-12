@@ -27,7 +27,7 @@ Refs from `snapshot` expire after navigation or major DOM changes — **re-snaps
 
 ## Navigation
 
-- `navigate(url)` → open URL; returns confirmed `{ requestedUrl, url, title, confirmed, … }`. Always check `data.url` / `confirmed` before continuing.
+- `navigate(url, envId?)` → open URL; returns confirmed `{ requestedUrl, url, title, confirmed, tabId, … }`. Always check `data.url` / `confirmed` before continuing. **带 `envId` 时会在该账号环境里新开标签**，返回的 `tabId` 就是那张标签。
 - `reload()` → reload active tab
 - `go_back()` → browser back
 - `go_forward()` → browser forward
@@ -38,12 +38,25 @@ Refs from `snapshot` expire after navigation or major DOM changes — **re-snaps
 
 ## Tabs
 
-- `new_tab(url?)` → open a tab (optional URL)
+- `new_tab(url?, envId?)` → open a tab (optional URL); with `envId` the tab lives in that account env
 - `close_tab(id)` → close by id (last tab becomes a blank page; window stays)
 - `switch_tab(id)` → set active tab
 - `list_tabs()` → `{ data: tabs… }` including active id/url, `discarded`, and `owner` (`user` or `agent:<clientId>`)
 
 Page tools take an optional `tabId`: `navigate`, `snapshot`, `click`, `fill`, `page_text`, `execute_primitives`, `press`, `pick_calendar`, `fill_suggest`, `get_url`, `get_title`, `reload`, `go_back`, `go_forward`. Without a client id, omitting `tabId` still means the active tab.
+
+## 多账号环境（account envs）
+
+同一个站点可以同时登录多个号：每个环境一套独立 Chromium partition（Cookie / localStorage / IndexedDB / 缓存互不可见），不是「切换登录态」。
+
+- `list_envs()` → `{ data: { envs: [{ id, name, type, enabled }] } }`。用户点名「A 号 / 第二个号 / 另一个百家号」时先调它。
+- `create_env({ account: { name, type?, homeUrl?, note? } })` → `{ data: { id } }`，新建一套存储。
+- `delete_env({ envId })` → 永久删除该环境的配置与登录态，不可撤销。
+- 用法：`navigate({ url, envId })` / `new_tab({ url, envId })`；技能用 `run_skill({ query, params: { envId } })`。不传 `envId` = 用户默认登录态。
+- 环境标签会认领给发起调用的 client，后续不带 `tabId` 的 click / fill / execute 仍停在同一个号里。
+- 环境里还没登录时如实告诉用户去登录一次，不要反复重试。
+
+界面上的人手入口：**设置 → 账号**，可新建 / 打开 / 删除环境。
 
 ## 多 Agent 并行
 

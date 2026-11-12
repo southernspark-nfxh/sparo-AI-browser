@@ -60,6 +60,8 @@ export interface NavigateConfirm {
     title: string;
     confirmed: true;
     loadMs: number;
+    /** 实际导航的标签；带 envId 时会落在该环境新开的标签上。 */
+    tabId?: string;
   };
 }
 

@@ -16,6 +16,16 @@ Do **not** type title/body into fields character-by-character. Do **not** loop `
 
 ---
 
+## 多账号（2026-11-12）
+
+同一个站点可以同时登录多个号。要发到指定账号：先 `list_envs` 拿 `envId`，再
+
+```text
+run_skill({ query: "发百家号", params: { envId, title, body } })
+```
+
+环境标签会认领给当前 client，后续填标题、插图、封面都停在这个号里。不传 `envId` 用默认登录态。一个号一个环境，不要把两个号挤在同一标签里换登录。细节见 [MULTI-ACCOUNT.md](./MULTI-ACCOUNT.md)。
+
 ## 0. Connect (once)
 
 商店版：用户点 **复制给 Agent**，或：

@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld("sparkShell", {
   setSidebarWidth: (w: number) => ipcRenderer.send("spark:set-sidebar-width", w),
   setTheme: (theme: "light" | "dark") => ipcRenderer.send("spark:set-theme", theme),
   focusShell: () => ipcRenderer.send("spark:focus-shell"),
+  // 壳层帧心跳：frames 是上一拍之后新画的帧数，0 说明顶栏/侧栏停帧了。
+  shellHeartbeat: (frames: number) => ipcRenderer.send("spark:shell-heartbeat", { frames }),
   navigate: (url: string) => ipcRenderer.invoke("spark:navigate", url),
   goBack: () => ipcRenderer.invoke("spark:go-back"),
   goForward: () => ipcRenderer.invoke("spark:go-forward"),

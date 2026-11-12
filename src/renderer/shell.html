@@ -3727,25 +3727,32 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           const nameEl = document.getElementById("envName");
           const homeEl = document.getElementById("envHome");
           const hintEl = document.getElementById("envHint");
-          const name = (nameEl && nameEl.value.trim()) || "";
+          const typed = (nameEl && nameEl.value.trim()) || "";
           const homeUrl = (homeEl && homeEl.value.trim()) || "";
-          if (!name) {
-            if (hintEl) hintEl.textContent = "先给环境起个名字。";
-            return;
+          const name = typed || "新环境";
+          if (hintEl) {
+            hintEl.style.color = "";
+            hintEl.textContent = "正在新建…";
           }
-          if (hintEl) hintEl.textContent = "正在新建…";
           try {
             const r = await window.sparkShell.createEnv({ account: { name, type: "other", ...(homeUrl ? { homeUrl } : {}) } });
             if (r && r.ok === false) {
-              if (hintEl) hintEl.textContent = r.message || "新建失败。";
+              if (hintEl) {
+                hintEl.style.color = "#d9534f";
+                hintEl.textContent = r.message || "新建失败。";
+              }
               return;
             }
             if (nameEl) nameEl.value = "";
             if (homeEl) homeEl.value = "";
-            if (hintEl) hintEl.textContent = "已新建。点上面的「打开」去登录一次。";
-            renderEnvs();
+            if (hintEl) hintEl.textContent = `已新建「${name}」。点上面的「打开」去登录一次。`;
+            await renderEnvs();
           } catch (err) {
-            if (hintEl) hintEl.textContent = "新建失败：" + (err && err.message ? err.message : String(err));
+            console.error("[envs] create failed", err);
+            if (hintEl) {
+              hintEl.style.color = "#d9534f";
+              hintEl.textContent = "新建失败：" + (err && err.message ? err.message : String(err));
+            }
           }
         };
       }
@@ -4065,6 +4072,21 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
             setTimeout(reportHole, 150);
           });
         });
+
+        // 帧心跳。合成器一旦停帧，顶栏和侧栏会整块发白、网页却照常显示，
+        // 人得最小化再最大化才恢复。主进程按「连续几拍 0 帧」判停帧并主动重绘。
+        let beats = 0;
+        const countFrame = () => {
+          beats += 1;
+          requestAnimationFrame(countFrame);
+        };
+        requestAnimationFrame(countFrame);
+        let reported = 0;
+        setInterval(() => {
+          if (!window.sparkShell || typeof window.sparkShell.shellHeartbeat !== "function") return;
+          window.sparkShell.shellHeartbeat(beats - reported);
+          reported = beats;
+        }, 1000);
 
         const SIDE_MIN = 300, SIDE_MAX = 480, SIDE_COLLAPSED = 56;
         const rootEl = document.documentElement;
