@@ -179,6 +179,45 @@ async function selfCheck() {
   if (!toutiaoSrc.includes(".article-cover img")) throw new Error("头条封面回读丢了");
   // 2026-11-12 发布实测：预览层、空包兜底、行内核验、0 张上传、失败台账
   if (!pageSrc.includes('class*=\\"preview\\"')) throw new Error("点击证明没有计入预览层，头条立即发布会停在 CLICK_UNPROVEN");
+  const between = (src, startToken, endToken) => {
+    const start = src.indexOf(startToken);
+    const end = src.indexOf(endToken, start + startToken.length);
+    if (start < 0 || end < 0) throw new Error("找不到区间 " + startToken);
+    return src.slice(start, end);
+  };
+  const toutiaoPublish = between(toutiaoSrc, "async publishOrSchedule(ctx)", "async verify(ctx)");
+  if (toutiaoPublish.includes('clickLabeled(ctx, "预览并发布")') || toutiaoPublish.includes('clickLabeled(ctx, "确认发布")')) {
+    throw new Error("头条立即发布还在用合成点击");
+  }
+  if (!toutiaoPublish.includes(".article-cover img") || !toutiaoPublish.includes("COVER_REQUIRED") || !toutiaoPublish.includes("data-sparo-publish")) {
+    throw new Error("头条立即发布没有封面回读或真实点击");
+  }
+  if (toutiaoPublish.indexOf("assertPublishReady") > toutiaoPublish.indexOf("data-sparo-publish")) {
+    throw new Error("头条质量门写在了点击发布之后");
+  }
+  if (!toutiaoSrc.includes("b.click()")) throw new Error("头条定时按钮的点击被改掉了");
+  const toutiaoReady = between(toutiaoSrc, "async function assertPublishReady(ctx)", "async function clickTrustedPublish");
+  for (const piece of ["MARKERS_LEFT", "IMAGE_COUNT_MISMATCH", "COVER_REQUIRED", "OPTIONS_MISMATCH", "@@IMG", ".pgc-img", ".article-cover img", "投放广告赚收益", "头条首发"]) {
+    if (!toutiaoReady.includes(piece)) throw new Error("头条质量门缺了 " + piece);
+  }
+  if (/first(Label|Input)?\.click\(/.test(toutiaoReady)) throw new Error("质量门会去点头条首发");
+  const baijiaPublish = between(baijia, "async publishOrSchedule(ctx)", "async verify(ctx)");
+  if (!baijiaPublish.includes("assertPublishReady") || baijiaPublish.indexOf("assertPublishReady") > baijiaPublish.indexOf("fire(btn)")) {
+    throw new Error("百家号质量门没有写在点击发布之前");
+  }
+  const baijiaReady = between(baijia, "async function assertPublishReady(ctx)", "async function readAi");
+  for (const piece of ["MARKERS_LEFT", "IMAGE_COUNT_MISMATCH", "COVER_REQUIRED", "OPTIONS_MISMATCH", "@@IMG", "采用AI生成内容"]) {
+    if (!baijiaReady.includes(piece)) throw new Error("百家号质量门缺了 " + piece);
+  }
+  const baijiaInsert = between(baijia, "async insertImages(ctx)", "async setCover(ctx)");
+  const loopAt = baijiaInsert.indexOf("for (let index");
+  const writeAt = baijiaInsert.indexOf("setUeContent");
+  const countAt = baijiaInsert.lastIndexOf("ctx.imageCount");
+  if (loopAt < 0 || writeAt < loopAt || writeAt > countAt) throw new Error("百家号没有在单张成功后立刻写回正文");
+  if ((baijiaInsert.match(/setUeContent/g) || []).length !== 1) throw new Error("百家号插图写回不该在循环结束后再来一次");
+  if (!baijiaInsert.includes("@@IMG") || !baijiaInsert.includes("if (!pending.has(mark)) continue")) {
+    throw new Error("百家号续跑没有按正文里是否还有 @@IMG 跳过");
+  }
   if (!toutiaoSrc.includes("IMAGE_CONFIRM_CLICK_FAILED") || !toutiaoSrc.includes("ASSISTANT_CLOSE_FAILED")) {
     throw new Error("头条点击空包兜底丢了");
   }

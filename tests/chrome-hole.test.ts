@@ -69,6 +69,8 @@ describe("常驻页面洞断言", () => {
       isDestroyed: () => false,
       isMinimized: () => false,
       isMaximized: () => false,
+      contentView: { children: [] as unknown[], removeChildView() {}, addChildView() {} },
+      webContents: { send() {}, isDestroyed: () => false },
     });
     let state = resetChromeCoverBudget(1_000);
     for (let i = 0; i < 20; i += 1) {
@@ -547,5 +549,43 @@ describe("T2 降频恢复", () => {
     expect(fallback.width).toBe(1280 - 340);
     expect(fallback.height).toBe(905 - 76);
     expect(fallback.width).toBeLessThan(1280);
+  });
+
+  it("多开时，另一扇窗口里被拉成整窗的页面也会被拉回", () => {
+    const browser = bare();
+    const hole = { x: 0, y: 76, width: 680, height: 829 };
+    armHole(browser, hole);
+    const w2 = {
+      isDestroyed: () => false,
+      isMinimized: () => false,
+      isMaximized: () => false,
+      getContentSize: () => [1280, 905],
+      contentView: { children: [] as unknown[], removeChildView() {}, addChildView() {} },
+      webContents: { send() {}, isDestroyed: () => false },
+    };
+    browser.wins.set("w2", w2);
+    browser.activeTabs.set("main", "a");
+    browser.activeTabs.set("w2", "b");
+    const host = browser as unknown as Record<string, unknown> & {
+      withWin: (winId: string, fn: () => void) => void;
+    };
+    host.withWin("w2", () => {
+      browser.holeBounds = hole;
+      (browser as unknown as { sidebarW: number }).sidebarW = 340;
+      (browser as unknown as { lastGoodContent: { width: number; height: number } }).lastGoodContent = {
+        width: 1280,
+        height: 905,
+      };
+    });
+    const a = rectView(hole);
+    const b = rectView({ x: 0, y: 0, width: 1400, height: 900 });
+    browser.tabs = new Map([
+      ["a", { id: "a", view: a.view, winId: "main" }],
+      ["b", { id: "b", view: b.view, winId: "w2" }],
+    ] as unknown as HoleBrowser["tabs"]);
+    browser.assertChromeHole();
+    expect(b.state).toMatchObject({ x: 0, y: 76, width: 940, height: 829 });
+    expect(a.state).toMatchObject(hole);
+    expect(browser.activeWinId).toBe("main");
   });
 });

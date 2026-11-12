@@ -30,7 +30,7 @@ import {
 } from "./studio-store.js";
 import { randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { boundsWithinOnePixel, CHROME_HEAL_COOLDOWN_MS, CHROME_HEAL_STALL_LIMIT, chromeCoverDelta, chromeCoverReason, pageViewCoversChrome, resetChromeCoverBudget, takeChromeCoverFix, type ChromeCoverBudget, type CoverReason, type PageRect } from "./page-bounds.js";
+import { boundsWithinOnePixel, CHROME_HEAL_COOLDOWN_MS, CHROME_HEAL_STALL_LIMIT, chromeCoverDelta, chromeCoverReason, pageViewCoversChrome, resetChromeCoverBudget, SHELL_PAINT_DIAG_BEATS, shellPaintStalled, takeChromeCoverFix, type ChromeCoverBudget, type CoverReason, type PageRect, type ShellPaintState } from "./page-bounds.js";
 import { formatPushMinute, formatShellCrashContext, formatShellMemLine } from "./diag-log.js";
 import { clickPointUsable, offscreenAgentBounds, viewportTooSmall } from "./agent-viewport.js";
 import {
@@ -1446,6 +1446,8 @@ export class SparkBrowser {
       this.resetChromeCoverState();
       this.scheduleLayout(150);
       this.armChromeGuard();
+      // 恢复过渡最容易留下「网页在画、壳层不画」，回来先强制重绘一次。
+      this.invalidateShell(this.win);
       // 壳层回到前台就恢复节流。Agent 标签是独立 webContents，不受这条影响。
       this.setShellBackgroundThrottling(true);
     });
@@ -1455,7 +1457,10 @@ export class SparkBrowser {
       this.noteUserClaimedRender();
       this.returnWindowIfUserFocused();
     });
-    this.win.on("show", () => this.scheduleLayout(150));
+    this.win.on("show", () => {
+      this.scheduleLayout(150);
+      this.invalidateShell(this.win);
+    });
     this.registerDisplayWatch();
     this.win.once("ready-to-show", () => this.presentWindow());
     this.win.webContents.once("did-finish-load", () => this.presentWindow());
@@ -1552,10 +1557,11 @@ export class SparkBrowser {
         proxyBypassRules: "<-loopback>",
       });
     }
+    // partition 必须放在 webPreferences 里：WebContentsView 构造参数顶层没有 session，
+    // 放顶层会被静默忽略，所有环境就退回共用默认 session（账号串号）。
     const view = new WebContentsView({
-      session: envSession,
-      webPreferences: prefs,
-    } as unknown as Electron.WebContentsViewConstructorOptions);
+      webPreferences: { ...prefs, partition },
+    });
     if (!env.fingerprint.userAgent) {
       view.webContents.setUserAgent(chromeUserAgent());
     }
@@ -2531,10 +2537,16 @@ export class SparkBrowser {
         this.resetChromeCoverState();
         this.scheduleLayout(150);
         this.armChromeGuard();
+        this.invalidateShell(win);
         this.setShellBackgroundThrottling(true);
       }),
     );
-    win.on("show", () => use(() => this.scheduleLayout(150)));
+    win.on("show", () =>
+      use(() => {
+        this.scheduleLayout(150);
+        this.invalidateShell(win);
+      }),
+    );
     win.on("closed", () => this.closeWindow(winId));
     win.webContents.on("context-menu", (_e, params) => {
       const template: MenuItemConstructorOptions[] = [];
@@ -2544,6 +2556,19 @@ export class SparkBrowser {
       template.push({ role: "selectAll" });
       Menu.buildFromTemplate(template).popup({ window: win });
     });
+    // 多开的窗口以前只有主窗口有这两条：壳层崩了不重载，假死了不拉回。
+    win.webContents.on("render-process-gone", (_e, details) => {
+      console.error(`[shell] render-process-gone ${winId}`, details.reason);
+      noteHang("shell-render-gone", `win=${winId} ${this.diagCrashContext(details)}`);
+      if (details.reason !== "clean-exit" && details.reason !== "killed") {
+        try {
+          win.webContents.reload();
+        } catch {
+          /* 已销毁 */
+        }
+      }
+    });
+    win.webContents.on("unresponsive", () => use(() => this.onShellUnresponsive()));
   }
 
   /** 关窗口：把这扇窗口名下的标签一起释放，别把别人的窗口带走。 */
@@ -2556,6 +2581,7 @@ export class SparkBrowser {
     this.sidebarWByWin.delete(winId);
     this.lastGoodContentByWin.delete(winId);
     this.lastLayoutContentByWin.delete(winId);
+    this.shellPaint.delete(winId);
     for (const [client, bound] of this.clientWindows) {
       if (bound === winId) this.clientWindows.delete(client);
     }
@@ -2627,15 +2653,22 @@ export class SparkBrowser {
     const onAdded = () => this.handleDisplayEvent("display-added");
     const onRemoved = () => this.handleDisplayEvent("display-removed");
     const onUnlock = () => this.handleDisplayEvent("unlock-screen");
+    const onResume = () => this.handleDisplayEvent("resume");
     screen.on("display-metrics-changed", onMetrics);
     screen.on("display-added", onAdded);
     screen.on("display-removed", onRemoved);
-    if (typeof powerMonitor?.on === "function") powerMonitor.on("unlock-screen", onUnlock);
+    if (typeof powerMonitor?.on === "function") {
+      powerMonitor.on("unlock-screen", onUnlock);
+      powerMonitor.on("resume", onResume);
+    }
     this.win.on("closed", () => {
       screen.removeListener("display-metrics-changed", onMetrics);
       screen.removeListener("display-added", onAdded);
       screen.removeListener("display-removed", onRemoved);
-      if (typeof powerMonitor?.removeListener === "function") powerMonitor.removeListener("unlock-screen", onUnlock);
+      if (typeof powerMonitor?.removeListener === "function") {
+        powerMonitor.removeListener("unlock-screen", onUnlock);
+        powerMonitor.removeListener("resume", onResume);
+      }
     });
   }
 
@@ -2667,10 +2700,13 @@ export class SparkBrowser {
     }
     this.requestHoleReport();
     this.scheduleLayout(120);
+    // 改分辨率、拔插显示器、解锁、休眠回来，DWM 会重建合成表面；不主动重绘就停在白屏。
+    this.invalidateAllShells();
     setTimeout(() => {
       if (this.win.isDestroyed()) return;
       this.requestHoleReport();
       this.layout();
+      this.invalidateAllShells();
     }, 400);
   }
 
@@ -3480,11 +3516,24 @@ export class SparkBrowser {
   }
 
   private assertChromeHole(): void {
+    // 多开时每扇窗口各自有自己的洞和标签组；只查当前窗口会漏掉另外两扇。
+    for (const [winId] of this.liveWins()) {
+      try {
+        this.withWin(winId, () => this.assertChromeHoleIn());
+      } catch {
+        /* 这扇窗口状态不可用，下一拍再试 */
+      }
+    }
+  }
+
+  private assertChromeHoleIn(): void {
     try {
       if (!this.win || this.win.isDestroyed()) return;
       const hole = this.reportedPageHole();
       if (!hole) return;
       this.noteUnregisteredPageViews();
+      // 一次断言算一拍：同一拍里几个标签都该被摆正，不能因为北京时间跨了一毫秒就只救一个。
+      const passNow = Date.now();
       for (const id of this.chromeWatchOrder()) {
         const tab = this.tabs.get(id);
         if (!tab?.view || tab.discarded || this.pageViewIsDestroyed(tab.view)) continue;
@@ -3495,7 +3544,7 @@ export class SparkBrowser {
           continue;
         }
         if (!pageViewCoversChrome(actual, hole)) continue;
-        this.healCoveredChrome(id, tab.view, actual, hole);
+        this.healCoveredChrome(id, tab.view, actual, hole, passNow);
       }
     } catch {
       /* 视图已销毁 */
@@ -3576,10 +3625,16 @@ export class SparkBrowser {
     return hole;
   }
 
-  private healCoveredChrome(tabId: string, view: WebContentsView, actual: PageRect, hole: PageRect): void {
+  private healCoveredChrome(
+    tabId: string,
+    view: WebContentsView,
+    actual: PageRect,
+    hole: PageRect,
+    passNow = Date.now(),
+  ): void {
     const reason = chromeCoverReason(actual, hole);
     if (!reason) return;
-    const now = Date.now();
+    const now = passNow;
     const stalls = this.chromeHealStalls();
     const prev = stalls.get(tabId);
     if (prev && prev.count >= CHROME_HEAL_STALL_LIMIT && now < prev.retryAt) return;
@@ -3695,9 +3750,9 @@ export class SparkBrowser {
     after: PageRect,
     cooldownMs: number,
   ): void {
-    console.log(
-      `[chrome-hole] ${kind} tab=${tabId} reason=${reason} before=${JSON.stringify(before)} after=${JSON.stringify(after)} cooldown=${cooldownMs}`,
-    );
+    const line = `[chrome-hole] ${kind} tab=${tabId} reason=${reason} before=${JSON.stringify(before)} after=${JSON.stringify(after)} cooldown=${cooldownMs}`;
+    console.log(line);
+    noteHang("chrome-hole-action", line);
   }
 
   /** 同一标签连续无进展后降频。resize / restore / switchTab 清掉退避，冷却到点还会再试。 */
@@ -3743,9 +3798,10 @@ export class SparkBrowser {
     }
     const delta = reason && oldBounds ? ` reason=${reason} ${chromeCoverDelta(reason, oldBounds, newBounds)}` : "";
     const who = tabId ? ` tab=${tabId}` : "";
-    console.log(
-      `[chrome-hole] ${kind}${who} t=${Date.now()} active=${this.activeTabId || ""} minimized=${minimized} maximized=${maximized} old=${JSON.stringify(oldBounds)} new=${JSON.stringify(newBounds)}${delta}`,
-    );
+    const line = `[chrome-hole] ${kind}${who} t=${Date.now()} active=${this.activeTabId || ""} minimized=${minimized} maximized=${maximized} old=${JSON.stringify(oldBounds)} new=${JSON.stringify(newBounds)}${delta}`;
+    console.log(line);
+    // 打包版没有控制台：自愈和停帧要落盘，下次复发才有账可查。
+    if (kind === "heal") noteHang("chrome-hole-heal", line);
   }
 
   /** 父布局之后再排几次。拉伸若落在首屏绘制，单次 100ms 补排会错过。 */
@@ -3828,6 +3884,74 @@ export class SparkBrowser {
   private chromeCover: ChromeCoverBudget = { windowStart: 0, fixes: 0, lastFix: 0 };
   /** 最近一次真正占用去抖预算的标签。同一毫秒里的其他标签仍可校正。 */
   private chromeCoverTabId = "";
+  /** 壳层帧心跳状态，按窗口存。 */
+  private _shellPaint?: Map<string, ShellPaintState>;
+  private get shellPaint(): Map<string, ShellPaintState> {
+    return (this._shellPaint ??= new Map());
+  }
+
+  /**
+   * 壳层每秒报一次「这一秒新画了几帧」。连续几拍 0 帧说明合成停了：
+   * 顶栏和侧栏整块发白、网页却照常显示，人得最小化再最大化。
+   * 这里主动 invalidate 一次，等于替人做那次最小化/最大化。
+   */
+  private onShellHeartbeat(e: unknown, raw: unknown): void {
+    const winId = this.winIdOfSender(e);
+    const win = this.wins.get(winId);
+    if (!win) return;
+    let minimized = true;
+    let visible = false;
+    let focused = false;
+    try {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) return;
+      minimized = win.isMinimized();
+      visible = win.isVisible();
+      focused = win.isFocused();
+    } catch {
+      return;
+    }
+    const frames = Math.max(0, Math.round(Number((raw as { frames?: unknown } | null)?.frames) || 0));
+    const now = Date.now();
+    const prev = this.shellPaint.get(winId) || { zeroStreak: 0, repaints: 0, lastRepaintAt: 0 };
+    if (!this.shellPaint.has(winId)) console.log(`[shell-paint] heartbeat online win=${winId}`);
+    const next = shellPaintStalled(prev, frames, { focused, minimized, visible, now });
+    this.shellPaint.set(winId, next.state);
+    if (next.repaint) {
+      const line = `[shell-paint] repaint win=${winId} streak=${next.state.zeroStreak} count=${next.state.repaints} minimized=${minimized} maximized=${this.safeMaximized(win)}`;
+      console.log(line);
+      noteHang("shell-paint-repaint", line);
+      this.invalidateShell(win);
+      return;
+    }
+    if (next.state.zeroStreak === SHELL_PAINT_DIAG_BEATS) {
+      const line = `[shell-paint] stalled win=${winId} beats=${next.state.zeroStreak} repaints=${next.state.repaints}`;
+      console.log(line);
+      noteHang("shell-paint-stall", line);
+    }
+  }
+
+  private safeMaximized(win: BrowserWindow): boolean {
+    try {
+      return win.isMaximized();
+    } catch {
+      return false;
+    }
+  }
+
+  /** 强制壳层整窗重绘。比窗口 resize 轻，不动布局、不抢焦点。 */
+  private invalidateShell(win: BrowserWindow): void {
+    try {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) return;
+      win.webContents.invalidate();
+    } catch {
+      /* 窗口正在销毁 */
+    }
+  }
+
+  private invalidateAllShells(): void {
+    for (const [, win] of this.liveWins()) this.invalidateShell(win);
+  }
+
   /** 向 shell 要一次最新的 page-hole 测量（恢复过渡的回调可能丢过）。 */
   private requestHoleReport(): void {
     try {
@@ -3951,6 +4075,8 @@ export class SparkBrowser {
     ipcMain.on("spark:page-hole", (e, raw) =>
       this.forSender(e, () => this.setPageHoleBounds(raw || {})),
     );
+    ipcMain.removeAllListeners("spark:shell-heartbeat");
+    ipcMain.on("spark:shell-heartbeat", (e, raw) => this.onShellHeartbeat(e, raw));
     ipcMain.removeAllListeners("spark:set-theme");
     ipcMain.on("spark:set-theme", (e, raw) => this.forSender(e, () => {
       const dark = String(raw) === "dark";
@@ -6644,6 +6770,7 @@ export class SparkBrowser {
         },
         fast_path: [
           "Site first: user said 知乎 → zhihu.com, 微博 → weibo.com. Never substitute Xiaohongshu.",
+          "Multi-account (since 2026-11-12): list_envs → navigate({ url, envId }) / new_tab({ url, envId }); skills use run_skill({ query, params:{ envId } }). Each env has its own cookies/storage, so two accounts of the same site stay logged in side by side. No envId = user's default login. See docs/MULTI-ACCOUNT.md.",
           "No matching skill → operate the page with snapshot/click/fill. Do not ask the human to record a skill first.",
           "Publishing: read docs/PUBLISHING.md — run_skill or xhs_inject_* (never loop fill).",
           "Xiaohongshu ONLY if user named 小红书/xhs/rednote: run_skill({ id:'xhs-longform-publish', params:{ title, body, summary, topics } }).",
@@ -12538,8 +12665,13 @@ export class SparkBrowser {
     opts?: { asHuman?: boolean; tabId?: string; envId?: string },
   ): Promise<NavigateConfirm | ToolResult> {
     let tabId = opts?.tabId;
-    if (opts?.envId && !tabId) {
-      tabId = this.createEnvTab(opts.envId, url);
+    if (opts?.envId) {
+      // 传了别的标签（普通页或另一个环境）也必须在目标环境里另开一张：
+      // 否则 envId 被忽略，导航落在共用标签上，账号就串了。
+      const current = tabId ? this.tabs.get(tabId) : undefined;
+      if (!current || current.envId !== opts.envId) {
+        tabId = this.createEnvTab(opts.envId, "about:blank");
+      }
     }
     if (!opts?.asHuman) {
       const blocked = this.assertNotPaused();
@@ -12647,6 +12779,7 @@ export class SparkBrowser {
           title: probe.title,
           confirmed: ok,
           loadMs: Date.now() - started,
+          tabId: tabId || this.activeTabId,
         },
       };
     } catch (error) {
@@ -12664,6 +12797,7 @@ export class SparkBrowser {
           title: probe.title,
           confirmed: true as const,
           loadMs: Date.now() - started,
+          tabId: tabId || this.activeTabId,
         },
       };
     }

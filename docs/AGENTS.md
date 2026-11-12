@@ -3,6 +3,7 @@
 **Sparo** — *会动手的 AI 浏览器。发送前你确认。*  
 Sparo 本身是 Agent。浏览器是身体。MCP 只是对外再露一双手。操纵的是用户正在看的那一扇窗。  
 多个外部 Agent 可以同时连 3921：`initialize` 拿 `clientId`，之后用请求头 `x-sparo-client`。不带 `tabId` 的操作落在该 client 自己的标签上，不抢用户当前页。后台任务全局最多 3 个同时跑，满了排队（`queued`），空出来自动开跑。`list_tabs` 的 `owner` 是 `user` 或 `agent:<clientId>`。  
+**多账号（2026-11-12 起）：** 同一个站点能同时登录多个号，不是切换登录态。先 `list_envs` 拿 `envId`，再 `navigate({ url, envId })` / `new_tab({ url, envId })`；技能放 `run_skill({ query, params: { envId } })`。每个环境一套独立 Chromium partition（Cookie / localStorage / IndexedDB 互不可见），环境标签会认领给发起它的 client。不传 `envId` 就是默认登录态。详见 [MCP-API.md](./MCP-API.md) 的「多账号环境」。
 **主线在本目录。** 原版 `D:\download\Sparo` 只同步能力，不要把云订阅搬过去。对人说「技能」，不要说「妙招」。店小秘采集箱用 `match_skill` 查询「店小秘上品」，技能 id 是 `dxm-crawl-prep`。
 
 卖点与痛点：[PRODUCT.md](./PRODUCT.md) · 密钥：[API-KEYS.md](./API-KEYS.md) · 云订阅：[CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md)

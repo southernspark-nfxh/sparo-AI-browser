@@ -52,6 +52,8 @@ https://github.com/southernspark-nfxh/sparo-agent-browser/releases/latest/downlo
    Open any page. Click **Summarize / Fill form / Reply / Publish**, or just say what you want.
 3. 侧栏支持中文、English、日本語、한국어、Español、Português、Deutsch、Français、Italiano  
    The sidebar speaks those languages too.
+4. 同一个站点要登两个号：**设置 → 账号** 新建两个环境，各登各的；两套 Cookie 互不可见，不用来回切换登录  
+   Two accounts on one site: open **Settings → 账号**, create two envs, sign in separately. Separate cookies, no re-login dance.
 
 分寸你自己选：默认**逐步确认**——回复只进输入框，发布、发送前停下等你点头；嫌打断多就切**自动执行**，一口气干完再汇报。支付、删除两种模式都先问你。
 
@@ -75,6 +77,7 @@ Start with **[AGENTS.md](./AGENTS.md)**.
 |---|---|
 | [docs/PRODUCT.md](./docs/PRODUCT.md) | 卖点、痛点 · product story |
 | [docs/CLOUD-SUBSCRIPTION.md](./docs/CLOUD-SUBSCRIPTION.md) | 可选云端模型 · optional cloud models |
+| [docs/MULTI-ACCOUNT.md](./docs/MULTI-ACCOUNT.md) | 同站点多账号 · multiple accounts per site |
 | [docs/PRIVACY.md](./docs/PRIVACY.md) · [docs/PRIVACY.en.md](./docs/PRIVACY.en.md) | 隐私 · privacy |
 | [docs/API-KEYS.md](./docs/API-KEYS.md) | 模型密钥 · model keys |
 | [STORE.md](./STORE.md) | 发行线 · shipping |

@@ -67,6 +67,8 @@ run_skill({ query: "比价", params: { query: "索尼WH-1000XM5" } })
 
 有匹配技能就不要自己临场点城市弹层、不要直开京东/淘宝/点评首页。
 
+**指定账号环境（2026-11-12）：** 技能不声明环境字段。外部先 `list_envs` 拿 `envId`，再 `run_skill({ query, params: { envId, … } })`；`run_skill` 会先在该环境开标签并把后续步骤接在这张标签上，不传 `envId` 就用默认登录态。见 [MULTI-ACCOUNT.md](./MULTI-ACCOUNT.md)。
+
 ## 10 个基础场景（官方种子）
 
 见 [PRODUCT-TASKBOOK.md](./PRODUCT-TASKBOOK.md) §3.1 与 `strategies/skills/life-*.json`、`research-*.json`。  

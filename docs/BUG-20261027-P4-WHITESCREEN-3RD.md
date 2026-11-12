@@ -32,3 +32,27 @@
 2. 删除「修 N 次就放弃」的语义：预算只做限频去抖，永不永久放弃；restore/resize 清预算保留。
 3. 诊断落盘：每次自愈与活跃视图 bounds-changed 记主进程日志（old/new bounds、窗口最小化/最大化态、activeTab、时间），再复现时有账可查。
 4. 靠诊断日志抓「谁把视图拉成整窗」的调用方，源头能防就防（检查哪些挂载路径没走 `pinViewBeforeMount`）。
+
+---
+
+# 第五轮（2026-11-12）：不是页面盖壳层，是壳层自己停帧
+
+## 症状（与 P4 不同）
+
+网页区域正常显示，**上方标签栏/地址栏和右侧侧栏整块发白**；同时开三扇窗口，三扇一起白；只能最小化再最大化才恢复。P4 的形态是「壳层被页面盖住，露出的是站点自己的页头」，这一轮是「壳层位置什么都没有，纯白」——判读为壳层渲染表面（frame sink）停帧，网页视图是另一条合成链，所以它还在画。
+
+## 修法
+
+1. 壳层每秒报一次「这一秒新画了几帧」（`shell.html` 里的 rAF 计数器 + `shellHtmlPreload` 的 `shellHeartbeat`）。
+2. 主进程 `onShellHeartbeat` 用 `page-bounds.ts` 的 `shellPaintStalled` 判定：**只在前台、可见、未最小化的窗口**，连续 3 拍 0 帧才算停帧，冷却 3 秒最多打一枪；停帧时 `webContents.invalidate()` 强制整窗重绘——等于替人做那次最小化/最大化。满 9 拍还没好就落盘一次 `[shell-paint] stalled`。
+3. show / restore / 显示器变化 / 解锁 / 休眠恢复都补一次 `invalidateShell`（这几种时机 DWM 会重建合成表面，不主动重绘就停在白屏）。
+4. `assertChromeHole` 从「只查当前窗口」改成遍历所有窗口各查各的洞；heal / remount 日志一并落盘（`chrome-hole-heal`、`chrome-hole-action`）。
+5. `openWindow` 出来的窗口补齐原先只有主窗口才挂的 `render-process-gone`（重载）与 `unresponsive`（拉回），多开时壳层崩掉不会留下一扇死白。
+
+## 复发时怎么查
+
+`%APPDATA%\sparo-store\diag\crash.log`：
+
+- `[shell-paint] heartbeat online win=…` 有 → 心跳通了；
+- `[shell-paint] repaint …` → 判定停帧并已主动重绘；`[shell-paint] stalled …` 连着出现说明 invalidate 也压不住，下一轮得往 GPU 合成器方向查；
+- 一条 `[shell-paint]` 都没有、壳层却白 → 壳层自己的定时器也停了（渲染进程挂起），看 `render-process-gone` / `unresponsive`。

@@ -12,6 +12,7 @@ Tagline: *会动手的 AI 浏览器 — 发送前你确认。*
 | [docs/INSTALL.md](./docs/INSTALL.md) | 人下载安装包 / 复制给 AI 自动装 |
 | [docs/CLOUD-SUBSCRIPTION.md](./docs/CLOUD-SUBSCRIPTION.md) | 云订阅：计量、客户端、验收、禁区 |
 | [docs/PRICING.md](./docs/PRICING.md) | 点数货架（v4） |
+| [docs/MULTI-ACCOUNT.md](./docs/MULTI-ACCOUNT.md) | 多账号环境：同站点同时登多个号 |
 | [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) | 模块、侧栏闭环、页面洞 |
 | [docs/AI-LEARNING.md](./docs/AI-LEARNING.md) | 卡住就问、经验只留本机 |
 | [docs/SKILL-COMMUNITY-M2.md](./docs/SKILL-COMMUNITY-M2.md) | 技能社区（**未开工**，M1 人测过完再开） |
@@ -45,6 +46,15 @@ Developer:
 
 **改完先自己 QA，再让人验收。** 侧栏按钮必须自己点通：点得到、下一步在原地出现、控制台无报错。不要把「看起来像按钮」的半成品丢给用户当测试员。
 
+## 多账号（2026-11-12 起）
+
+同一站点可同时登录多个号：每个环境一套独立 Chromium partition（Cookie / localStorage / IndexedDB / 缓存互不可见），不是切换登录态。
+
+- 人：**设置 → 账号**，新建 / 打开 / 删除环境；每个环境各登各的号。
+- Agent：`list_envs` 拿 `envId` → `navigate({ url, envId })` / `new_tab({ url, envId })`；技能用 `run_skill({ query, params: { envId } })`。不传 `envId` = 默认登录态。
+- 环境标签会认领给发起调用的 client，后续不带 `tabId` 的 click / fill / execute 仍停在这个号里。
+- 细节见 [docs/MCP-API.md](./docs/MCP-API.md#多账号环境account-envs) 与 [docs/MULTI-ACCOUNT.md](./docs/MULTI-ACCOUNT.md)。
+
 ## Publish
 
 AI detects stage; scripts inject title/body once. Never loop `fill`.
@@ -74,3 +84,5 @@ Life query: 侧栏原句（打开站点 + 后半句；酒店/机票/火车/路�
 - 改完侧栏/引导就喊人测；自己没点过的按钮不要当完成
 - 新增会提前结束任务、绕过脑区或改走向的本地判断，却没先写进 `docs/DECISION-POINTS.md`
 - 用单测绿代替黄金场景；重打包前不跑受影响场景。安装包至少复测 G1、G2、G3（见 `docs/QA-GOLDEN-SCENARIOS.md`）
+- 想靠「切登录态」在同一个标签里换账号（应建账号环境，见 `list_envs` 与 [docs/MULTI-ACCOUNT.md](./docs/MULTI-ACCOUNT.md)）
+- 给环境标签的 `WebContentsView` 顶层传 `session`（会被 Electron 静默忽略、退回共用登录态；必须走 `webPreferences.partition`）

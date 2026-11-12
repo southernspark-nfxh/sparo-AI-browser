@@ -92,6 +92,7 @@
 | `agent/mission.ts` | 比价、周末、调研、求职、租房、挂号、材料、选课、文献、物流 |
 | `agent/report-html.ts` | 行程手册、任务手册 |
 | `tools/index.ts` | MCP 名 → 浏览器方法 |
+| `envs/store.ts` + `browser.ts createEnvTab` | 多账号环境：每个环境独立 `persist:env_<id>` partition，见 [MULTI-ACCOUNT.md](./MULTI-ACCOUNT.md) |
 | `mcp-server.ts` | Streamable HTTP + Bearer |
 | `shell.html` | 人用的标签栏 + 侧栏对话 |
 | `settings/store.ts` | `llmMode: byok \| cloud` |
@@ -114,6 +115,7 @@
 ## 其它面
 
 - **发布**：`run_skill` / `xhs_inject_*`，标题正文整段写入。见 [PUBLISHING.md](./PUBLISHING.md)。  
+- **多账号**：设置 → 账号；MCP `list_envs` / `create_env` / `delete_env`，`navigate` / `new_tab` 带 `envId`。每个环境一套独立 Cookie，可同时登录同站点多个号。见 [MULTI-ACCOUNT.md](./MULTI-ACCOUNT.md)。  
 - **填表**：`analyze_page` → `execute_primitives`。[UNIVERSAL-ANALYZER.md](./UNIVERSAL-ANALYZER.md)。  
 - **客服**：`cs_draft_reply` 只填草稿。[CUSTOMER-SERVICE.md](./CUSTOMER-SERVICE.md)。  
 - **人协议**：`pause` / `resume` / `request_approval`。  

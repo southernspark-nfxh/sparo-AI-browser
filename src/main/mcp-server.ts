@@ -7,7 +7,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import type { ToolHandlers } from "./tools/index.js";
 import { listNotes } from "./agent/notes.js";
 import { laneForText } from "./agent/task-class.js";
-import { backgroundPoolDecision, bindClientTab, issueClientId } from "./agent/mcp-sessions.js";
+import { backgroundPoolDecision, bindClientTab, claimTabForClient, issueClientId } from "./agent/mcp-sessions.js";
 import { bindForWrite as requireWriteTab, switchTabWithoutClient } from "./agent/tab-guard.js";
 import { agentInstructions, registerSparoPrompt } from "./agent/agent-guide.js";
 import {
@@ -112,7 +112,17 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
       tabId: tabIdField,
       envId: z.string().optional().describe("Optional envId for isolated account session (separate cookies/localStorage)"),
     },
-    async ({ url, tabId, envId }) => textResult(await handlers.navigate(url, bindForWrite("navigate", tabId), envId)),
+    async ({ url, tabId, envId }) => {
+      // 指定环境时不要先 bind 到 client 现有标签：那会让 envId 被忽略、
+      // 页面落进共用标签，两个账号就串了。先在本环境开标签，再把它认领给 client。
+      if (envId && !tabId) {
+        const r = await handlers.navigate(url, undefined, envId);
+        const made = (r as { data?: { tabId?: string } }).data?.tabId;
+        if (scope?.clientId && made) claimTabForClient(scope.clientId, made);
+        return textResult(r);
+      }
+      return textResult(await handlers.navigate(url, bindForWrite("navigate", tabId), envId));
+    },
   );
 
   server.tool(
@@ -648,7 +658,15 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
       url: z.string().optional(),
       envId: z.string().optional().describe("Optional envId for isolated account session"),
     },
-    async ({ url, envId }) => textResult(await handlers.new_tab(url, envId)),
+    async ({ url, envId }) => {
+      const r = await handlers.new_tab(url, envId);
+      // 环境标签开出来后认领给该 client，后续 click/fill/execute 才停在这个账号里。
+      if (envId && scope?.clientId) {
+        const made = (r as { data?: { id?: string } }).data?.id;
+        if (made) claimTabForClient(scope.clientId, made);
+      }
+      return textResult(r);
+    },
   );
 
   server.tool(

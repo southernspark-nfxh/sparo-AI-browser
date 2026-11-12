@@ -18,8 +18,9 @@ Do not tell end users to run `npm run start`.
 1. Read ./AGENTS.md
 2. GET http://127.0.0.1:3921/health  (store / public product)
 3. Publishing: read ./docs/PUBLISHING.md then `run_skill` or `xhs_inject_*`
-4. Otherwise: MCP `navigate` + `get_url` / `page_text`
-5. Call `sparo_info` if unsure
+4. Multi-account: `list_envs` → `navigate({ url, envId })` / `run_skill({ query, params: { envId } })` — each env has its own cookies/storage
+5. Otherwise: MCP `navigate` + `get_url` / `page_text`
+6. Call `sparo_info` if unsure
 
 ## Publish rule
 
@@ -34,6 +35,7 @@ Do not loop `fill` on title/body.
 | ./docs/INSTALL.md | Human download + agent install snippet |
 | ./docs/PUBLISHING.md | Xiaohongshu + generic site publish |
 | ./docs/MCP-API.md | Tool reference |
+| ./docs/MULTI-ACCOUNT.md | Multiple accounts of the same site, side by side |
 | ./docs/AGENTS.md | MCP connection |
 | ./docs/ARCHITECTURE.md | Internals |
 | ./docs/CLOUD-SUBSCRIPTION.md | Optional cloud models (M1) |
