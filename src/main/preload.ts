@@ -4,6 +4,14 @@
  */
 import { contextBridge, ipcRenderer } from "electron";
 
+contextBridge.exposeInMainWorld("sparkStudio", {
+  load: () => ipcRenderer.invoke("studio:load"),
+  create: () => ipcRenderer.invoke("studio:create"),
+  save: (draft: unknown) => ipcRenderer.invoke("studio:save", draft),
+  precheck: (draft: unknown) => ipcRenderer.invoke("studio:precheck", draft),
+  confirm: (draft: unknown) => ipcRenderer.invoke("studio:confirm", draft),
+});
+
 contextBridge.exposeInMainWorld("sparkPage", {
   version: "0.1.0",
   cloudSession: () => ipcRenderer.invoke("spark:cloud-page-session"),

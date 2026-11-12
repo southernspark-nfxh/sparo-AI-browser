@@ -72,6 +72,8 @@ contextBridge.exposeInMainWorld("sparkShell", {
   },
   pickFile: () => ipcRenderer.invoke("spark:pick-file"),
   openReport: (filePath: string) => ipcRenderer.invoke("spark:open-report", filePath),
+  openStudio: () => ipcRenderer.invoke("spark:open-studio"),
+  studioPending: () => ipcRenderer.invoke("spark:studio-pending"),
   openReaderMode: () => ipcRenderer.invoke("reader:open"),
   listNotes: (query?: { limit?: number; tag?: string; search?: string }) =>
     ipcRenderer.invoke("notes:list", query || {}),
