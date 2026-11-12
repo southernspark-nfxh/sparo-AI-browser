@@ -24,8 +24,12 @@ import {
   takeChromeCoverFix,
 } from "../src/main/page-bounds.js";
 
+type FakeView = {
+  getBounds: () => { x: number; y: number; width: number; height: number };
+  webContents?: { isDestroyed: () => boolean };
+};
 type HoleBrowser = SparkBrowser & {
-  tabs: Map<string, { id: string; view?: { getBounds: () => { x: number; y: number; width: number; height: number } }; discarded?: boolean }>;
+  tabs: Map<string, { id: string; view?: FakeView; discarded?: boolean }>;
   activeTabId: string;
   holeBounds: { x: number; y: number; width: number; height: number } | null;
   chromeCover: { windowStart: number; fixes: number; lastFix: number };
@@ -58,7 +62,9 @@ describe("常驻页面洞断言", () => {
     const browser = bare();
     const hole = { x: 0, y: 76, width: 900, height: 700 };
     const full = { x: 0, y: 0, width: 1400, height: 900 };
-    browser.tabs = new Map([["t", { id: "t", view: { getBounds: () => full } }]]);
+    browser.tabs = new Map([
+      ["t", { id: "t", view: { getBounds: () => full, webContents: { isDestroyed: () => false } } }],
+    ]);
     browser.activeTabId = "t";
     browser.holeBounds = hole;
     browser.overlay = "none";
@@ -165,7 +171,7 @@ describe("T1 后台视图覆盖与归属", () => {
   const parked = { x: -20000, y: 0, width: 680, height: 829 };
   const full = { x: 0, y: 0, width: 1400, height: 900 };
 
-  it("活动页正常时，屏幕内的后台页会被停放到屏幕外", () => {
+  it("活动页正常时，屏幕内的后台页会被隐藏，几何留在页面洞里", () => {
     const browser = bare();
     armHole(browser, hole);
     const active = rectView(hole);
@@ -183,7 +189,9 @@ describe("T1 后台视图覆盖与归属", () => {
     };
     browser.assertChromeHole();
     expect(bg.state.visible).toBe(false);
-    expect(bg.state.x).toBe(-20000);
+    // 改成屏幕外会让 Chromium 丢掉上一帧，切回来就得重新排版绘制。
+    expect(bg.state.x).toBe(0);
+    expect(bg.state.width).toBe(940);
     expect(applies).toBe(0);
     expect(bg.reloads).toEqual([]);
     expect(browser.activeTabId).toBe("a");
@@ -192,11 +200,12 @@ describe("T1 后台视图覆盖与归属", () => {
     expect(active.state).toMatchObject(hole);
   });
 
-  it("后台页停在 x=-20000 时不触发修复", () => {
+  it("后台页已隐藏且几何正确时，不重排也不重复停放", () => {
     const browser = bare();
     armHole(browser, hole);
     const active = rectView(hole);
-    const bg = rectView(parked);
+    const bg = rectView(hole);
+    bg.state.visible = false;
     browser.tabs = new Map([
       ["a", { id: "a", view: active.view }],
       ["bg", { id: "bg", view: bg.view }],
@@ -216,7 +225,8 @@ describe("T1 后台视图覆盖与归属", () => {
     browser.assertChromeHole();
     expect(applies).toBe(0);
     expect(parks).toBe(0);
-    expect(bg.state.x).toBe(-20000);
+    expect(bg.state.x).toBe(hole.x);
+    expect(bg.state.visible).toBe(false);
   });
 
   it("后台视图触发 heal 时，after 与 stall 都属于后台标签", () => {
@@ -230,6 +240,7 @@ describe("T1 后台视图覆盖与归属", () => {
       },
       setBounds() {},
       setVisible() {},
+      webContents: { isDestroyed: () => false },
     };
     const bg = {
       getBounds: () => {
@@ -238,6 +249,7 @@ describe("T1 后台视图覆盖与归属", () => {
       },
       setBounds() {},
       setVisible() {},
+      webContents: { isDestroyed: () => false },
     };
     browser.tabs = new Map([
       ["a", { id: "a", view: active }],
@@ -334,10 +346,26 @@ describe("T2 降频恢复", () => {
     const browser = bare();
     const hole = { x: 0, y: 76, width: 680, height: 829 };
     const stuck = { x: 0, y: 76, width: 966, height: 829 };
-    const view = { getBounds: () => stuck, setBounds() {}, setVisible() {} };
+    const view = {
+      getBounds: () => stuck,
+      setBounds() {},
+      setVisible() {},
+      webContents: { isDestroyed: () => false },
+    };
     browser.tabs = new Map([
       ["a", { id: "a", view }],
-      ["b", { id: "b", view: { getBounds: () => stuck, setBounds() {}, setVisible() {} } }],
+      [
+        "b",
+        {
+          id: "b",
+          view: {
+            getBounds: () => stuck,
+            setBounds() {},
+            setVisible() {},
+            webContents: { isDestroyed: () => false },
+          },
+        },
+      ],
     ]);
     browser.activeTabId = "a";
     armHole(browser, hole);
@@ -462,7 +490,12 @@ describe("T2 降频恢复", () => {
     const browser = bare();
     const hole = { x: 0, y: 76, width: 680, height: 829 };
     const stuck = { x: 0, y: 0, width: 1400, height: 900 };
-    const view = { getBounds: () => stuck, setBounds() {}, setVisible() {} };
+    const view = {
+      getBounds: () => stuck,
+      setBounds() {},
+      setVisible() {},
+      webContents: { isDestroyed: () => false },
+    };
     browser.tabs = new Map([["a", { id: "a", view }]]);
     browser.activeTabId = "a";
     armHole(browser, hole);
@@ -476,7 +509,7 @@ describe("T2 降频恢复", () => {
     expect(pulls).toBe(1);
   });
 
-  it("同一次断言会停放每一个仍在屏幕内的后台页", () => {
+  it("同一次断言会隐藏每一个仍在屏幕内的后台页", () => {
     const browser = bare();
     const hole = { x: 0, y: 76, width: 680, height: 829 };
     armHole(browser, hole);
@@ -493,8 +526,8 @@ describe("T2 降频恢复", () => {
       throw new Error("活动页正常时不应该重排");
     };
     browser.assertChromeHole();
-    expect(first.state.x).toBe(-20000);
-    expect(second.state.x).toBe(-20000);
+    expect(first.state.x).toBe(hole.x);
+    expect(second.state.x).toBe(hole.x);
     expect(first.state.visible).toBe(false);
     expect(second.state.visible).toBe(false);
     expect(browser.activeTabId).toBe("a");
@@ -527,7 +560,7 @@ describe("T2 降频恢复", () => {
     };
     browser.assertChromeHole();
     expect(bg.state.visible).toBe(false);
-    expect(bg.state.x).toBe(-20000);
+    expect(bg.state.x).toBe(hole.x);
     expect(removes).toBe(0);
     expect(adds).toBe(0);
     expect(bg.reloads).toEqual([]);

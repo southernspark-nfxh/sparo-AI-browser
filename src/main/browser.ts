@@ -1289,6 +1289,8 @@ export class SparkBrowser {
   viewForTab(tabId: string): WebContentsView {
     const tab = this.tabs.get(tabId);
     if (!tab) throw new Error(`Tab not found: ${tabId}`);
+    // 视图对象还在、里面的渲染进程已经没了：这种标签不会自己好，先摘掉再重建。
+    if (tab.view && this.pageViewIsDestroyed(tab.view)) this.dropDeadView(tab);
     if (!tab.view || tab.discarded) this.wakeTab(tab.id);
     if (!tab.view) throw new Error(`Tab view missing: ${tabId}`);
     return tab.view;
@@ -1765,6 +1767,7 @@ export class SparkBrowser {
   private wakeTab(id: string): void {
     const tab = this.tabs.get(id);
     if (!tab) return;
+    if (tab.view && this.pageViewIsDestroyed(tab.view)) this.dropDeadView(tab);
     if (tab.view && !tab.discarded) return;
     if (tab.view) {
       tab.discarded = false;
@@ -1786,7 +1789,30 @@ export class SparkBrowser {
       });
     } catch (err) {
       console.error("[sparo] wakeTab failed:", err);
+      tab.view = null;
     }
+  }
+
+  /**
+   * 视图对象还挂在标签上，但它里面的渲染进程已经没了（页面区整块白、点回来也是白）。
+   * 只摘视图、留住 URL 和标题，交给 wakeTab 按原地址重建。
+   */
+  private dropDeadView(tab: TabInfo): void {
+    const view = tab.view;
+    if (!view) return;
+    noteHang("page-view-dead", `tab=${tab.id} url=${tab.url || ""}`);
+    try {
+      this.win.contentView.removeChildView(view);
+    } catch {
+      /* ignore */
+    }
+    try {
+      const wc = view.webContents;
+      if (wc && !wc.isDestroyed()) wc.close();
+    } catch {
+      /* ignore */
+    }
+    tab.view = null;
   }
 
   /** Sleep every background tab now. Playing audio is skipped. */
@@ -2402,8 +2428,14 @@ export class SparkBrowser {
     }
     this.tabs.delete(id);
     if (this.activeTabId === id) {
-      const next = [...this.tabs.keys()][0];
+      // 关掉当前页要立刻把下一张「真的」显示出来：它可能已经被休眠过（view=null），
+      // 只改 activeTabId 不唤醒，网页区就是一块白。
+      const sameWin = [...this.tabs.entries()].find(
+        ([, tab]) => (tab.winId || "main") === this.activeWinId,
+      )?.[0];
+      const next = sameWin || [...this.tabs.keys()][0] || "";
       this.activeTabId = next;
+      if (next) this.wakeTab(next);
     }
     this.layout();
     this.pushChromeState();
@@ -3533,6 +3565,9 @@ export class SparkBrowser {
   private assertChromeHoleIn(): void {
     try {
       if (!this.win || this.win.isDestroyed()) return;
+      // 网页区的进程如果悄悄没了，标签还亮着、地址栏还有网址，只有中间一块白。
+      // 这里顺手看一眼活动页，坏了就按原地址重建。
+      this.healDeadActiveView();
       const hole = this.reportedPageHole();
       if (!hole) return;
       this.noteUnregisteredPageViews();
@@ -3575,10 +3610,34 @@ export class SparkBrowser {
     return null;
   }
 
+  /**
+   * 活动标签的页面进程没了、视图还挂着：网页区只能是纯白，切走再切回来也没用
+   * （wakeTab 看到 view 还在就直接返回）。这里按原地址重建一次。
+   * 同一张标签一分钟内最多救 3 次，页面自身崩溃反复白屏时不至于来回刷。
+   */
+  private healDeadActiveView(): void {
+    const tab = this.tabs.get(this.activeTabId);
+    if (!tab || !tab.view) return;
+    if (!this.pageViewIsDestroyed(tab.view)) return;
+    const now = Date.now();
+    const rec = this.deadViewHeals.get(tab.id);
+    if (rec && now - rec.lastAt < 5_000) return;
+    if (rec && now - rec.lastAt < 60_000 && rec.count >= 3) return;
+    this.deadViewHeals.set(tab.id, {
+      count: rec && now - rec.lastAt < 60_000 ? rec.count + 1 : 1,
+      lastAt: now,
+    });
+    this.dropDeadView(tab);
+    this.wakeTab(tab.id);
+    this.layout();
+    this.pushChromeState();
+  }
+
+  /** 渲染进程没了就是没了。webContents 取不到（Electron 已把它置空）同样算报废。 */
   private pageViewIsDestroyed(view: WebContentsView): boolean {
     try {
       const wc = view.webContents;
-      if (!wc || typeof wc.isDestroyed !== "function") return false;
+      if (!wc || typeof wc.isDestroyed !== "function") return true;
       return Boolean(wc.isDestroyed());
     } catch {
       return true;
@@ -3863,21 +3922,26 @@ export class SparkBrowser {
     view.setBounds(bounds);
   }
 
-  /** 后台标签留在视图树里（后台任务还要跑），但必须移出窗口。 */
+  /**
+   * 后台标签留在视图树里（后台任务还要跑），但必须隐藏。
+   * 几何一律保持页面洞大小：一旦改成屏幕外或别的尺寸，Chromium 就丢掉上一帧的栅格，
+   * 切回来得重新排版绘制，看着就像每次都在重新加载。
+   */
   private parkPageView(
     view: WebContentsView,
     bounds: { x: number; y: number; width: number; height: number },
     nudge: boolean,
   ): void {
     view.setVisible(false);
-    const parked = {
-      x: -20000,
-      y: 0,
-      width: Math.max(bounds.width, 100),
-      height: Math.max(bounds.height, 100),
-    };
-    if (nudge) view.setBounds({ ...parked, width: parked.width - 1 });
-    view.setBounds(parked);
+    let actual: { x: number; y: number; width: number; height: number } | null = null;
+    try {
+      actual = view.getBounds();
+    } catch {
+      actual = null;
+    }
+    if (actual && boundsWithinOnePixel(actual, bounds)) return;
+    if (nudge) view.setBounds({ ...bounds, width: Math.max(100, bounds.width - 1) });
+    view.setBounds(bounds);
   }
 
   private layoutTimer: ReturnType<typeof setTimeout> | null = null;
@@ -3888,6 +3952,8 @@ export class SparkBrowser {
   private chromeCover: ChromeCoverBudget = { windowStart: 0, fixes: 0, lastFix: 0 };
   /** 最近一次真正占用去抖预算的标签。同一毫秒里的其他标签仍可校正。 */
   private chromeCoverTabId = "";
+  /** 活动页死视图的重建记录：tabId → 次数 / 上次时间，防页面自身崩溃时来回刷。 */
+  private deadViewHeals = new Map<string, { count: number; lastAt: number }>();
   /** 壳层帧心跳状态，按窗口存。 */
   private _shellPaint?: Map<string, ShellPaintState>;
   private get shellPaint(): Map<string, ShellPaintState> {
