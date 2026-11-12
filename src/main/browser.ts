@@ -2288,6 +2288,16 @@ export class SparkBrowser {
     };
   }
 
+  private async studioPayloadWithMetrics() {
+    const base = this.studioPayload();
+    const root = join(__dirname, "../../strategies/skills/social-media-publish/scripts");
+    const collector = await import(pathToFileURL(join(root, "collector.mjs")).href);
+    const db = await import(pathToFileURL(join(root, "metrics-db.mjs")).href);
+    await collector.collectAll();
+    const rows = await db.listMetrics();
+    return { ...base, metrics: db.buildViews(rows) };
+  }
+
   openStudio(): ToolResult {
     const fileUrl = this.studioFileUrl();
     const existing = this.studioTabId ? this.tabs.get(this.studioTabId) : undefined;
@@ -4092,7 +4102,11 @@ export class SparkBrowser {
     });
     handle("studio:load", async (e) => {
       if (!this.senderIsStudio(e.sender)) return { ok: false, message: "只能从工作台读取" };
-      return this.studioPayload();
+      return this.studioPayloadWithMetrics();
+    });
+    handle("studio:refresh", async (e) => {
+      if (!this.senderIsStudio(e.sender)) return { ok: false };
+      return this.studioPayloadWithMetrics();
     });
     handle("studio:create", async (e) => {
       if (!this.senderIsStudio(e.sender)) return { ok: false };

@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("sparkStudio", {
   save: (draft: unknown) => ipcRenderer.invoke("studio:save", draft),
   precheck: (draft: unknown) => ipcRenderer.invoke("studio:precheck", draft),
   confirm: (draft: unknown) => ipcRenderer.invoke("studio:confirm", draft),
+  refresh: () => ipcRenderer.invoke("studio:refresh"),
 });
 
 contextBridge.exposeInMainWorld("sparkPage", {
