@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1] — 2026-11-12 白屏修复补漏（0.6.0 没救全）
+
+**0.6.0 的自动重绘有两处没覆盖到，这次补上。** 一是判定要求窗口在前台获得焦点——可人看到白屏的第一反应就是切到别的程序去截图/反馈，一切走就失焦，重绘永远不触发；现在只看「没最小化、仍然可见」。二是切回 Sparo 时没人补画——新增 `focus` 时先重绘一次、350ms 再补一次，多开窗口同样生效。
+
+**重绘力度也加强了。** 合成器停住时单纯 `invalidate()` 推不动，现在同时把壳层缩放轻推一丝（1 → 1.0001，60ms 后还原）逼它重新提交一帧；网页视图不受影响，肉眼不可见。
+
+**心跳首次上线也会落盘**（`[shell-paint] heartbeat online`），下次复现有账可查。判定逻辑改为只看 `minimized=false && visible=true`，测试同步调整。
+
 ## [0.6.0] — 2026-11-12 多账号环境 + 自媒体自动发布 + 壳层白屏自愈
 
 **同一个站点可以同时登录多个号。** 新增「账号环境」：每个环境一套独立 Chromium partition（Cookie / localStorage / IndexedDB / 缓存），不是切换登录态。人走 **设置 → 账号** 新建 / 打开 / 删除；Agent 走 `list_envs` 拿 `envId`，再 `navigate({ url, envId })`、`new_tab({ url, envId })`，技能用 `run_skill({ query, params: { envId } })`。不传 `envId` 仍是默认登录态。环境标签会认领给发起它的 client，后续 click / fill / execute 继续停在这个号里。

@@ -1456,6 +1456,8 @@ export class SparkBrowser {
       this.clearTaskbarFlash();
       this.noteUserClaimedRender();
       this.returnWindowIfUserFocused();
+      // 切到别的程序期间壳层可能已经停帧，回到前台先重绘一次，别等人最小化再最大化。
+      this.repaintShellSoon(this.win);
     });
     this.win.on("show", () => {
       this.scheduleLayout(150);
@@ -2510,6 +2512,8 @@ export class SparkBrowser {
         this.clearTaskbarFlash();
         this.noteUserClaimedRender();
         this.returnWindowIfUserFocused();
+        // 多开的窗口同样可能带着白壳回到前台。
+        this.repaintShellSoon(win);
       });
     });
     win.on("resize", () =>
@@ -3901,20 +3905,22 @@ export class SparkBrowser {
     if (!win) return;
     let minimized = true;
     let visible = false;
-    let focused = false;
     try {
       if (win.isDestroyed() || win.webContents.isDestroyed()) return;
       minimized = win.isMinimized();
       visible = win.isVisible();
-      focused = win.isFocused();
     } catch {
       return;
     }
     const frames = Math.max(0, Math.round(Number((raw as { frames?: unknown } | null)?.frames) || 0));
     const now = Date.now();
     const prev = this.shellPaint.get(winId) || { zeroStreak: 0, repaints: 0, lastRepaintAt: 0 };
-    if (!this.shellPaint.has(winId)) console.log(`[shell-paint] heartbeat online win=${winId}`);
-    const next = shellPaintStalled(prev, frames, { focused, minimized, visible, now });
+    if (!this.shellPaint.has(winId)) {
+      const line = `[shell-paint] heartbeat online win=${winId}`;
+      console.log(line);
+      noteHang("shell-paint-online", line);
+    }
+    const next = shellPaintStalled(prev, frames, { minimized, visible, now });
     this.shellPaint.set(winId, next.state);
     if (next.repaint) {
       const line = `[shell-paint] repaint win=${winId} streak=${next.state.zeroStreak} count=${next.state.repaints} minimized=${minimized} maximized=${this.safeMaximized(win)}`;
@@ -3938,14 +3944,36 @@ export class SparkBrowser {
     }
   }
 
-  /** 强制壳层整窗重绘。比窗口 resize 轻，不动布局、不抢焦点。 */
+  /**
+   * 强制壳层整窗重绘。比窗口 resize 轻，不动布局、不抢焦点。
+   * 合成器停住时单纯 invalidate 推不动，再把缩放轻推一丝逼它重新提交一帧，
+   * 60ms 后还原（肉眼看不出，也不会影响网页视图）。
+   */
   private invalidateShell(win: BrowserWindow): void {
     try {
       if (win.isDestroyed() || win.webContents.isDestroyed()) return;
-      win.webContents.invalidate();
+      const wc = win.webContents;
+      wc.invalidate();
+      const zoom = wc.getZoomFactor();
+      wc.setZoomFactor(zoom === 1 ? 1.0001 : 1);
+      setTimeout(() => {
+        try {
+          if (!win.isDestroyed() && !wc.isDestroyed()) wc.setZoomFactor(zoom);
+        } catch {
+          /* 窗口正在销毁 */
+        }
+      }, 60);
     } catch {
       /* 窗口正在销毁 */
     }
+  }
+
+  /** 回到前台、刚从最小化恢复时最容易留下半张白壳：先打一枪，350ms 再补一枪。 */
+  private repaintShellSoon(win: BrowserWindow): void {
+    this.invalidateShell(win);
+    setTimeout(() => {
+      if (!win.isDestroyed()) this.invalidateShell(win);
+    }, 350);
   }
 
   private invalidateAllShells(): void {

@@ -53,7 +53,7 @@ describe("pageViewCoversChrome", () => {
   });
 });
 
-const awake = { focused: true, minimized: false, visible: true };
+const awake = { minimized: false, visible: true };
 
 function feed(frames: number[], start = { zeroStreak: 0, repaints: 0, lastRepaintAt: 0 }, step = 1_000) {
   let state: ShellPaintState = start;
@@ -94,11 +94,10 @@ describe("壳层停帧", () => {
     expect(hits[1] - hits[0]).toBeGreaterThanOrEqual(SHELL_PAINT_REPAINT_COOLDOWN_MS - 1_000);
   });
 
-  it("最小化 / 不可见 / 失焦的窗口本来就不出帧，不判白屏", () => {
+  it("最小化 / 不可见的窗口本来就不出帧，不判白屏；失焦仍要判", () => {
     const asleep = [
-      { focused: true, minimized: true, visible: true },
-      { focused: true, minimized: false, visible: false },
-      { focused: false, minimized: false, visible: true },
+      { minimized: true, visible: true },
+      { minimized: false, visible: false },
     ];
     for (const ctx of asleep) {
       let state: ShellPaintState = { zeroStreak: 0, repaints: 0, lastRepaintAt: 0 };
@@ -108,6 +107,12 @@ describe("壳层停帧", () => {
         state = next.state;
       }
     }
+    // 人切到别的程序时壳层照样会白，回来还得手动最大最小化，所以失焦也要救。
+    let state: ShellPaintState = { zeroStreak: 0, repaints: 0, lastRepaintAt: 0 };
+    for (let i = 0; i < 3; i += 1) {
+      state = shellPaintStalled(state, 0, { minimized: false, visible: true, now: (i + 1) * 1_000 }).state;
+    }
+    expect(state.repaints).toBe(1);
   });
 
   it("帧恢复后计数归零，下一次停帧重新从第一拍算", () => {

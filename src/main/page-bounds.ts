@@ -76,14 +76,17 @@ export const SHELL_PAINT_REPAINT_COOLDOWN_MS = 3_000;
 /** 连续这么多拍还没恢复就落一次盘，下次复现有账可查。 */
 export const SHELL_PAINT_DIAG_BEATS = 9;
 
-/** 最小化、藏起来、失焦的窗口本来就不出帧，不判白屏。 */
+/**
+ * 最小化、藏起来的窗口本来就不出帧，不判白屏。
+ * 失焦不算：人切到别的程序去的时候壳层照样是白的，回来还得手动最大最小化。
+ */
 export function shellPaintStalled(
   state: ShellPaintState,
   frames: number,
-  ctx: { focused: boolean; minimized: boolean; visible: boolean; now: number },
+  ctx: { minimized: boolean; visible: boolean; now: number },
 ): { state: ShellPaintState; repaint: boolean } {
   const idle = { zeroStreak: 0, repaints: 0, lastRepaintAt: state.lastRepaintAt };
-  if (ctx.minimized || !ctx.visible || !ctx.focused) return { state: idle, repaint: false };
+  if (ctx.minimized || !ctx.visible) return { state: idle, repaint: false };
   if (frames > 0) return { state: idle, repaint: false };
   const zeroStreak = state.zeroStreak + 1;
   const cooled =
