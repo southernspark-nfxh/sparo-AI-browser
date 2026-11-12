@@ -1297,9 +1297,9 @@ export class SparkBrowser {
   }
 
   /** 开一个后台标签。activate=false 时 activeTabId 保持不变，不抢焦点。关闭渲染节流，最小化时定时器照跑。 */
-  createAgentTab(url?: string, activate = false): string {
+  createAgentTab(url?: string, activate = false, clientId = ""): string {
     const target = url && url.trim() ? url : DEFAULT_URL;
-    return this.createTab(target, activate, { agentOwned: true });
+    return this.createTab(target, activate, { agentOwned: true, clientId });
   }
 
   /**
@@ -1878,17 +1878,19 @@ export class SparkBrowser {
   private createTab(
     url = DEFAULT_URL,
     activate = true,
-    opts?: { agentOwned?: boolean; openerTabId?: string; userAction?: boolean },
+    opts?: { agentOwned?: boolean; openerTabId?: string; userAction?: boolean; clientId?: string },
   ): string {
     const actor = this.focusActor();
     if (actor?.winId && actor.winId !== this.activeWinId && this.wins.has(actor.winId)) {
       return this.withWin(actor.winId, () => this.createTab(url, activate, opts));
     }
     const id = randomBytes(4).toString("hex");
-    const clientId = agentClientFromScope(
-      this.taskStore()?.chatKey,
-      opts?.openerTabId ? ownerForTab(opts.openerTabId) : undefined,
-    );
+    const clientId =
+      opts?.clientId ||
+      agentClientFromScope(
+        this.taskStore()?.chatKey,
+        opts?.openerTabId ? ownerForTab(opts.openerTabId) : undefined,
+      );
     const agentOwned = opts?.agentOwned === true || Boolean(clientId);
     const view = this.makePageView(undefined, { agentOwned });
     const winId = this.activeWinId;
@@ -6446,17 +6448,12 @@ export class SparkBrowser {
 
   /**
    * 侧栏开站任务第一次碰到页面时，开或复用「侧栏」工位。
-   * 侧栏独占这扇窗时切到新标签；同窗还有别的 agent 时不抢当前页。划词和读当前页不走这里。
+   * 这是人自己在侧栏里点的活，开出来的页就该显示在人面前；同一扇窗里别的 agent
+   * 各用各的 tabId，不需要靠「当前页是谁」干活。
    */
   private ensureSidebarWorkTab(): string {
     ensureSidebarClient();
-    const before = this.activeTabId;
     const tabId = this.bindAgentTab(SIDEBAR_CLIENT_ID) || "";
-    const winId = (tabId && this.tabs?.get(tabId)?.winId) || this.activeWinId || "main";
-    const alone = [...this.getClientsOnWindow(winId)].every((id) => id === SIDEBAR_CLIENT_ID);
-    if (!alone && before && this.activeTabId !== before && typeof this.switchTab === "function") {
-      this.switchTab(before, { userAction: true });
-    }
     if (!tabId) return "";
     const tab = this.tabs?.get(tabId);
     if (tab?.agentStatus === "done") delete tab.agentStatus;
@@ -8922,14 +8919,11 @@ export class SparkBrowser {
       (item) => item.state === "running" || item.state === "queued" || item.state === "waiting_human",
     );
     const busy = Boolean(candidate) && candidateTabBusy({ clientId, candidateTabId: candidate, live });
-    const winId = this.activeWinId || "main";
-    const others = [...this.getClientsOnWindow(winId)].filter((id) => id !== clientId);
     const tabId = bindClientTab({
       clientId,
       knownTabIds: known,
-      createAgentTab: (activate = false) => this.createAgentTab(undefined, activate),
+      createAgentTab: (activate = false) => this.createAgentTab(undefined, activate, clientId),
       candidateBusy: busy,
-      otherClientsOnWindow: others,
     });
     if (tabId) this.bindClientWindow(clientId, this.tabs?.get(tabId)?.winId || this.activeWinId || "main");
     const mode = tabId && candidate && tabId === candidate ? "reused" : "new";

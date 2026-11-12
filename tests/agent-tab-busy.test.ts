@@ -113,4 +113,25 @@ describe("T80 同一 agent 的活任务各用各的标签", () => {
     registerClientName("jia", "甲");
     expect(seatForClient("jia")).toBe(1);
   });
+
+  it("侧栏新标签请求激活，别的 client 不抢当前页", () => {
+    const seen: boolean[] = [];
+    bindClientTab({
+      clientId: "sidebar",
+      knownTabIds: ["user"],
+      createAgentTab: (activate) => {
+        seen.push(Boolean(activate));
+        return "side-tab";
+      },
+    });
+    bindClientTab({
+      clientId: "jia",
+      knownTabIds: ["user"],
+      createAgentTab: (activate) => {
+        seen.push(Boolean(activate));
+        return "jia-tab";
+      },
+    });
+    expect(seen).toEqual([true, false]);
+  });
 });
