@@ -11,7 +11,7 @@ contextBridge.exposeInMainWorld("sparkStudio", {
   precheck: (draft: unknown) => ipcRenderer.invoke("studio:precheck", draft),
   confirm: (draft: unknown) => ipcRenderer.invoke("studio:confirm", draft),
   refresh: () => ipcRenderer.invoke("studio:refresh"),
-  reply: (payload: { platform?: string; text?: string }) => ipcRenderer.invoke("studio:reply", payload),
+  reply: (payload: { platform?: string; text?: string; commentId?: string; content?: string }) => ipcRenderer.invoke("studio:reply", payload),
 });
 
 contextBridge.exposeInMainWorld("sparkPage", {
