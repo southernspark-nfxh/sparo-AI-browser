@@ -16,4 +16,4 @@
 - [x] 安装包级实测：`navigate` 开站 + `page_text` 读回可用，MCP `/health` 正常
 - [x] `package.json` 版本 0.6.4；`CHANGELOG.md` 写明 0.6.0–0.6.3 为何没治好；`docs/DECISION-POINTS.md` 已登记；`AGENTS.md` 版本口径已同步
 - [x] `docs/QA-GOLDEN-SCENARIOS.md` 实机记录补 0.6.4 一行
-- [ ] 提交并推送 GitHub
+- [x] 提交并推送 GitHub（`d70515a`）

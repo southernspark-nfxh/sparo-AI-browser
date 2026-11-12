@@ -11,4 +11,4 @@
 - [x] T9 手动验证（CDP 卡死壳层主线程，复现线上白屏）：5 秒判静默 → 重绘 3 次 → `restart win=main count=4` → `render-process-gone reason=crashed` → `shell-reload forced=true` → 1.2 秒后 `heartbeat online`，页面重建（`vite connected` 第二次），网页视图与标签未受影响
 - [x] T10 版本与文档：`package.json` 0.6.4、`CHANGELOG.md`、`docs/DECISION-POINTS.md` #53、`AGENTS.md` 版本口径
 - [x] T11 `npm run dist` 产出 `release\Sparo-Setup-0.6.4.exe`（103688818 字节，2026-11-13 00:32:43；退出码 1 只因缺 `GH_TOKEN`）。安装包级实测：卡死壳层 19 秒自动恢复（3 次重绘 → `restart` → `shell-reload forced=true` → 1.2 秒 `heartbeat online`）；自发崩溃 1.5 秒恢复；`navigate` + `page_text` + `/health` 正常。G2/G3 需要已登录微博 + 模型 Key，隔离配置里跑不了，已在 `docs/QA-GOLDEN-SCENARIOS.md` 如实记录
-- [ ] T12 提交并推送 GitHub（含本轮白屏修复与本轮之前未提交的工作区改动说明）
+- [x] T12 提交并推送 GitHub：`d70515a`（`30fccc3..d70515a master -> master`）。同一提交带入工作区在飞的媒体工作台/标签持久化改动（`studio-*`、`tabs-session`、`execute-wrapper` 及其测试），`browser.ts` 两边交织无法拆分，已在提交说明里写明
