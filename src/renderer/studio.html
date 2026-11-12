@@ -35,6 +35,7 @@
       <button type="button" data-view="draft">稿件</button>
       <button type="button" data-view="dispatch">分发</button>
       <button type="button" data-view="ledger">台账</button>
+      <button type="button" data-view="metrics">数据</button>
     </nav>
     <main>
       <section id="overview" class="on">
@@ -74,6 +75,11 @@
       <section id="ledger">
         <h1>台账</h1>
         <div id="ledgerTable"></div>
+      </section>
+      <section id="metrics">
+        <h1>数据</h1>
+        <button type="button" class="act" id="refreshMetrics">刷新</button>
+        <div id="metricViews"></div>
       </section>
     </main>
   </div>
@@ -229,6 +235,36 @@
       document.getElementById("confirmNote").textContent = result.message;
     };
 
+    function showMetrics(metrics) {
+      const host = document.getElementById("metricViews");
+      if (!metrics) {
+        host.textContent = "还没有快照";
+        return;
+      }
+      const blocks = [
+        ["总览卡", "阅读 " + metrics.overview.reads + "；净增 " + metrics.overview.follows + "；收益 " + metrics.overview.revenue],
+        ["趋势", JSON.stringify(metrics.trend)],
+        ["内容榜", metrics.ranking.length ? JSON.stringify(metrics.ranking) : "无单篇"],
+        ["平台对比", JSON.stringify(metrics.compare)],
+        ["收益拆分", JSON.stringify(metrics.revenueSplit)],
+        ["异常", metrics.overview.exceptions.join("；") || "无"],
+        ["采集", metrics.capturedAt || ""],
+      ];
+      host.innerHTML = "";
+      for (const [title, text] of blocks) {
+        const card = document.createElement("div");
+        card.className = "card";
+        card.textContent = title + "：" + text;
+        host.append(card);
+      }
+    }
+
+    document.getElementById("refreshMetrics").onclick = async () => {
+      const payload = await api.refresh();
+      showMetrics(payload.metrics);
+      showOverview(payload.overview);
+    };
+
     api.load().then((payload) => {
       drafts = payload.drafts;
       draft = payload.draft;
@@ -236,6 +272,7 @@
       showDrafts();
       showOverview(payload.overview);
       showLedger(payload.ledger);
+      showMetrics(payload.metrics);
     });
   </script>
 </body>
