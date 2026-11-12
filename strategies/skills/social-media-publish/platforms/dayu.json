@@ -1,0 +1,50 @@
+{
+  "id": "dayu",
+  "name": "大鱼",
+  "entry": {
+    "host": "mp.dayu.com",
+    "writeUrl": "https://mp.dayu.com/dashboard/article/write",
+    "listUrl": "https://mp.dayu.com/dashboard/contents",
+    "dataUrl": "",
+    "commentUrl": ""
+  },
+  "auth": {
+    "tokenSource": "",
+    "csrfHeader": ""
+  },
+  "limits": {
+    "titleMin": null,
+    "titleMax": null,
+    "bodyMax": null,
+    "imagesMax": null,
+    "perDay": null,
+    "minGapMinutes": null
+  },
+  "image": {
+    "rehost": true,
+    "stripExternal": null,
+    "minDistinctImages": 3,
+    "coverMode": "三图"
+  },
+  "switches": {
+    "required": [],
+    "forbidden": [],
+    "defaults": [{ "id": "source", "label": "无需标注" }]
+  },
+  "schedule": {
+    "supported": false,
+    "uiPath": "",
+    "note": "pending"
+  },
+  "readback": ["NEED_3_DISTINCT_IMAGES", "COVER_REJECTED", "SOURCE_ASSERT_FAIL"],
+  "data": {
+    "metricsMap": {},
+    "delayDays": null,
+    "revenueTypes": [],
+    "pageLimit": null
+  },
+  "capabilities": {
+    "supportsDraft": null,
+    "supportsUpdate": null
+  }
+}

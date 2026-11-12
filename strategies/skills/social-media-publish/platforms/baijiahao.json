@@ -1,0 +1,50 @@
+{
+  "id": "baijiahao",
+  "name": "百家",
+  "entry": {
+    "host": "baijiahao.baidu.com",
+    "writeUrl": "https://baijiahao.baidu.com/builder/rc/edit?type=news",
+    "listUrl": "https://baijiahao.baidu.com/builder/rc/content",
+    "dataUrl": "",
+    "commentUrl": ""
+  },
+  "auth": {
+    "tokenSource": "",
+    "csrfHeader": ""
+  },
+  "limits": {
+    "titleMin": null,
+    "titleMax": null,
+    "bodyMax": null,
+    "imagesMax": null,
+    "perDay": null,
+    "minGapMinutes": null
+  },
+  "image": {
+    "rehost": true,
+    "stripExternal": null,
+    "minDistinctImages": null,
+    "coverMode": "单图"
+  },
+  "switches": {
+    "required": [],
+    "forbidden": [{ "id": "ai", "label": "采用AI生成内容" }],
+    "defaults": []
+  },
+  "schedule": {
+    "supported": true,
+    "uiPath": "定时发布",
+    "note": ""
+  },
+  "readback": ["COVER_UNREAD", "COVER_RADIO_UNREAD", "AI_STILL_CHECKED", "AI_CONTROL_MISSING"],
+  "data": {
+    "metricsMap": {},
+    "delayDays": null,
+    "revenueTypes": [],
+    "pageLimit": null
+  },
+  "capabilities": {
+    "supportsDraft": null,
+    "supportsUpdate": null
+  }
+}

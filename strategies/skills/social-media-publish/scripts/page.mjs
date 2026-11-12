@@ -1,5 +1,5 @@
 // 页面动作都走带 tabId 的客户端。地址不对就停，不再发这一步。
-import { activeIdOf, call, ensureRender, exec, nav, sessionStamp, sleep, switchTab, tabRows, tabs, uploadFile, useTab } from "./sparo.mjs";
+import { activeIdOf, call, click, ensureRender, exec, nav, sessionStamp, sleep, switchTab, tabRows, tabs, uploadFile, useTab } from "./sparo.mjs";
 
 export { sleep };
 
@@ -68,10 +68,16 @@ export function canResume(state) {
 }
 
 export async function page(ctx, script) {
-  const raw = await exec(script, ctx.tabId, ctx.host);
-  const stopped = blockedCall(raw);
-  if (stopped) return { mismatch: raw, stop: stopped };
-  return { value: unwrap(raw), raw };
+  // 渲染进程忙的时候 execute 会回空串，别把这当成页面的答案：重问两次
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const raw = await exec(script, ctx.tabId, ctx.host);
+    const stopped = blockedCall(raw);
+    if (stopped) return { mismatch: raw, stop: stopped };
+    const value = unwrap(raw);
+    if (value !== "" && value != null) return { value, raw };
+    await sleep(250);
+  }
+  return { value: "", raw: "" };
 }
 
 const DANGER_NEIGHBORS = ["认领", "删除", "立即发布", "保存并认领", "确认发布"];
@@ -131,7 +137,7 @@ export function clickExact(text) {
     "blockers.push({ cls: String(top.className).slice(0, 80), left: br.left, top: br.top, w: br.width, h: br.height });" +
     "}" +
     "}" +
-    "const dialogs = document.querySelectorAll('[role=\"dialog\"],[class*=\"modal\"],[class*=\"popup\"],[class*=\"dropdown\"]').length;" +
+    "const dialogs = document.querySelectorAll('[role=\"dialog\"],[class*=\"modal\"],[class*=\"popup\"],[class*=\"dropdown\"],[class*=\"preview\"]').length;" +
     "const input = el ? el.querySelector('input') : null;" +
     "return { viewport: view, doc, target, inside, scrollers, blockers, neighbors, signals: { dialogs, expanded: el ? el.getAttribute('aria-expanded') : null, checked: !!(input && input.checked) } };" +
     "}" +
@@ -371,7 +377,11 @@ export async function openWriteTab(ctx) {
   const stamp = await sessionStamp();
   const beforeListed = await tabs();
   const beforeRows = tabRows(beforeListed);
-  const ready = findOwnedEditor(beforeRows, stamp, ctx.writeMark);
+  // 「修改已发布文章」的编辑页长得和新建页一样，复用它会改错稿：带 article_id / online_modify 的一律不复用
+  const reusable = ctx.editExisting
+    ? beforeRows.filter((tab) => !ctx.editExisting.test(String(tab.url || "")))
+    : beforeRows;
+  const ready = findOwnedEditor(reusable, stamp, ctx.writeMark);
   if (ready && String(ready.url || "").includes(ctx.host)) {
     const pin = await useTab(ready.id, ctx.host);
     const stopped = blockedCall(pin);
@@ -608,10 +618,12 @@ function pickPopupScript(text, date) {
     "const cls = String(el.className || '');" +
     "if (/disabled|prev|next|out-of|not-in/.test(cls)) return false;" +
     "const title = el.getAttribute('title') || el.getAttribute('aria-label') || '';" +
-    "const t = (el.innerText || '').replace(/\\s+/g, '').replace(/分|时/g, '');" +
+    "const t = (el.innerText || '').replace(/\\s+/g, '').replace(/分|时|点/g, '');" +
     "if (date && title.includes(date)) return true;" +
     "if (date && /月.*日/.test(t)) { const m = t.match(/(\\d+)日/); return m && m[1] === want; }" +
-    "return t === want;" +
+    "if (t === want) return true;" +
+    // 小时列表写成「7点」，脚本传的是「07」，按数值再比一次
+    "return /^\\d+$/.test(t) && /^\\d+$/.test(want) && Number(t) === Number(want);" +
     "});" +
     "if (!hit) return JSON.stringify({ ok: false, popup: true });" +
     "fire(hit);" +
@@ -620,8 +632,57 @@ function pickPopupScript(text, date) {
   );
 }
 
-function scrollMinuteScript(minute) {
-  const want = String(minute);
+function scrollPopupScript(step) {
+  return (
+    "(() => {" +
+    "function visible(el) {" +
+    "if (!el || !el.isConnected) return false;" +
+    "const r = el.getBoundingClientRect();" +
+    "const st = getComputedStyle(el);" +
+    "if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) === 0) return false;" +
+    "return r.width > 0 && r.height > 0;" +
+    "}" +
+    "const lists = Array.from(document.querySelectorAll('[class*=\"dropdown\"],[class*=\"popup\"],[class*=\"picker\"]'))" +
+    ".filter((el) => visible(el) && el.getBoundingClientRect().height > 20);" +
+    "lists.sort((a, b) => (Number(getComputedStyle(a).zIndex) || 0) - (Number(getComputedStyle(b).zIndex) || 0));" +
+    "const root = lists[lists.length - 1];" +
+    "if (!root) return JSON.stringify({ ok: false, popup: false });" +
+    "const named = Array.from(root.querySelectorAll('[class*=\"virtual-list-holder\"],[class*=\"scroll\"],[class*=\"list-holder\"]'))" +
+    ".filter((el) => el.scrollHeight > el.clientHeight + 4);" +
+    "const holder = named[0] || Array.from(root.querySelectorAll('div,ul'))" +
+    ".filter((el) => el.scrollHeight > el.clientHeight + 20 && el.clientHeight > 40).pop() || root;" +
+    "const before = holder.scrollTop;" +
+    "if (" + Number(step) + " < 0) holder.scrollTop = 0;" +
+    "else holder.scrollTop = Math.min(holder.scrollHeight, before + holder.clientHeight * " + Number(step) + ");" +
+    "holder.dispatchEvent(new Event('scroll', { bubbles: true }));" +
+    "return JSON.stringify({ ok: true, top: holder.scrollTop, height: holder.scrollHeight, client: holder.clientHeight, moved: holder.scrollTop !== before });" +
+    "})()"
+  );
+}
+
+// 分钟下拉同样是 rc-virtual-list，只渲染当前可见的十几项。分两步：先扫当前渲染项，找不到再滚一屏。
+// 不按行高估算位置——React 还没重渲染就读 DOM 会读到旧值（上次就是这么卡住的）。
+function findMinuteListBody() {
+  return (
+    "function visible(el) {" +
+    "if (!el || !el.isConnected) return false;" +
+    "const r = el.getBoundingClientRect();" +
+    "return r.width > 0 && r.height > 0;" +
+    "}" +
+    "const lists = Array.from(document.querySelectorAll('.rc-virtual-list')).filter(visible);" +
+    "let minuteList = null;" +
+    "for (const list of lists) {" +
+    "const items = list.querySelectorAll('.cheetah-select-item, [class*=\"select-item\"]');" +
+    "if (items.length && /分/.test(items[0].textContent || '')) { minuteList = list; break; }" +
+    "}" +
+    "if (!minuteList) return { error: 'no minute list' };" +
+    "const holder = minuteList.querySelector('.rc-virtual-list-holder') || minuteList;" +
+    "return { list: minuteList, holder };"
+  );
+}
+
+function pickMinuteScript(minute) {
+  const target = Number(minute);
   return (
     "(() => {" +
     "function visible(el) {" +
@@ -638,38 +699,31 @@ function scrollMinuteScript(minute) {
     "el.dispatchEvent(new MouseEvent('mouseup', opt));" +
     "el.click();" +
     "}" +
-    // 找包含"分"的分钟虚拟列表
-    "const lists = Array.from(document.querySelectorAll('.rc-virtual-list')).filter(visible);" +
-    "let minuteList = null;" +
-    "for (const list of lists) {" +
-    "const items = list.querySelectorAll('.cheetah-select-item, [class*=\"select-item\"]');" +
-    "if (items.length && /分/.test(items[0].textContent || '')) { minuteList = list; break; }" +
-    "}" +
-    "if (!minuteList) return JSON.stringify({ ok: false, reason: 'no minute list' });" +
-    "const holder = minuteList.querySelector('.rc-virtual-list-holder');" +
-    "if (!holder) return JSON.stringify({ ok: false, reason: 'no holder' });" +
-    "const want = " + JSON.stringify(want) + ";" +
-    // 1. 先滚到顶部，读取第一个可用分钟
-    "holder.scrollTop = 0;" +
-    "holder.dispatchEvent(new Event('scroll', { bubbles: true }));" +
-    "let firstItems = minuteList.querySelectorAll('.cheetah-select-item, [class*=\"select-item\"]');" +
-    "if (!firstItems.length) return JSON.stringify({ ok: false, reason: 'no items after scroll top' });" +
-    "const firstText = firstItems[0].textContent.trim();" +
-    "const firstMatch = firstText.match(/\\d+/);" +
-    "if (!firstMatch) return JSON.stringify({ ok: false, reason: 'cannot parse first minute', first: firstText });" +
-    "const firstMin = parseInt(firstMatch[0], 10);" +
-    "const targetMin = parseInt(want, 10);" +
-    // 2. 计算目标滚动位置（每项约30px）
-    "const offset = targetMin - firstMin;" +
-    "if (offset < 0) return JSON.stringify({ ok: false, reason: 'target before first available', first: firstMin, want: targetMin });" +
-    "holder.scrollTop = offset * 30;" +
-    "holder.dispatchEvent(new Event('scroll', { bubbles: true }));" +
-    // 3. 查找并点击目标分钟
-    "const items = minuteList.querySelectorAll('.cheetah-select-item, [class*=\"select-item\"]');" +
+    "const found = (() => {" + findMinuteListBody() + "})();" +
+    "if (found.error) return JSON.stringify({ ok: false, reason: found.error });" +
+    // 列表写「0分」，参数是「00」：按数值比，别比字符串
+    "const items = Array.from(found.list.querySelectorAll('.cheetah-select-item, [class*=\"select-item\"]')).filter(visible);" +
     "for (const it of items) {" +
-    "if (it.textContent.trim() === want + '分') { fire(it); return JSON.stringify({ ok: true }); }" +
+    "const m = (it.textContent || '').replace(/\\s+/g, '').match(/^(\\d+)分$/);" +
+    "if (m && Number(m[1]) === " + target + ") { fire(it); return JSON.stringify({ ok: true }); }" +
     "}" +
-    "return JSON.stringify({ ok: false, reason: 'not found after scroll', first: firstMin, offset, shown: Array.from(items).map(i => i.textContent.trim()).slice(0,8) });" +
+    "const shown = items.map((it) => { const m = (it.textContent || '').replace(/\\s+/g, '').match(/^(\\d+)分$/); return m ? Number(m[1]) : null; }).filter((n) => n !== null);" +
+    "return JSON.stringify({ ok: false, reason: 'not rendered', shown: shown.slice(0, 6), last: shown[shown.length - 1] });" +
+    "})()"
+  );
+}
+
+function scrollMinuteListScript(step) {
+  return (
+    "(() => {" +
+    "const found = (() => {" + findMinuteListBody() + "})();" +
+    "if (found.error) return JSON.stringify({ ok: false, reason: found.error });" +
+    "const holder = found.holder;" +
+    "const before = holder.scrollTop;" +
+    "if (" + Number(step) + " < 0) holder.scrollTop = 0;" +
+    "else holder.scrollTop = Math.min(holder.scrollHeight - holder.clientHeight, before + Math.max(24, Math.round(holder.clientHeight * " + Number(step) + ")));" +
+    "holder.dispatchEvent(new Event('scroll', { bubbles: true }));" +
+    "return JSON.stringify({ ok: true, top: holder.scrollTop, moved: Math.abs(holder.scrollTop - before) > 1, height: holder.scrollHeight, client: holder.clientHeight });" +
     "})()"
   );
 }
@@ -684,14 +738,26 @@ function readScheduleScript() {
     "const r = el.getBoundingClientRect();" +
     "return r.width > 0 && r.height > 0;" +
     "}" +
-    "const dialogs = Array.from(document.querySelectorAll('[role=\"dialog\"],[class*=\"modal\"],[class*=\"popover\"],[class*=\"dropdown\"]')).filter(visible);" +
-    "const host = dialogs.filter((el) => /定时|发布时间|选择时间/.test(el.innerText || '')).pop() || document.body;" +
-    "const widgets = Array.from(host.querySelectorAll('.cheetah-picker, .cheetah-select, .byte-picker, .byte-select, .byte-timepicker')).filter(visible);" +
+    "const sel = '.cheetah-picker, .cheetah-select, .byte-picker, .byte-select, .byte-timepicker';" +
+    // 定时弹层里真正的主体是 .timepublish-wrap；按「弹窗里谁含定时二字」找会抓到页脚的按钮条
+    "const wrap = document.querySelector('.timepublish-wrap');" +
+    "let widgets = wrap ? Array.from(wrap.querySelectorAll(sel)).filter(visible) : [];" +
+    "if (!widgets.length) widgets = Array.from(document.querySelectorAll(sel)).filter(visible);" +
     "const readOf = (widget, kind) => {" +
     "if (!widget) return '';" +
     "const text = ((widget.querySelector('input') && widget.querySelector('input').value) || widget.innerText || '').replace(/\\s+/g, '');" +
-    "if (kind === 'date') { const m = text.match(/\\d{4}-\\d{2}-\\d{2}/); return m ? m[0] : ''; }" +
-    "const m = text.match(/\\d{1,2}/); return m ? String(m[0]).padStart(2, '0') : '';" +
+    // 日期控件只显示「11月12日」，补上日历年，才能和 --schedule 的 YYYY-MM-DD 比
+    "if (kind === 'date') {" +
+    "const full = text.match(/\\d{4}-\\d{2}-\\d{2}/);" +
+    "if (full) return full[0];" +
+    "const md = text.match(/(\\d{1,2})月(\\d{1,2})日/);" +
+    "if (!md) return '';" +
+    "const now = new Date();" +
+    "const month = Number(md[1]);" +
+    "const year = month < now.getMonth() + 1 ? now.getFullYear() + 1 : now.getFullYear();" +
+    "return year + '-' + String(month).padStart(2, '0') + '-' + String(Number(md[2])).padStart(2, '0');" +
+    "}" +
+    "const m = text.match(/\\d{1,2}/); return m ? String(Number(m[0])).padStart(2, '0') : '';" +
     "};" +
     "return JSON.stringify({ date: readOf(widgets[0], 'date'), hour: readOf(widgets[1], 'hour'), minute: readOf(widgets[2], 'minute'), widgets: widgets.length, innerHeight });" +
     "})()"
@@ -710,36 +776,157 @@ async function pollPage(ctx, script, ready) {
   return last;
 }
 
+function popupOpenScript() {
+  return (
+    "(() => {" +
+    "function visible(el) {" +
+    "if (!el || !el.isConnected) return false;" +
+    "const r = el.getBoundingClientRect();" +
+    "const st = getComputedStyle(el);" +
+    "if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) === 0) return false;" +
+    "return r.width > 0 && r.height > 0;" +
+    "}" +
+    "const open = Array.from(document.querySelectorAll('[class*=\"dropdown\"],[class*=\"popup\"],[class*=\"picker\"]'))" +
+    ".some((el) => visible(el) && el.getAttribute('aria-hidden') !== 'true' && el.getBoundingClientRect().height > 20);" +
+    "return JSON.stringify({ open });" +
+    "})()"
+  );
+}
+
+/** 点开一个下拉。上一层下拉收起来要时间，浮层还在淡出时会吃掉这一次点击，所以先等它收干净再点。 */
+function markWidgetScript(index) {
+  return (
+    "(() => {" +
+    "function visible(el) {" +
+    "if (!el || !el.isConnected) return false;" +
+    "const r = el.getBoundingClientRect();" +
+    "const st = getComputedStyle(el);" +
+    "if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) === 0) return false;" +
+    "return r.width > 0 && r.height > 0;" +
+    "}" +
+    "document.querySelectorAll('[data-sparo-widget]').forEach((el) => el.removeAttribute('data-sparo-widget'));" +
+    "const sel = '.cheetah-select, .cheetah-picker, .byte-picker, .byte-select, .byte-timepicker';" +
+    "const wrap = document.querySelector('.timepublish-wrap');" +
+    "const inWrap = wrap ? Array.from(wrap.querySelectorAll(sel)).filter(visible) : [];" +
+    "const all = inWrap.length ? inWrap : Array.from(document.querySelectorAll(sel)).filter(visible);" +
+    "const widget = all[" + Number(index) + "];" +
+    "if (!widget) return JSON.stringify({ ok: false, widgets: all.length });" +
+    "widget.setAttribute('data-sparo-widget', '1');" +
+    "const r = widget.getBoundingClientRect();" +
+    "return JSON.stringify({ ok: true, widgets: all.length, text: (widget.innerText || '').trim(), rect: { w: Math.round(r.width), h: Math.round(r.height) } });" +
+    "})()"
+  );
+}
+
+function coverScript() {
+  return (
+    "(() => {" +
+    "const el = document.querySelector('[data-sparo-widget=\"1\"]');" +
+    "if (!el) return JSON.stringify({ missing: true });" +
+    "const r = el.getBoundingClientRect();" +
+    "const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);" +
+    "return JSON.stringify({ top: top ? String(top.className).slice(0, 70) : '', covered: !!top && !el.contains(top) && top !== el });" +
+    "})()"
+  );
+}
+
+/** 点开一个下拉。用真实鼠标点（JS 合成事件在弹层刚出现时会被吞），点完确认真展开了，没展开就再点。 */
+async function openWidget(ctx, index, label) {
+  let last = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    // 等上一个浮层彻底消失，别点到正在淡出的遮罩上
+    for (let settle = 0; settle < 10; settle++) {
+      const p = await page(ctx, popupOpenScript());
+      if (p.stop) return p.stop;
+      if (!p.value?.open) break;
+      await sleep(200);
+    }
+    const marked = await page(ctx, markWidgetScript(index));
+    if (marked.stop) return marked.stop;
+    if (!marked.value?.ok) return fail("SCHEDULE_CONTROLS_MISSING", marked.value, label + "找不到");
+    const real = await click('[data-sparo-widget="1"]', ctx.tabId);
+    if (!/"ok"\s*:\s*true/.test(String(real))) {
+      // 真实点击落空时退回 JS 合成事件
+      const fired = await page(ctx, clickWidgetScript(index));
+      if (fired.stop) return fired.stop;
+      last = fired.value;
+    } else {
+      last = marked.value;
+    }
+    const opened = await page(ctx, popupOpenScript());
+    if (opened.stop) return opened.stop;
+    if (opened.value?.open) return pass(last);
+    const cover = await page(ctx, coverScript());
+    last = { ...(last || {}), cover: cover.value || null };
+    await sleep(600);
+  }
+  return fail("SCHEDULE_CONTROLS_MISSING", { index, last }, label + "点了三次都没展开下拉");
+}
+
 async function chooseWidget(ctx, index, text, date) {
-  const clicked = await page(ctx, clickWidgetScript(index));
-  console.error(`[DEBUG chooseWidget] index=${index} text=${text} date=${date} value=`, JSON.stringify(clicked.value), " raw= ", JSON.stringify(clicked.raw)?.slice(0,200), " stop=", clicked.stop);
-  if (clicked.stop) return clicked.stop;
-  if (clicked.value?.code === "RENDER_NOT_READY") return fail("RENDER_NOT_READY", clicked.value, "编辑标签还没有布局");
-  if (!clicked.value?.ok) return fail("SCHEDULE_CONTROLS_MISSING", clicked.value, "定时控件点不开");
-  const picked = await pollPage(ctx, pickPopupScript(text, date), (value) => value?.ok);
+  const opened = await openWidget(ctx, index, "定时控件");
+  if (!opened.ok) return opened;
+  const picked = await pickInPopup(ctx, text, date);
   if (picked.stop) return picked.stop;
   if (!picked.value?.ok) return fail("SCHEDULE_CONTROLS_MISSING", picked.value, "弹层里没有 " + text);
   return pass(picked.value);
 }
 
+/** 下拉是虚拟列表：目标项可能还没渲染，得先滚到顶部，再逐屏下滑边滑边找。 */
+async function pickInPopup(ctx, text, date) {
+  const fresh = await pollPage(ctx, pickPopupScript(text, date), (value) => value?.ok);
+  if (fresh.stop || fresh.value?.ok) return fresh;
+  if (!fresh.value?.popup) return fresh;
+  let last = fresh;
+  await page(ctx, scrollPopupScript(-1));
+  for (let i = 0; i < 30; i++) {
+    const again = await page(ctx, pickPopupScript(text, date));
+    if (again.stop) return again;
+    if (again.value?.ok) return again;
+    last = again;
+    if (!again.value?.popup) return again;
+    const moved = await page(ctx, scrollPopupScript(0.8));
+    if (!moved.value?.moved) break;
+    await sleep(220);
+  }
+  return last;
+}
+
 async function chooseMinute(ctx, index, minute) {
-  const clicked = await page(ctx, clickWidgetScript(index));
-  if (clicked.stop) return clicked.stop;
-  if (clicked.value?.code === "RENDER_NOT_READY") return fail("RENDER_NOT_READY", clicked.value, "编辑标签还没有布局");
-  if (!clicked.value?.ok) return fail("SCHEDULE_CONTROLS_MISSING", clicked.value, "分钟下拉点不开");
+  const opened = await openWidget(ctx, index, "分钟下拉");
+  if (!opened.ok) return opened;
   return pollMinuteInOpenPopup(ctx, minute);
 }
 
 async function pollMinuteInOpenPopup(ctx, minute) {
   let last = null;
-  for (let i = 0; i < 20; i++) {
-    last = await page(ctx, scrollMinuteScript(minute));
-    if (last.stop) return last.stop;
-    if (last.value?.code === "RENDER_NOT_READY") return fail("RENDER_NOT_READY", last.value, "编辑标签还没有布局");
-    if (last.value?.ok) return pass(last.value);
+  // 下拉挂载要时间：先等列表出现，别把「还没渲染」当成「没有分钟」
+  for (let i = 0; i < 12; i++) {
+    const fresh = await page(ctx, pickMinuteScript(minute));
+    if (fresh.stop) return fresh.stop;
+    last = fresh.value;
+    if (last?.ok) return pass(last);
+    if (last?.reason !== "no minute list") break;
     await sleep(300);
   }
-  return fail("SCHEDULE_CONTROLS_MISSING", last?.value, "弹层里没有分钟 " + minute);
+  if (last?.reason === "no minute list") {
+    return fail("SCHEDULE_CONTROLS_MISSING", last, "弹层里没有分钟 " + minute);
+  }
+  // 目标可能还没渲染：先回顶，再逐屏下滑，每滑一次重新扫一遍
+  const top = await page(ctx, scrollMinuteListScript(-1));
+  if (top.stop) return top.stop;
+  if (!top.value?.ok) return fail("SCHEDULE_CONTROLS_MISSING", top.value, "弹层里没有分钟 " + minute);
+  for (let i = 0; i < 40; i++) {
+    const again = await page(ctx, pickMinuteScript(minute));
+    if (again.stop) return again.stop;
+    if (again.value?.ok) return pass(again.value);
+    last = again.value;
+    const moved = await page(ctx, scrollMinuteListScript(0.6));
+    if (moved.stop) return moved.stop;
+    if (!moved.value?.moved) break;
+    await sleep(200);
+  }
+  return fail("SCHEDULE_CONTROLS_MISSING", last, "弹层里没有分钟 " + minute);
 }
 
 export async function runSchedule(ctx) {
@@ -769,11 +956,23 @@ export async function runSchedule(ctx) {
     "fire(btn);" +
     "return JSON.stringify({ ok: true, tag: btn.tagName });" +
     "})()";
-  const opened = await page(ctx, openScript);
-  if (opened.stop) return opened.stop;
-  if (!opened.value?.ok) {
-    const fallback = await clickLabeled(ctx, "定时发布");
-    if (!fallback.ok && !fallback.fired && !fallback.detail?.fired) return fallback;
+  // 续跑时弹层可能已经开着：再点一次开弹层的按钮会把它关掉
+  const existing = await page(
+    ctx,
+    "(() => {" +
+      "const wrap = document.querySelector('.timepublish-wrap');" +
+      "const r = wrap ? wrap.getBoundingClientRect() : null;" +
+      "return JSON.stringify({ open: !!r && r.height > 8 });" +
+      "})()",
+  );
+  if (existing.stop) return existing.stop;
+  if (!existing.value?.open) {
+    const opened = await page(ctx, openScript);
+    if (opened.stop) return opened.stop;
+    if (!opened.value?.ok) {
+      const fallback = await clickLabeled(ctx, "定时发布");
+      if (!fallback.ok && !fallback.fired && !fallback.detail?.fired) return fallback;
+    }
   }
   const seen = await pollPage(ctx, scheduleScanScript(), (value) => Number(value?.widgets) >= 1);
   if (seen.stop) return seen.stop;
@@ -812,7 +1011,7 @@ export async function runSchedule(ctx) {
   }
   const read = await pollPage(ctx, readScheduleScript(), (value) => value?.date === date && value?.hour === hour && value?.minute === minute);
   if (read.stop) return read.stop;
-  const got = { ...(read.value || {}), innerHeight: height.value.innerHeight };
+  const got = { ...(read.value || {}) };
   if (!scheduleMatches(got, ctx.schedule)) {
     return fail("SCHEDULE_CONTROLS_MISSING", got, "定时控件没有回读到 " + ctx.schedule.text);
   }
@@ -837,13 +1036,13 @@ export function confirmCoverScript(rootSelector) {
     "}" +
     "const root = document.querySelector(" + JSON.stringify(rootSelector) + ");" +
     "if (!root || !visible(root)) return JSON.stringify({ ok: false, code: 'NO_DIALOG' });" +
-    "const imgs = Array.from(root.querySelectorAll('img')).filter((img) => visible(img) && ((img.currentSrc || img.getAttribute('src') || '').length > 8));" +
-    "if (!imgs.length) return JSON.stringify({ ok: false, code: 'NO_THUMB' });" +
-    "fire(imgs[0]);" +
+    "const thumbs = Array.from(root.querySelectorAll('img,.img-span')).filter((el) => visible(el) && (el.tagName === 'IMG' ? ((el.currentSrc || el.getAttribute('src') || '').length > 8) : (getComputedStyle(el).backgroundImage || '').includes('url(')));" +
+    "if (!thumbs.length) return JSON.stringify({ ok: false, code: 'NO_THUMB' });" +
+    "fire(thumbs[0]);" +
     "const confirm = Array.from(root.querySelectorAll('button,[role=\"button\"],span,a,div')).find((el) => visible(el) && (el.innerText || '').replace(/\\s+/g, '') === '确定');" +
-    "if (!confirm) return JSON.stringify({ ok: false, code: 'NO_CONFIRM', thumbs: imgs.length });" +
+    "if (!confirm) return JSON.stringify({ ok: false, code: 'NO_CONFIRM', thumbs: thumbs.length });" +
     "fire(confirm);" +
-    "return JSON.stringify({ ok: true, thumbs: imgs.length });" +
+    "return JSON.stringify({ ok: true, thumbs: thumbs.length });" +
     "})()"
   );
 }

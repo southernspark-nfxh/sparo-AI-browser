@@ -1,0 +1,50 @@
+{
+  "id": "sohu",
+  "name": "搜狐",
+  "entry": {
+    "host": "mp.sohu.com",
+    "writeUrl": "https://mp.sohu.com/mpfe/v4/contentManagement/first/page",
+    "listUrl": "https://mp.sohu.com/mpfe/v4/contentManagement/first/page",
+    "dataUrl": "",
+    "commentUrl": ""
+  },
+  "auth": {
+    "tokenSource": "",
+    "csrfHeader": ""
+  },
+  "limits": {
+    "titleMin": null,
+    "titleMax": null,
+    "bodyMax": null,
+    "imagesMax": null,
+    "perDay": null,
+    "minGapMinutes": null
+  },
+  "image": {
+    "rehost": true,
+    "stripExternal": null,
+    "minDistinctImages": null,
+    "coverMode": "1张"
+  },
+  "switches": {
+    "required": [{ "id": "declare", "label": "无需声明" }],
+    "forbidden": [{ "id": "ai", "label": "AI生成" }],
+    "defaults": [{ "id": "declare", "label": "无需声明" }]
+  },
+  "schedule": {
+    "supported": true,
+    "uiPath": "定时发布",
+    "note": "找不到入口则停手，不改点发布"
+  },
+  "readback": ["DECLARE_CONTROL_MISSING", "AI_STILL_CHECKED", "DECLARE_ASSERT_FAIL"],
+  "data": {
+    "metricsMap": {},
+    "delayDays": null,
+    "revenueTypes": [],
+    "pageLimit": null
+  },
+  "capabilities": {
+    "supportsDraft": null,
+    "supportsUpdate": null
+  }
+}

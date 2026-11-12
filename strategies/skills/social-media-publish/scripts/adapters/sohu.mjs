@@ -1,15 +1,18 @@
 // 搜狐号。定时入口没探测到就停，不改点「发布」。
 import { clickExact, clickLabeled, fail, guard, page, pageHint, pass, setNativeValue, sleep, uploadPicked, waitEditor } from "../page.mjs";
 import { call, nav, tabRows, tabs, useTab } from "../sparo.mjs";
+import { loadProfile } from "../profile.mjs";
 
-const LIST_URL = "https://mp.sohu.com/mpfe/v4/contentManagement/first/page";
+const profile = loadProfile("sohu");
+const LIST_URL = profile.entry.listUrl;
+const DECLARE_LABEL = profile.switches.defaults.find((item) => item.id === "declare").label;
 
 export const sohu = {
-  id: "sohu",
-  host: "mp.sohu.com",
-  writeUrl: LIST_URL,
+  id: profile.id,
+  host: profile.entry.host,
+  writeUrl: profile.entry.writeUrl,
   writeMark: "addarticle",
-  listUrl: LIST_URL,
+  listUrl: profile.entry.listUrl,
 
   async openBlank(ctx) {
     const list = tabRows(await tabs());
@@ -149,7 +152,7 @@ export const sohu = {
     const script =
       "(() => {" +
       "const radios = Array.from(document.querySelectorAll('.el-radio, label'));" +
-      "const plain = radios.find((el) => (el.innerText || '').replace(/\\s+/g, '').includes('无需声明'));" +
+      "const plain = radios.find((el) => (el.innerText || '').replace(/\\s+/g, '').includes(" + JSON.stringify(DECLARE_LABEL) + "));" +
       "const ai = radios.find((el) => /AI生成|含有AI/.test(el.innerText || ''));" +
       "if (plain) plain.click();" +
       "const checkedText = radios.filter((el) => el.className.includes('is-checked') || el.querySelector('input')?.checked).map((el) => (el.innerText || '').trim());" +
@@ -157,14 +160,14 @@ export const sohu = {
       "})()";
     const read = await page(ctx, script);
     if (read.mismatch) return fail("MISMATCH", read.mismatch);
-    if (!read.value?.found) return fail("DECLARE_CONTROL_MISSING", read.value, "没有找到「无需声明」");
+    if (!read.value?.found) return fail("DECLARE_CONTROL_MISSING", read.value, "没有找到「" + DECLARE_LABEL + "」");
     if (read.value.aiChecked) return fail("AI_STILL_CHECKED", read.value, "搜狐创作声明勾在了 AI 上");
     const again = await page(ctx, script);
     if (again.mismatch) return fail("MISMATCH", again.mismatch);
-    if (!again.value?.checkedText?.some((text) => text.includes("无需声明"))) {
-      return fail("DECLARE_ASSERT_FAIL", again.value, "创作声明回读不是「无需声明」");
+    if (!again.value?.checkedText?.some((text) => text.includes(DECLARE_LABEL))) {
+      return fail("DECLARE_ASSERT_FAIL", again.value, "创作声明回读不是「" + DECLARE_LABEL + "」");
     }
-    ctx.options = { declare: "无需声明", aiChecked: false };
+    ctx.options = { declare: DECLARE_LABEL, aiChecked: false };
     return pass(ctx.options);
   },
 
