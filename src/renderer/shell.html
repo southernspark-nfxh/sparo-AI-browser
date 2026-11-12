@@ -2030,6 +2030,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
             <button type="button" class="job" id="btnFillForm" data-i18n-title="act.fillTitle" title="识别表单并按你给的资料填写，提交前停下"><svg class="ic"><use href="#i-form"/></svg><span data-i18n="act.fill">填表</span></button>
             <button type="button" class="job" id="btnCsOneClick" data-i18n-title="act.replyTitle" title="起草回复并填入输入框，不会自动发送"><svg class="ic"><use href="#i-chat"/></svg><span data-i18n="act.reply">回复</span></button>
             <button type="button" class="job" id="btnPublish" data-i18n-title="act.publishTitle" title="按当前站发布，提交前暂停"><svg class="ic"><use href="#i-send"/></svg><span data-i18n="act.publish">发布</span></button>
+            <button type="button" class="job" id="btnStudio" title="打开媒体工作台">媒体工作台 <span id="studioPending">0</span></button>
           </div>
           <div class="composer is-locked">
             <div id="composerLock" class="composer-lock">
@@ -4501,6 +4502,20 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           runChatGoal(t("goal.fill"), document.getElementById("btnFillForm"));
         document.getElementById("btnPublish").onclick = () =>
           runChatGoal(t("goal.publish"), document.getElementById("btnPublish"));
+        const studioBtn = document.getElementById("btnStudio");
+        const refreshStudioPending = () => {
+          window.sparkShell.studioPending?.().then((res) => {
+            const count = document.getElementById("studioPending");
+            if (count && res && typeof res.pending === "number") count.textContent = String(res.pending);
+          }).catch(() => {});
+        };
+        if (studioBtn) {
+          studioBtn.onclick = () => {
+            refreshStudioPending();
+            window.sparkShell.openStudio?.();
+          };
+          refreshStudioPending();
+        }
         let pendingImages = [];
         function renderPendingImages() {
           const box = document.getElementById("imagePreviews");

@@ -17,6 +17,17 @@ import {
 import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync, unlinkSync } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  emptyDraft,
+  failureCount,
+  listDrafts,
+  overviewFrom,
+  precheckDraft,
+  readLedgerDir,
+  readProfiles,
+  saveDraftDir,
+  type StudioDraft,
+} from "./studio-store.js";
 import { randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { boundsWithinOnePixel, CHROME_HEAL_COOLDOWN_MS, CHROME_HEAL_STALL_LIMIT, chromeCoverDelta, chromeCoverReason, pageViewCoversChrome, resetChromeCoverBudget, takeChromeCoverFix, type ChromeCoverBudget, type CoverReason, type PageRect } from "./page-bounds.js";
@@ -868,6 +879,7 @@ export class SparkBrowser {
   private memoryTimer: ReturnType<typeof setInterval> | null = null;
   /** 报告和阅读模式共用的标签。用户关掉后置空。手动新开的研究页不记在这里。 */
   private readerTabId: string | null = null;
+  private studioTabId: string | null = null;
   /** 每扇窗口各自的页面洞（壳层报上来的视口缺口）。多开时不能串用。 */
   private _holeBoundsByWin?: Map<string, { x: number; y: number; width: number; height: number } | null>;
   private get holeBoundsByWin(): Map<string, { x: number; y: number; width: number; height: number } | null> {
@@ -2231,6 +2243,63 @@ export class SparkBrowser {
     return { ok: true, message: `已交给系统打开：${abs}` };
   }
 
+  private studioProfileDir(): string {
+    return join(__dirname, "../../strategies/skills/social-media-publish/platforms");
+  }
+
+  private studioLedgerDir(): string {
+    return join(__dirname, "../../strategies/skills/social-media-publish/ledger");
+  }
+
+  private studioDraftRoot(): string {
+    return join(this.configDir(), "drafts");
+  }
+
+  private studioFileUrl(): string {
+    const built = join(__dirname, "../renderer/studio.html");
+    const src = join(__dirname, "../../src/renderer/studio.html");
+    return pathToFileURL(existsSync(built) ? built : src).href;
+  }
+
+  private senderIsStudio(sender: WebContents): boolean {
+    try {
+      return sender.getURL().includes("studio.html");
+    } catch {
+      return false;
+    }
+  }
+
+  private studioPayload(): {
+    ok: true;
+    drafts: StudioDraft[];
+    draft: StudioDraft;
+    overview: { pending: number; failed: number; login: string };
+    ledger: ReturnType<typeof readLedgerDir>;
+  } {
+    const drafts = listDrafts(this.studioDraftRoot());
+    const ledger = readLedgerDir(this.studioLedgerDir());
+    const draft = drafts[0] || emptyDraft(randomBytes(4).toString("hex"));
+    return {
+      ok: true,
+      drafts,
+      draft,
+      overview: overviewFrom(drafts.length, failureCount(ledger)),
+      ledger,
+    };
+  }
+
+  openStudio(): ToolResult {
+    const fileUrl = this.studioFileUrl();
+    const existing = this.studioTabId ? this.tabs.get(this.studioTabId) : undefined;
+    if (existing) {
+      this.switchTab(existing.id, { userAction: true });
+      return { ok: true, message: "已切换到媒体工作台", data: { id: existing.id, ...this.listTabs() } };
+    }
+    const id = this.createTab(fileUrl, true, { userAction: true });
+    this.studioTabId = id;
+    return { ok: true, message: "已打开媒体工作台", data: { id, ...this.listTabs() } };
+  }
+
   newTab(url?: string, envId?: string): ToolResult {
     const id = envId
       ? this.createEnvTab(envId, url || DEFAULT_URL, { userAction: true })
@@ -2295,6 +2364,7 @@ export class SparkBrowser {
     }
     this.lastClosed = { url: closedUrl, envId: tab.envId };
     if (this.readerTabId === id) this.readerTabId = null;
+    if (this.studioTabId === id) this.studioTabId = null;
     if (this.tabs.size <= 1) {
       this.createTab("about:blank", true, { userAction: true });
     }
@@ -4012,6 +4082,47 @@ export class SparkBrowser {
     handle("spark:open-report", async (_e, filePath: string) =>
       this.openReport(String(filePath || "")),
     );
+    handle("spark:open-studio", async (e) => {
+      if (!this.senderIsShell(e.sender)) return { ok: false, message: "只能从侧栏打开媒体工作台" };
+      return this.openStudio();
+    });
+    handle("spark:studio-pending", async (e) => {
+      if (!this.senderIsShell(e.sender)) return { ok: false, pending: 0 };
+      return { ok: true, pending: listDrafts(this.studioDraftRoot()).length };
+    });
+    handle("studio:load", async (e) => {
+      if (!this.senderIsStudio(e.sender)) return { ok: false, message: "只能从工作台读取" };
+      return this.studioPayload();
+    });
+    handle("studio:create", async (e) => {
+      if (!this.senderIsStudio(e.sender)) return { ok: false };
+      const draft = emptyDraft(randomBytes(4).toString("hex"));
+      saveDraftDir(this.studioDraftRoot(), draft);
+      return { ok: true, draft: this.studioPayload().drafts.find((item) => item.id === draft.id) || draft };
+    });
+    handle("studio:save", async (e, incoming: StudioDraft) => {
+      if (!this.senderIsStudio(e.sender)) return { ok: false };
+      const draft = { ...emptyDraft(incoming?.id || randomBytes(4).toString("hex")), ...incoming, schedule: {} };
+      saveDraftDir(this.studioDraftRoot(), draft);
+      const saved = this.studioPayload().drafts.find((item) => item.id === draft.id) || draft;
+      return { ok: true, draft: saved };
+    });
+    handle("studio:precheck", async (e, incoming: StudioDraft) => {
+      if (!this.senderIsStudio(e.sender)) return { ok: false, rows: [] };
+      const draft = { ...emptyDraft("preview"), ...incoming, schedule: {} };
+      return { ok: true, rows: precheckDraft(draft, readProfiles(this.studioProfileDir())) };
+    });
+    handle("studio:confirm", async (e, incoming: StudioDraft) => {
+      if (!this.senderIsStudio(e.sender)) return { ok: false };
+      const draft = { ...emptyDraft(incoming?.id || randomBytes(4).toString("hex")), ...incoming, schedule: {} };
+      const rows = precheckDraft(draft, readProfiles(this.studioProfileDir()));
+      saveDraftDir(this.studioDraftRoot(), draft);
+      writeFileSync(
+        join(this.studioDraftRoot(), draft.id, "confirmed.json"),
+        JSON.stringify({ at: new Date().toISOString(), rows, wroteToPlatform: false }, null, 2),
+      );
+      return { ok: true, message: "确认已记下。这一步不向平台写稿，也不代你点发布。" };
+    });
     handle("reader:open", async () => this.openActiveReader());
     handle("highlight:save", async (e, payload?: { url?: string; highlights?: Highlight[] }) => {
       if (!this.senderIsReaderPage(e.sender)) return { ok: false, message: "只能从阅读页保存高亮" };

@@ -43,6 +43,7 @@ export default defineConfig({
       rollupOptions: {
         input: {
           shell: resolve(__dirname, "src/renderer/shell.html"),
+          studio: resolve(__dirname, "src/renderer/studio.html"),
         },
       },
     },
