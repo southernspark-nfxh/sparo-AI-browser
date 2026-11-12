@@ -28,6 +28,7 @@ import {
   saveDraftDir,
   type StudioDraft,
 } from "./studio-store.js";
+import { buildPrecheckResult, listStudioEnvs, resolveStudioEnv, snapshotHash, unsupported } from "./studio-env.js";
 import { randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { boundsWithinOnePixel, CHROME_HEAL_COOLDOWN_MS, CHROME_HEAL_STALL_LIMIT, chromeCoverDelta, chromeCoverReason, pageViewCoversChrome, resetChromeCoverBudget, SHELL_PAINT_DIAG_BEATS, shellPaintStalled, takeChromeCoverFix, type ChromeCoverBudget, type CoverReason, type PageRect, type ShellPaintState } from "./page-bounds.js";
@@ -689,6 +690,10 @@ function namedSkillId(configDir: string, query: string): string | null {
   if (hit && (reason.includes("exact") || reason.includes("alias:"))) return hit.id;
   return null;
 }
+
+type StoredPrecheck = ReturnType<typeof buildPrecheckResult> & { draft: StudioDraft };
+const studioPrechecks = new Map<string, StoredPrecheck>();
+const studioConfirms = new Map<string, { ok: true; code: "ok"; message: string; envId: string; confirmationId: string; precheckId: string }>();
 
 export class SparkBrowser {
   readonly window: BrowserWindow;
@@ -2292,6 +2297,8 @@ export class SparkBrowser {
   }
 
   private studioFileUrl(): string {
+    const rendererUrl = process.env.ELECTRON_RENDERER_URL;
+    if (rendererUrl) return `${rendererUrl.replace(/\/$/, "")}/studio.html`;
     const built = join(__dirname, "../renderer/studio.html");
     const src = join(__dirname, "../../src/renderer/studio.html");
     return pathToFileURL(existsSync(built) ? built : src).href;
@@ -2324,15 +2331,19 @@ export class SparkBrowser {
     };
   }
 
-  private async studioPayloadWithMetrics() {
+  private async studioPayloadWithMetrics(collect: boolean) {
     const base = this.studioPayload();
     const root = join(__dirname, "../../strategies/skills/social-media-publish/scripts");
-    const collector = await import(pathToFileURL(join(root, "collector.mjs")).href);
-    const db = await import(pathToFileURL(join(root, "metrics-db.mjs")).href);
-    await collector.collectAll();
-    const rows = await db.listMetrics();
-    const comments = await import(pathToFileURL(join(root, "comments.mjs")).href);
-    return { ...base, metrics: db.buildViews(rows), comments: await comments.listComments() };
+    try {
+      const collector = await import(pathToFileURL(join(root, "collector.mjs")).href);
+      const db = await import(pathToFileURL(join(root, "metrics-db.mjs")).href);
+      if (collect) await collector.collectAll();
+      const rows = await db.listMetrics();
+      const comments = await import(pathToFileURL(join(root, "comments.mjs")).href);
+      return { ...base, metrics: db.buildViews(rows), comments: await comments.listComments() };
+    } catch {
+      return { ...base, metrics: null, comments: [], readError: "数据和评论这次没有读出来，原有记录还在。" };
+    }
   }
 
   openStudio(): ToolResult {
@@ -4323,57 +4334,156 @@ export class SparkBrowser {
       if (!this.senderIsShell(e.sender)) return { ok: false, pending: 0 };
       return { ok: true, pending: listDrafts(this.studioDraftRoot()).length };
     });
-    handle("studio:load", async (e) => {
-      if (!this.senderIsStudio(e.sender)) return { ok: false, message: "只能从工作台读取" };
-      return this.studioPayloadWithMetrics();
+    handle("studio:load", async (e, payload?: { envId?: string }) => {
+      if (!this.senderIsStudio(e.sender)) return { ok: false, code: "forbidden", message: "只能从工作台读取", envId: "" };
+      const availableEnvs = listStudioEnvs(this.configDir());
+      const env = resolveStudioEnv(this.configDir(), payload?.envId);
+      if (!env.ok) return { ...env, availableEnvs };
+      const data = await this.studioPayloadWithMetrics(false);
+      return { ...data, code: "ok" as const, message: "", envId: env.envId, name: env.name, availableEnvs };
     });
-    handle("studio:refresh", async (e) => {
-      if (!this.senderIsStudio(e.sender)) return { ok: false };
-      return this.studioPayloadWithMetrics();
+    handle("studio:refresh", async (e, payload?: { envId?: string }) => {
+      if (!this.senderIsStudio(e.sender)) return { ok: false, code: "forbidden", message: "只能从工作台读取", envId: "" };
+      const env = resolveStudioEnv(this.configDir(), payload?.envId);
+      if (!env.ok) return env;
+      const data = await this.studioPayloadWithMetrics(true);
+      return { ...data, code: "ok" as const, message: "", envId: env.envId, name: env.name, availableEnvs: listStudioEnvs(this.configDir()) };
     });
-    handle("studio:reply", async (e, payload?: { platform?: string; text?: string; commentId?: string; content?: string }) => {
-      if (!this.senderIsStudio(e.sender)) return { ok: false, message: "只能从工作台起草" };
-      // 每次从工作台填写都重新走 comments.mjs 里的频率闸门。
+    handle("studio:reply", async (e, payload?: { envId?: string; platform?: string; text?: string; commentId?: string; content?: string }) => {
+      if (!this.senderIsStudio(e.sender)) return { ok: false, code: "forbidden", message: "只能从工作台起草", envId: "" };
+      const env = resolveStudioEnv(this.configDir(), payload?.envId);
+      if (!env.ok) return env;
       const comments = await import(pathToFileURL(join(__dirname, "../../strategies/skills/social-media-publish/scripts/comments.mjs")).href);
       const platform = String(payload?.platform || "");
       const text = String(payload?.text || "").trim();
-      if (!comments.canReply(platform)) return { ok: false, message: "只读，回复未开" };
-      if (!text) return { ok: false, message: "回复草稿是空的，没有填写。" };
+      if (!comments.canReply(platform)) return { ok: false, code: "readonly", message: "只读，回复未开", envId: env.envId };
+      if (!text) return { ok: false, code: "empty", message: "回复草稿是空的，没有填写。", envId: env.envId };
       const saved = comments.saveReplyDraft(platform, text);
       const filled = await comments.fillOpenReply(platform, text, {
         commentId: String(payload?.commentId || ""),
         content: String(payload?.content || ""),
       });
-      return { ...filled, draft: saved };
+      return { ...filled, code: filled.ok ? "ok" : "reply", draft: saved, envId: env.envId };
     });
-    handle("studio:create", async (e) => {
-      if (!this.senderIsStudio(e.sender)) return { ok: false };
+    handle("studio:create", async (e, payload?: { envId?: string }) => {
+      if (!this.senderIsStudio(e.sender)) return { ok: false, code: "forbidden", message: "只能从工作台起草", envId: "" };
+      const env = resolveStudioEnv(this.configDir(), payload?.envId);
+      if (!env.ok) return env;
       const draft = emptyDraft(randomBytes(4).toString("hex"));
       saveDraftDir(this.studioDraftRoot(), draft);
-      return { ok: true, draft: this.studioPayload().drafts.find((item) => item.id === draft.id) || draft };
+      const saved = this.studioPayload().drafts.find((item) => item.id === draft.id) || draft;
+      return { ok: true, code: "ok", message: "", envId: env.envId, draft: saved };
     });
-    handle("studio:save", async (e, incoming: StudioDraft) => {
-      if (!this.senderIsStudio(e.sender)) return { ok: false };
+    handle("studio:save", async (e, payload?: { envId?: string; draft?: StudioDraft; revision?: number }) => {
+      if (!this.senderIsStudio(e.sender)) return { ok: false, code: "forbidden", message: "只能从工作台保存", envId: "" };
+      const env = resolveStudioEnv(this.configDir(), payload?.envId);
+      if (!env.ok) return env;
+      const incoming = payload?.draft;
       const draft = { ...emptyDraft(incoming?.id || randomBytes(4).toString("hex")), ...incoming, schedule: {} };
       saveDraftDir(this.studioDraftRoot(), draft);
       const saved = this.studioPayload().drafts.find((item) => item.id === draft.id) || draft;
-      return { ok: true, draft: saved };
+      return { ok: true, code: "ok", message: "已保存", envId: env.envId, revision: Number(payload?.revision) || 0, savedAt: saved.updatedAt, draft: saved };
     });
-    handle("studio:precheck", async (e, incoming: StudioDraft) => {
-      if (!this.senderIsStudio(e.sender)) return { ok: false, rows: [] };
-      const draft = { ...emptyDraft("preview"), ...incoming, schedule: {} };
-      return { ok: true, rows: precheckDraft(draft, readProfiles(this.studioProfileDir())) };
+    handle("studio:precheck", async (e, payload?: { envId?: string; draft?: StudioDraft; revision?: number }) => {
+      if (!this.senderIsStudio(e.sender)) return { ok: false, code: "forbidden", message: "只能从工作台预检", envId: "", rows: [] };
+      const env = resolveStudioEnv(this.configDir(), payload?.envId);
+      if (!env.ok) return { ...env, rows: [] };
+      const incoming = payload?.draft;
+      const draft = { ...emptyDraft(incoming?.id || "preview"), ...incoming, schedule: {} };
+      const result = buildPrecheckResult({
+        precheckId: randomBytes(8).toString("hex"),
+        envId: env.envId,
+        draftRevision: Number(payload?.revision) || 0,
+        draft,
+        rows: precheckDraft(draft, readProfiles(this.studioProfileDir())),
+      });
+      studioPrechecks.set(result.precheckId, { ...result, draft });
+      return result;
     });
-    handle("studio:confirm", async (e, incoming: StudioDraft) => {
-      if (!this.senderIsStudio(e.sender)) return { ok: false };
-      const draft = { ...emptyDraft(incoming?.id || randomBytes(4).toString("hex")), ...incoming, schedule: {} };
-      const rows = precheckDraft(draft, readProfiles(this.studioProfileDir()));
-      saveDraftDir(this.studioDraftRoot(), draft);
+    handle("studio:confirm", async (e, payload?: { envId?: string; precheckId?: string; confirmationId?: string }) => {
+      if (!this.senderIsStudio(e.sender)) return { ok: false, code: "forbidden", message: "只能从工作台确认", envId: "" };
+      const env = resolveStudioEnv(this.configDir(), payload?.envId);
+      if (!env.ok) return env;
+      const confirmationId = String(payload?.confirmationId || "");
+      const precheckId = String(payload?.precheckId || "");
+      if (!confirmationId || !precheckId) {
+        return { ok: false, code: "missing_precheck", message: "请先预检，再确认。", envId: env.envId };
+      }
+      const seen = studioConfirms.get(confirmationId);
+      if (seen) return seen;
+      const stored = studioPrechecks.get(precheckId);
+      if (!stored || stored.envId !== env.envId) {
+        return { ok: false, code: "stale_precheck", message: "这份预检已经失效，请重新预检。", envId: env.envId };
+      }
+      const disk = listDrafts(this.studioDraftRoot()).find((item) => item.id === stored.draft.id);
+      if (!disk || snapshotHash(env.envId, disk) !== stored.snapshotHash) {
+        return { ok: false, code: "stale_precheck", message: "稿件已改，请重新预检。", envId: env.envId };
+      }
       writeFileSync(
-        join(this.studioDraftRoot(), draft.id, "confirmed.json"),
-        JSON.stringify({ at: new Date().toISOString(), rows, wroteToPlatform: false }, null, 2),
+        join(this.studioDraftRoot(), stored.draft.id, "confirmed.json"),
+        JSON.stringify({
+          at: new Date().toISOString(),
+          envId: env.envId,
+          precheckId,
+          confirmationId,
+          draftRevision: stored.draftRevision,
+          snapshotHash: stored.snapshotHash,
+          rows: stored.rows,
+          wroteToPlatform: false,
+        }, null, 2),
       );
-      return { ok: true, message: "确认已记下。这一步不向平台写稿，也不代你点发布。" };
+      const result = {
+        ok: true as const,
+        code: "ok" as const,
+        message: "确认已记下。这一步不向平台写稿，也不代你点发布。",
+        envId: env.envId,
+        confirmationId,
+        precheckId,
+      };
+      studioConfirms.set(confirmationId, result);
+      return result;
+    });
+    handle("studio:pick-images", async (e, payload?: { envId?: string }) => {
+      if (!this.senderIsStudio(e.sender)) return unsupported("", "只能从工作台选择图片");
+      const env = resolveStudioEnv(this.configDir(), payload?.envId);
+      if (!env.ok) return env;
+      return unsupported(env.envId, "选择本地图片尚未接入");
+    });
+    handle("studio:check-accounts", async (e, payload?: { envId?: string }) => {
+      if (!this.senderIsStudio(e.sender)) return unsupported("", "只能从工作台核验账号");
+      const env = resolveStudioEnv(this.configDir(), payload?.envId);
+      if (!env.ok) return env;
+      return unsupported(env.envId, "账号核验尚未接入");
+    });
+    handle("studio:open-account", async (e, payload?: { envId?: string }) => {
+      if (!this.senderIsStudio(e.sender)) return unsupported("", "只能从工作台打开后台");
+      const env = resolveStudioEnv(this.configDir(), payload?.envId);
+      if (!env.ok) return env;
+      return unsupported(env.envId, "打开平台后台尚未接入");
+    });
+    handle("studio:query-tasks", async (e, payload?: { envId?: string }) => {
+      if (!this.senderIsStudio(e.sender)) return unsupported("", "只能从工作台查询任务");
+      const env = resolveStudioEnv(this.configDir(), payload?.envId);
+      if (!env.ok) return env;
+      return unsupported(env.envId, "任务查询尚未接入");
+    });
+    handle("studio:open-task", async (e, payload?: { envId?: string }) => {
+      if (!this.senderIsStudio(e.sender)) return unsupported("", "只能从工作台打开任务");
+      const env = resolveStudioEnv(this.configDir(), payload?.envId);
+      if (!env.ok) return env;
+      return unsupported(env.envId, "打开任务页面尚未接入");
+    });
+    handle("studio:verify-task", async (e, payload?: { envId?: string }) => {
+      if (!this.senderIsStudio(e.sender)) return unsupported("", "只能从工作台核验任务");
+      const env = resolveStudioEnv(this.configDir(), payload?.envId);
+      if (!env.ok) return env;
+      return unsupported(env.envId, "任务核验尚未接入，不会重新提交");
+    });
+    handle("studio:resume-task", async (e, payload?: { envId?: string }) => {
+      if (!this.senderIsStudio(e.sender)) return unsupported("", "只能从工作台续跑");
+      const env = resolveStudioEnv(this.configDir(), payload?.envId);
+      if (!env.ok) return env;
+      return unsupported(env.envId, "续跑尚未接入，不会创建发布批次");
     });
     handle("reader:open", async () => this.openActiveReader());
     handle("highlight:save", async (e, payload?: { url?: string; highlights?: Highlight[] }) => {

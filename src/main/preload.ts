@@ -2,16 +2,31 @@
  * Preload for page WebContentsView.
  * 只给官网账号页露出云会话，其它站点拿不到 token。
  */
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
+import { TASK_EVENT_CHANNEL, type TaskChangedEvent } from "../renderer/studio/types.js";
 
 contextBridge.exposeInMainWorld("sparkStudio", {
-  load: () => ipcRenderer.invoke("studio:load"),
-  create: () => ipcRenderer.invoke("studio:create"),
-  save: (draft: unknown) => ipcRenderer.invoke("studio:save", draft),
-  precheck: (draft: unknown) => ipcRenderer.invoke("studio:precheck", draft),
-  confirm: (draft: unknown) => ipcRenderer.invoke("studio:confirm", draft),
-  refresh: () => ipcRenderer.invoke("studio:refresh"),
-  reply: (payload: { platform?: string; text?: string; commentId?: string; content?: string }) => ipcRenderer.invoke("studio:reply", payload),
+  load: (payload: { envId: string }) => ipcRenderer.invoke("studio:load", payload),
+  create: (payload: { envId: string }) => ipcRenderer.invoke("studio:create", payload),
+  save: (payload: { envId: string; draft: unknown; revision: number }) => ipcRenderer.invoke("studio:save", payload),
+  precheck: (payload: { envId: string; draft: unknown; revision: number }) => ipcRenderer.invoke("studio:precheck", payload),
+  confirm: (payload: { envId: string; precheckId: string; confirmationId: string }) => ipcRenderer.invoke("studio:confirm", payload),
+  refresh: (payload: { envId: string }) => ipcRenderer.invoke("studio:refresh", payload),
+  reply: (payload: { envId: string; platform?: string; text?: string; commentId?: string; content?: string }) => ipcRenderer.invoke("studio:reply", payload),
+  pickImages: (payload: { envId: string; draftId: string; kind: "body" | "cover" }) => ipcRenderer.invoke("studio:pick-images", payload),
+  checkAccounts: (payload: { envId: string; platforms: string[] }) => ipcRenderer.invoke("studio:check-accounts", payload),
+  openAccount: (payload: { envId: string; platform: string }) => ipcRenderer.invoke("studio:open-account", payload),
+  queryTasks: (payload: { envId: string }) => ipcRenderer.invoke("studio:query-tasks", payload),
+  openTask: (payload: { envId: string; jobId: string }) => ipcRenderer.invoke("studio:open-task", payload),
+  verifyTask: (payload: { envId: string; jobId: string }) => ipcRenderer.invoke("studio:verify-task", payload),
+  resumeTask: (payload: { envId: string; jobId: string; fromStep: string }) => ipcRenderer.invoke("studio:resume-task", payload),
+  onTasksChanged: (envId: string, listener: (event: TaskChangedEvent) => void) => {
+    const wrapped = (_event: IpcRendererEvent, payload: TaskChangedEvent) => {
+      if (payload?.envId === envId) listener(payload);
+    };
+    ipcRenderer.on(TASK_EVENT_CHANNEL, wrapped);
+    return () => ipcRenderer.removeListener(TASK_EVENT_CHANNEL, wrapped);
+  },
 });
 
 contextBridge.exposeInMainWorld("sparkPage", {
