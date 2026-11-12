@@ -1,6 +1,6 @@
 # 打包通知：多账号环境（2026-11-12）
 
-**状态**：开发版已实现并人工验收通过；安装版未打包，需要本次一并发布。
+**状态**：已随 **0.6.0** 打包（`release\Sparo-Setup-0.6.0.exe`），代码已推 `origin/master`（`34168e5`）。
 
 **一句话**：同一个 Sparo 里，同一站点可同时登录多个号。每个账号环境一套独立 Chromium 存储（Cookie / localStorage / IndexedDB / 缓存），不是切换登录态。
 
@@ -30,7 +30,7 @@
 
 ## 打包前
 
-- 建议版本号统一由你决定（当前 `package.json` 为 `0.5.3`，可升 `0.5.4` 或按你的发布节奏）。
+- 版本号已定 **0.6.0**（`package.json` / `package-lock.json` / `CHANGELOG.md` 已同步），安装包已出，与本批 social-media-publish v0.3.6 一起发的是同一个包。
 - 不要改动 `docs/listings/`（提审前另做一轮）。
 - 主进程不支持热更；确认打包机拉到的 `src/main` 与上表一致。
 - 与其他窗口的改动合并时，重点检查 `browser.ts` 的 `makePageView` / `navigate` 与 `mcp-server.ts` 的 `navigate` / `new_tab` handler，这两处是本次核心。

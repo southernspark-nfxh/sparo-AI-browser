@@ -1,5 +1,7 @@
 # 多账号环境（2026-11-12）
 
+> 已随 **0.6.0** 打包：`release\Sparo-Setup-0.6.0.exe`（多账号环境 + 自媒体自动发布 + 壳层白屏自愈同一个包）。
+
 同一个 Sparo 里，同一个站点可以**同时**登录多个号。不是「切换登录态」，而是每个账号环境各有一套独立存储：Cookie、localStorage、IndexedDB、缓存、Service Worker 全部分开，互不可见。
 
 ## 人怎么用
@@ -56,5 +58,5 @@ run_skill({ query: "发百家号", params: { envId } })   # 技能也支持
 ## 已知边界
 
 - 环境登录必须人工完成一次（扫码 / 密码 / 短信），Agent 不代登录。
-- 安装版需要重新打包才包含本功能；开发版数据在 `SPARO_CONFIG_DIR`（默认 `.devdata`），与安装版 `%APPDATA%\sparo-store` 互不影响。
+- 安装版已随 0.6.0 打包；卸载重装即覆盖更新。开发版数据在 `SPARO_CONFIG_DIR`（默认 `.devdata`），与安装版 `%APPDATA%\sparo-store` 互不影响。
 - 同一个号不要在两个环境里同时登录（平台可能踢下线），这是平台行为，不是隔离失效。

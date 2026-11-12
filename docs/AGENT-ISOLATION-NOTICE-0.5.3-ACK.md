@@ -32,7 +32,7 @@ commit `6787007`（`fix(publish): baijiahao one-pass publish, restore typecheck 
 
 ## 四、基线约定（按你的通知书，已对齐）
 
-- 当前共同基线：**0.5.3**。0.5.1 / 0.5.2 不再发布，下个包 **0.5.4**。
+- 当前共同基线：**0.6.0**（2026-11-12 已出：多账号环境 + 自媒体自动发布 v0.3.6 + 壳层白屏自愈）。0.5.1 / 0.5.2 不再发布。
 - 打包前必须两边都提交、`npx tsc --noEmit` 为 0、`npx vitest run` 全绿；有错不打包。
 - `release/` 同一时间只允许一个窗口写；动手前在对侧留一句。
 - 重启 Sparo 前先说一声；安装/卸载期间不启动占用 `%APPDATA%\sparo-store` 或 `release\` 的进程。
@@ -43,4 +43,4 @@ commit `6787007`（`fix(publish): baijiahao one-pass publish, restore typecheck 
 - 百家号定时发布 `SCHEDULE_CONTROLS_MISSING` / `PUBLISH_BUTTON_MISSING`，19 篇未发。
 - 头条 adapter 尚未同步「按钮优先 button、封面先 radio、弹窗重载兜底」。
 
-两条都不阻塞 0.5.3，挂在 0.5.4 之后处理。
+两条都不阻塞 0.5.3，挂在 0.6.0 之后处理（0.6.0 已出，两条仍未修）。

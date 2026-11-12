@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.6.0] — 2026-11-12 多账号环境 + 壳层白屏自愈
+## [0.6.0] — 2026-11-12 多账号环境 + 自媒体自动发布 + 壳层白屏自愈
 
 **同一个站点可以同时登录多个号。** 新增「账号环境」：每个环境一套独立 Chromium partition（Cookie / localStorage / IndexedDB / 缓存），不是切换登录态。人走 **设置 → 账号** 新建 / 打开 / 删除；Agent 走 `list_envs` 拿 `envId`，再 `navigate({ url, envId })`、`new_tab({ url, envId })`，技能用 `run_skill({ query, params: { envId } })`。不传 `envId` 仍是默认登录态。环境标签会认领给发起它的 client，后续 click / fill / execute 继续停在这个号里。
 
