@@ -169,7 +169,7 @@ node publish.mjs --self-check
 ## 5. 禁止事项
 
 1. **不要在打包窗口跑真发布**。QA 阶段只回读，不新增稿件。
-2. **不要改 package.json**。版本号这次没提，保持 0.5.3。
+2. **不要改 package.json**。版本号已统一为 **0.6.0**（多账号 + 自媒体发布 + 白屏自愈同一个包），已打包推送。
 3. **不要只拷 scripts/** 同步安装副本。必须整目录 `Copy-Item -Recurse -Force`。
 4. **不要碰 platforms/dayu.json / sohu.json**。这两个平台本轮没动，同步时原样带走即可。
 5. **不要删除 ledger/** 下的运行台账。打包时排除，但本机运行的副本需要它。

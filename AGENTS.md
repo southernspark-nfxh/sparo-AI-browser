@@ -18,10 +18,10 @@ Tagline: *会动手的 AI 浏览器 — 发送前你确认。*
 | [docs/SKILL-COMMUNITY-M2.md](./docs/SKILL-COMMUNITY-M2.md) | 技能社区（**未开工**，M1 人测过完再开） |
 | [docs/SKILL-FORMAT.md](./docs/SKILL-FORMAT.md) | 技能包命名与字段（本机 `run_skill`，以后才分享） |
 | [docs/THREE-CHANNEL-DESIGN.md](./docs/THREE-CHANNEL-DESIGN.md) | 三通道架构（**设计稿，未开工**，评审后按分期落地） |
-| [docs/PRODUCT-TASKBOOK.md](./docs/PRODUCT-TASKBOOK.md) | 现行任务、QA、待办（v0.3.7） |
+| [docs/PRODUCT-TASKBOOK.md](./docs/PRODUCT-TASKBOOK.md) | 现行任务、QA、待办（v0.6.0） |
 | [docs/DECISION-POINTS.md](./docs/DECISION-POINTS.md) | 能提前结束任务的本地判断，先登记再合码 |
 | [docs/QA-GOLDEN-SCENARIOS.md](./docs/QA-GOLDEN-SCENARIOS.md) | 黄金场景，用底账核对，不看侧栏感觉 |
-| [CHANGELOG.md](./CHANGELOG.md) | 对外变更（现 0.3.2） |
+| [CHANGELOG.md](./CHANGELOG.md) | 对外变更（现 0.6.0） |
 | [docs/PRODUCT.md](./docs/PRODUCT.md) | 商店定位，不是任务书 |
 
 **此后主线就在本目录改。** 原版 `D:\download\Sparo`（3920 / `%APPDATA%\sparo`）只同步侧栏能力，不要把云订阅搬过去。

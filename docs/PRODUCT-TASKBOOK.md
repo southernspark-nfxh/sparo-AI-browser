@@ -1,16 +1,16 @@
 # Sparo 现行产品任务书
 
 > 持续更新。与原版 **同一份正文**，便于两边对照。上一版见 [archive/2026-08/PRODUCT-TASKBOOK-20260811.md](./archive/2026-08/PRODUCT-TASKBOOK-20260811.md)。  
-> 版本：**v0.5.4 · 2026-11-12**（多账号环境开发版已验收；安装包由发布窗口统一出）  
-> 状态：**进行中**（云订阅 M1 代码已落地并人测过登录/付款；上架未完；飞书网页已做；侧栏大脑已让模型编手；0.5.4 多账号环境已落地，同站点可同时登录多个号）  
+> 版本：**v0.6.0 · 2026-11-12**（多账号环境 + 自媒体自动发布已打包：`release\Sparo-Setup-0.6.0.exe`）  
+> 状态：**进行中**（云订阅 M1 代码已落地并人测过登录/付款；上架未完；飞书网页已做；侧栏大脑已让模型编手；0.6.0 多账号环境 + social-media-publish v0.3.6 已随包发布）  
 > 产品文案仍以 [PRODUCT.md](./PRODUCT.md) 为准，不要把任务书当商店上架稿。  
-> 先读：[ARCHITECTURE.md](./ARCHITECTURE.md) · [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) · [CHANGELOG.md](../CHANGELOG.md) 0.5.4 · 根目录 [AGENTS.md](../AGENTS.md)
+> 先读：[ARCHITECTURE.md](./ARCHITECTURE.md) · [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) · [CHANGELOG.md](../CHANGELOG.md) 0.6.0 · 根目录 [AGENTS.md](../AGENTS.md)
 >
 > **大脑进度（0.1.19）：** 听整句、站点表换站、模型编 `handbook` / 写下一步已进代码。10-26 起任务循环硬规则：新任务出确认卡、关单必有声、跑完计划步才许收摊、挂起答复接得回。10-27 起同能力多段逐段对账，最小化不再把窗口拉回前台。`absorb`（页上价格对约束）未开工。9 月交接稿见 [archive/2026-09/TRAE-PROMPT-AGENT-BRAIN.md](./archive/2026-09/TRAE-PROMPT-AGENT-BRAIN.md)，以 changelog 和测试为准。
 
-## 2026-11-12 已落地（0.5.4：多账号环境）
+## 2026-11-12 已落地（0.6.0：多账号环境 + 自媒体自动发布）
 
-对外变更见 [CHANGELOG.md](../CHANGELOG.md) 0.5.4；用法与边界见 [MULTI-ACCOUNT.md](./MULTI-ACCOUNT.md)；打包事项见 [RELEASE-NOTE-MULTI-ACCOUNT.md](./RELEASE-NOTE-MULTI-ACCOUNT.md)。安装包未打，由发布窗口统一出。
+对外变更见 [CHANGELOG.md](../CHANGELOG.md) 0.6.0；用法与边界见 [MULTI-ACCOUNT.md](./MULTI-ACCOUNT.md)；打包事项见 [RELEASE-NOTE-MULTI-ACCOUNT.md](./RELEASE-NOTE-MULTI-ACCOUNT.md)。安装包已出：`release\Sparo-Setup-0.6.0.exe`，代码已推 `origin/master`。
 
 - 每个账号环境一套独立 Chromium partition（`persist:env_<id>`），Cookie / localStorage / IndexedDB / 缓存互不可见，同一站点可同时登录多个号，不靠切换登录态
 - 人：**设置 → 账号** 新建 / 打开 / 删除；Agent：`list_envs` → `navigate({ url, envId })` / `new_tab({ url, envId })`；技能 `run_skill({ query, params: { envId } })`
@@ -18,6 +18,8 @@
 - 环境标签认领给发起它的 client，后续 click / fill / execute 不串号；MCP 工具数 74 → 77（实测 `tools/list`）
 - 验收：A 环境写 cookie + sessionStorage，B 读到空 / `null`；回 A 原值仍在；真实两个环境分别写入 20 KB / 28 KB Cookies。`typecheck` 0 错误，测试 126 文件 / 950 条通过
 - 已知：删除环境只删配置，`Partitions/env_<id>/` 留空壳（无有效登录态）；环境登录需人工完成一次
+- 自媒体自动发布（social-media-publish v0.3.6）：今日头条 / 百家号 / 大鱼号 / 搜狐号 走后台填稿 → 插图 → 设封面 → 发布 → 回读核验，不抢焦点；头条八条自检 + 立即发布真 click + 质量门；百家号续跑（pending 过滤、单张写回整篇）+ 质量门。技能 JSON 内置版本升到 v2，重装即刷新本机副本
+- 同期修掉壳层白屏：网页照常、顶栏与侧栏整块发白时不再需要人工最小化/最大化，帧心跳停 3 拍自动重绘；多开时每扇窗口各查页面洞（见 [BUG-20261027-P4-WHITESCREEN-3RD.md](./BUG-20261027-P4-WHITESCREEN-3RD.md) 第五轮）
 
 ## 2026-11-10 已落地（0.5.0：新 Agent 接入自述、店小秘可执行化、ensure_render）
 
