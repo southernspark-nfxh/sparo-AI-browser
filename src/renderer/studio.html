@@ -18,6 +18,7 @@
     label { display: block; margin: 10px 0 4px; }
     input, textarea, select { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 8px; font: inherit; background: #fff; }
     textarea { min-height: 180px; }
+    #commentBoards textarea { min-height: 64px; }
     .row { display: flex; gap: 12px; flex-wrap: wrap; }
     .checks label { display: inline-flex; align-items: center; gap: 6px; margin-right: 12px; }
     button.act { margin-top: 12px; padding: 8px 14px; border-radius: 8px; border: 1px solid #1c1b19; background: #1c1b19; color: #fff; cursor: pointer; }
@@ -246,17 +247,36 @@
         host.textContent = "还没有快照";
         return;
       }
-      const blocks = [
-        ["总览卡", "阅读 " + metrics.overview.reads + "；净增 " + metrics.overview.follows + "；收益 " + metrics.overview.revenue],
-        ["趋势", JSON.stringify(metrics.trend)],
+      host.innerHTML = "";
+      const overview = document.createElement("div");
+      overview.className = "card";
+      overview.textContent = "总览卡：阅读 " + metrics.overview.reads + "；净增 " + metrics.overview.follows + "；收益 " + metrics.overview.revenue;
+      host.append(overview);
+      for (const row of metrics.compare || []) {
+        const trend = (metrics.trend || []).find((item) => item.platform === row.platform && item.date);
+        const money = (metrics.revenueSplit || []).find((item) => item.platform === row.platform);
+        const card = document.createElement("div");
+        card.className = "card";
+        const names = { toutiao: "头条", baijiahao: "百家", dayu: "大鱼", sohu: "搜狐" };
+        const reads = row.reads == null ? "" : String(row.reads);
+        const likes = row.likes == null ? "" : String(row.likes);
+        const moneyText = !money ? "" : money.text.startsWith("¥") ? money.text.slice(1) + " 元" : money.text;
+        card.textContent = [
+          names[row.platform] || row.platform,
+          trend ? trend.date : "",
+          "阅读 " + reads,
+          "点赞 " + likes,
+          "收益 " + moneyText,
+          row.completeness,
+        ].join("  ");
+        host.append(card);
+      }
+      const rest = [
         ["内容榜", metrics.ranking.length ? JSON.stringify(metrics.ranking) : "无单篇"],
-        ["平台对比", JSON.stringify(metrics.compare)],
-        ["收益拆分", JSON.stringify(metrics.revenueSplit)],
         ["异常", metrics.overview.exceptions.join("；") || "无"],
         ["采集", metrics.capturedAt || ""],
       ];
-      host.innerHTML = "";
-      for (const [title, text] of blocks) {
+      for (const [title, text] of rest) {
         const card = document.createElement("div");
         card.className = "card";
         card.textContent = title + "：" + text;
@@ -277,7 +297,7 @@
         const card = document.createElement("div");
         card.className = "card";
         const title = document.createElement("div");
-        title.textContent = board.name + "：" + (board.reason || "列表为空");
+        title.textContent = board.name + (board.reason ? "：" + board.reason : "");
         card.append(title);
         if (!board.canReply) {
           const locked = document.createElement("button");
@@ -285,19 +305,31 @@
           locked.disabled = true;
           locked.textContent = "只读，回复未开";
           card.append(locked);
-        } else {
+          host.append(card);
+          continue;
+        }
+        for (const item of board.comments || []) {
+          const row = document.createElement("div");
+          row.className = "card";
+          row.textContent = [item.author, item.content, item.title, item.createdAt].filter(Boolean).join("  ·  ");
           const box = document.createElement("textarea");
-          box.placeholder = "回复草稿，只保存在本机";
+          box.placeholder = "这条评论的回复草稿";
           const go = document.createElement("button");
           go.type = "button";
           go.className = "act";
-          go.textContent = "保存回复草稿";
+          go.textContent = "回复";
           const note = document.createElement("p");
           go.onclick = async () => {
-            const result = await api.reply({ platform: board.platform, text: box.value });
+            const result = await api.reply({
+              platform: board.platform,
+              text: box.value,
+              commentId: item.commentId,
+              content: item.content,
+            });
             note.textContent = result.message || "";
           };
-          card.append(box, go, note);
+          row.append(box, go, note);
+          card.append(row);
         }
         host.append(card);
       }

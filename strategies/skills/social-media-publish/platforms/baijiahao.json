@@ -5,8 +5,8 @@
     "host": "baijiahao.baidu.com",
     "writeUrl": "https://baijiahao.baidu.com/builder/rc/edit?type=news",
     "listUrl": "https://baijiahao.baidu.com/builder/rc/content",
-    "dataUrl": "",
-    "commentUrl": ""
+    "dataUrl": "https://baijiahao.baidu.com/author/eco/statistics/appStatisticV3?type=all&start_day={ymd}&end_day={ymd}&stat=0&special_filter_days=1",
+    "commentUrl": "https://baijiahao.baidu.com/pcui/comment/list?reply_type=0&relation_type=0&size=20&page=1"
   },
   "auth": {
     "tokenSource": "",
@@ -38,9 +38,62 @@
   },
   "readback": ["COVER_UNREAD", "COVER_RADIO_UNREAD", "AI_STILL_CHECKED", "AI_CONTROL_MISSING"],
   "data": {
-    "metricsMap": {},
+    "metricsMap": {
+      "sources": [
+        {
+          "url": "https://baijiahao.baidu.com/author/eco/statistics/appStatisticV3?type=all&start_day={ymd}&end_day={ymd}&stat=0&special_filter_days=1",
+          "datePath": "data.latest_event_day",
+          "fields": {
+            "reads": "data.total_info.view_count",
+            "likes": "data.total_info.likes_count",
+            "comments": "data.total_info.comment_count",
+            "shares": "data.total_info.share_count",
+            "collects": "data.total_info.collect_count",
+            "follows": "data.total_info.fans_increase"
+          }
+        },
+        {
+          "url": "https://baijiahao.baidu.com/author/eco/income4/overviewhome?period_type=1",
+          "when": "yesterday",
+          "unit": { "revenue": "yuan" },
+          "fields": { "revenue": "data.yesterday_income" }
+        }
+      ],
+      "unsupported": ["impressions"],
+      "labels": {
+        "reads": "阅读量",
+        "likes": "点赞量",
+        "comments": "评论量",
+        "shares": "分享量",
+        "collects": "收藏量",
+        "follows": "作品涨粉量",
+        "revenue": "昨日收入",
+        "search": "百度搜索量是 disp_pv，不是推荐量"
+      },
+      "article": {
+        "url": "https://baijiahao.baidu.com/author/eco/statistics/articleListStatistic?type=news&num=1&count=10",
+        "id": "article_id",
+        "impressions": "rec_count",
+        "reads": "view_count",
+        "likes": "likes_count",
+        "comments": "comment_count",
+        "collects": "collect_count",
+        "shares": "share_count"
+      },
+      "replySelector": "textarea[placeholder=\"请输入回复的内容\"]",
+      "comment": {
+        "page": "/commentmanage/comment",
+        "list": "data.reply_list",
+        "id": "reply_id",
+        "text": "content",
+        "author": "uname",
+        "articleId": "article_id",
+        "title": "title",
+        "time": "create_time"
+      }
+    },
     "delayDays": null,
-    "revenueTypes": [],
+    "revenueTypes": ["广告分成"],
     "pageLimit": null
   },
   "capabilities": {

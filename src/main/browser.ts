@@ -2296,7 +2296,7 @@ export class SparkBrowser {
     await collector.collectAll();
     const rows = await db.listMetrics();
     const comments = await import(pathToFileURL(join(root, "comments.mjs")).href);
-    return { ...base, metrics: db.buildViews(rows), comments: comments.listCommentStatus() };
+    return { ...base, metrics: db.buildViews(rows), comments: await comments.listComments() };
   }
 
   openStudio(): ToolResult {
@@ -4109,14 +4109,20 @@ export class SparkBrowser {
       if (!this.senderIsStudio(e.sender)) return { ok: false };
       return this.studioPayloadWithMetrics();
     });
-    handle("studio:reply", async (e, payload?: { platform?: string; text?: string }) => {
+    handle("studio:reply", async (e, payload?: { platform?: string; text?: string; commentId?: string; content?: string }) => {
       if (!this.senderIsStudio(e.sender)) return { ok: false, message: "只能从工作台起草" };
+      // 每次从工作台填写都重新走 comments.mjs 里的频率闸门。
       const comments = await import(pathToFileURL(join(__dirname, "../../strategies/skills/social-media-publish/scripts/comments.mjs")).href);
       const platform = String(payload?.platform || "");
-      const text = String(payload?.text || "");
+      const text = String(payload?.text || "").trim();
       if (!comments.canReply(platform)) return { ok: false, message: "只读，回复未开" };
+      if (!text) return { ok: false, message: "回复草稿是空的，没有填写。" };
       const saved = comments.saveReplyDraft(platform, text);
-      return { ok: false, kept: true, draft: saved, message: "回复草稿已留在本机。评论框选择器还没实测，没有往平台页面填写。" };
+      const filled = await comments.fillOpenReply(platform, text, {
+        commentId: String(payload?.commentId || ""),
+        content: String(payload?.content || ""),
+      });
+      return { ...filled, draft: saved };
     });
     handle("studio:create", async (e) => {
       if (!this.senderIsStudio(e.sender)) return { ok: false };

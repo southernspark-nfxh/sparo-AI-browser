@@ -5,8 +5,8 @@
     "host": "mp.toutiao.com",
     "writeUrl": "https://mp.toutiao.com/profile_v4/graphic/publish",
     "listUrl": "https://mp.toutiao.com/profile_v4/graphic/articles",
-    "dataUrl": "",
-    "commentUrl": ""
+    "dataUrl": "https://mp.toutiao.com/mp/agw/statistic/v2/content_stat?type=0&app_id=1231",
+    "commentUrl": "https://mp.toutiao.com/comment/author_receive_comment/?offset=0&count=10&scene=11&feature=0&user_relation=0&app_id=1231"
   },
   "auth": {
     "tokenSource": "",
@@ -38,9 +38,62 @@
   },
   "readback": ["COVER_UNREAD", "AD_CONTROL_MISSING", "AD_ASSERT_FAIL"],
   "data": {
-    "metricsMap": {},
+    "metricsMap": {
+      "readyUrl": "https://mp.toutiao.com/mp/agw/statistic/v2/helper/latest_ready_date?type=0&app_id=1231",
+      "datePath": "impression_latest_ready_date",
+      "sources": [
+        {
+          "url": "https://mp.toutiao.com/mp/agw/statistic/v2/content_stat?type=0&app_id=1231",
+          "fields": {
+            "impressions": "author_stat.consume_data.impression_count",
+            "reads": "author_stat.consume_data.go_detail_count",
+            "likes": "author_stat.interaction_data.digg_count",
+            "comments": "author_stat.interaction_data.comment_count"
+          }
+        },
+        {
+          "url": "https://mp.toutiao.com/mp/agw/statistic/v2/fans/latest_stat?app_id=1231",
+          "datePath": "date",
+          "fields": { "follows": "fans_stat.change_count" }
+        },
+        {
+          "url": "https://mp.toutiao.com/mp/agw/income/overview/income/details?start_date={date}&end_date={date}&only_mid_income=0&app_id=1231",
+          "dateEquals": "data.detail.0.day",
+          "unit": { "revenue": "yuan" },
+          "fields": { "revenue": "data.detail.0.total" }
+        }
+      ],
+      "unsupported": ["shares", "collects"],
+      "labels": {
+        "impressions": "昨日展现量",
+        "reads": "昨日阅读(播放)量",
+        "likes": "昨日点赞量",
+        "comments": "昨日评论量",
+        "follows": "昨日粉丝变化数",
+        "revenue": "创作收益"
+      },
+      "article": {
+        "url": "https://mp.toutiao.com/api/feed/mp_provider/v1/",
+        "id": "assembleCell.itemCell.articleBase.gidStr",
+        "impressions": "assembleCell.itemCell.itemCounter.showCount",
+        "reads": "assembleCell.itemCell.itemCounter.readCount",
+        "likes": "assembleCell.itemCell.itemCounter.diggCount",
+        "comments": "assembleCell.itemCell.itemCounter.commentCount"
+      },
+      "replySelector": ".comment-item-reply-box-showed textarea.byte-textarea",
+      "comment": {
+        "page": "/manage/comment",
+        "list": "data",
+        "id": "id_str",
+        "text": "text",
+        "author": "user.name",
+        "articleId": "article_info.group_id_str",
+        "title": "article_info.title",
+        "time": "create_time"
+      }
+    },
     "delayDays": null,
-    "revenueTypes": [],
+    "revenueTypes": ["创作收益"],
     "pageLimit": null
   },
   "capabilities": {
