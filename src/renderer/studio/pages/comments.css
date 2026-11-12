@@ -1,0 +1,74 @@
+/* 评论三栏。壳层接入时把本文件链进工作台。 */
+
+.comments-page {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 5fr) minmax(0, 4fr);
+  gap: var(--gutter, 24px);
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: clip;
+}
+
+.comments-accounts,
+.comments-list,
+.comments-detail {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: clip;
+}
+
+.comments-clip,
+.comments-summary,
+.comments-full,
+.comments-status {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.comments-summary {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.comments-filters,
+.comments-accounts,
+.comments-list,
+.comments-detail {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.comments-row,
+.comments-account {
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+}
+
+@media (max-width: 900px) {
+  .comments-page {
+    display: flex;
+    flex-direction: column;
+    overflow-x: clip;
+  }
+
+  .comments-page[data-pane="list"] .comments-detail {
+    display: none;
+  }
+
+  .comments-page[data-pane="detail"] .comments-accounts,
+  .comments-page[data-pane="detail"] .comments-list {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .comments-page * {
+    transition: none;
+  }
+}

@@ -1,4 +1,6 @@
 // 指标快照。sql.js 写入 %APPDATA%/sparo-store/metrics.sqlite。
+// 主键仍是 platform + accountId + date + articleId，不另加环境列。
+// 环境和平台账号的对应关系写在 accountId 里：env:<envId>:<platformAccountId>。
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import os from "node:os";
@@ -36,6 +38,29 @@ export function metricsPath() {
   return path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "sparo-store", "metrics.sqlite");
 }
 
+/** 能同时认出环境和平台账号才算关联。空账号、缺环境都是未关联。 */
+export function accountLink(accountId) {
+  const matched = /^env:([^:\s]+):(.+)$/.exec(String(accountId || ""));
+  if (!matched || !matched[2].trim()) {
+    return { linked: false, envId: "", platformAccountId: "", label: "未关联" };
+  }
+  return { linked: true, envId: matched[1], platformAccountId: matched[2], label: "" };
+}
+
+export function linkedAccountId(envId, platformAccountId) {
+  const env = String(envId || "").trim();
+  const account = String(platformAccountId || "").trim();
+  if (!env || !account || env.includes(":") || env.includes("\t") || account.startsWith("env:")) return "";
+  return "env:" + env + ":" + account;
+}
+
+export function fetchLogKey(envId, platform) {
+  const env = String(envId || "").trim();
+  const name = String(platform || "").trim();
+  if (!env || !name) return "";
+  return env + "\t" + name;
+}
+
 async function openDb(file = metricsPath()) {
   const SQL = await initSqlJs({
     locateFile: (name) => path.join(path.dirname(require.resolve("sql.js")), "..", "dist", name),
@@ -57,7 +82,22 @@ function yesterday() {
   return date.toISOString().slice(0, 10);
 }
 
+function refuse(code, message, envId) {
+  return { ok: false, code, message, envId: String(envId || "") };
+}
+
 export async function upsertMetric(row, file = metricsPath()) {
+  const link = accountLink(row.accountId);
+  const legacy = row.classify === "未关联";
+  if (link.linked && row.envId && row.envId !== link.envId) {
+    return refuse("env_mismatch", "账号关联的环境和本次环境不一致，已暂停写入。", row.envId);
+  }
+  if (!link.linked && !legacy) {
+    return refuse("unlinked", "无法把这条数据和账号环境对应起来，已暂停写入。", row.envId);
+  }
+  const accountId = link.linked ? String(row.accountId) : "";
+  let reason = row.reason || "";
+  if (!link.linked && legacy && !reason.includes("未关联")) reason = reason ? reason + "；未关联" : "未关联";
   const store = await openDb(file);
   store.db.run(
     `INSERT INTO metrics (platform, accountId, date, articleId, impressions, reads, likes, comments, shares, collects, follows, revenue, capturedAt, completeness, reason)
@@ -68,7 +108,7 @@ export async function upsertMetric(row, file = metricsPath()) {
        capturedAt=excluded.capturedAt, completeness=excluded.completeness, reason=excluded.reason`,
     {
       $platform: row.platform,
-      $accountId: row.accountId || "",
+      $accountId: accountId,
       $date: row.date,
       $articleId: row.articleId || "",
       $impressions: row.impressions ?? null,
@@ -81,10 +121,29 @@ export async function upsertMetric(row, file = metricsPath()) {
       $revenue: row.revenue ?? null,
       $capturedAt: row.capturedAt || new Date().toISOString(),
       $completeness: row.completeness,
-      $reason: row.reason || "",
+      $reason: reason,
     },
   );
   store.save();
+  return { ok: true, code: "ok", message: "", envId: link.envId };
+}
+
+/** 旧数据只有 accountId 已经带环境时才保留归属。对不上的只打「未关联」，不改派到当前环境。 */
+export async function classifyLegacyMetrics(file = metricsPath()) {
+  const rows = await listMetrics(file);
+  const plan = [];
+  for (const row of rows) {
+    const link = accountLink(row.accountId);
+    if (link.linked) {
+      plan.push({ platform: row.platform, accountId: row.accountId, action: "keep", envId: link.envId, label: "" });
+      continue;
+    }
+    plan.push({ platform: row.platform, accountId: row.accountId || "", action: "unlinked", envId: "", label: "未关联" });
+    if (!String(row.reason || "").includes("未关联")) {
+      await upsertMetric({ ...row, accountId: "", classify: "未关联" }, file);
+    }
+  }
+  return plan;
 }
 
 export async function listMetrics(file = metricsPath()) {
@@ -96,19 +155,24 @@ export async function listMetrics(file = metricsPath()) {
   return result[0].values.map((value) => Object.fromEntries(cols.map((col, index) => [col, value[index]])));
 }
 
-export async function markFetched(platform, file = metricsPath()) {
+export async function markFetched(platform, file = metricsPath(), envId = "") {
+  const key = fetchLogKey(envId, platform);
+  if (!key) return refuse("missing_env", "还没有选择账号环境，已停止。不会改用默认登录。", envId);
   const store = await openDb(file);
   store.db.run(
     "INSERT INTO fetch_log (platform, at) VALUES ($platform, $at) ON CONFLICT(platform) DO UPDATE SET at=excluded.at",
-    { $platform: platform, $at: new Date().toISOString() },
+    { $platform: key, $at: new Date().toISOString() },
   );
   store.save();
+  return { ok: true, code: "ok", message: "", envId: String(envId) };
 }
 
-export async function cooledDown(platform, file = metricsPath(), waitMs = 5 * 60 * 1000) {
+export async function cooledDown(platform, file = metricsPath(), waitMs = 5 * 60 * 1000, envId = "") {
+  const key = fetchLogKey(envId, platform);
+  if (!key) return false;
   if (!fs.existsSync(file)) return true;
   const store = await openDb(file);
-  const result = store.db.exec("SELECT at FROM fetch_log WHERE platform = $platform", { $platform: platform });
+  const result = store.db.exec("SELECT at FROM fetch_log WHERE platform = $platform", { $platform: key });
   const at = result[0]?.values?.[0]?.[0];
   if (!at) return true;
   return Date.now() - Date.parse(String(at)) >= waitMs;
@@ -127,9 +191,11 @@ export function completenessText(value) {
   return "数据缺失";
 }
 
-export function buildViews(rows) {
-  const accounts = rows.filter((row) => !row.articleId);
-  const articles = rows.filter((row) => row.articleId);
+export function buildViews(rows, opts = {}) {
+  const envId = String(opts.envId || "").trim();
+  const scoped = envId ? rows.filter((row) => accountLink(row.accountId).envId === envId) : rows;
+  const accounts = scoped.filter((row) => !row.articleId);
+  const articles = scoped.filter((row) => row.articleId);
   const anyPartial = accounts.some((row) => row.completeness === "partial");
   const readable = accounts.filter((row) => row.completeness === "full" && row.reads != null);
   const totalReads = readable.reduce((sum, row) => sum + Number(row.reads), 0);
@@ -155,6 +221,7 @@ export function buildViews(rows) {
     exceptions: accounts.filter((row) => row.completeness === "missing" || row.completeness === "partial" || row.completeness === "unsupported"),
     hideDelta: anyPartial || accounts.some((row) => row.completeness !== "full"),
     capturedAt: accounts.map((row) => row.platform + " " + (row.date || "") + " " + (row.capturedAt || "")).join("；"),
+    envId,
   };
 }
 

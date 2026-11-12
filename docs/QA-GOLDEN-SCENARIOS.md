@@ -126,6 +126,18 @@ $chat | Where-Object { $_.text -like "*$($want.Substring(0, [Math]::Min(12, $wan
 
 安装包复测至少 G1、G2、G3。记下 `git rev-parse --short HEAD` 和 `release\Sparo-Setup.exe` 的修改时间。开发窗绿了，不能代替安装包。
 
+### 2026-11-13 0.6.4 安装包级复测（壳层白屏自愈）
+
+- 对象：`release\Sparo-Setup-0.6.4.exe`（103688818 字节，2026-11-13 00:32:43）解出的 `release\win-unpacked\Sparo.exe`。
+- 环境隔离：`SPARO_CONFIG_DIR=%TEMP%\sparo-qa-064*`、`SPARO_MCP_PORT=393x`，不动用户 `%APPDATA%\sparo-store` 与已装的 0.6.3。
+- **G1 口径（开站 + 读页）过**：MCP `initialize` 拿 `clientId` → `navigate https://weibo.com` → 落到 `passport.weibo.com` 登录页（隔离配置无登录态，属预期）→ `get_url`、`page_text` 读回 77 字登录页正文；`/health` 200。
+- **壳层卡死自愈过**：CDP `Runtime.evaluate while(true){}` 卡死壳层主线程后，日志逐拍为
+  `repaint streak=3 count=1` → `count=2` → `count=3` → `restart win=main count=4` → `shell-render-gone reason=crashed exitCode=2` → `shell-reload forced=true` → 1.2 秒后 `heartbeat online`，全程 19 秒；主进程存活、`/health` 一直 200、CDP 里 `shell.html` 目标仍在。
+- **壳层自发崩溃自愈过**：CDP `Page.crash` 打崩渲染进程 → `render-process-gone` → 1.5 秒后 `heartbeat online`。
+- **G2 / G3 未跑**：两条都要已登录微博 + 模型 Key + 真实博主页，隔离配置里没有；本轮壳层改动不碰发布/采集链路，留到用户自己那份登录态上首次使用时验。
+- 截图备注：用「整屏截图」取证时抓到的是前台那扇（用户 0.6.3）窗口，不作为本条的视觉证据；本条以 `%TEMP%\sparo-qa-064*\diag\crash.log` 为准。
+
+
 ### 2026-11-09 安装包 G1–G3 复测环境备注
 
 - 测试对象：安装版 **0.3.2**（`D:\Program Files\Sparo`，app.asar 2026-11-09 15:30:44，即交接单 15:30:48 打包批次），3921 属主 `Sparo.exe`（17:21:53 启动），`/health` 200、toolCount 76。发送通道：MCP `sidebar_chat`（hands:true，UTF-8）。

@@ -1,0 +1,22 @@
+.accounts-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.accounts-ops {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.accounts-head .tag[data-state="checking"],
+.tag[data-state="checking"] {
+  color: var(--info);
+}
+
+.tag[data-state="checking"]::before {
+  background: var(--info);
+}

@@ -33,8 +33,10 @@ export function createToolHandlers(browser: SparkBrowser) {
         () => fillTool(browser, target, value, tabId),
         tabId,
       ),
-    execute: (script: string, opts?: { frame?: number | string; tabId?: string }) =>
-      browser.execute(script, opts),
+    execute: (
+      script: string,
+      opts?: { frame?: number | string; tabId?: string; awaitPromise?: boolean; timeoutMs?: number },
+    ) => browser.execute(script, opts),
     select: (target: { ref?: string; selector?: string }, value: string, tabId?: string) =>
       browser.select(target, value, tabId),
     upload: (target: { ref?: string; selector?: string }, files: string[], tabId?: string) =>
@@ -175,9 +177,10 @@ export function createToolHandlers(browser: SparkBrowser) {
       ref?: string;
       timeoutMs?: number;
       all?: boolean;
+      tabId?: string;
     }) => browser.waitFor(input),
-    qa_check: () => browser.qaCheck(),
-    qa_gate: () => browser.qaGate(),
+    qa_check: (tabId?: string) => browser.qaCheck(tabId),
+    qa_gate: (tabId?: string) => browser.qaGate(tabId),
     sidebar_chat: (text: string, hands?: boolean) =>
       browser.sidebarChatTool(text, { hands }),
     submit_task: (text: string, opts?: { execMode?: "step" | "auto"; clientId?: string }) =>

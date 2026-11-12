@@ -1,0 +1,19 @@
+- [x] `src/main/page-bounds.ts` 导出 `SHELL_HEARTBEAT_GAP_MS`、`SHELL_PAINT_RELOAD_AFTER_REPAINTS`、`shellSilentTooLong()`、`shellRecoveryStep()`，且不依赖 Electron
+- [x] `tests/page-bounds.test.ts` 覆盖：静默超时判死；最小化 / 不可见 / 未聚焦 / 心跳未知不判死；前两次重绘；第三次升级重启；`unresponsive` 且已重绘过 1 次提前升级
+- [x] `src/main/browser.ts` 每扇窗口记录最后一次心跳时间，`onShellHeartbeat` 写入
+- [x] 主进程 1 秒一拍看门狗遍历存活窗口；90 秒内聚焦过仍算「人在用」，不因切走截图而漏判
+- [x] 恢复阶梯：第 1–2 次 `invalidateShell()`；第 3 次起 `forcefullyCrashRenderer()`；同一窗口 120 秒内最多重启一次
+- [x] 主动重启后 `render-process-gone` 标记为 forced，延迟 300ms 用 `loadURL()` 重新拉起壳层（不是 `reload()`）
+- [x] `onShellUnresponsive()` 接入恢复阶梯，不再只拉窗口到前面
+- [x] `onShellUnresponsive()` 体积探测按字段安全序列化，失败时记录真实错误消息，不再只有 `bytes=-1`
+- [x] 壳层 `did-finish-load` 清空该窗口停帧账与心跳时间（心跳未知 ≠ 心跳超时）
+- [x] 窗口 `closed` 清看门狗定时器与各 Map，不留悬挂状态
+- [x] `npm run typecheck` 0 错误
+- [x] `npm test` 全绿（132 文件 / 986 条）
+- [x] 安装包 `release\Sparo-Setup-0.6.4.exe` 已产出
+- [x] 安装包级实测：卡死壳层 → 3 次重绘无效 → `restart win=main` → `shell-reload forced=true` → 1.2 秒后 `heartbeat online`
+- [x] 安装包级实测：壳层渲染进程自发崩溃 → 1.5 秒内重新出心跳
+- [x] 安装包级实测：`navigate` 开站 + `page_text` 读回可用，MCP `/health` 正常
+- [x] `package.json` 版本 0.6.4；`CHANGELOG.md` 写明 0.6.0–0.6.3 为何没治好；`docs/DECISION-POINTS.md` 已登记；`AGENTS.md` 版本口径已同步
+- [x] `docs/QA-GOLDEN-SCENARIOS.md` 实机记录补 0.6.4 一行
+- [ ] 提交并推送 GitHub

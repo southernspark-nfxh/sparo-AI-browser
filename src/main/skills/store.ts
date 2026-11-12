@@ -40,8 +40,14 @@ export type Skill = {
   /** 记错关键文本后停用，避免下次还优先撞它。 */
   retiredReason?: string;
   traceFile?: string;
-  /** 沉淀四件套。true 时 run_skill 只回脚手架，不逐字直放。 */
+  /** 沉淀路线。true 时 run_skill 回脚手架，并在 data 里带上脚本，不逐字执行。 */
   distilled?: boolean;
+  /** 可粘贴的脚本。run_skill 放进 data.agentPlaybook，不自动执行。 */
+  agentPlaybook?: string[];
+  measured?: Record<string, unknown>;
+  knownGaps?: string[];
+  notes?: string[];
+  version?: number;
   route?: RouteMilestone[];
   params?: Record<
     string,

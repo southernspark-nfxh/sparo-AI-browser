@@ -31,7 +31,7 @@ import {
 import { buildPrecheckResult, listStudioEnvs, resolveStudioEnv, snapshotHash, unsupported } from "./studio-env.js";
 import { randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { boundsWithinOnePixel, CHROME_HEAL_COOLDOWN_MS, CHROME_HEAL_STALL_LIMIT, chromeCoverDelta, chromeCoverReason, pageViewCoversChrome, resetChromeCoverBudget, SHELL_PAINT_DIAG_BEATS, shellPaintStalled, takeChromeCoverFix, type ChromeCoverBudget, type CoverReason, type PageRect, type ShellPaintState } from "./page-bounds.js";
+import { boundsWithinOnePixel, CHROME_HEAL_COOLDOWN_MS, CHROME_HEAL_STALL_LIMIT, chromeCoverDelta, chromeCoverReason, pageViewCoversChrome, resetChromeCoverBudget, SHELL_HEARTBEAT_GAP_MS, SHELL_PAINT_DIAG_BEATS, SHELL_PAINT_REPAINT_COOLDOWN_MS, SHELL_PAINT_STALL_BEATS, shellPaintStalled, shellRecoveryStep, shellSilentTooLong, takeChromeCoverFix, type ChromeCoverBudget, type CoverReason, type PageRect, type ShellPaintState } from "./page-bounds.js";
 import { formatPushMinute, formatShellCrashContext, formatShellMemLine } from "./diag-log.js";
 import { clickPointUsable, offscreenAgentBounds, viewportTooSmall } from "./agent-viewport.js";
 import {
@@ -201,6 +201,7 @@ import {
   loadHistory,
   clearHistory,
 } from "./history.js";
+import { loadTabs, saveTabs, type TabSessionItem } from "./tabs-session.js";
 import { uniqueDownloadPath } from "./downloads.js";
 import { loadChatMemory, saveChatMemory, clearChatMemory, type ChatTurn } from "./profile/chat-memory.js";
 import { formatPushFrame, planChatFrame, stampChatSeq } from "./sidebar-sync.js";
@@ -469,6 +470,7 @@ import {
   type CdpFrameInfo,
   type IframeMeta,
 } from "./cdp-frames.js";
+import { buildExecuteExpression, clampExecuteTimeout, withDeadline } from "./execute-wrapper.js";
 import { isMojibake, softFillMatch, sleep } from "./browser-helpers.js";
 import { retryShortContentEditable } from "./fill-retry.js";
 import { recaptureIfEmpty } from "./snapshot-retry.js";
@@ -1391,12 +1393,28 @@ export class SparkBrowser {
     const iconPath = resolveAppIconPath();
     this.window = this.buildWindow();
     this.wins.set("main", this.window);
+    this.shellFocusAt.set("main", Date.now());
+    this.window.on("focus", () => this.shellFocusAt.set("main", Date.now()));
     this.win.setMenuBarVisibility(false);
     traceMainWindow(this.window);
     this.win.webContents.on("render-process-gone", (_e, details) => {
       console.error("[shell] render-process-gone", details.reason);
       noteHang("shell-render-gone", this.diagCrashContext(details));
-      if (details.reason !== "clean-exit" && details.reason !== "killed") {
+      // forcefullyCrashRenderer() 报的是 killed，和「人自己关掉」同因；靠这个集合区分要不要重载。
+      const forced = this.shellRestarting.delete("main");
+      if (forced) {
+        // 刚崩完立刻 reload 会被吞掉，等一拍再导航；走 loadURL 而不是 reload，确保真的重新拉起页面。
+        setTimeout(() => {
+          try {
+            if (this.win.isDestroyed() || this.win.webContents.isDestroyed()) return;
+            const url = this.win.webContents.getURL();
+            this.win.webContents.loadURL(url);
+            noteHang("shell-reload", `win=main forced=true url=${url}`);
+          } catch (error) {
+            noteHang("shell-reload-failed", `win=main error=${(error as Error)?.message || String(error)}`);
+          }
+        }, 300);
+      } else if (details.reason !== "clean-exit" && details.reason !== "killed") {
         try {
           this.win.webContents.reload();
         } catch {
@@ -1479,9 +1497,17 @@ export class SparkBrowser {
     });
     setTimeout(() => this.presentWindow(), 800);
     this.registerIpc();
-    this.createTab(DEFAULT_URL, true, { userAction: true });
+    if (!this.restoreTabs()) this.createTab(DEFAULT_URL, true, { userAction: true });
     this.memoryTimer = setInterval(() => this.autoDiscardIdleTabs(), 30_000);
     this.startChromeHoleWatch();
+    this.startShellWatch();
+    this.win.on("close", () => {
+      if (this.tabsPersistTimer) {
+        clearTimeout(this.tabsPersistTimer);
+        this.tabsPersistTimer = null;
+      }
+      this.persistTabsNow(true);
+    });
     this.win.on("closed", () => {
       if (this.memoryTimer) {
         clearInterval(this.memoryTimer);
@@ -1491,6 +1517,7 @@ export class SparkBrowser {
         clearInterval(this.chromeHoleTimer);
         this.chromeHoleTimer = null;
       }
+      this.stopShellWatch();
     });
   }
 
@@ -1679,6 +1706,7 @@ export class SparkBrowser {
       tab.title = wc.getTitle() || tab.title;
       this.pushChromeState();
       this.pushSidebarState();
+      this.schedulePersistTabs();
     };
     wc.on("page-title-updated", (_e, title) => {
       tab.title = title;
@@ -1934,6 +1962,7 @@ export class SparkBrowser {
     void view.webContents.loadURL(normalizeUrl(url));
     if (activate) this.switchTab(id, { userAction: opts?.userAction, actor: this.focusActor() });
     else this.layout();
+    this.schedulePersistTabs();
     return id;
   }
 
@@ -2238,6 +2267,7 @@ export class SparkBrowser {
     this.wakeTab(id);
     this.activeTabId = id;
     if (tab) tab.lastActiveAt = Date.now();
+    this.schedulePersistTabs();
     this.lastSnapshot = null;
     this.layout();
     if (opts?.focus !== false) this.focusActivePage();
@@ -2452,7 +2482,80 @@ export class SparkBrowser {
     }
     this.layout();
     this.pushChromeState();
+    this.schedulePersistTabs();
     return { ok: true, message: `Closed tab ${id}`, data: this.listTabs() };
+  }
+
+  private tabsPersistTimer: NodeJS.Timeout | null = null;
+  private restoringTabs = false;
+
+  /**
+   * 重启后把上次的标签原样打开。没有记录时返回 false，交给调用方开默认页。
+   * 单张恢复失败只跳过这一张，不影响其余标签。
+   */
+  private restoreTabs(): boolean {
+    let items: TabSessionItem[] = [];
+    try {
+      items = loadTabs(this.configDir());
+    } catch {
+      items = [];
+    }
+    if (!items.length) return false;
+    this.restoringTabs = true;
+    let activeId = "";
+    try {
+      for (const item of items) {
+        try {
+          const id = item.envId
+            ? this.createEnvTab(item.envId, item.url, { userAction: false })
+            : this.createTab(item.url, false, { userAction: false });
+          if (item.active && !activeId) activeId = id;
+        } catch (e) {
+          console.warn("[tabs-restore] failed", item.url, String(e));
+          /* 环境已删除或地址非法：跳过这一张 */
+        }
+      }
+      console.log(`[tabs-restore] loaded=${items.length} restored=${this.tabs.size} active=${activeId}`);
+      if (activeId) this.switchTab(activeId, { userAction: false, actor: this.focusActor() });
+      if (!this.activeTabId) {
+        const first = this.tabs.keys().next().value;
+        if (first) this.switchTab(first, { userAction: true, actor: this.focusActor() });
+      }
+    } finally {
+      this.restoringTabs = false;
+    }
+    return this.tabs.size > 0;
+  }
+
+  /** 落盘当前窗口的标签：地址、标题、账号环境、当前激活项。 */
+  private persistTabsNow(keepOnEmpty = false): void {
+    try {
+      const items: TabSessionItem[] = [];
+      for (const [id, tab] of this.tabs) {
+        if (!tab.url || tab.url === "about:blank") continue;
+        items.push({
+          url: tab.url,
+          title: tab.title,
+          envId: tab.envId,
+          active: id === this.activeTabId,
+        });
+      }
+      if (!items.length && keepOnEmpty) return;
+      if (items.length && !items.some((t) => t.active)) items[0].active = true;
+      saveTabs(this.configDir(), items);
+    } catch {
+      /* best-effort：写盘失败不能影响浏览 */
+    }
+  }
+
+  private schedulePersistTabs(): void {
+    if (this.restoringTabs) return;
+    if (this.tabsPersistTimer) return;
+    this.tabsPersistTimer = setTimeout(() => {
+      this.tabsPersistTimer = null;
+      this.persistTabsNow();
+    }, 800);
+    this.tabsPersistTimer.unref?.();
   }
 
   private windowIsMinimized(): boolean {
@@ -2473,14 +2576,10 @@ export class SparkBrowser {
   /** 壳层假死：人正看着窗口才拉回。最小化时只闪任务栏，后台出报告不能靠这条弹窗。 */
   private onShellUnresponsive(): void {
     console.error("[shell] unresponsive");
-    let bytes = -1;
-    try {
-      bytes = JSON.stringify(this.getSidebarPayload()).length;
-    } catch {
-      bytes = -1;
-    }
+    const winId = this.activeWinId;
+    const win = this.wins.get(winId) || this.window;
     this.lastShellUnresponsiveAt = Date.now();
-    noteHang("shell-unresponsive", `sidebar bytes=${bytes}`);
+    noteHang("shell-unresponsive", `win=${winId} ${this.sidebarPayloadDiag()}`);
     if (this.windowIsMinimized()) {
       this.flashTaskbarIfHidden();
       return;
@@ -2488,6 +2587,31 @@ export class SparkBrowser {
     this.ensureWindowVisible();
     this.resetChromeCoverState();
     this.armChromeGuard();
+    // 不响应说明「请求重绘」已经推不动了，直接进恢复阶梯：这一次先重绘，下一次重启渲染进程。
+    const prev = this.shellPaint.get(winId) || { zeroStreak: 0, repaints: 0, lastRepaintAt: 0 };
+    if (prev.lastRepaintAt > 0 && Date.now() - prev.lastRepaintAt < SHELL_PAINT_REPAINT_COOLDOWN_MS) return;
+    this.actOnShellStall(winId, win || this.window, prev, "unresponsive");
+  }
+
+  /**
+   * 壳层体积诊断。整体 JSON.stringify 会因循环引用 / BigInt 抛错，只留 bytes=-1 查不出原因，
+   * 这里按字段量体积，并把真正的错误消息落盘。
+   */
+  private sidebarPayloadDiag(): string {
+    try {
+      const payload = this.getSidebarPayload() as Record<string, unknown>;
+      let bytes = 0;
+      for (const [key, value] of Object.entries(payload || {})) {
+        try {
+          bytes += JSON.stringify(value ?? null)?.length || 0;
+        } catch (error) {
+          return `sidebar bytes≈${bytes} bad=${key}: ${(error as Error)?.message || String(error)}`;
+        }
+      }
+      return `sidebar bytes=${bytes}`;
+    } catch (error) {
+      return `sidebar read failed: ${(error as Error)?.message || String(error)}`;
+    }
   }
 
   /** First show only. Later calls must not center() — that fights the user dragging the window. */
@@ -2597,6 +2721,8 @@ export class SparkBrowser {
       }),
     );
     win.on("closed", () => this.closeWindow(winId));
+    this.shellFocusAt.set(winId, Date.now());
+    win.on("focus", () => this.shellFocusAt.set(winId, Date.now()));
     win.webContents.on("context-menu", (_e, params) => {
       const template: MenuItemConstructorOptions[] = [];
       if (params.selectionText) {
@@ -2609,7 +2735,19 @@ export class SparkBrowser {
     win.webContents.on("render-process-gone", (_e, details) => {
       console.error(`[shell] render-process-gone ${winId}`, details.reason);
       noteHang("shell-render-gone", `win=${winId} ${this.diagCrashContext(details)}`);
-      if (details.reason !== "clean-exit" && details.reason !== "killed") {
+      const forced = this.shellRestarting.delete(winId);
+      if (forced) {
+        setTimeout(() => {
+          try {
+            if (win.isDestroyed() || win.webContents.isDestroyed()) return;
+            const url = win.webContents.getURL();
+            win.webContents.loadURL(url);
+            noteHang("shell-reload", `win=${winId} forced=true url=${url}`);
+          } catch (error) {
+            noteHang("shell-reload-failed", `win=${winId} error=${(error as Error)?.message || String(error)}`);
+          }
+        }, 300);
+      } else if (details.reason !== "clean-exit" && details.reason !== "killed") {
         try {
           win.webContents.reload();
         } catch {
@@ -2631,6 +2769,10 @@ export class SparkBrowser {
     this.lastGoodContentByWin.delete(winId);
     this.lastLayoutContentByWin.delete(winId);
     this.shellPaint.delete(winId);
+    this.shellBeatAt.delete(winId);
+    this.shellFocusAt.delete(winId);
+    this.shellRestartAt.delete(winId);
+    this.shellRestarting.delete(winId);
     for (const [client, bound] of this.clientWindows) {
       if (bound === winId) this.clientWindows.delete(client);
     }
@@ -2751,6 +2893,14 @@ export class SparkBrowser {
     this.scheduleLayout(120);
     // 改分辨率、拔插显示器、解锁、休眠回来，DWM 会重建合成表面；不主动重绘就停在白屏。
     this.invalidateAllShells();
+    // 表面真丢了的话，invalidate 推不动（0.6.3 及以前就是这样白到人手动最小化）。
+    // 把心跳判成可疑，交给 1 秒看门狗按阶梯重绘 / 重启，人不用再动手。
+    const now = Date.now();
+    for (const [winId, current] of this.liveWins()) {
+      if (current.isDestroyed()) continue;
+      const beat = this.shellBeatAt.get(winId) || 0;
+      if (!beat || now - beat > 1_500) this.shellBeatAt.set(winId, now - SHELL_HEARTBEAT_GAP_MS - 1);
+    }
     setTimeout(() => {
       if (this.win.isDestroyed()) return;
       this.requestHoleReport();
@@ -3972,6 +4122,18 @@ export class SparkBrowser {
   private get shellPaint(): Map<string, ShellPaintState> {
     return (this._shellPaint ??= new Map());
   }
+  /** 这一轮用户消息里，侧栏工位是否已经摆到过人面前。默认 true，开窗不抢。 */
+  private sidebarTabShownForTurn = true;
+  /** 每扇窗口最后一次收到壳层心跳的时间。渲染进程彻底卡死时，这是主进程唯一的凭据。 */
+  private shellBeatAt = new Map<string, number>();
+  /** 壳层看门狗：1 秒一拍，不依赖渲染进程主动上报。 */
+  private shellWatchTimer: ReturnType<typeof setInterval> | null = null;
+  /** 壳层被迫重启的时间，按窗口存，防死循环。 */
+  private shellRestartAt = new Map<string, number>();
+  /** 正在被我们主动打崩的壳层窗口。forcefullyCrashRenderer 报 killed，得靠它区分「要不要重载」。 */
+  private shellRestarting = new Set<string>();
+  /** 最近一次聚焦的时间。人看完就切走截图时 isFocused() 已经为假，但窗口仍是人在用的窗口。 */
+  private shellFocusAt = new Map<string, number>();
 
   /**
    * 壳层每秒报一次「这一秒新画了几帧」。连续几拍 0 帧说明合成停了：
@@ -3999,13 +4161,11 @@ export class SparkBrowser {
       console.log(line);
       noteHang("shell-paint-online", line);
     }
+    this.shellBeatAt.set(winId, now);
     const next = shellPaintStalled(prev, frames, { minimized, visible, now });
     this.shellPaint.set(winId, next.state);
     if (next.repaint) {
-      const line = `[shell-paint] repaint win=${winId} streak=${next.state.zeroStreak} count=${next.state.repaints} minimized=${minimized} maximized=${this.safeMaximized(win)}`;
-      console.log(line);
-      noteHang("shell-paint-repaint", line);
-      this.invalidateShell(win);
+      this.actOnShellStall(winId, win, prev, "beat-stall");
       return;
     }
     if (next.state.zeroStreak === SHELL_PAINT_DIAG_BEATS) {
@@ -4021,6 +4181,100 @@ export class SparkBrowser {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * 恢复阶梯：前两次只推重绘（人看不出），第三次起重启壳层渲染进程。
+   * 推重绘对「不响应 IPC」的渲染进程无效，只能让它崩掉再重载——网页视图是另一个
+   * WebContents，不受影响；壳层在 did-finish-load 里按主进程状态重建。
+   */
+  private actOnShellStall(
+    winId: string,
+    win: BrowserWindow,
+    prev: ShellPaintState,
+    reason: "beat-stall" | "silent" | "unresponsive",
+  ): void {
+    const now = Date.now();
+    const step = shellRecoveryStep(prev, reason === "unresponsive");
+    const next: ShellPaintState = {
+      zeroStreak: Math.max(prev.zeroStreak + 1, SHELL_PAINT_STALL_BEATS),
+      repaints: prev.repaints + 1,
+      lastRepaintAt: now,
+    };
+    this.shellPaint.set(winId, next);
+    if (step === "reload" && this.restartShellRenderer(winId, win)) {
+      const line = `[shell-paint] restart win=${winId} reason=${reason} streak=${next.zeroStreak} count=${next.repaints} maximized=${this.safeMaximized(win)}`;
+      console.log(line);
+      noteHang("shell-paint-recover", line);
+      return;
+    }
+    const line = `[shell-paint] repaint win=${winId} reason=${reason} streak=${next.zeroStreak} count=${next.repaints} maximized=${this.safeMaximized(win)}`;
+    console.log(line);
+    noteHang("shell-paint-recover", line);
+    this.invalidateShell(win);
+  }
+
+  /** 重启壳层渲染进程。同一窗口 2 分钟内最多一次；之后交给 render-process-gone 自动重载。 */
+  private restartShellRenderer(winId: string, win: BrowserWindow): boolean {
+    const now = Date.now();
+    const last = this.shellRestartAt.get(winId) || 0;
+    if (now - last < 120_000) return false;
+    this.shellRestartAt.set(winId, now);
+    try {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) return false;
+      this.shellRestarting.add(winId);
+      win.webContents.forcefullyCrashRenderer();
+      return true;
+    } catch (error) {
+      this.shellRestarting.delete(winId);
+      const line = `[shell-paint] restart failed win=${winId} error=${(error as Error)?.message || String(error)}`;
+      console.error(line);
+      noteHang("shell-paint-restart-failed", line);
+      return false;
+    }
+  }
+
+  /** 壳层看门狗：1 秒一拍。渲染进程连心跳都不发时，只有这条能发现。 */
+  private startShellWatch(): void {
+    if (this.shellWatchTimer) return;
+    this.shellWatchTimer = setInterval(() => this.watchShellPaint(), 1_000);
+  }
+
+  private stopShellWatch(): void {
+    if (!this.shellWatchTimer) return;
+    clearInterval(this.shellWatchTimer);
+    this.shellWatchTimer = null;
+  }
+
+  private watchShellPaint(): void {
+    const now = Date.now();
+    for (const [winId, win] of this.liveWins()) {
+      let minimized = true;
+      let visible = false;
+      let focused = false;
+      try {
+        if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+        minimized = win.isMinimized();
+        visible = win.isVisible();
+        focused = win.isFocused();
+      } catch {
+        continue;
+      }
+      const lastBeatAt = this.shellBeatAt.get(winId) || 0;
+      // 人切去别的程序截图 / 反馈时 isFocused() 已经为假；90 秒内聚焦过仍算「人在用这扇窗」。
+      const recentlyFocused = now - (this.shellFocusAt.get(winId) || 0) < 90_000;
+      if (!shellSilentTooLong(lastBeatAt, { now, minimized, visible, focused: focused || recentlyFocused })) continue;
+      const prev = this.shellPaint.get(winId) || { zeroStreak: 0, repaints: 0, lastRepaintAt: 0 };
+      if (prev.lastRepaintAt > 0 && now - prev.lastRepaintAt < SHELL_PAINT_REPAINT_COOLDOWN_MS) continue;
+      this.actOnShellStall(winId, win, prev, "silent");
+    }
+  }
+
+  /** 壳层重载 / 重启后清账，避免新渲染进程一上线就被上一轮的停帧计数判死。 */
+  private resetShellPaintState(winId: string): void {
+    this.shellPaint.delete(winId);
+    // 心跳未知 ≠ 心跳超时：没收到过心跳之前不判死，否则首屏加载慢一点就被白白重绘两次。
+    this.shellBeatAt.delete(winId);
   }
 
   /**
@@ -4117,6 +4371,8 @@ export class SparkBrowser {
     });
     this.win.webContents.on("did-finish-load", () => {
       this.chatResync = true;
+      // 重载 / 重启后清账：新渲染进程刚上线，不能被上一轮的停帧计数判死。
+      this.resetShellPaintState(this.activeWinId);
       this.pushChromeState();
       this.pushSidebarState();
       this.layout();
@@ -6026,8 +6282,8 @@ export class SparkBrowser {
     }
   }
 
-  async qaGate(): Promise<ToolResult> {
-    const report = await this.qaCheck();
+  async qaGate(tabId?: string): Promise<ToolResult> {
+    const report = await this.qaCheck(tabId);
     if (!report.ok) {
       return {
         ok: false,
@@ -6568,6 +6824,16 @@ export class SparkBrowser {
     const tab = this.tabs?.get(tabId);
     if (tab?.agentStatus === "done") delete tab.agentStatus;
     this.agentTabId = tabId;
+    // 复用到的工位可能还在后台（上一轮留下的）。人刚发了话，这一轮头一次碰页面就把它摆到眼前；
+    // 同一轮后续工具调用不再切，人自己点去别处不会被反复拽回来。后台车道、最小化窗口不抢。
+    if (
+      !this.sidebarTabShownForTurn &&
+      this.taskStore()?.lane !== "background" &&
+      !this.windowIsMinimized()
+    ) {
+      this.sidebarTabShownForTurn = true;
+      if (tabId !== this.activeTabId) this.switchTab(tabId, { userAction: true });
+    }
     if (typeof this.pushChromeState === "function") this.pushChromeState();
     return tabId;
   }
@@ -9411,6 +9677,8 @@ export class SparkBrowser {
     const boundTab = tabId || this.activeTabId;
     const prevAgentTab = this.agentTabId;
     this.agentTabId = boundTab;
+    // 新的一轮人话：头一次碰到页面时允许把侧栏工位摆到眼前。
+    this.sidebarTabShownForTurn = false;
     try {
       return await this.dispatchChatJob(text, images, quotes, boundTab);
     } finally {
@@ -11183,9 +11451,13 @@ export class SparkBrowser {
    */
   async execute(
     script: string,
-    opts?: { frame?: number | string; tabId?: string },
+    opts?: { frame?: number | string; tabId?: string; awaitPromise?: boolean; timeoutMs?: number },
   ): Promise<ToolResult & { data?: { result: unknown; error?: string } }> {
     const tabId = opts?.tabId;
+    const awaitPromise = opts?.awaitPromise === true;
+    const expression = buildExecuteExpression(script, awaitPromise);
+    const deadline = awaitPromise ? clampExecuteTimeout(opts?.timeoutMs) : 0;
+    const guard = <T>(work: Promise<T>) => (deadline ? withDeadline(work, deadline) : work);
     const blocked = this.assertNotPaused();
     if (blocked) {
       return blocked as ToolResult & {
@@ -11199,7 +11471,7 @@ export class SparkBrowser {
     try {
       if (opts?.frame !== undefined && opts.frame !== null && opts.frame !== "") {
         const wc = this.viewForTab(tabId || this.activeTabId).webContents;
-        const result = await withDebugger(wc, async (send) => {
+        const result = await guard(withDebugger(wc, async (send) => {
           let frameId: string | undefined;
           if (typeof opts.frame === "number") {
             frameId = this.cdpFrames[opts.frame]?.frameId;
@@ -11224,24 +11496,12 @@ export class SparkBrowser {
               `Unknown frame ${String(opts.frame)} — run snapshot first (use x* refs / frame index)`,
             );
           }
-          const expression = `(() => {
-            try {
-              const __src = ${cdpUtf8Expr(script)};
-              const __r = (0, eval)(__src);
-              let safe;
-              try { safe = JSON.parse(JSON.stringify(__r === undefined ? null : __r)); }
-              catch (_) { safe = String(__r); }
-              return { ok: true, result: safe };
-            } catch (e) {
-              return { ok: false, result: null, error: String(e && e.message ? e.message : e) };
-            }
-          })()`;
           return cdpEvaluate<{ ok: boolean; result: unknown; error?: string }>(
             send,
             frameId,
             expression,
           );
-        });
+        }));
         return {
           ok: Boolean(result?.ok),
           message: result?.ok
@@ -11251,28 +11511,8 @@ export class SparkBrowser {
         };
       }
 
-      const wrapped = `(() => {
-        try {
-          const __src = ${cdpUtf8Expr(script)};
-          const __r = (0, eval)(__src);
-          let safe;
-          try {
-            safe = JSON.parse(JSON.stringify(__r === undefined ? null : __r));
-          } catch (_) {
-            safe = String(__r);
-          }
-          return { ok: true, result: safe };
-        } catch (e) {
-          return {
-            ok: false,
-            result: null,
-            error: String(e && e.message ? e.message : e),
-          };
-        }
-      })()`;
-      const data = (await this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(
-        wrapped,
-        true,
+      const data = (await guard(
+        this.viewForTab(tabId || this.activeTabId).webContents.executeJavaScript(expression, true),
       )) as { ok: boolean; result: unknown; error?: string };
       return {
         ok: data.ok,
@@ -13197,7 +13437,7 @@ export class SparkBrowser {
         true,
       ).catch(() => "")) as string;
       if (submitClickNeedsGate(this.freeSoulRunning, label || String(hit.target || ""))) {
-        const gate = await this.qaGate();
+        const gate = await this.qaGate(tabId);
         if (!gate.ok) return gate as ToolResult;
         const appr = await this.requestApproval({
           action: "submit",

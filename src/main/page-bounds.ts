@@ -103,6 +103,40 @@ export function shellPaintStalled(
   };
 }
 
+/**
+ * 渲染进程连心跳都不发时，主进程这边的停帧计数永远不会再更新，光看 0 帧发现不了。
+ * 前台窗口超过这个时间没心跳，就按「壳层已卡死」处理。
+ */
+export const SHELL_HEARTBEAT_GAP_MS = 5_000;
+/** 轻推重绘这么多次还推不动，就不能再推了，得重启渲染进程。 */
+export const SHELL_PAINT_RELOAD_AFTER_REPAINTS = 3;
+
+/**
+ * 窗口在前台、可见、未最小化，却超过 SHELL_HEARTBEAT_GAP_MS 没收到壳层心跳。
+ * 最小化 / 藏起来 / 没聚焦的窗口本来就可能不出帧，不判死。
+ */
+export function shellSilentTooLong(
+  lastBeatAt: number,
+  ctx: { now: number; minimized: boolean; visible: boolean; focused: boolean },
+): boolean {
+  if (ctx.minimized || !ctx.visible || !ctx.focused) return false;
+  if (!lastBeatAt) return false;
+  return ctx.now - lastBeatAt > SHELL_HEARTBEAT_GAP_MS;
+}
+
+/**
+ * 恢复阶梯：前两次只重绘（无感），第三次起重启渲染进程。
+ * 已经收到 unresponsive、且重绘过一次仍没救回来，也直接重启——重绘对不响应 IPC 的进程无效。
+ */
+export function shellRecoveryStep(
+  state: ShellPaintState,
+  unresponsive = false,
+): "repaint" | "reload" {
+  if (state.repaints >= SHELL_PAINT_RELOAD_AFTER_REPAINTS) return "reload";
+  if (unresponsive && state.repaints >= 1) return "reload";
+  return "repaint";
+}
+
 /** heal 日志里的差值。width 用 dw，正数表示视图比洞宽出多少。 */
 export function chromeCoverDelta(reason: Exclude<CoverReason, null>, actual: PageRect, hole: PageRect): string {
   if (reason === "y") return `dy=${actual.y - hole.y}`;

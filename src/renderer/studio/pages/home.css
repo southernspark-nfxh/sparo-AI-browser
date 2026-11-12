@@ -1,0 +1,87 @@
+.home-page,
+.home-page .card,
+.home-page .clip,
+.home-page .kpi,
+.home-page .num {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.home-page {
+  display: grid;
+  gap: 24px;
+  container-type: inline-size;
+}
+
+.home-kpis,
+.home-columns {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.home-kpis .span-4 {
+  grid-column: span 4;
+}
+
+.home-columns .span-8 {
+  grid-column: span 8;
+}
+
+.home-columns .span-4 {
+  grid-column: span 4;
+}
+
+button.kpi-card {
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.kpi,
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.kpi {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.num {
+  text-align: right;
+}
+
+.clip,
+.home-page th,
+.home-page td:not(.num) {
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.attention-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.attention-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+@container (max-width: 720px) {
+  .home-kpis .span-4,
+  .home-columns .span-8,
+  .home-columns .span-4 {
+    grid-column: span 12;
+  }
+}

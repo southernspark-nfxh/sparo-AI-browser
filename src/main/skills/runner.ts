@@ -1176,6 +1176,9 @@ function scaffoldText(skill: Skill): string {
       if (pit.milestone === n && pit.note) lines.push(`   坑：${pit.note}`);
     }
   });
+  if (Array.isArray(skill.agentPlaybook) && skill.agentPlaybook.length) {
+    lines.push("脚本全文在 data.agentPlaybook。上面的路线没有脚本，用这份返回或 get_skill 取全文。");
+  }
   if (skill.contract && Object.keys(skill.contract).length) {
     lines.push(`验收：${JSON.stringify(skill.contract)}`);
   }
@@ -1263,7 +1266,15 @@ export async function runSkill(
     return {
       ok: true,
       message: scaffoldText(skill),
-      data: { skillId: skill.id, title: skill.title, distilled: true },
+      data: {
+        skillId: skill.id,
+        title: skill.title,
+        distilled: true,
+        agentPlaybook: Array.isArray(skill.agentPlaybook) ? skill.agentPlaybook : [],
+        measured:
+          skill.measured && typeof skill.measured === "object" ? skill.measured : {},
+        knownGaps: Array.isArray(skill.knownGaps) ? skill.knownGaps : [],
+      },
     };
   }
   const steps = (skill.steps || []) as AnyStep[];

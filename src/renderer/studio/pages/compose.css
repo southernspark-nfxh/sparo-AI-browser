@@ -1,0 +1,168 @@
+.compose-head,
+.compose-inline,
+.compose-action-left,
+.precheck-tools,
+.precheck-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.compose-head {
+  justify-content: space-between;
+}
+
+.compose-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 8fr) minmax(0, 4fr);
+  gap: 24px;
+  align-items: start;
+  min-width: 0;
+}
+
+.compose-main,
+.compose-side,
+.compose-block,
+.platform-card,
+.precheck-row {
+  min-width: 0;
+}
+
+.field-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.field-count[data-over="true"],
+.platform-gap,
+[data-note="limits"] {
+  color: var(--text-secondary);
+}
+
+.field-count[data-over="true"],
+[data-over="true"],
+[data-note="limits"] {
+  color: var(--danger);
+}
+
+.compose-actions {
+  grid-column: 1 / -1;
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  background: var(--bg);
+}
+
+.compose-images,
+.platform-panel,
+.compose-block {
+  display: grid;
+  gap: 8px;
+}
+
+.compose-image,
+.compose-cover,
+.platform-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.platform-head {
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+}
+
+.compose-image img,
+.compose-cover img {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  background: var(--surface-subtle);
+  border-radius: var(--radius-control);
+}
+
+.compose-image .name,
+.platform-name,
+.platform-gap {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.check-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.check-line input {
+  width: auto;
+}
+
+.platform-card + .platform-card {
+  margin-top: 8px;
+}
+
+.precheck-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 24px 16px;
+  background: rgba(16, 24, 40, 0.35);
+}
+
+.precheck-dialog {
+  width: min(720px, 100%);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-radius: var(--radius-overlay);
+  box-shadow: var(--shadow-float);
+}
+
+.precheck-head,
+.precheck-foot,
+.precheck-body {
+  padding-right: 16px;
+  padding-left: 16px;
+}
+
+.precheck-head {
+  padding-top: 16px;
+}
+
+.precheck-body {
+  overflow: auto;
+  min-height: 0;
+}
+
+.precheck-foot {
+  flex: none;
+  justify-content: space-between;
+  padding-top: 12px;
+  padding-bottom: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.precheck-row {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+@media (max-width: 1099px) {
+  .compose-editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

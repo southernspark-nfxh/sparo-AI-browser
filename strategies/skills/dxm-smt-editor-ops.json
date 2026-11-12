@@ -1,0 +1,209 @@
+{
+  "id": "dxm-smt-editor-ops",
+  "title": "店小秘速卖通编辑页：脚本化流水线（尺寸 / 图片翻译 / 勾图 / 保存）",
+  "kind": "site",
+  "version": 4,
+  "shareable": true,
+  "distilled": true,
+  "platform": "dianxiaomi",
+  "aliases": [
+    "店小秘图片翻译",
+    "图片一键翻译",
+    "批量改图片尺寸",
+    "主图800",
+    "编辑图片下拉",
+    "店小秘主图7张",
+    "图片没翻译",
+    "店小秘上架太慢"
+  ],
+  "createdAt": "2026-11-12T00:00:00.000Z",
+  "updatedAt": "2026-11-13T00:20:00.000Z",
+  "intent": "在店小秘速卖通商品编辑页里做批量图片尺寸、图片翻译、主图勾选、保存与复检时使用。脚本负责找元素、派发事件、等待和读回。大脑只负责英文标题、类目取舍、价格库存重量、哪几张图有中文、费用确认和保存前是否通过。付费翻译和保存必须等人确认。",
+  "declared_domains": [
+    "www.dianxiaomi.com"
+  ],
+  "declared_actions": [
+    "execute"
+  ],
+  "human_gates": [
+    "login",
+    "pay"
+  ],
+  "params": {},
+  "steps": [],
+  "measured": {
+    "mcpRoundTripWarm": "6-15ms",
+    "executeDoesNotAwaitPromise": "默认仍返回 {}。awaitPromise 为 true 才等待 Promise，并有超时",
+    "checkbox18x2Clicks": "gap150ms=5.8s，0 失败",
+    "exam312s": "2026-11-12 23:39–23:44，17 个调用文件。五次快照和模型间隔占了大部分时间",
+    "unsavedFillLost": "填表没有保存。重启后 bcd8d745 休眠并离开编辑页，英文标题和 20.45 售价不在商品上"
+  },
+  "route": [
+    {
+      "kind": "open",
+      "goal": "先分清谁做。脚本做找元素、派发事件、等待、重试、批量循环和读回。大脑只做标题英文、类目取舍、价格库存重量、哪几张图有中文、费用确认、保存前是否通过。确定性规则写进脚本。"
+    },
+    {
+      "kind": "open",
+      "goal": "执行模型：execute 默认不 await Promise。每个阶段是一次启动加轮询：启动脚本最后返回字符串 started，结果写进 window.__jobRes。run_skill 只回本路线。脚本在 data.agentPlaybook，也可用 get_skill 取全文。"
+    },
+    {
+      "kind": "open",
+      "goal": "每个 job 包在 try/catch/finally 里，finally 写 window.__jobRes。轮询间隔 300ms。禁止在主进程或 PowerShell 里 Start-Sleep 硬等。"
+    },
+    {
+      "kind": "open",
+      "goal": "动手前 list_tabs。目标 id 要在，discarded 必须是 false，url 必须仍包含本单的 edit?id=。只剩 id、标签已休眠或地址变成草稿列表，就重新打开再快照。switch_tab 会 not_your_tab，工具参数直接传 tabId。"
+    },
+    {
+      "kind": "open",
+      "goal": "P0 一次快照拿全：标题、分类、自定义属性、关税、包装、18 张图的勾选和宽度、红字、SKU 每一行的价格库存重量。缺字段才允许再扫一次。"
+    },
+    {
+      "kind": "open",
+      "goal": "P1 勾图一个 job。重新 query .productMainImgModule .single-image，点 label.image-checkbox-in-box，每张之间 await 150 到 250ms，然后复读勾选。不要用同步 for 空转。"
+    },
+    {
+      "kind": "open",
+      "goal": "打开编辑图片下拉：按钮按文本匹配「编辑图片」并排除「批量编辑」。先派发指针序列把下拉创建出来。菜单项按文本点。禁止按索引。禁止点清空图片。"
+    },
+    {
+      "kind": "open",
+      "goal": "P2 尺寸一个 job。弹窗按 .ant-modal-title 精确等于「批量图片尺寸」。主图 6 张小边 800，其余图宽 800。提交后轮询完成再关弹窗。"
+    },
+    {
+      "kind": "open",
+      "goal": "P3 图片翻译只打开弹窗并读出今日免费张数和预计秘豆，然后停。返回 needConfirm:true、submitted:false。秘豆数等于 30 也不点「一键翻译」。页顶一键翻译不译图片。等人确认费用之后才允许另一次提交。"
+    },
+    {
+      "kind": "open",
+      "goal": "P4 表单一个 job。值放在 window.__fill，由大脑事先算好。同一行 SKU 连续写入，行与行之间只让出一帧，不要每格 sleep 50 到 70ms。"
+    },
+    {
+      "kind": "open",
+      "goal": "P5 先跑保存前检查表。失败项不为空就不点保存。检查表看：标题为英文、主图恰好 6 张、商品图都是 800 宽、属性无汉字、红字为 0 且关税已选、SKU 每行都有价格和库存、类目已定。保存按钮 innerText 严格等于「保存」。出现「未应用的图片」点「继续操作」。不要给 qa_gate 传 target 或 mode。"
+    },
+    {
+      "kind": "open",
+      "goal": "P6 重载同一个 edit?id= 后，再跑同一张检查表。重载后的结果才算保存成功。"
+    }
+  ],
+  "pitfalls": [
+    {
+      "milestone": 2,
+      "note": "execute 默认不 await Promise。整段 async 脚本直接当返回值时，拿到的是 {}。job 要以 started 收尾，结果写在 window.__jobRes。"
+    },
+    {
+      "milestone": 2,
+      "note": "run_skill 的 message 只有路线。脚本在 data.agentPlaybook，或再 get_skill 取全文。"
+    },
+    {
+      "milestone": 3,
+      "note": "job 不写 finally 就会永远 running。异常也要把 err 写进结果。"
+    },
+    {
+      "milestone": 3,
+      "note": "禁止外部 Start-Sleep。页面内 300ms 轮询 window.__jobRes。"
+    },
+    {
+      "milestone": 4,
+      "note": "switch_tab 会 not_your_tab。execute、快照和检查都在参数里传 tabId。"
+    },
+    {
+      "milestone": 4,
+      "note": "标签 id 还在不够。discarded 为 true，或 url 不再是这个 edit?id=，内存修改已经丢了，必须重开。"
+    },
+    {
+      "milestone": 6,
+      "note": "同步 for 连点 checkbox 会丢点击。每张之间 await 150 到 250ms。"
+    },
+    {
+      "milestone": 7,
+      "note": ".img-options-action-btn 第 0 个是 AI 商品套图。按文本找「编辑图片」，并排除「批量编辑」。"
+    },
+    {
+      "milestone": 7,
+      "note": "下拉不在 DOM 里。不先派发指针序列，.ant-dropdown 数量是 0。"
+    },
+    {
+      "milestone": 7,
+      "note": "「清空图片」在同一个下拉里。只按文本白名单点击，禁止按索引。"
+    },
+    {
+      "milestone": 7,
+      "note": "menu_click 找「编辑图片」会点到页顶翻译按钮，那里没有这些菜单项。"
+    },
+    {
+      "milestone": 8,
+      "note": "多个 .ant-modal-wrap 叠在一起。按 .ant-modal-title 精确选「批量图片尺寸」，不要用最后一个弹窗。"
+    },
+    {
+      "milestone": 9,
+      "note": "页顶「一键翻译」只译文字，不译图片。图片走「编辑图片 → 图片翻译」。"
+    },
+    {
+      "milestone": 9,
+      "note": "预计秘豆等于 30 也不许自己点「一键翻译」。读完费用就停，等人确认。"
+    },
+    {
+      "milestone": 10,
+      "note": "29 行 SKU 每格再等 50 到 70ms，会把一个 job 拖到 17 秒。一行写完再让出一帧。"
+    },
+    {
+      "milestone": 11,
+      "note": "保存按钮用包含匹配会点到「保存并移入待发布」。innerText 必须严格等于「保存」。"
+    },
+    {
+      "milestone": 11,
+      "note": "「未应用的图片」点「继续操作」。点「返回处理」弹窗会留着。"
+    },
+    {
+      "milestone": 11,
+      "note": "检查表有失败项就停。不要把 qa_gate 的 target、mode 当成参数，那两个字段会被丢掉。"
+    }
+  ],
+  "knownGaps": [
+    "变种颜色列是只读文本，编辑页里改不了。",
+    "图片翻译和图片白底要扣费。脚本只读费用，不自动提交。",
+    "切换产品分类可能重置 SKU 和自定义属性。能接受的自动识别类目就保留。",
+    "P2 生成完成和 P3 翻译完成都要在页面里轮询。固定睡眠不算完成。",
+    "主进程 qa_gate 与这张检查表对齐之后，调用时带 tabId。在那之前，保存以本技能检查表为准。"
+  ],
+  "notes": [
+    "v4：一次快照、一条 job、费用和保存前停下、标签要同时满足未休眠且仍是本单编辑页、坑按 12 段重新编号。",
+    "run_skill 会在 data.agentPlaybook 里带上脚本。message 仍然是路线。",
+    "不采用「单段同步不超过 3 秒」。慢的是每格主动等待和模型在两次调用之间重做决定。",
+    "收费功能提交前把费用交人。整套顺序：快照 → 勾图 → 尺寸 → 翻译确认 → 填表 → 检查表 → 保存 → 重载复检。"
+  ],
+  "agentPlaybook": [
+    "动手前 list_tabs。id 在、discarded 为 false、url 含本单 edit?id= 才继续。否则重新 navigate 到这个编辑页，再跑 P0。",
+    "通用前缀：const P=(el,ts=['pointerdown','mousedown','pointerup','mouseup','click'])=>{if(!el)return;for(const n of ts){const C=n.startsWith('pointer')?PointerEvent:MouseEvent;(el.querySelector('span')||el).dispatchEvent(new C(n,{bubbles:true,cancelable:true,button:0,pointerId:1,isPrimary:true}));}el.click();}; const EDITBTN=()=>[...document.querySelectorAll('.img-options-action-btn')].find(x=>x.innerText.includes('编辑图片')&&!x.innerText.includes('批量编辑'));",
+    "P0 一次快照：(() => {\n  const S = (el) => ((el && (el.innerText || el.textContent)) || \"\").replace(/\\s+/g, \" \").trim();\n  const fi = (kw) => [...document.querySelectorAll(\".ant-form-item\")].find((f) => S(f.querySelector(\"label\")).replace(/\\s+/g, \"\").includes(kw));\n  const val = (el) => (el ? String(el.value ?? \"\").trim() : \"\");\n  const cjk = (s) => (String(s).match(/[\\u4e00-\\u9fff]/g) || []).length;\n  const imgs = [...document.querySelectorAll(\".productMainImgModule .single-image\")];\n  const rows = [...document.querySelectorAll(\".smtSkuEditTable table tr\")].slice(2);\n  const titleItem = fi(\"产品标题\");\n  const attrItem = fi(\"自定义属性\");\n  const dutyItem = fi(\"报价是否含关税\");\n  const catItem = fi(\"产品分类\");\n  const errs = [...document.querySelectorAll(\".ant-form-item-explain-error\")].map(S).filter(Boolean);\n  return {\n    url: location.href,\n    title: val(titleItem && titleItem.querySelector(\"input,textarea\")),\n    category: catItem ? S(catItem) : \"\",\n    attrs: attrItem ? [...attrItem.querySelectorAll(\"input,textarea\")].map((el) => el.value).filter(Boolean) : [],\n    attrCjk: attrItem ? [...attrItem.querySelectorAll(\"input,textarea\")].reduce((n, el) => n + cjk(el.value), 0) : 0,\n    duty: dutyItem ? [...dutyItem.querySelectorAll(\"input[type=radio]\")].map((r) => ({ v: r.value, on: r.checked })) : [],\n    packW: val((fi(\"包装后重量\") || {}).querySelector && fi(\"包装后重量\").querySelector(\"input\")),\n    imgs: imgs.map((el, i) => {\n      const img = el.querySelector(\"img\");\n      return { i, on: !!el.querySelector(\"input.ant-checkbox-input\")?.checked, dim: S(el).slice(0, 24), w: img ? img.naturalWidth : 0 };\n    }),\n    errs,\n    sku: rows.map((tr) => {\n      const td = [...tr.querySelectorAll(\"td\")];\n      return { name: S(td[1]).slice(0, 40), price: val(td[2] && td[2].querySelector(\"input\")), stock: val(td[6] && td[6].querySelector(\"input\")), w: val(td[7] && td[7].querySelector(\"input\")) };\n    })\n  };\n})()",
+    "保存前检查表。ok 为 false 就停，不要点保存：(() => {\n  const S = (el) => ((el && (el.innerText || el.textContent)) || \"\").replace(/\\s+/g, \" \").trim();\n  const fi = (kw) => [...document.querySelectorAll(\".ant-form-item\")].find((f) => S(f.querySelector(\"label\")).replace(/\\s+/g, \"\").includes(kw));\n  const val = (el) => (el ? String(el.value ?? \"\").trim() : \"\");\n  const cjk = (s) => (String(s).match(/[\\u4e00-\\u9fff]/g) || []).length;\n  const letters = (s) => (String(s).match(/[A-Za-z]/g) || []).length;\n  const fails = [];\n  const title = val((fi(\"产品标题\") || {}).querySelector && fi(\"产品标题\").querySelector(\"input,textarea\"));\n  if (!title) fails.push(\"标题为空\");\n  else if (cjk(title) > 0 && cjk(title) >= letters(title)) fails.push(\"标题仍含中文\");\n  const imgs = [...document.querySelectorAll(\".productMainImgModule .single-image\")];\n  const checked = imgs.filter((el) => el.querySelector(\"input.ant-checkbox-input\")?.checked).length;\n  if (checked !== 6) fails.push(\"主图 \" + checked + \" 张，需要恰好 6 张\");\n  const bad = imgs.filter((el) => {\n    const m = S(el).match(/(\\d{2,4})\\s*[Xx×]\\s*(\\d{2,4})/);\n    const nw = el.querySelector(\"img\")?.naturalWidth || 0;\n    return !(m && Number(m[1]) === 800 && (nw === 0 || nw === 800));\n  });\n  if (!imgs.length || bad.length) fails.push(\"商品图不是全部 800 宽\");\n  const attrs = fi(\"自定义属性\") ? [...fi(\"自定义属性\").querySelectorAll(\"input,textarea\")].map((el) => el.value) : [];\n  if (attrs.reduce((n, v) => n + cjk(v), 0) > 0) fails.push(\"自定义属性有中文\");\n  const errs = [...document.querySelectorAll(\".ant-form-item-explain-error\")].map(S).filter(Boolean);\n  const dutyOn = fi(\"报价是否含关税\") ? [...fi(\"报价是否含关税\").querySelectorAll(\"input[type=radio]\")].some((r) => r.checked) : false;\n  if (errs.length || !dutyOn) fails.push(errs[0] || \"报价是否含关税未选\");\n  const rows = [...document.querySelectorAll(\".smtSkuEditTable table tr\")].slice(2);\n  let empty = 0;\n  rows.forEach((tr) => {\n    const td = [...tr.querySelectorAll(\"td\")];\n    if (!val(td[2] && td[2].querySelector(\"input\")) || !val(td[6] && td[6].querySelector(\"input\"))) empty += 1;\n  });\n  if (!rows.length || empty) fails.push(\"SKU 有空的价格或库存\");\n  const cat = (fi(\"产品分类\") ? S(fi(\"产品分类\")) : \"\").replace(/^产品分类/, \"\").trim();\n  if (cat.length < 2) fails.push(\"类目为空\");\n  return { ok: fails.length === 0, fails };\n})()",
+    "P1 勾图沿用已测过的写法：每张之间 await 200ms，finally 写 window.__jobRes。只勾大脑指定的下标，默认前 6 张。",
+    "P4 填写。先把大脑算好的值放进 window.__fill，字段有 title、attrs 数组、duty、price、cargo、stock、weight。然后启动：window.__jobRes=null;(async()=>{const fill=window.__fill||{};const S=(ms)=>new Promise((r)=>setTimeout(r,ms));const set=(el,v)=>{if(!el)return false;const d=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,\"value\");d.set.call(el,String(v));if(el._valueTracker)el._valueTracker.setValue(\"\");el.dispatchEvent(new Event(\"input\",{bubbles:true}));el.dispatchEvent(new Event(\"change\",{bubbles:true}));el.dispatchEvent(new Event(\"blur\",{bubbles:true}));return true;};const out={phase:\"fill\",ok:false,err:null};const t0=performance.now();try{const fi=(kw)=>[...document.querySelectorAll(\".ant-form-item\")].find((f)=>((f.querySelector(\"label\")||{}).innerText||\"\").replace(/\\s+/g,\"\").includes(kw));if(fill.title)set((fi(\"产品标题\")||{}).querySelector&&fi(\"产品标题\").querySelector(\"input,textarea\"),fill.title);const attrs=Array.isArray(fill.attrs)?fill.attrs:[];const inputs=fi(\"自定义属性\")?[...fi(\"自定义属性\").querySelectorAll(\"input\")]:[];for(let i=0;i<attrs.length;i++){set(inputs[i],attrs[i]);}if(fill.duty){const r=[...(fi(\"报价是否含关税\")||document).querySelectorAll(\"input[type=radio]\")].find((x)=>x.value===String(fill.duty));if(r)(r.closest(\"label\")||r).click();}const rows=()=>[...document.querySelectorAll(\".smtSkuEditTable table tr\")].slice(2);for(const tr of rows()){const td=[...tr.querySelectorAll(\"td\")];if(fill.price!=null)set(td[2]&&td[2].querySelector(\"input\"),fill.price);if(fill.cargo!=null)set(td[3]&&td[3].querySelector(\"input\"),fill.cargo);if(fill.stock!=null)set(td[6]&&td[6].querySelector(\"input\"),fill.stock);if(fill.weight!=null)set(td[7]&&td[7].querySelector(\"input\"),fill.weight);await new Promise((r)=>requestAnimationFrame(r));}out.ok=true;}catch(e){out.err=String(e&&e.message||e);}finally{out.ms=Math.round(performance.now()-t0);window.__jobRes=out;}})();\"started\"",
+    "P3 翻译只打开弹窗并读费用，不点「一键翻译」：window.__jobRes=null;(async()=>{const S=(ms)=>new Promise((r)=>setTimeout(r,ms));const P=(el)=>{if(!el)return;for(const n of [\"pointerdown\",\"mousedown\",\"pointerup\",\"mouseup\",\"click\"]){const C=n.startsWith(\"pointer\")?PointerEvent:MouseEvent;(el.querySelector(\"span\")||el).dispatchEvent(new C(n,{bubbles:true,cancelable:true,button:0,pointerId:1,isPrimary:true}));}el.click();};const out={phase:\"translate\",ok:false,needConfirm:true,submitted:false};try{const btn=[...document.querySelectorAll(\".img-options-action-btn\")].find((x)=>x.innerText.includes(\"编辑图片\")&&!x.innerText.includes(\"批量编辑\"));if(!btn){out.err=\"no edit btn\";return;}btn.scrollIntoView({block:\"center\"});await S(200);P(btn);await S(700);const dd=[...document.querySelectorAll(\".ant-dropdown\")].find((d)=>/图片翻译/.test(d.innerText));if(!dd){out.err=\"no dropdown\";return;}const b=btn.getBoundingClientRect();dd.classList.remove(\"ant-dropdown-hidden\");dd.style.cssText=\"display:block;position:fixed;left:\"+Math.max(8,b.left)+\"px;top:\"+(b.bottom+2)+\"px;z-index:99999;visibility:visible;pointer-events:auto;\";await S(200);const item=[...dd.querySelectorAll(\"li,.ant-dropdown-menu-item\")].find((el)=>el.innerText.replace(/\\s+/g,\"\").startsWith(\"图片翻译\"));if(!item){out.err=\"no item\";return;}for(const n of [\"mouseenter\",\"mousedown\",\"mouseup\",\"click\"]){item.dispatchEvent(new MouseEvent(n,{bubbles:true,cancelable:true}));}item.click();await S(1500);const w=[...document.querySelectorAll(\".ant-modal-wrap\")].find((x)=>getComputedStyle(x).display!==\"none\"&&/批量图片翻译/.test(x.innerText));if(!w){out.err=\"no modal\";return;}const txt=w.innerText.replace(/\\s+/g,\" \");out.cost=(txt.match(/预计消耗秘豆：(\\d+)/)||[])[1]||\"\";out.summary=(txt.match(/已选中\\d+张/)||[])[0]||\"\";out.ok=true;out.needConfirm=true;out.submitted=false;}catch(e){out.err=String(e&&e.message||e);}finally{window.__jobRes=out;}})();\"started\"",
+    "保存：先跑检查表。fails 为空，并且人已经同意保存，才点 innerText 严格等于「保存」的按钮。随后轮询「继续操作」和「您的产品编辑成功！」。",
+    "重载同一个 edit?id= 后，再跑检查表。沿用保存前的 DOM 不算完成。",
+    "不要做：外部 Start-Sleep、按索引点菜单、自动点一键翻译、给 qa_gate 传 target 或 mode、把整页正文里的 4000x4000 当成商品图尺寸。"
+  ],
+  "contract": {
+    "workflows": [],
+    "doNotUse": [
+      "menu_click 找编辑图片子菜单",
+      "按索引点下拉菜单项",
+      "清空图片",
+      "同步 for 循环连点 checkbox",
+      "async IIFE 直接 return 结果",
+      "switch_tab 切标签",
+      "秘豆数到了就点一键翻译",
+      "外部 Start-Sleep",
+      "qa_gate 的 target 或 mode"
+    ],
+    "paidConfirm": [
+      "图片翻译",
+      "图片白底"
+    ],
+    "publishConfirm": []
+  }
+}

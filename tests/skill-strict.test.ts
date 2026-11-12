@@ -235,6 +235,41 @@ describe("distilled scaffold and stats", () => {
     expect(skillCatalogLines(dir)).toContain("- taught-bill: 核对户号（沉淀·2 段路线）");
   });
 
+  it("distilled run_skill returns playbook without executing it", async () => {
+    const dir = tmp();
+    writeFileSync(
+      join(dir, "skills", "taught-script.json"),
+      JSON.stringify({
+        id: "taught-script",
+        title: "带脚本的路线",
+        intent: "只交脚本",
+        source: "taught",
+        createdAt: "2026-11-12T00:00:00.000Z",
+        updatedAt: "2026-11-12T00:00:00.000Z",
+        steps: [],
+        stepCount: 0,
+        stats: { success: 0, fail: 0 },
+        enabled: true,
+        distilled: true,
+        route: [{ kind: "open", goal: "先看脚本" }],
+        agentPlaybook: ["window.__jobRes=null;'started'"],
+        measured: { gap: "150ms" },
+        knownGaps: ["完成信号未重跑"],
+      }),
+    );
+    const ran = await runSkill({} as SkillBrowser, dir, { id: "taught-script" });
+    expect(ran.ok).toBe(true);
+    expect(ran.message).toContain("data.agentPlaybook");
+    const data = ran.data as {
+      agentPlaybook?: string[];
+      measured?: { gap?: string };
+      knownGaps?: string[];
+    };
+    expect(data.agentPlaybook).toEqual(["window.__jobRes=null;'started'"]);
+    expect(data.measured).toEqual({ gap: "150ms" });
+    expect(data.knownGaps).toEqual(["完成信号未重跑"]);
+  });
+
   it("counts a real run and leaves dry-run stats unchanged", async () => {
     const dir = tmp();
     writeSkill(dir, "qa-nav", "打开一下");

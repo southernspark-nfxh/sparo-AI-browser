@@ -1,0 +1,142 @@
+.metrics-page,
+.metrics-page .card,
+.metrics-page .clip,
+.metrics-page .kpi,
+.metrics-page .num {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.metrics-page {
+  display: grid;
+  gap: 24px;
+  container-type: inline-size;
+}
+
+.metrics-head,
+.metrics-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.metrics-tools select {
+  width: auto;
+  max-width: 180px;
+}
+
+.metrics-kpis {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.metrics-kpis .span-4,
+.metrics-split {
+  grid-column: span 12;
+}
+
+.metrics-kpis .span-4 {
+  grid-column: span 4;
+}
+
+.metrics-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 24px;
+}
+
+.kpi,
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.kpi {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.num {
+  text-align: right;
+}
+
+.clip,
+.metrics-page th,
+.metrics-page td:not(.num) {
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.metrics-banner,
+.metrics-progress {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.metrics-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.metrics-tabs [aria-selected="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.compare-row,
+.revenue-row,
+.exception {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(72px, auto);
+  gap: 8px 12px;
+  align-items: center;
+  min-width: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.compare-track {
+  height: 8px;
+  background: var(--surface-subtle);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.compare-fill {
+  display: block;
+  height: 8px;
+  background: var(--accent);
+}
+
+.trend-svg {
+  width: 100%;
+  height: 180px;
+}
+
+.trend-svg polyline,
+.trend-svg circle {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.trend-svg circle {
+  fill: var(--accent);
+  stroke: none;
+}
+
+@container (max-width: 720px) {
+  .metrics-kpis .span-4,
+  .metrics-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .metrics-kpis .span-4 {
+    grid-column: span 12;
+  }
+}

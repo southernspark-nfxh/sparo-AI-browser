@@ -9,11 +9,18 @@ export const MIN_GAP_MS = 20 * 1000;
 export const HOUR_CAP = 30;
 
 const IDS = ["toutiao", "baijiahao", "dayu", "sohu"];
+export const COMMENT_PLATFORMS = IDS;
+const PLATFORM_NAME = { toutiao: "头条号", baijiahao: "百家号", dayu: "大鱼号", sohu: "搜狐号" };
+const MISSING_ENV = "还没有选择账号环境，已停止。不会改用默认登录。";
 
-function storeDir() {
+export function defaultCommentStoreDir() {
   const dir = path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "sparo-store");
   fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+function storeDir() {
+  return defaultCommentStoreDir();
 }
 
 function readJson(file, fallback) {
@@ -29,12 +36,24 @@ export function replyLabel(platform) {
   return canReply(platform) ? "回复" : "只读，回复未开";
 }
 
+function clock(ms) {
+  const date = new Date(ms);
+  const pad = (n) => String(n).padStart(2, "0");
+  return pad(date.getHours()) + ":" + pad(date.getMinutes()) + ":" + pad(date.getSeconds());
+}
+
 export function allowReply(stamps, now = Date.now()) {
-  const recent = stamps.filter((stamp) => now - stamp < 60 * 60 * 1000);
-  if (recent.length >= HOUR_CAP) return { ok: false, reason: "每小时不超过 30 条" };
+  const recent = (stamps || []).filter((stamp) => typeof stamp === "number" && now - stamp >= 0 && now - stamp < 60 * 60 * 1000);
+  if (recent.length >= HOUR_CAP) {
+    const retryAt = Math.min(...recent) + 60 * 60 * 1000;
+    return { ok: false, reason: "每小时不超过 30 条，" + clock(retryAt) + " 后再试", retryAt };
+  }
   const last = recent.length ? Math.max(...recent) : 0;
-  if (last && now - last < MIN_GAP_MS) return { ok: false, reason: "单条至少间隔 20 秒" };
-  return { ok: true };
+  if (last && now - last < MIN_GAP_MS) {
+    const retryAt = last + MIN_GAP_MS;
+    return { ok: false, reason: "单条至少间隔 20 秒，" + clock(retryAt) + " 后再试", retryAt };
+  }
+  return { ok: true, retryAt: 0 };
 }
 
 function getPath(value, path) {
@@ -107,7 +126,16 @@ async function readCommentJson(sparo, tab, url) {
   return null;
 }
 
-export async function listComments() {
+export async function listComments(options = {}) {
+  if (options.requireEnv && !String(options.envId || "").trim()) {
+    return {
+      ok: false,
+      code: "missing_env",
+      message: "还没有选择账号环境，已停止。不会改用默认登录。",
+      envId: "",
+      boards: [],
+    };
+  }
   const boards = [];
   let sparo = null;
   let rows = [];
@@ -173,14 +201,240 @@ export function listCommentStatus() {
   });
 }
 
-export function saveReplyDraft(platform, text) {
-  const file = path.join(storeDir(), "comment-drafts.json");
-  const all = readJson(file, {});
-  const key = platform;
-  const prev = all[key] || { text: "", stamps: [] };
-  all[key] = { text, stamps: prev.stamps || [], updatedAt: new Date().toISOString() };
-  fs.writeFileSync(file, JSON.stringify(all, null, 2));
-  return all[key];
+function cachePath(dir) {
+  return path.join(dir, "comment-cache.json");
+}
+
+function legacyDraftPath(dir) {
+  return path.join(dir, "comment-drafts.json");
+}
+
+function normalizeRecord(raw, migrating) {
+  const envId = typeof raw?.envId === "string" ? raw.envId.trim() : "";
+  const association = envId ? "linked" : "unlinked";
+  return {
+    envId,
+    platform: String(raw?.platform || ""),
+    commentId: String(raw?.commentId || ""),
+    author: String(raw?.author || ""),
+    content: String(raw?.content || ""),
+    title: String(raw?.title || ""),
+    articleId: String(raw?.articleId || ""),
+    createdAt: String(raw?.createdAt || ""),
+    draftText: String(raw?.draftText || ""),
+    pendingReply: migrating ? "" : String(raw?.pendingReply || ""),
+    replied: migrating ? false : raw?.replied === true,
+    association,
+    linkLabel: association === "unlinked" ? "未关联" : "",
+  };
+}
+
+function normalizeDraft(raw) {
+  const envId = typeof raw?.envId === "string" ? raw.envId.trim() : "";
+  const association = envId ? "linked" : "unlinked";
+  return {
+    envId,
+    platform: String(raw?.platform || ""),
+    commentId: String(raw?.commentId || ""),
+    text: String(raw?.text || ""),
+    stamps: Array.isArray(raw?.stamps) ? raw.stamps.filter((stamp) => typeof stamp === "number") : [],
+    association,
+    linkLabel: association === "unlinked" ? "未关联" : "",
+    updatedAt: String(raw?.updatedAt || ""),
+  };
+}
+
+function collectRecords(raw, into) {
+  const rows = Array.isArray(raw)
+    ? raw
+    : Array.isArray(raw?.records)
+      ? raw.records
+      : Array.isArray(raw?.comments)
+        ? raw.comments
+        : Array.isArray(raw?.items)
+          ? raw.items
+          : [];
+  for (const row of rows) into.push(normalizeRecord(row, true));
+}
+
+export function migrateCommentCache(cacheRaw, draftsRaw) {
+  const records = [];
+  const drafts = [];
+  collectRecords(cacheRaw, records);
+  if (draftsRaw && typeof draftsRaw === "object" && !Array.isArray(draftsRaw)) {
+    if (draftsRaw.version === 2 && Array.isArray(draftsRaw.drafts)) {
+      for (const row of draftsRaw.drafts) drafts.push(normalizeDraft(row));
+    } else {
+      for (const [key, value] of Object.entries(draftsRaw)) {
+        if (["version", "records", "drafts", "comments", "items", "notes", "legacyMerged"].includes(key)) continue;
+        if (!value || typeof value !== "object") continue;
+        drafts.push(normalizeDraft({ ...value, platform: value.platform || key }));
+      }
+    }
+  }
+  return { version: 2, legacyMerged: true, records, drafts, notes: Array.isArray(cacheRaw?.notes) ? cacheRaw.notes : [] };
+}
+
+export function readCommentStore(dir) {
+  const raw = readJson(cachePath(dir), null);
+  if (raw && raw.version === 2 && Array.isArray(raw.records) && Array.isArray(raw.drafts)) {
+    return {
+      version: 2,
+      legacyMerged: Boolean(raw.legacyMerged),
+      records: raw.records.map((item) => normalizeRecord(item, false)),
+      drafts: raw.drafts.map((item) => normalizeDraft(item)),
+      notes: Array.isArray(raw.notes) ? raw.notes : [],
+    };
+  }
+  return migrateCommentCache(raw, readJson(legacyDraftPath(dir), null));
+}
+
+export function writeCommentStore(dir, store) {
+  fs.mkdirSync(dir, { recursive: true });
+  const next = {
+    version: 2,
+    legacyMerged: store.legacyMerged !== false,
+    records: (store.records || []).map((item) => normalizeRecord(item, false)),
+    drafts: (store.drafts || []).map((item) => normalizeDraft(item)),
+    notes: store.notes || [],
+  };
+  fs.writeFileSync(cachePath(dir), JSON.stringify(next, null, 2));
+  return next;
+}
+
+export function loadCommentStore(dir) {
+  const file = cachePath(dir);
+  const raw = readJson(file, null);
+  const ready = raw && raw.version === 2;
+  const store = readCommentStore(dir);
+  if (!ready) writeCommentStore(dir, store);
+  return ready ? readCommentStore(dir) : store;
+}
+
+export function listCachedComments(dir, envId) {
+  const id = String(envId || "").trim();
+  if (!id) return [];
+  return readCommentStore(dir).records.filter((item) => item.association === "linked" && item.envId === id);
+}
+
+function scopedStamps(dir, envId, platform) {
+  return readCommentStore(dir).drafts
+    .filter((item) => item.association === "linked" && item.envId === envId && item.platform === platform)
+    .flatMap((item) => item.stamps || []);
+}
+
+function legacyStamps(dir, platform) {
+  const row = readJson(legacyDraftPath(dir), {})[platform];
+  return Array.isArray(row?.stamps) ? row.stamps.filter((stamp) => typeof stamp === "number") : [];
+}
+
+function replySeen(item, text) {
+  if (!text) return false;
+  const chunks = [];
+  if (Array.isArray(item?.replies)) chunks.push(...item.replies.map((part) => String(part)));
+  if (item?.replyText) chunks.push(String(item.replyText));
+  return chunks.some((chunk) => chunk.includes(text));
+}
+
+export function reconcileWithGet(dir, envId, platform, fetched) {
+  const id = String(envId || "").trim();
+  if (!id) return { ok: false, code: "missing_env", message: MISSING_ENV, envId: "", records: [] };
+  const store = readCommentStore(dir);
+  const incoming = Array.isArray(fetched) ? fetched : [];
+  const kept = store.records.filter((item) => !(item.envId === id && item.platform === platform && item.association === "linked"));
+  const next = incoming.map((item) => {
+    const commentId = String(item.commentId || "");
+    const prev = store.records.find((row) => row.envId === id && row.platform === platform && row.commentId === commentId);
+    const pending = prev?.pendingReply || "";
+    const seen = Boolean(pending) && replySeen(item, pending);
+    return normalizeRecord({
+      platform,
+      commentId,
+      author: item.author || prev?.author || "",
+      content: item.content || prev?.content || "",
+      title: item.title || prev?.title || "",
+      articleId: item.articleId || prev?.articleId || "",
+      createdAt: item.createdAt || prev?.createdAt || "",
+      envId: id,
+      draftText: prev?.draftText || "",
+      pendingReply: seen ? "" : pending,
+      replied: Boolean(seen),
+      association: "linked",
+    }, false);
+  });
+  for (const prev of store.records) {
+    if (prev.envId === id && prev.platform === platform && prev.association === "linked" && prev.pendingReply && !next.some((item) => item.commentId === prev.commentId)) {
+      next.push({ ...prev, replied: false });
+    }
+  }
+  store.records = kept.concat(next);
+  store.notes = (store.notes || []).filter((note) => !(note.envId === id && note.platform === platform));
+  writeCommentStore(dir, store);
+  return { ok: true, code: "ok", message: "", envId: id, records: next };
+}
+
+export function saveReplyDraft(platform, text, meta = {}) {
+  const envId = String(meta.envId || "").trim();
+  const dir = meta.storeDir || storeDir();
+  const commentId = String(meta.commentId || "");
+  if (!envId) {
+    const file = legacyDraftPath(dir);
+    fs.mkdirSync(dir, { recursive: true });
+    const all = readJson(file, {});
+    const prev = all[platform] || { text: "", stamps: [] };
+    all[platform] = { text, stamps: prev.stamps || [], updatedAt: new Date().toISOString() };
+    fs.writeFileSync(file, JSON.stringify(all, null, 2));
+    return { ...all[platform], association: "unlinked", linkLabel: "未关联", envId: "" };
+  }
+  const store = readCommentStore(dir);
+  const prev = store.drafts.find((item) => item.association === "linked" && item.envId === envId && item.platform === platform && item.commentId === commentId)
+    || store.drafts.find((item) => item.association === "linked" && item.envId === envId && item.platform === platform && !item.commentId);
+  const draft = normalizeDraft({
+    envId,
+    platform,
+    commentId,
+    text,
+    stamps: prev?.stamps || [],
+    updatedAt: new Date().toISOString(),
+  });
+  store.drafts = store.drafts.filter((item) => item !== prev);
+  store.drafts.push(draft);
+  const record = store.records.find((item) => item.association === "linked" && item.envId === envId && item.platform === platform && item.commentId === commentId);
+  if (record) record.draftText = text;
+  writeCommentStore(dir, store);
+  return draft;
+}
+
+export function noteReplyAttempt(platform, now = Date.now(), meta = {}) {
+  const envId = String(meta.envId || "").trim();
+  const dir = meta.storeDir || storeDir();
+  const commentId = String(meta.commentId || "");
+  if (!envId) {
+    const file = legacyDraftPath(dir);
+    fs.mkdirSync(dir, { recursive: true });
+    const all = readJson(file, {});
+    const prev = all[platform] || { text: "", stamps: [] };
+    const gate = allowReply(prev.stamps || [], now);
+    if (!gate.ok) return gate;
+    prev.stamps = [...(prev.stamps || []), now];
+    all[platform] = prev;
+    fs.writeFileSync(file, JSON.stringify(all, null, 2));
+    return { ok: true };
+  }
+  const store = readCommentStore(dir);
+  const stamps = store.drafts
+    .filter((item) => item.association === "linked" && item.envId === envId && item.platform === platform)
+    .flatMap((item) => item.stamps || []);
+  const gate = allowReply(stamps, now);
+  if (!gate.ok) return gate;
+  let draft = store.drafts.find((item) => item.association === "linked" && item.envId === envId && item.platform === platform && item.commentId === commentId);
+  if (!draft) {
+    draft = normalizeDraft({ envId, platform, commentId, text: meta.text || "", stamps: [], updatedAt: new Date().toISOString() });
+    store.drafts.push(draft);
+  }
+  draft.stamps = [...(draft.stamps || []), now];
+  writeCommentStore(dir, store);
+  return { ok: true };
 }
 
 function pageResult(raw) {
@@ -212,27 +466,11 @@ export function replySelector(platform) {
   }
 }
 
-export async function fillOpenReply(platform, text, comment = {}) {
-  const selector = replySelector(platform);
-  const profile = loadProfile(platform);
-  const page = profile.data?.metricsMap?.comment?.page || "";
-  if (!selector || !page) {
-    return { ok: false, kept: true, message: "回复草稿已留在本机。评论框选择器还没实测，没有往平台页面填写。" };
-  }
-  const stamps = readJson(path.join(storeDir(), "comment-drafts.json"), {})[platform]?.stamps || [];
-  const gate = allowReply(stamps, Date.now());
-  if (!gate.ok) return { ok: false, kept: true, message: gate.reason };
-  const sparo = await import("./sparo.mjs");
-  const listed = await sparo.tabs();
-  const tab = sparo.tabRows(listed).find((item) => String(item.url || "").includes(profile.entry.host) && String(item.url || "").includes(page));
-  if (!tab?.id) {
-    return { ok: false, kept: true, message: "回复草稿已留在本机。评论页没打开，没有填写。" };
-  }
-  await sparo.switchTab(tab.id);
-  const snippet = String(comment.content || "").replace(/\s+/g, " ").trim().slice(0, 16);
-  const script =
-    "(() => {" +
-    "if (!location.href.includes(" + JSON.stringify(page) + ")) return { ok: false, reason: '页面不匹配' };" +
+export function buildReplyFillScript(page, selector, text, snippet, commentId) {
+  return "(() => {" +
+    "const captcha = document.querySelector(\"iframe[src*='captcha'], iframe[src*='verify'], .geetest_panel, .captcha, [class*='captcha-'], #captcha\");" +
+    "if (captcha) { const style = getComputedStyle(captcha); if (style && style.display !== 'none' && style.visibility !== 'hidden') return { captcha: true, ok: false, reason: '验证码', n: 0 }; }" +
+    "if (!location.href.includes(" + JSON.stringify(page) + ")) return { ok: false, reason: '页面不匹配', n: 0 };" +
     "const nodes = Array.from(document.querySelectorAll(" + JSON.stringify(selector) + "));" +
     "const hit = [];" +
     "for (const el of nodes) {" +
@@ -240,15 +478,11 @@ export async function fillOpenReply(platform, text, comment = {}) {
     "if (style.display === 'none' || style.visibility === 'hidden') continue;" +
     "let own = false; let p = el;" +
     "const snip = " + JSON.stringify(snippet) + ";" +
-    "const cid = " + JSON.stringify(String(comment.commentId || "")) + ";" +
+    "const cid = " + JSON.stringify(String(commentId || "")) + ";" +
     "for (let i = 0; i < 16 && p; i++) {" +
     "const t = (p.innerText || '').replace(/\\s+/g, ' ');" +
     "const hitText = (cid && t.includes(cid)) || (snip && t.includes(snip));" +
-    "if (hitText) {" +
-    "const replies = (t.match(/回复/g) || []).length;" +
-    "if (replies <= 4) own = true;" +
-    "break;" +
-    "}" +
+    "if (hitText) { const replies = (t.match(/回复/g) || []).length; if (replies <= 4) own = true; break; }" +
     "p = p.parentElement;" +
     "}" +
     "if (own) hit.push(el);" +
@@ -258,33 +492,185 @@ export async function fillOpenReply(platform, text, comment = {}) {
     "const proto = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value');" +
     "if (proto && proto.set) proto.set.call(el, " + JSON.stringify(text) + "); else el.value = " + JSON.stringify(text) + ";" +
     "el.dispatchEvent(new Event('input', { bubbles: true }));" +
-    "return { ok: el.value === " + JSON.stringify(text) + ", value: el.value };" +
+    "const readback = el.value;" +
+    "return { ok: readback === " + JSON.stringify(text) + ", value: readback, readback: readback, n: 1 };" +
     "})()";
+}
+
+export function judgeReplyTarget(probe, text) {
+  if (!probe) {
+    return { ok: false, filled: false, replied: false, code: "reply_box_closed", message: "回复框未打开，已停止。草稿还留着。" };
+  }
+  if (probe.captcha || probe.reason === "验证码") {
+    return { ok: false, filled: false, replied: false, code: "captcha", message: "遇到验证码，已停止。请在平台页面手动处理，草稿还留着。" };
+  }
+  if (probe.reason === "环境不匹配") {
+    return { ok: false, filled: false, replied: false, code: "env_mismatch", message: "回复框不属于当前环境，已停止。不会改用默认登录。" };
+  }
+  const count = Number(probe.n ?? 0);
+  if (probe.reason === "定位不唯一" || count > 1) {
+    return { ok: false, filled: false, replied: false, code: "reply_target_ambiguous", message: "回复目标不唯一，已停止，没有填进其他输入框。草稿还留着。" };
+  }
+  const readback = probe.readback !== undefined ? probe.readback : probe.value;
+  if (probe.ok === true && readback === text && (probe.n === undefined || count === 1)) {
+    return {
+      ok: false,
+      filled: true,
+      replied: false,
+      code: "filled_pending_get",
+      message: "已经填进这条评论打开的回复框，并读回一致。请到平台页面发送。下一次读取评论之前，不会标成已回复。",
+    };
+  }
+  if (probe.reason === "回复框未打开" || probe.reason === "页面不匹配" || count === 0 || probe.ok === false) {
+    return { ok: false, filled: false, replied: false, code: "reply_box_closed", message: "回复框未打开，已停止。草稿还留着。" };
+  }
+  return { ok: false, filled: false, replied: false, code: "fill_failed", message: "没有确认写进这条评论的回复框，草稿还留着。" };
+}
+
+export function resolveReplyTab(rows, platform, envId) {
+  const id = String(envId || "").trim();
+  if (!id) return { ok: false, code: "missing_env", reason: "环境不匹配", message: MISSING_ENV, n: 0 };
+  let page = "";
+  let host = "";
   try {
-    const raw = await sparo.exec(script, tab.id, profile.entry.host);
-    const pageBack = pageResult(raw);
-    if (!pageBack || pageBack.ok !== true || pageBack.value !== text) {
-      const reason = pageBack?.reason === "页面不匹配" || pageBack?.reason === "定位不唯一" || pageBack?.reason === "回复框未打开"
-        ? pageBack.reason
-        : "回复框未打开";
-      return { ok: false, kept: true, message: "回复草稿已留在本机。" + reason + "，没有往别的输入框填写。" };
-    }
-    const noted = noteReplyAttempt(platform, Date.now());
-    if (!noted.ok) return { ok: false, kept: true, message: noted.reason };
-    return { ok: false, kept: true, filled: true, message: "已经写进这条评论打开的回复框，并读回一致。发送要你在平台页面上点。" };
+    const profile = loadProfile(platform);
+    page = profile.data?.metricsMap?.comment?.page || "";
+    host = profile.entry?.host || "";
   } catch {
-    return { ok: false, kept: true, message: "回复草稿已留在本机。往页面填写时没有成功。" };
+    page = "";
+  }
+  if (!page || !host) return { ok: false, code: "reply_box_closed", reason: "回复框未打开", message: "回复框未打开，已停止。草稿还留着。", n: 0 };
+  const samePage = (item) => {
+    const url = String(item?.url || "");
+    return url.includes(host) && url.includes(page);
+  };
+  const foreign = (rows || []).filter((item) => item?.envId && item.envId !== id && samePage(item));
+  const matched = (rows || []).filter((item) => samePage(item) && (!item.envId || item.envId === id));
+  if (!matched.length && foreign.length) {
+    return { ok: false, code: "env_mismatch", reason: "环境不匹配", message: "回复框不属于当前环境，已停止。不会改用默认登录。", n: foreign.length };
+  }
+  if (matched.length !== 1) {
+    const ambiguous = matched.length > 1;
+    return {
+      ok: false,
+      code: ambiguous ? "reply_target_ambiguous" : "reply_box_closed",
+      reason: ambiguous ? "定位不唯一" : "回复框未打开",
+      message: ambiguous ? "回复目标不唯一，已停止，没有填进其他输入框。草稿还留着。" : "回复框未打开，已停止。草稿还留着。",
+      n: matched.length,
+    };
+  }
+  return { ok: true, tab: matched[0], n: 1 };
+}
+
+let commentLock = null;
+let lockSeq = 0;
+
+export function resetCommentLock() {
+  commentLock = null;
+  lockSeq += 1;
+}
+
+function claimCommentLock(envId, platform) {
+  if (commentLock) {
+    const name = PLATFORM_NAME[commentLock.platform] || commentLock.platform;
+    const same = commentLock.platform === platform && commentLock.envId === envId;
+    return {
+      ok: false,
+      code: "busy_platform",
+      message: same
+        ? "这个平台的评论页正在处理，不能同时再开一次。"
+        : "正在处理" + name + "的评论，不能同时操作另一个平台。请等这一次结束。",
+      envId,
+      replied: false,
+    };
+  }
+  lockSeq += 1;
+  commentLock = { envId, platform, token: lockSeq };
+  return { ok: true, token: lockSeq };
+}
+
+function releaseCommentLock(token) {
+  if (commentLock && commentLock.token === token) commentLock = null;
+}
+
+function stopped(code, message, envId) {
+  return { ok: false, code, message, envId: envId || "", kept: true, replied: false };
+}
+
+function markPending(dir, envId, platform, commentId, text) {
+  const store = readCommentStore(dir);
+  const record = store.records.find((item) => item.association === "linked" && item.envId === envId && item.platform === platform && item.commentId === commentId);
+  if (!record) return;
+  record.pendingReply = text;
+  record.draftText = text;
+  record.replied = false;
+  writeCommentStore(dir, store);
+}
+
+export async function fillOpenReply(platform, text, comment = {}) {
+  if (comment.batch || Array.isArray(comment.commentId)) {
+    return stopped("batch_rejected", "不会自动批量回复。", comment.envId || "");
+  }
+  if (!canReply(platform)) return stopped("readonly", "只读，回复未开", comment.envId || "");
+  const body = String(text || "").trim();
+  const envId = String(comment.envId || "").trim();
+  if (!body) return stopped("empty", "回复草稿是空的，没有填写。", envId);
+  const dir = comment.storeDir || storeDir();
+  const now = comment.now || Date.now();
+  const stamps = envId ? scopedStamps(dir, envId, platform) : legacyStamps(dir, platform);
+  const gate = allowReply(stamps, now);
+  if (!gate.ok) return { ok: false, kept: true, code: "rate_limit", message: gate.reason, retryAt: gate.retryAt, envId, replied: false };
+  if (!envId) return stopped("missing_env", MISSING_ENV, "");
+  const claimed = claimCommentLock(envId, platform);
+  if (!claimed.ok) return { ...claimed, kept: true };
+  try {
+    let probe = null;
+    if (typeof comment.probe === "function") {
+      probe = await comment.probe({ envId, platform, commentId: String(comment.commentId || ""), text: body });
+    } else if (comment.probe) {
+      probe = await comment.probe;
+    } else if (typeof comment.listTabs === "function") {
+      const found = resolveReplyTab(await comment.listTabs(), platform, envId);
+      if (!found.ok) return { ...found, ok: false, kept: true, replied: false, envId };
+      if (typeof comment.exec !== "function") return stopped("reply_box_closed", "回复框未打开，已停止。草稿还留着。", envId);
+      const selector = replySelector(platform);
+      const profile = loadProfile(platform);
+      const page = profile.data?.metricsMap?.comment?.page || "";
+      const snippet = String(comment.content || "").replace(/\s+/g, " ").trim().slice(0, 16);
+      const raw = await comment.exec(buildReplyFillScript(page, selector, body, snippet, comment.commentId || ""), String(found.tab.id || ""));
+      probe = pageResult(raw);
+    } else {
+      return stopped("reply_box_closed", "回复框未打开，已停止。没有拿到当前环境已打开的评论页。", envId);
+    }
+    const judged = judgeReplyTarget(probe, body);
+    if (!judged.filled) return { ...judged, kept: true, envId };
+    const noted = noteReplyAttempt(platform, now, { envId, storeDir: dir, commentId: comment.commentId || "", text: body });
+    if (!noted.ok) return { ok: false, kept: true, code: "rate_limit", message: noted.reason, retryAt: noted.retryAt, envId, replied: false };
+    markPending(dir, envId, platform, String(comment.commentId || ""), body);
+    return { ...judged, kept: true, envId, replied: false, focusPlatform: platform };
+  } catch {
+    return stopped("fill_failed", "没有写进回复框，草稿还留着。", envId);
+  } finally {
+    releaseCommentLock(claimed.token);
   }
 }
 
-export function noteReplyAttempt(platform, now = Date.now()) {
-  const file = path.join(storeDir(), "comment-drafts.json");
-  const all = readJson(file, {});
-  const prev = all[platform] || { text: "", stamps: [] };
-  const gate = allowReply(prev.stamps || [], now);
-  if (!gate.ok) return gate;
-  prev.stamps = [...(prev.stamps || []), now];
-  all[platform] = prev;
-  fs.writeFileSync(file, JSON.stringify(all, null, 2));
-  return { ok: true };
+export async function listCommentsForEnv(envId, options = {}) {
+  const id = String(envId || "").trim();
+  if (!id) return { ok: false, code: "missing_env", message: MISSING_ENV, envId: "", boards: [] };
+  const boards = Array.isArray(options.boards) ? options.boards : await listComments();
+  if (options.storeDir) {
+    for (const board of boards) {
+      if (!board?.open) continue;
+      if (board.reason && board.reason !== "列表为空") {
+        const store = readCommentStore(options.storeDir);
+        store.notes = (store.notes || []).filter((note) => !(note.envId === id && note.platform === board.platform));
+        store.notes.push({ envId: id, platform: board.platform, reason: board.reason });
+        writeCommentStore(options.storeDir, store);
+        continue;
+      }
+      reconcileWithGet(options.storeDir, id, board.platform, board.comments || []);
+    }
+  }
+  return { ok: true, code: "ok", message: "", envId: id, boards };
 }

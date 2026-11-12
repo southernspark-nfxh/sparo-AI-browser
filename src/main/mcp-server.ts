@@ -180,13 +180,23 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
         .optional()
         .describe("CDP frame index (0 for x0) or frameId — required for cross-origin iframe DOM"),
       tabId: tabIdField,
+      awaitPromise: z
+        .boolean()
+        .optional()
+        .describe("为 true 时等待脚本返回的 Promise。默认 false，返回值与原来一致。"),
+      timeoutMs: z
+        .number()
+        .optional()
+        .describe("仅 awaitPromise 为 true 时生效。默认 30000，范围 1000–120000。"),
     },
-    async ({ script, frame, tabId }) => {
+    async ({ script, frame, tabId, awaitPromise, timeoutMs }) => {
       const t = bindForWrite("execute", tabId);
       return textResult(
         await handlers.execute(script, {
           ...(frame !== undefined ? { frame } : {}),
           tabId: t,
+          ...(awaitPromise ? { awaitPromise: true } : {}),
+          ...(timeoutMs != null ? { timeoutMs } : {}),
         }),
       );
     },
@@ -737,23 +747,33 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
         .boolean()
         .optional()
         .describe("If true with comma selectors, require ALL parts visible (AND)"),
+      tabId: tabIdField,
     },
-    async ({ selector, text, ref, timeoutMs, all }) =>
-      textResult(await handlers.wait_for({ selector, text, ref, timeoutMs, all })),
+    async ({ selector, text, ref, timeoutMs, all, tabId }) =>
+      textResult(
+        await handlers.wait_for({
+          selector,
+          text,
+          ref,
+          timeoutMs,
+          all,
+          ...(tabId ? { tabId: bind(tabId) } : {}),
+        }),
+      ),
   );
 
   server.tool(
     "qa_check",
-    "Run Dianxiaomi SMT product-edit QA checklist on the active tab.",
-    {},
-    async () => textResult(await handlers.qa_check()),
+    "Run Dianxiaomi SMT product-edit QA checklist. Pass tabId to read a background edit tab.",
+    { tabId: tabIdField },
+    async ({ tabId }) => textResult(await handlers.qa_check(tabId ? bind(tabId) : undefined)),
   );
 
   server.tool(
     "qa_gate",
-    "Run QA and block if FAIL. Use before submit/save. Click on 提交 also auto-gates.",
-    {},
-    async () => textResult(await handlers.qa_gate()),
+    "Run QA and block if FAIL. Use before submit/save. Pass tabId so a background edit tab is checked. Click on 提交 also auto-gates.",
+    { tabId: tabIdField },
+    async ({ tabId }) => textResult(await handlers.qa_gate(tabId ? bind(tabId) : undefined)),
   );
 
   server.tool(

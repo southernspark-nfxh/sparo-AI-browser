@@ -101,7 +101,7 @@ describe("T78 侧栏开站不征用当前标签", () => {
     resetMcpSessions();
   });
 
-  it("没指当前页时，开站走侧栏标签，下一句复用，用户页不动", async () => {
+  it("没指当前页时，开站走侧栏标签并摆到眼前，用户页地址不动", async () => {
     const browser = harness();
     let during: ReturnType<SparkBrowser["listTabs"]> | undefined;
     browser.freeSoul = {
@@ -115,7 +115,7 @@ describe("T78 侧栏开站不征用当前标签", () => {
     await browser.handleChat("打开维基百科唐朝条目逐节汇报");
 
     expect(browser.created()).toBe(1);
-    expect(browser.activeTabId).toBe("tab-a");
+    expect(browser.activeTabId).toBe("tab-b");
     expect(browser.tabs.get("tab-a")?.url).toBe("https://www.baidu.com");
     expect(browser.navTabs).toEqual(["tab-b"]);
     expect(ownerForTab("tab-b")).toBe("agent:sidebar");
@@ -124,14 +124,15 @@ describe("T78 侧栏开站不征用当前标签", () => {
     expect(working?.agentName).toBe("侧栏");
     expect(working?.agentSeat).toBe(0);
     expect(working?.agentState).toBe("running");
-    expect(during?.activeId).toBe("tab-a");
+    expect(during?.activeId).toBe("tab-b");
     const user = during?.tabs.find((tab) => tab.id === "tab-a");
     expect(user?.agentName).toBeUndefined();
     expect(user?.owner).toBe("user");
 
     const done = browser.listTabs().tabs.find((tab) => tab.id === "tab-b");
-    expect(done?.agentState).toBe("done");
-    expect(done?.agentStatus).toBe("done");
+    // 工位就在人眼前，收工后不挂「已下班」角标，也不再休眠它。
+    expect(done?.agentStatus).toBeUndefined();
+    expect(done?.agentState).toBe("idle");
 
     browser.freeSoul = {
       run: async () => {
@@ -142,7 +143,7 @@ describe("T78 侧栏开站不征用当前标签", () => {
     await browser.handleChat("再打开宋朝条目");
     expect(browser.created()).toBe(1);
     expect(browser.navTabs.at(-1)).toBe("tab-b");
-    expect(browser.activeTabId).toBe("tab-a");
+    expect(browser.activeTabId).toBe("tab-b");
     expect(browser.tabs.get("tab-a")?.url).toBe("https://www.baidu.com");
 
     const other = registerClientName("job-1");
