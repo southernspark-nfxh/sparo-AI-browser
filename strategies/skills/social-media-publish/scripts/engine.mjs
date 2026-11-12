@@ -41,6 +41,7 @@ export async function runPublish(args, article) {
     host: adapter.host,
     writeUrl: adapter.writeUrl,
     writeMark: adapter.writeMark,
+    editExisting: adapter.editExisting || null,
     dryRun: args.dryRun,
     probe: args.probe,
     schedule: args.schedule,
@@ -75,7 +76,10 @@ export async function runPublish(args, article) {
     const listed = await tabs();
     const list = tabRows(listed);
     const editors = list.filter(
-      (tab) => String(tab.url || "").includes(adapter.host) && String(tab.url || "").includes(adapter.writeMark),
+      (tab) =>
+        String(tab.url || "").includes(adapter.host) &&
+        String(tab.url || "").includes(adapter.writeMark) &&
+        !(adapter.editExisting && adapter.editExisting.test(String(tab.url || ""))),
     );
     let gate = { ok: false, code: "RESUME_NOT_EDITOR", hint: "没有找到可续跑的编辑页，请从头跑" };
     for (const tab of editors) {
@@ -182,9 +186,9 @@ function writeLedger(ctx, report) {
     ok: report.ok,
     step: report.step || "verify",
     reason: report.reason || "",
-    status: detail.status || (ctx.schedule ? "定时 " + ctx.schedule.text : ""),
-    time: detail.time || ctx.schedule?.text || "",
-    images: detail.images ?? ctx.imageCount ?? null,
+    status: detail.status || (report.ok && ctx.schedule ? "定时 " + ctx.schedule.text : ""),
+    time: detail.time || (report.ok ? ctx.schedule?.text || "" : ""),
+    images: verify ? (detail.images ?? null) : null,
     link: detail.link || "",
     hint: typeof report.hint === "string" ? report.hint : "",
     from: ctx.from || "",

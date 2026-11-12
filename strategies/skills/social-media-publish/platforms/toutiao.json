@@ -1,0 +1,50 @@
+{
+  "id": "toutiao",
+  "name": "头条",
+  "entry": {
+    "host": "mp.toutiao.com",
+    "writeUrl": "https://mp.toutiao.com/profile_v4/graphic/publish",
+    "listUrl": "https://mp.toutiao.com/profile_v4/graphic/articles",
+    "dataUrl": "",
+    "commentUrl": ""
+  },
+  "auth": {
+    "tokenSource": "",
+    "csrfHeader": ""
+  },
+  "limits": {
+    "titleMin": null,
+    "titleMax": null,
+    "bodyMax": null,
+    "imagesMax": null,
+    "perDay": null,
+    "minGapMinutes": null
+  },
+  "image": {
+    "rehost": true,
+    "stripExternal": null,
+    "minDistinctImages": null,
+    "coverMode": "硬校验，必须回读到图"
+  },
+  "switches": {
+    "required": [{ "id": "ad", "label": "投放广告赚收益" }],
+    "forbidden": [],
+    "defaults": [{ "id": "ad", "label": "投放广告赚收益" }]
+  },
+  "schedule": {
+    "supported": true,
+    "uiPath": "定时发布",
+    "note": ""
+  },
+  "readback": ["COVER_UNREAD", "AD_CONTROL_MISSING", "AD_ASSERT_FAIL"],
+  "data": {
+    "metricsMap": {},
+    "delayDays": null,
+    "revenueTypes": [],
+    "pageLimit": null
+  },
+  "capabilities": {
+    "supportsDraft": null,
+    "supportsUpdate": null
+  }
+}

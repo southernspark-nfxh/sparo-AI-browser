@@ -13,13 +13,19 @@ import {
   waitEditor,
 } from "../page.mjs";
 import { nav } from "../sparo.mjs";
+import { loadProfile } from "../profile.mjs";
+
+const profile = loadProfile("dayu");
+const DISTINCT_IMAGES = profile.limits.minDistinctImages;
+const COVER_MODE = profile.image.coverMode;
+const SOURCE_PLAIN = profile.switches.defaults.find((item) => item.id === "source").label;
 
 export const dayu = {
-  id: "dayu",
-  host: "mp.dayu.com",
-  writeUrl: "https://mp.dayu.com/dashboard/article/write",
+  id: profile.id,
+  host: profile.entry.host,
+  writeUrl: profile.entry.writeUrl,
   writeMark: "/dashboard/article/write",
-  listUrl: "https://mp.dayu.com/dashboard/contents",
+  listUrl: profile.entry.listUrl,
 
   async openBlank(ctx) {
     const opened = await openWriteTab(ctx);
@@ -62,14 +68,14 @@ export const dayu = {
   },
 
   async insertImages(ctx) {
-    if (ctx.images.length < 3) {
+    if (ctx.images.length < DISTINCT_IMAGES) {
       return fail(
         "NEED_3_DISTINCT_IMAGES",
-        { have: ctx.images.length, droppedDuplicates: ctx.droppedDuplicates || 0 },
-        "大鱼封面要从正文选 3 张不同的图，images/ 里现在不够",
+        { have: ctx.images.length, droppedDuplicates: ctx.droppedDuplicates || 0, need: DISTINCT_IMAGES },
+        "大鱼封面要从正文选 " + DISTINCT_IMAGES + " 张不同的图，images/ 里现在不够",
       );
     }
-    const files = ctx.images.slice(0, 3);
+    const files = ctx.images.slice(0, DISTINCT_IMAGES);
     for (const file of files) {
       const opened = await page(
         ctx,
@@ -96,8 +102,8 @@ export const dayu = {
     }
     const counted = await countImages(ctx);
     if (!counted.ok) return counted;
-    if (counted.detail.distinct < 3) {
-      return fail("NEED_3_DISTINCT_IMAGES", counted.detail, "正文里不同图片不足 3 张，封面步骤不会开始");
+    if (counted.detail.distinct < DISTINCT_IMAGES) {
+      return fail("NEED_3_DISTINCT_IMAGES", counted.detail, "正文里不同图片不足 " + DISTINCT_IMAGES + " 张，封面步骤不会开始");
     }
     ctx.imageCount = counted.detail.distinct;
     return pass(counted.detail);
@@ -106,8 +112,8 @@ export const dayu = {
   async setCover(ctx) {
     const counted = await countImages(ctx);
     if (!counted.ok) return counted;
-    if (counted.detail.distinct < 3) {
-      return fail("NEED_3_DISTINCT_IMAGES", counted.detail, "封面前正文必须先有 3 张不同的图");
+    if (counted.detail.distinct < DISTINCT_IMAGES) {
+      return fail("NEED_3_DISTINCT_IMAGES", counted.detail, "封面前正文必须先有 " + DISTINCT_IMAGES + " 张不同的图");
     }
     const opened = await page(
       ctx,
@@ -115,7 +121,7 @@ export const dayu = {
         "const options = Array.from(document.querySelectorAll('.article-write-article-cover_normal-option, label, span, div'));" +
         "const triple = options.find((el) => {" +
         "const t = (el.innerText || '').replace(/\\s+/g, '');" +
-        "return t === '三图' || t === '三封面' || t.includes('三图');" +
+        "return t === " + JSON.stringify(COVER_MODE) + " || t === '三封面' || t.includes(" + JSON.stringify(COVER_MODE) + ");" +
         "});" +
         "if (triple) triple.click();" +
         "const choose = Array.from(document.querySelectorAll('button, span, a')).find((el) => (el.innerText || '').includes('从正文中选择'));" +
@@ -145,23 +151,23 @@ export const dayu = {
         "seen.add(src);" +
         "(img.closest('[class*=\"item\"], [class*=\"cover\"]') || img).click();" +
         "n += 1;" +
-        "if (n >= 3) break;" +
+        "if (n >= " + DISTINCT_IMAGES + ") break;" +
         "}" +
-        "return JSON.stringify({ ok: n >= 3, n });" +
+        "return JSON.stringify({ ok: n >= " + DISTINCT_IMAGES + ", n });" +
         "})()",
     );
     if (picked.mismatch) return fail("MISMATCH", picked.mismatch);
-    if (!picked.value?.ok) return fail("COVER_REJECTED", picked.value, "三图封面没选满 3 张不同的图");
+    if (!picked.value?.ok) return fail("COVER_REJECTED", picked.value, COVER_MODE + "封面没选满 " + DISTINCT_IMAGES + " 张不同的图");
     const confirmed = await clickLabeled(ctx, "确定");
     if (!confirmed.ok) return fail("COVER_CONFIRM_MISSING", "确定", await pageHint(ctx));
     const hint = await pageHint(ctx);
     if (/三图|封面/.test(hint) && /请完成|失败|不符/.test(hint)) return fail("COVER_REJECTED", hint, hint);
-    ctx.coverCount = 3;
+    ctx.coverCount = DISTINCT_IMAGES;
     return pass({ cover: 3, distinct: counted.detail.distinct });
   },
 
   async setOptions(ctx) {
-    const want = ctx.aiImages ? "AI生成" : "无需标注";
+    const want = ctx.aiImages ? "AI生成" : SOURCE_PLAIN;
     const script =
       "(() => {" +
       "const want = " + JSON.stringify(want) + ";" +
@@ -187,7 +193,7 @@ export const dayu = {
     if (!options.ok) return options;
     const counted = await countImages(ctx);
     if (!counted.ok) return counted;
-    if (counted.detail.distinct < 3) return fail("NEED_3_DISTINCT_IMAGES", counted.detail, "发表前正文不同图片不足 3 张");
+    if (counted.detail.distinct < DISTINCT_IMAGES) return fail("NEED_3_DISTINCT_IMAGES", counted.detail, "发表前正文不同图片不足 " + DISTINCT_IMAGES + " 张");
     if (ctx.schedule) {
       const opened = await clickLabeled(ctx, "定时发布");
       if (!opened.ok) return fail("SCHEDULE_ENTRY_MISSING", "定时发布", "大鱼没有找到定时发布入口，已停手，没有点发表");

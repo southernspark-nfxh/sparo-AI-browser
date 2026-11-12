@@ -15,6 +15,29 @@ import {
   waitEditor,
 } from "../page.mjs";
 import { click, nav } from "../sparo.mjs";
+import { loadProfile } from "../profile.mjs";
+
+const profile = loadProfile("baijiahao");
+const AI_FORBIDDEN = profile.switches.forbidden.find((item) => item.id === "ai").label;
+
+/** 图片不堆在文末：单图放中段，多图均匀分布，只插在段落之前，不插在小标题后面。 */
+function withImageSlots(html, count) {
+  if (!count) return html;
+  const blocks = html
+    .split(/(?=<(?:p|h[1-6]|blockquote|ul|ol|table|hr|figure)\b)/i)
+    .filter((block) => block.trim());
+  const paras = blocks.map((block, i) => (/^<p[\s>]/i.test(block) ? i : -1)).filter((i) => i >= 0);
+  if (paras.length < 2) {
+    return html + Array.from({ length: count }, (_, i) => "<p>@@IMG" + (i + 1) + "@@</p>").join("");
+  }
+  const slots = new Map();
+  for (let i = 0; i < count; i++) {
+    const at = Math.min(paras.length - 1, Math.max(0, Math.round(((i + 1) * paras.length) / (count + 1)) - 1));
+    const pos = paras[at];
+    slots.set(pos, (slots.get(pos) || "") + "<p>@@IMG" + (i + 1) + "@@</p>");
+  }
+  return blocks.map((block, i) => (slots.get(i) || "") + block).join("");
+}
 
 /** 弹窗当前文案。重开弹窗时上一轮的「上传成功」还在，靠它区分新旧。 */
 async function modalText(ctx) {
@@ -43,11 +66,25 @@ async function waitUploaded(ctx, beforeText) {
         "})()",
     );
     if (read.stop) return read.stop;
+    if (!read.value?.visible) {
+      await sleep(500);
+      continue;
+    }
     const text = read.value?.text || "";
-    if (read.value?.visible && /上传成功|上传完成|上传失败/.test(text) && text !== beforeText) return pass({});
+    if (/上传失败/.test(text)) return fail("UPLOAD_FAILED", { text }, "百家号图片弹层报上传失败");
+    const matched = text.match(/(\d+)\s*张\s*上传(?:成功|完成)/);
+    const count = matched ? Number(matched[1]) : 0;
+    if (count >= 1 && text !== beforeText) {
+      const enabled = await page(
+        ctx,
+        "(() => { const mod = document.querySelector('.cheetah-ui-pro-image-modal'); const btn = mod && mod.querySelector('.cheetah-modal-footer button.cheetah-btn-primary'); if (!btn) return JSON.stringify({ btnDisabled: true }); const disabled = !!btn.disabled || btn.getAttribute('aria-disabled') === 'true' || /disabled/.test(String(btn.className)); return JSON.stringify({ btnDisabled: disabled }); })()",
+      );
+      if (enabled.stop) return enabled.stop;
+      if (enabled.value?.btnDisabled === false) return pass({ count });
+    }
     await sleep(500);
   }
-  return pass({ timeout: true });
+  return fail("UPLOAD_UNCONFIRMED", "", "上传张数未到 1 或确认按钮仍不可用");
 }
 
 /** 点弹窗页脚的「确认」。文案匹配会有两个同名按钮，只能用精确选择器。 */
@@ -89,16 +126,97 @@ async function readImageSrcs(ctx) {
   return read.value?.srcs || [];
 }
 
+/** 定时弹层的确认按钮：页脚主按钮写「定时发布」，和页面上开弹层的按钮重名，只能按弹层的构造点。 */
+async function confirmScheduleModal(ctx) {
+  const selector = ".cheetah-modal-confirm-btns button.cheetah-btn-primary";
+  const wrapOpen = () =>
+    page(
+      ctx,
+      "(() => {" +
+        "const wrap = document.querySelector('.timepublish-wrap');" +
+        "const r = wrap ? wrap.getBoundingClientRect() : null;" +
+        "return JSON.stringify({ open: !!r && r.height > 8 });" +
+        "})()",
+    );
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const raw = await click(selector, ctx.tabId);
+    if (!/"ok"\s*:\s*true/.test(String(raw))) {
+      // click 回执会因为渲染忙变成空串，但动作可能已经生效。先看弹层关没关：
+      // 关了就是成功，绝不能再点一次——第二次会落到后续弹层的 primary 上，变成立即发布。
+      console.error("[baijiahao] schedule confirm click:", String(raw).slice(0, 300));
+      const state = await wrapOpen();
+      if (state.stop) return state.stop;
+      if (state.value && state.value.open === false) return pass({ retried: true });
+      await sleep(800);
+      continue;
+    }
+    const deadline = Date.now() + 15000;
+    while (Date.now() <= deadline) {
+      const read = await wrapOpen();
+      if (read.stop) return read.stop;
+      if (!read.value?.open) return pass({});
+      await sleep(500);
+    }
+    return fail("SCHEDULE_CONFIRM_MISSING", {}, "点了「定时发布」但弹层没关");
+  }
+  return fail("SCHEDULE_CONFIRM_MISSING", {}, "没点到定时弹层的「定时发布」");
+}
+
+/** 续跑时定时弹层可能还开着，会挡住封面和 AI 选项：先按「取消」关掉，后面再重新填时间。 */
+async function closeScheduleModal(ctx) {
+  const read = await page(
+    ctx,
+    "(() => {" +
+      "const wrap = document.querySelector('.timepublish-wrap');" +
+      "const r = wrap ? wrap.getBoundingClientRect() : null;" +
+      "return JSON.stringify({ open: !!r && r.height > 8 });" +
+      "})()",
+  );
+  if (read.stop) return read.stop;
+  if (!read.value?.open) return pass({ closed: false });
+  const fired = await page(
+    ctx,
+    "(() => {" +
+      "const foot = document.querySelector('.cheetah-modal-confirm-btns');" +
+      "if (!foot) return JSON.stringify({ ok: false });" +
+      "const btn = Array.from(foot.querySelectorAll('button')).find((el) => (el.innerText || '').replace(/\\s+/g, '') === '取消');" +
+      "if (!btn) return JSON.stringify({ ok: false });" +
+      "const r = btn.getBoundingClientRect();" +
+      "const opt = { bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };" +
+      "btn.dispatchEvent(new PointerEvent('pointerdown', opt));" +
+      "btn.dispatchEvent(new MouseEvent('mousedown', opt));" +
+      "btn.dispatchEvent(new PointerEvent('pointerup', opt));" +
+      "btn.dispatchEvent(new MouseEvent('mouseup', opt));" +
+      "btn.click();" +
+      "return JSON.stringify({ ok: true });" +
+      "})()",
+  );
+  if (fired.stop) return fired.stop;
+  if (!fired.value?.ok) return fail("SCHEDULE_MODAL_STUCK", fired.value, "定时弹层开着，没找到「取消」");
+  await sleep(800);
+  return pass({ closed: true });
+}
+
 export const baijiahao = {
-  id: "baijiahao",
-  host: "baijiahao.baidu.com",
-  writeUrl: "https://baijiahao.baidu.com/builder/rc/edit?type=news",
+  id: profile.id,
+  host: profile.entry.host,
+  writeUrl: profile.entry.writeUrl,
   writeMark: "/builder/rc/edit",
-  listUrl: "https://baijiahao.baidu.com/builder/rc/content",
+  // 带 article_id / online_modify 的是「修改已发布文章」，不能当新稿空白页复用
+  editExisting: /[?&]article_id=|\bonline_modify\b/,
+  listUrl: profile.entry.listUrl,
 
   async openBlank(ctx) {
     const opened = await openWriteTab(ctx);
     if (!opened.ok) return opened;
+    if (opened.detail && opened.detail.reused) {
+      // 复用旧编辑器会带着上一篇的草稿和半初始化的工具栏：重载一次，保证从空白页开始
+      const moved = await nav(ctx.writeUrl, ctx.tabId);
+      if (typeof moved === "string" && /MISMATCH|UNREAD/.test(moved)) {
+        return fail("NAV_FAIL", moved, "重载空白编辑页失败");
+      }
+      await sleep(1800);
+    }
     const editor = await waitEditor(ctx, "#ueditor_0");
     if (!editor.ok) return editor;
     const title = await waitEditor(ctx, '[data-lexical-editor="true"]');
@@ -128,16 +246,20 @@ export const baijiahao = {
       "const value = ((ed.innerText || '').replace(/\\u200b/g, '').trim());" +
       "return JSON.stringify({ ok: value === text, value });" +
       "})()";
-    const read = await page(ctx, script);
-    if (read.stop) return read.stop;
-    if (!read.value?.ok) return fail("TITLE_UNREAD", read.value, "Lexical 标题回读不一致");
-    return pass({ value: read.value.value });
+    let last = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const read = await page(ctx, script);
+      if (read.stop) return read.stop;
+      last = read.value;
+      if (last?.ok) return pass({ value: last.value });
+      // 刚重载时 exec 可能回空串，或 Lexical 还没挂上 __lexicalEditor：等一下再试
+      await sleep(700);
+    }
+    return fail("TITLE_UNREAD", last, "Lexical 标题回读不一致");
   },
 
   async fillBody(ctx) {
-    const html = ctx.images.length
-      ? ctx.bodyHtml + ctx.images.map((_, index) => "<p>@@IMG" + (index + 1) + "@@</p>").join("")
-      : ctx.bodyHtml;
+    const html = withImageSlots(ctx.bodyHtml, ctx.images.length);
     ctx.bodyHtmlLive = html;
     const written = await setUeContent(ctx, html);
     if (!written.ok) return written;
@@ -155,10 +277,36 @@ export const baijiahao = {
       const file = ctx.images[index];
       const beforeSrcs = await readImageSrcs(ctx);
       const beforeModal = await modalText(ctx);
+      // 刚进编辑页时工具栏还没渲染，先等插图入口出现，别急着点
+      let entry = false;
+      for (let wait = 0; wait < 12 && !entry; wait++) {
+        entry = await page(
+          ctx,
+          "(() => { const el = document.querySelector('.edui-for-insertimage'); if (!el) return JSON.stringify({ ok: false }); const r = el.getBoundingClientRect(); return JSON.stringify({ ok: r.width > 0 && r.height > 0 }); })()",
+        ).then((r) => !!r.value?.ok);
+        if (!entry) await sleep(400);
+      }
+      if (!entry) return fail("IMAGE_ENTRY_MISSING", file, "工具栏一直没渲染出插图入口");
       // 真实点击：JS 模拟点击会落到相邻的视频入口，jpg 被当视频拒收
-      const opened = await click(".edui-for-insertimage", ctx.tabId);
+      // click 回执偶发空串，不代表没点上：先看图片弹窗出来没有，没出来才补点一次
+      let opened = await click(".edui-for-insertimage", ctx.tabId);
       if (!/"ok"\s*:\s*true/.test(String(opened))) {
-        return fail("IMAGE_ENTRY_MISSING", file, "没有点到百家号插图按钮：" + String(opened).slice(0, 160));
+        console.error("[baijiahao] image entry click:", String(opened).slice(0, 200));
+        await sleep(1200);
+        const popped = await page(
+          ctx,
+          "(() => {" +
+            "const el = document.querySelector('.cheetah-ui-pro-image-modal');" +
+            "const r = el ? el.getBoundingClientRect() : null;" +
+            "return JSON.stringify({ open: !!r && r.width > 0 && r.height > 0 });" +
+            "})()",
+        );
+        if (popped.value?.open !== true) {
+          opened = await click(".edui-for-insertimage", ctx.tabId);
+          if (!/"ok"\s*:\s*true/.test(String(opened))) {
+            return fail("IMAGE_ENTRY_MISSING", file, "没有点到百家号插图按钮：" + String(opened).slice(0, 160));
+          }
+        }
       }
       await sleep(1600);
       const blocked = await guard(ctx);
@@ -166,7 +314,8 @@ export const baijiahao = {
       // 只认图片模态框里的 image input，避免抓到视频上传框
       const uploaded = await uploadPicked(ctx, file, "", true);
       if (!uploaded.ok) return uploaded;
-      await waitUploaded(ctx, beforeModal);
+      const ready = await waitUploaded(ctx, beforeModal);
+      if (!ready.ok) return ready;
       const confirmed = await confirmImageModal(ctx);
       if (!confirmed.ok) return confirmed;
       // 确认后正文里必须多出一张图，才算这次插入成功
@@ -297,6 +446,9 @@ export const baijiahao = {
   async publishOrSchedule(ctx) {
     const blocked = await guard(ctx);
     if (blocked) return blocked;
+    // 续跑时上一次没关掉的定时弹层会挡住封面和 AI 选项
+    const scheduleClosed = await closeScheduleModal(ctx);
+    if (!scheduleClosed.ok) return scheduleClosed;
     // 只确认「单图」radio，不存草稿：存草稿会清空已设封面并重弹空封面窗，发布必被挡
     if (ctx.cover) {
       const radioOk = await ensureSingleCover(ctx);
@@ -309,13 +461,10 @@ export const baijiahao = {
     if (ctx.schedule) {
       const filled = await runSchedule(ctx);
       if (!filled.ok) return filled;
-      const confirm = await clickLabeled(ctx, "确认");
-      if (!confirm.ok) {
-        const alt = await clickLabeled(ctx, "确定");
-        if (!alt.ok) return fail("SCHEDULE_CONFIRM_MISSING", ctx.schedule.text, await pageHint(ctx));
-      }
-      const again = await readAi(ctx, false);
-      if (!again.ok) return again;
+      // 弹层页脚的主按钮写的是「定时发布」，和页面上开弹层的按钮同名，只能按弹层页脚的构造点
+      const confirmed = await confirmScheduleModal(ctx);
+      if (!confirmed.ok) return confirmed;
+      // 提交后编辑页会跳走，再读 AI 选项只会假阴性；「采用AI生成内容」未勾选已在提交前断言过
       return pass({ mode: "schedule", at: ctx.schedule.text });
     }
     // 注入 XHR hook 抓 publish 真实响应（百家号 publish 静默成功/失败不弹窗）
@@ -432,9 +581,18 @@ export const baijiahao = {
       "const want = " + title + ";" +
       "const wantPlain = want.replace(/[《》]/g, '');" +
       "const articleId = " + articleId + ";" +
-      "const text = (document.body?.innerText || '').slice(0, 12000);" +
-      "const wantHit = text.includes(want) || (wantPlain && text.includes(wantPlain));" +
-      "const idHit = articleId && text.includes(articleId);" +
+      "const rows = (document.body?.innerText || '').split('\\n').map((s) => s.trim()).filter(Boolean);" +
+      "const idx = rows.findIndex((s) => s === want || (wantPlain && s === wantPlain));" +
+      "if (idx < 0) return JSON.stringify({ hit: false, href: location.href });" +
+      // 相邻稿大约隔 5 行。只取标题往后 6 行，避开下一篇的状态。
+      "const block = rows.slice(idx, idx + 7);" +
+      "const joined = block.join('|');" +
+      "let status = '';" +
+      "if (/审核中/.test(joined)) status = '审核中';" +
+      "else if (/已发布|发布成功/.test(joined)) status = '已发布';" +
+      "else if (/定时|待发布/.test(joined)) status = '定时';" +
+      "const scheduled = (joined.match(/预计\\s*(\\d{4}-\\d{2}-\\d{2}\\s+\\d{2}:\\d{2})/) || [])[1] || '';" +
+      "const time = scheduled || (joined.match(/\\d{4}-\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}/) || [])[0] || '';" +
       "const linkEl = Array.from(document.querySelectorAll('a')).find((el) => {" +
       "const href = el.href || '';" +
       "if (articleId && href.includes('baijiahao.baidu.com/s?id=' + articleId)) return true;" +
@@ -443,11 +601,7 @@ export const baijiahao = {
       "return false;" +
       "});" +
       "const link = linkEl ? linkEl.href : '';" +
-      "let status = '';" +
-      "if (/审核中/.test(text)) status = '审核中';" +
-      "else if (/已发布|发布成功/.test(text)) status = '已发布';" +
-      "else if (/定时|待发布/.test(text)) status = '定时';" +
-      "return JSON.stringify({ hit: wantHit || idHit, wantHit, idHit, link, status, href: location.href });" +
+      "return JSON.stringify({ hit: true, link, status, time, href: location.href });" +
       "})()";
     const read = await page(ctx, script);
     if (read.stop) return read.stop;
@@ -457,14 +611,14 @@ export const baijiahao = {
       const retry = await page(ctx, script);
       if (retry.stop) return retry.stop;
       if (!retry.value?.hit) return fail("LIST_ROW_MISSING", retry.value, "列表里没有这篇标题（已等 5s）");
-      if (retry.value?.link) read.value = { ...read.value, link: retry.value.link };
+      read.value = retry.value;
     }
     const link = read.value.link || (/审核中|定时/.test(read.value.status || "") ? "待回访" : "");
     if (!link) return fail("LINK_UNREAD", read.value, "没有公开链接，也不是审核中或定时");
     return pass({
       platform: this.id,
       title: ctx.title,
-      time: ctx.schedule?.text || "",
+      time: read.value.time || ctx.schedule?.text || "",
       status: read.value.status || "待回访",
       images: ctx.imageCount || 0,
       link,
@@ -562,12 +716,12 @@ async function readAi(ctx, fix) {
     const read = await page(ctx, script);
     if (read.stop) return read.stop;
     if (read.value?.found) {
-      if (read.value.checked) return fail("AI_STILL_CHECKED", read.value, "采用AI生成内容仍是勾选状态");
+      if (read.value.checked) return fail("AI_STILL_CHECKED", read.value, AI_FORBIDDEN + "仍是勾选状态");
       return pass({ aiChecked: false });
     }
     await sleep(500);
   }
-  return fail("AI_CONTROL_MISSING", "", "没有找到「采用AI生成内容」，不能证明它没被勾上");
+  return fail("AI_CONTROL_MISSING", "", "没有找到「" + AI_FORBIDDEN + "」，不能证明它没被勾上");
 }
 
 /** 发布前把残留的封面弹窗用真实点击关掉。JS 模拟点击对 cheetah 弹窗无效。 */
