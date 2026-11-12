@@ -2295,7 +2295,8 @@ export class SparkBrowser {
     const db = await import(pathToFileURL(join(root, "metrics-db.mjs")).href);
     await collector.collectAll();
     const rows = await db.listMetrics();
-    return { ...base, metrics: db.buildViews(rows) };
+    const comments = await import(pathToFileURL(join(root, "comments.mjs")).href);
+    return { ...base, metrics: db.buildViews(rows), comments: comments.listCommentStatus() };
   }
 
   openStudio(): ToolResult {
@@ -4107,6 +4108,15 @@ export class SparkBrowser {
     handle("studio:refresh", async (e) => {
       if (!this.senderIsStudio(e.sender)) return { ok: false };
       return this.studioPayloadWithMetrics();
+    });
+    handle("studio:reply", async (e, payload?: { platform?: string; text?: string }) => {
+      if (!this.senderIsStudio(e.sender)) return { ok: false, message: "只能从工作台起草" };
+      const comments = await import(pathToFileURL(join(__dirname, "../../strategies/skills/social-media-publish/scripts/comments.mjs")).href);
+      const platform = String(payload?.platform || "");
+      const text = String(payload?.text || "");
+      if (!comments.canReply(platform)) return { ok: false, message: "只读，回复未开" };
+      const saved = comments.saveReplyDraft(platform, text);
+      return { ok: false, kept: true, draft: saved, message: "回复草稿已留在本机。评论框选择器还没实测，没有往平台页面填写。" };
     });
     handle("studio:create", async (e) => {
       if (!this.senderIsStudio(e.sender)) return { ok: false };

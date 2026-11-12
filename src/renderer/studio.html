@@ -36,6 +36,7 @@
       <button type="button" data-view="dispatch">分发</button>
       <button type="button" data-view="ledger">台账</button>
       <button type="button" data-view="metrics">数据</button>
+      <button type="button" data-view="comments">互动</button>
     </nav>
     <main>
       <section id="overview" class="on">
@@ -80,6 +81,10 @@
         <h1>数据</h1>
         <button type="button" class="act" id="refreshMetrics">刷新</button>
         <div id="metricViews"></div>
+      </section>
+      <section id="comments">
+        <h1>互动</h1>
+        <div id="commentBoards"></div>
       </section>
     </main>
   </div>
@@ -265,6 +270,39 @@
       showOverview(payload.overview);
     };
 
+    function showComments(boards) {
+      const host = document.getElementById("commentBoards");
+      host.innerHTML = "";
+      for (const board of boards || []) {
+        const card = document.createElement("div");
+        card.className = "card";
+        const title = document.createElement("div");
+        title.textContent = board.name + "：" + (board.reason || "列表为空");
+        card.append(title);
+        if (!board.canReply) {
+          const locked = document.createElement("button");
+          locked.type = "button";
+          locked.disabled = true;
+          locked.textContent = "只读，回复未开";
+          card.append(locked);
+        } else {
+          const box = document.createElement("textarea");
+          box.placeholder = "回复草稿，只保存在本机";
+          const go = document.createElement("button");
+          go.type = "button";
+          go.className = "act";
+          go.textContent = "保存回复草稿";
+          const note = document.createElement("p");
+          go.onclick = async () => {
+            const result = await api.reply({ platform: board.platform, text: box.value });
+            note.textContent = result.message || "";
+          };
+          card.append(box, go, note);
+        }
+        host.append(card);
+      }
+    }
+
     api.load().then((payload) => {
       drafts = payload.drafts;
       draft = payload.draft;
@@ -273,6 +311,7 @@
       showOverview(payload.overview);
       showLedger(payload.ledger);
       showMetrics(payload.metrics);
+      showComments(payload.comments);
     });
   </script>
 </body>
