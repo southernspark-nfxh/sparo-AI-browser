@@ -1,7 +1,7 @@
 # SOCIAL-PUBLISH R3 任务书 —— 修「后台标签渲染」前提
 
 > 交付对象：同一开发窗口
-> 工作目录：`C:\Users\60914\.trae-cn\skills\social-media-publish\`
+> 工作目录：`C:\Users\<用户名>\.trae-cn\skills\social-media-publish\`
 > 前置：R2 已完成并通过 9 项，本任务只处理未通过的 3 项
 
 ---

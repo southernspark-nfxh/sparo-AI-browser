@@ -115,7 +115,7 @@
 |---|---|---|---|
 | **A 发版窗口（本窗口）** | 复核多开修红 → 双窗真机 → 合并 → tag `v0.4.1` → 打包 → G1–G3；穿插验收 tabId、做附录 C 采样 | [FIX-MULTIWINDOW-0.4.1-R2-TASKBOOK.md](./FIX-MULTIWINDOW-0.4.1-R2-TASKBOOK.md) | 主仓 + 打包权 |
 | **B 多开窗口（或 Cursor）** | 8 个集合改惰性初始化，全量修回 884 绿，两个提交交证据；不打包、不合并 | 同上 | `D:/download/sparo-multi-window` |
-| **C 发布窗口** | 多平台发布可复用化：客户端带 tabId、统一入口、四平台各留一套、回执与铁律断言 | [SOCIAL-PUBLISH-R1-TASKBOOK.md](./SOCIAL-PUBLISH-R1-TASKBOOK.md) | `C:\Users\60914\.trae-cn\skills\social-media-publish` |
+| **C 发布窗口** | 多平台发布可复用化：客户端带 tabId、统一入口、四平台各留一套、回执与铁律断言 | [SOCIAL-PUBLISH-R1-TASKBOOK.md](./SOCIAL-PUBLISH-R1-TASKBOOK.md) | `C:\Users\<用户名>\.trae-cn\skills\social-media-publish` |
 
 两条线的核查结论：
 

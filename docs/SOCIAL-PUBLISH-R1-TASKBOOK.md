@@ -1,6 +1,6 @@
 # 多平台新闻发布 R1 任务书（social-media-publish 可复用化）
 
-> 对象目录：`C:\Users\60914\.trae-cn\skills\social-media-publish`（**工具层，不在本仓库，不受发版约束**）。
+> 对象目录：`C:\Users\<用户名>\.trae-cn\skills\social-media-publish`（**工具层，不在本仓库，不受发版约束**）。
 > 与 0.4.1 打包并行，互不影响。本任务书**只动 skill 目录**，禁碰仓库 `src/`。
 
 ---

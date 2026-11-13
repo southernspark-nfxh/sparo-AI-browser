@@ -1980,7 +1980,7 @@ agent 会话本轮不落盘、重启即清，是有意的：只把 `user` 会话
   - `page_text` 单次最多 80000 字。送进模型前单条超过 24000 字会截成头 16000 + 尾 7000。截断后的正文每一轮都留在 `messages` 里，旧轮不删，一轮任务没有字符预算。不是 80000 字原文整段重复入栈。修复另立 T63，这次没改脑区。
 - 测试：`tests/diag-log.test.ts`、`tests/page-text-stack.test.ts`「截断后的正文每轮追加，旧轮还在」。全量 `npm test` 90 文件 / 652 通过，`npm run typecheck` 通过。
 - 真机：独立窗口，`SPARO_CONFIG_DIR` 指向临时目录，不碰正在用的 3921。人为 `throw new Error("diag-probe")` 已落盘。
-  - 异常文件：`C:\Users\60914\AppData\Local\Temp\sparo-t56-diag\diag\crash-20261106-160819.log`
+  - 异常文件：`C:\Users\<用户名>\AppData\Local\Temp\sparo-t56-diag\diag\crash-20261106-160819.log`
   - 内容：`2026-11-06T08:08:20.079Z [uncaughtException] diag-probe`，带堆栈。
   - 长任务：MCP `3922` 提交「打开维基百科第二次世界大战并通读摘要」。`get_task` 结果 `status=done`，`rounds=29`，`elapsedMs=328838`。r2/r4/r8 的 `page_text` 仍是 80000 chars。进程没有消失，diag 里没有 render-process-gone / child-process-gone。主进程高峰大约 rss=187 heapUsed=23。不能把上次消失断言成代码崩溃。
   - 内存文件：`crash-20261106-160907.log`，最后 10 行：

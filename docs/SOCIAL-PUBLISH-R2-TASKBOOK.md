@@ -1,7 +1,7 @@
 # SOCIAL-PUBLISH R2 任务书 —— 修发布脚本（头条 + 百家号）
 
 > 交付对象：1 个开发窗口（Cursor 或等价）
-> 工作目录：`C:\Users\60914\.trae-cn\skills\social-media-publish\`
+> 工作目录：`C:\Users\<用户名>\.trae-cn\skills\social-media-publish\`
 > 提交要求：一个改动一个 commit，不碰 `D:\download\sparo上架应用商店版\src\`
 
 ---

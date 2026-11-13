@@ -68,7 +68,7 @@ node publish.mjs --self-check
 # → SELF_CHECK_OK
 
 # 安装副本（当前正在用的）
-cd C:\Users\60914\.trae-cn\skills\social-media-publish\scripts
+cd C:\Users\<用户名>\.trae-cn\skills\social-media-publish\scripts
 node publish.mjs --self-check
 # → SELF_CHECK_OK
 ```
@@ -77,7 +77,7 @@ node publish.mjs --self-check
 
 ```powershell
 $ws = "D:\download\sparo上架应用商店版\strategies\skills\social-media-publish\scripts"
-$ins = "C:\Users\60914\.trae-cn\skills\social-media-publish\scripts"
+$ins = "C:\Users\<用户名>\.trae-cn\skills\social-media-publish\scripts"
 foreach ($f in @("adapters\toutiao.mjs","adapters\baijiahao.mjs","page.mjs","publish.mjs","engine.mjs")) {
   $a = (Get-FileHash "$ws\$f" -Algorithm SHA256).Hash
   $b = (Get-FileHash "$ins\$f" -Algorithm SHA256).Hash
@@ -90,7 +90,7 @@ foreach ($f in @("adapters\toutiao.mjs","adapters\baijiahao.mjs","page.mjs","pub
 
 ```powershell
 Copy-Item -Path "D:\download\sparo上架应用商店版\strategies\skills\social-media-publish" `
-  -Destination "C:\Users\60914\.trae-cn\skills\social-media-publish" `
+  -Destination "C:\Users\<用户名>\.trae-cn\skills\social-media-publish" `
   -Recurse -Force
 # 不要只拷 scripts/*——会漏 platforms/ 和 SKILL.md / references/
 ```
@@ -155,11 +155,11 @@ Stop-Process -Name Sparo -Force
 
 # 2. 整目录同步（不要只拷 scripts/*）
 Copy-Item -Path "D:\download\sparo上架应用商店版\strategies\skills\social-media-publish" `
-  -Destination "C:\Users\60914\.trae-cn\skills\social-media-publish" `
+  -Destination "C:\Users\<用户名>\.trae-cn\skills\social-media-publish" `
   -Recurse -Force
 
 # 3. 自检
-cd C:\Users\60914\.trae-cn\skills\social-media-publish\scripts
+cd C:\Users\<用户名>\.trae-cn\skills\social-media-publish\scripts
 node publish.mjs --self-check
 # → SELF_CHECK_OK
 ```
