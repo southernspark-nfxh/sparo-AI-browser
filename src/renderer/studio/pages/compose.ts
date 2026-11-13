@@ -552,6 +552,14 @@ export function mount(container: HTMLElement, viewModel: ComposeViewModel, actio
     refreshRules();
   }
 
+  function primarySelect(): HTMLSelectElement {
+    const select = el("select");
+    select.setAttribute("data-field", "primary");
+    for (const profile of profiles) select.append(option(profile.id, platformLabel(profile)));
+    select.value = draft.primaryPlatform || profiles[0]?.id || "";
+    return select;
+  }
+
   function renderMain(): HTMLElement {
     const main = el("div", "compose-main");
     const list = el("select");

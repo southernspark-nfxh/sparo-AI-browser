@@ -138,6 +138,15 @@ $chat | Where-Object { $_.text -like "*$($want.Substring(0, [Math]::Min(12, $wan
 - 截图备注：用「整屏截图」取证时抓到的是前台那扇（用户 0.6.3）窗口，不作为本条的视觉证据；本条以 `%TEMP%\sparo-qa-064*\diag\crash.log` 为准。
 
 
+### 2026-11-13 0.6.5 汇总构建安装包级复测（含 0.6.4 自愈）
+
+- 对象：`release\Sparo-Setup-0.6.5.exe`（103700477 字节，2026-11-13 09:35:31，SHA-256 `4F0055A4E1318A42D9806F966CBABEF459C98F773A2F6FC3EDCEB85537F3B134`）同一份 `release\win-unpacked\Sparo.exe`。
+- 环境隔离：`SPARO_CONFIG_DIR=%TEMP%\sparo-qa-065-*`、`SPARO_MCP_PORT=3941`，不动用户 `%APPDATA%\sparo-store` 与已装版本。
+- **G1 口径（开站 + 读页）过**：MCP `initialize` 200 → `navigate https://www.baidu.com` 回执 `ok:true`、标题「百度一下，你就知道」、`loadMs=15184` → `page_text` 有正文响应；`/health` 200、工具 81 个。
+- 打开产物核对：回执里 `agent.docs` 指向 `release\win-unpacked\resources\docs`；`app.asar` 中能查到本轮三处代码标记 `documentVisible`、`sidebarTabShownForTurn`、`persistTabsNow`。
+- **未在安装包上重跑壳层卡死/崩溃自愈**：这两条 0.6.4 已做过安装包级实测（上一条），0.6.5 的差异是「文档隐藏零帧不判停帧」与标签落盘/恢复，由 `tests/page-bounds.test.ts`、`tests/tabs-session.test.ts` 覆盖。
+- **G2 / G3 未跑**：需要已登录微博 + 模型 Key + 真实博主页；隔离配置里没有，留到用户自己登录态上首次使用时验。
+
 ### 2026-11-09 安装包 G1–G3 复测环境备注
 
 - 测试对象：安装版 **0.3.2**（`D:\Program Files\Sparo`，app.asar 2026-11-09 15:30:44，即交接单 15:30:48 打包批次），3921 属主 `Sparo.exe`（17:21:53 启动），`/health` 200、toolCount 76。发送通道：MCP `sidebar_chat`（hands:true，UTF-8）。

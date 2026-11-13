@@ -4084,7 +4084,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         let reported = 0;
         setInterval(() => {
           if (!window.sparkShell || typeof window.sparkShell.shellHeartbeat !== "function") return;
-          window.sparkShell.shellHeartbeat(beats - reported);
+          window.sparkShell.shellHeartbeat(beats - reported, document.visibilityState === "visible");
           reported = beats;
         }, 1000);
 

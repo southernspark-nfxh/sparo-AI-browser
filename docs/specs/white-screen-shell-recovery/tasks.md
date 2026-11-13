@@ -12,3 +12,4 @@
 - [x] T10 版本与文档：`package.json` 0.6.4、`CHANGELOG.md`、`docs/DECISION-POINTS.md` #53、`AGENTS.md` 版本口径
 - [x] T11 `npm run dist` 产出 `release\Sparo-Setup-0.6.4.exe`（103688818 字节，2026-11-13 00:32:43；退出码 1 只因缺 `GH_TOKEN`）。安装包级实测：卡死壳层 19 秒自动恢复（3 次重绘 → `restart` → `shell-reload forced=true` → 1.2 秒 `heartbeat online`）；自发崩溃 1.5 秒恢复；`navigate` + `page_text` + `/health` 正常。G2/G3 需要已登录微博 + 模型 Key，隔离配置里跑不了，已在 `docs/QA-GOLDEN-SCENARIOS.md` 如实记录
 - [x] T12 提交并推送 GitHub：`d70515a`（`30fccc3..d70515a master -> master`）。同一提交带入工作区在飞的媒体工作台/标签持久化改动（`studio-*`、`tabs-session`、`execute-wrapper` 及其测试），`browser.ts` 两边交织无法拆分，已在提交说明里写明
+- [x] T13 0.6.5 补丁：壳层心跳带 `document.visibilityState`，文档隐藏零帧不判停帧（新增用例）；与工作区媒体工作台/标签会话/发布适配器改动一起汇总打包 0.6.5

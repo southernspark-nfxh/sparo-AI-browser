@@ -119,6 +119,19 @@ describe("壳层停帧", () => {
     expect(state.repaints).toBe(1);
   });
 
+  it("Chromium 文档隐藏时零帧是正常节流，不触发恢复", () => {
+    let state: ShellPaintState = { zeroStreak: 0, repaints: 0, lastRepaintAt: 0 };
+    for (let i = 0; i < 6; i += 1) {
+      state = shellPaintStalled(state, 0, {
+        ...awake,
+        documentVisible: false,
+        now: (i + 1) * 1_000,
+      }).state;
+    }
+    expect(state.repaints).toBe(0);
+    expect(state.zeroStreak).toBe(0);
+  });
+
   it("帧恢复后计数归零，下一次停帧重新从第一拍算", () => {
     const stalled = feed([0, 0]);
     const recovered = shellPaintStalled(stalled.state, 4, { ...awake, now: 3_000 });

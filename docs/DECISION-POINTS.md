@@ -61,6 +61,7 @@
 | 51 | 判重数据源改读采集箱列表接口 | 新增 `workflows/dxm-smt-api.ts`；`dxm-smt-live.ts` `lookupDraft`/`searchBox` | 页面上下文直接 fetch 列表接口，判重不再依赖表体渲染，窗口最小化也能判；正常路径不再开/激活采集箱标签（标签闪切消失）。接口不可用即 `unknown` 停等，绝不由接口路径产生 `absent` | R10 真机 0/6 实证：窗口隐藏时页面不取数不建 DOM，DOM 判重与「后台跑」根本冲突 | 保留。`absent` 须过三重门（200 + 结构完整 + 过滤生效且分页覆盖全量）；DOM 路径降级为可见态 fallback，只产生既有结论。合码前须完成附录 C 采样 |
 | 52 | 潜意识优先、卡住交还意识 | 技能回放入口（`run_skill` 已登记技能）；交还留痕见 `dxm-crawl-ledger.jsonl` 的 `handoff` | 有已登记技能且步骤完整时直接回放，不让模型逐步重想；出现缺槽、页面结构不符、回读不一致、接口非 0 回执、或同因连败两次时停手交还模型 | 已登记技能 id / 精确触发语；回读 diff 与接口回执 code | 保留（R12 落地）。只决定「由谁执行」，不判任务完成，不改任务走向；不绕 human_gates；模糊匹配与路线选择仍归模型 |
 | 53 | 壳层静默 5 秒重启渲染进程 | `browser.ts` `watchShellPaint` / `actOnShellStall`；纯函数 `page-bounds.ts` `shellSilentTooLong` / `shellRecoveryStep` | 前台（或 90 秒内聚焦过）、可见、未最小化的窗口超过 5 秒没收到壳层心跳即判死：先推两次重绘，第三次 `forcefullyCrashRenderer()` 并延迟 `loadURL` 重载壳层。同一窗口 120 秒最多重启一次 | 0.6.3 `crash.log`：壳层 `unresponsive`、连续 40 拍 0 帧，40 次重绘全部无效、`reload` 0 条；人手动最小化/还原能恢复 | 保留。只管界面自愈，不碰网页视图、标签与任务走向，不结束任何工作单 |
+| 54 | 文档隐藏时零帧不判停帧 | `shell.html` 帧心跳带 `document.visibilityState`；`shell-preload.ts` 透传；`page-bounds.ts` `shellPaintStalled`；`browser.ts` `onShellHeartbeat` | 壳层文档被 Chromium 判隐藏时，零帧一律清零停帧账，不推重绘、不重启壳层；只有文档可见的零帧、或 5 秒无心跳，才进 #53 的恢复阶梯 | 心跳里上报的真实 `document.visibilityState`，不是「窗口可见」的推测 | 保留。只决定这一拍算不算停帧，不改恢复阶梯，不碰网页视图、标签与任务走向 |
 
 模型把采集句编成「一步 navigate + 只有 answer」时，第 1 条仍会当成只是开站。这是信脑区计划的残留，不是词表漏洞。无计划又带「复制」的句子在过期日前仍走第 2 条。
 

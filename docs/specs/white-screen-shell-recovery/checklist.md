@@ -17,3 +17,5 @@
 - [x] `package.json` 版本 0.6.4；`CHANGELOG.md` 写明 0.6.0–0.6.3 为何没治好；`docs/DECISION-POINTS.md` 已登记；`AGENTS.md` 版本口径已同步
 - [x] `docs/QA-GOLDEN-SCENARIOS.md` 实机记录补 0.6.4 一行
 - [x] 提交并推送 GitHub（`d70515a`）
+- [x] 0.6.5 补丁：心跳上报真实 `document.visibilityState`，文档隐藏时零帧不判停帧、不重启壳层（`tests/page-bounds.test.ts` 覆盖）
+- [x] 0.6.5 汇总打包：`package.json` 0.6.5、`CHANGELOG.md` / `AGENTS.md` / `DECISION-POINTS.md` #54 同步，产出 `release\Sparo-Setup-0.6.5.exe`

@@ -11,7 +11,8 @@ contextBridge.exposeInMainWorld("sparkShell", {
   setTheme: (theme: "light" | "dark") => ipcRenderer.send("spark:set-theme", theme),
   focusShell: () => ipcRenderer.send("spark:focus-shell"),
   // 壳层帧心跳：frames 是上一拍之后新画的帧数，0 说明顶栏/侧栏停帧了。
-  shellHeartbeat: (frames: number) => ipcRenderer.send("spark:shell-heartbeat", { frames }),
+  shellHeartbeat: (frames: number, documentVisible: boolean) =>
+    ipcRenderer.send("spark:shell-heartbeat", { frames, documentVisible }),
   navigate: (url: string) => ipcRenderer.invoke("spark:navigate", url),
   goBack: () => ipcRenderer.invoke("spark:go-back"),
   goForward: () => ipcRenderer.invoke("spark:go-forward"),

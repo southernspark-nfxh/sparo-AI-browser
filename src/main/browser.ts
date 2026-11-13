@@ -1506,7 +1506,7 @@ export class SparkBrowser {
         clearTimeout(this.tabsPersistTimer);
         this.tabsPersistTimer = null;
       }
-      this.persistTabsNow(true);
+      this.persistTabsNow();
     });
     this.win.on("closed", () => {
       if (this.memoryTimer) {
@@ -2516,7 +2516,8 @@ export class SparkBrowser {
         }
       }
       console.log(`[tabs-restore] loaded=${items.length} restored=${this.tabs.size} active=${activeId}`);
-      if (activeId) this.switchTab(activeId, { userAction: false, actor: this.focusActor() });
+      // 恢复的是人自己上次的当前页，按用户动作放行；否则 tab-guard 会拒绝用户标签。
+      if (activeId) this.switchTab(activeId, { userAction: true, actor: this.focusActor() });
       if (!this.activeTabId) {
         const first = this.tabs.keys().next().value;
         if (first) this.switchTab(first, { userAction: true, actor: this.focusActor() });
@@ -2528,7 +2529,7 @@ export class SparkBrowser {
   }
 
   /** 落盘当前窗口的标签：地址、标题、账号环境、当前激活项。 */
-  private persistTabsNow(keepOnEmpty = false): void {
+  private persistTabsNow(): void {
     try {
       const items: TabSessionItem[] = [];
       for (const [id, tab] of this.tabs) {
@@ -2540,8 +2541,9 @@ export class SparkBrowser {
           active: id === this.activeTabId,
         });
       }
-      if (!items.length && keepOnEmpty) return;
-      if (items.length && !items.some((t) => t.active)) items[0].active = true;
+      // 空列表不落盘：窗口销毁/多实例收尾时读到空标签表，不能把上次会话抹成 0 条。
+      if (!items.length) return;
+      if (!items.some((t) => t.active)) items[0].active = true;
       saveTabs(this.configDir(), items);
     } catch {
       /* best-effort：写盘失败不能影响浏览 */
@@ -4154,6 +4156,7 @@ export class SparkBrowser {
       return;
     }
     const frames = Math.max(0, Math.round(Number((raw as { frames?: unknown } | null)?.frames) || 0));
+    const documentVisible = (raw as { documentVisible?: unknown } | null)?.documentVisible !== false;
     const now = Date.now();
     const prev = this.shellPaint.get(winId) || { zeroStreak: 0, repaints: 0, lastRepaintAt: 0 };
     if (!this.shellPaint.has(winId)) {
@@ -4162,7 +4165,7 @@ export class SparkBrowser {
       noteHang("shell-paint-online", line);
     }
     this.shellBeatAt.set(winId, now);
-    const next = shellPaintStalled(prev, frames, { minimized, visible, now });
+    const next = shellPaintStalled(prev, frames, { minimized, visible, documentVisible, now });
     this.shellPaint.set(winId, next.state);
     if (next.repaint) {
       this.actOnShellStall(winId, win, prev, "beat-stall");

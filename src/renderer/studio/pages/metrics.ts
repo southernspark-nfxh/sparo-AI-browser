@@ -242,6 +242,11 @@ export function trendSegments(points: Array<{ date: string; value: number | null
       current = [];
       continue;
     }
+    const previous = current[current.length - 1];
+    if (previous && shiftDay(previous.date, 1) !== date) {
+      segments.push(current);
+      current = [];
+    }
     current.push({ date, value });
   }
   if (current.length) segments.push(current);

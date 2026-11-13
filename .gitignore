@@ -50,3 +50,8 @@ bookmarks.json
 strategy-cache.json
 /diag/
 /traces/
+
+# Local dev profiles and agent scratch — never commit
+.devdata/
+.workbuddy/
+strategies/skills/social-media-publish/ledger/
