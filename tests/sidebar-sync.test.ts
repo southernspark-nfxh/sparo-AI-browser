@@ -30,7 +30,7 @@ vi.mock("electron", () => ({
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SparkBrowser } from "../src/main/browser.js";
-import { applyChatFrame, type ShellChatState } from "../src/main/sidebar-sync.js";
+import { applyChatFrame, consumeChatEcho, type ShellChatState } from "../src/main/sidebar-sync.js";
 import type { ChatTurn } from "../src/main/profile/chat-memory.js";
 
 type FrameBrowser = {
@@ -39,7 +39,7 @@ type FrameBrowser = {
   lastChatKey: string;
   chatResync: boolean;
   chatSessions: Map<string, ChatTurn[]>;
-  chatFrame: (key: string, forceFull: boolean) => {
+  chatFrame: (key: string, forceFull: boolean, readOnly?: boolean) => {
     chatSync: "full" | "delta";
     chat: ChatTurn[];
     chatBase: number;
@@ -176,5 +176,81 @@ describe("T74 侧栏对话增量", () => {
     expect(html).toContain("function applyChatFrame");
     expect(html).toContain("requestChatFull");
     expect(preload).toContain("spark:chat-resync");
+  });
+
+  it("没有 chatSync 时不动对话，全量缺 chat 时请求全量且不清空", () => {
+    const state: ShellChatState = { key: "user", seq: 2, texts: ["还在"] };
+    const ignored = applyChatFrame(state, { selectedSession: "user" });
+    expect(ignored.requestFull).toBe(false);
+    expect(ignored.state).toBe(state);
+    const missing = applyChatFrame(state, { selectedSession: "user", chatSync: "full", chatSeq: 4 });
+    expect(missing.requestFull).toBe(true);
+    expect(missing.state.texts).toEqual(["还在"]);
+    const cleared = applyChatFrame(state, { selectedSession: "user", chatSync: "full", chat: [], chatSeq: 0 });
+    expect(cleared.requestFull).toBe(false);
+    expect(cleared.state.texts).toEqual([]);
+  });
+
+  it("只读对话帧不推进游标，也不改原对话的序号", () => {
+    const browser = frameBrowser();
+    const book = browser.chatSessions.get("user")!;
+    book.push({ role: "user", text: "未编号" });
+    browser.chatResync = true;
+    const seqBefore = browser.chatSeq;
+    const peeked = browser.chatFrame("user", false, true);
+    expect(peeked.chatSync).toBe("full");
+    expect(peeked.chat.map((turn) => turn.text)).toEqual(["未编号"]);
+    expect(book[0].seq).toBeUndefined();
+    expect(browser.chatCursor.has("user")).toBe(false);
+    expect(browser.chatSeq).toBe(seqBefore);
+    expect(browser.chatResync).toBe(true);
+  });
+
+  it("连发两句相同的话，只吃掉已经出现在正式对话里的那条回显", () => {
+    const echoes = [
+      { id: "1", text: "同样" },
+      { id: "2", text: "同样" },
+    ];
+    const prev = [{ role: "user", text: "同样" }];
+    const next = [
+      { role: "user", text: "同样" },
+      { role: "user", text: "同样" },
+    ];
+    expect(consumeChatEcho(prev, next, echoes)).toEqual([{ id: "2", text: "同样" }]);
+  });
+
+  it("壳层坏帧不清空，并保留角色和附件", () => {
+    const html = readFileSync(join(process.cwd(), "src/renderer/shell.html"), "utf8");
+    const start = html.indexOf("function applyChatFrame");
+    const end = html.indexOf("function applySidebar");
+    const src = html.slice(start, end);
+    const shell = new Function(`${src}\nreturn { applyChatFrame, consumeChatEcho };`)() as {
+      applyChatFrame: (
+        state: { key: string; seq: number; texts: Array<{ role?: string; text?: string; images?: string[] }> },
+        frame: { selectedSession?: string; chatSync?: string; chat?: unknown; chatSeq?: number },
+      ) => { requestFull: boolean; state: { texts: Array<{ role?: string; text?: string; images?: string[] }> } };
+      consumeChatEcho: typeof consumeChatEcho;
+    };
+    const state = { key: "user", seq: 3, texts: [{ role: "user", text: "还在" }] };
+    const ignored = shell.applyChatFrame(state, { selectedSession: "other" });
+    expect(ignored.requestFull).toBe(false);
+    expect(ignored.state.texts).toEqual(state.texts);
+    const missing = shell.applyChatFrame(state, { chatSync: "full", chatSeq: 9 });
+    expect(missing.requestFull).toBe(true);
+    expect(missing.state.texts).toEqual([{ role: "user", text: "还在" }]);
+    const kept = shell.applyChatFrame(state, {
+      chatSync: "full",
+      chatSeq: 4,
+      chat: [{ role: "assistant", text: "新", images: ["a.png"] }],
+    });
+    expect(kept.requestFull).toBe(false);
+    expect(kept.state.texts).toEqual([{ role: "assistant", text: "新", images: ["a.png"] }]);
+    const echoes = [
+      { id: "1", text: "同样" },
+      { id: "2", text: "同样" },
+    ];
+    expect(
+      shell.consumeChatEcho([{ role: "user", text: "同样" }], [{ role: "user", text: "同样" }, { role: "user", text: "同样" }], echoes),
+    ).toEqual([{ id: "2", text: "同样" }]);
   });
 });

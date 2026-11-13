@@ -193,6 +193,11 @@ contextBridge.exposeInMainWorld("sparkShell", {
     ipcRenderer.on("spark:quote-from-page", handler);
     return () => ipcRenderer.removeListener("spark:quote-from-page", handler);
   },
+  onOpenAccountSettings: (cb: () => void) => {
+    const handler = () => cb();
+    ipcRenderer.on("spark:open-account-settings", handler);
+    return () => ipcRenderer.removeListener("spark:open-account-settings", handler);
+  },
   onNotes: (cb: (payload: { search?: string }) => void) => {
     const handler = (_: Electron.IpcRendererEvent, payload: { search?: string }) => cb(payload || {});
     ipcRenderer.on("spark:notes", handler);

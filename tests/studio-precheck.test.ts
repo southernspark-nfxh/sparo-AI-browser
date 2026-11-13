@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -88,6 +88,39 @@ describe("媒体工作台预检", () => {
     const loaded = loadDraftDir(join(root, "new1"));
     expect(loaded?.body).toBe("正文");
     expect(loaded?.primaryPlatform).toBe("baijiahao");
+  });
+
+  it("封面和正文图片落盘为目录内副本，删除源文件后仍能重载恢复", () => {
+    const root = mkdtempSync(join(tmpdir(), "studio-images-"));
+    const sources = mkdtempSync(join(tmpdir(), "studio-image-sources-"));
+    const coverSource = join(sources, "cover.png");
+    const bodySource = join(sources, "body.png");
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+    writeFileSync(coverSource, png);
+    writeFileSync(bodySource, png);
+    const draft = emptyDraft("with-images");
+    draft.cover = coverSource;
+    draft.images = [bodySource];
+
+    const dir = saveDraftDir(root, draft);
+    const persisted = JSON.parse(readFileSync(join(dir, "draft.json"), "utf8")) as StudioDraft;
+    const storedCover = join(dir, "cover.png");
+    const storedBody = join(dir, "images", "1.png");
+    expect(persisted.cover).toBe(storedCover);
+    expect(persisted.images).toEqual([storedBody]);
+    const loaded = loadDraftDir(dir);
+    expect(loaded?.cover).toBe(storedCover);
+    expect(loaded?.images).toEqual([storedBody]);
+
+    unlinkSync(coverSource);
+    unlinkSync(bodySource);
+    const restored = loadDraftDir(dir);
+    expect(restored?.cover).toBe(storedCover);
+    expect(restored?.images).toEqual([storedBody]);
+    expect(existsSync(storedCover)).toBe(true);
+    expect(existsSync(storedBody)).toBe(true);
+    expect(readFileSync(storedCover)).toEqual(png);
+    expect(readFileSync(storedBody)).toEqual(png);
   });
 
   it("总览只有待发、失败和登录三项", () => {
@@ -444,6 +477,69 @@ describe("发稿页", () => {
     click(container, '[data-action="confirm-publish"]');
     await vi.advanceTimersByTimeAsync(0);
     expect(calls).toEqual([]);
+  });
+
+  it("未核验预检失败后，核验成功会按最新保存 revision 重新预检并可确认", async () => {
+    const view = composeModel();
+    view.draft.title = "合规";
+    view.draft.cover = "D:/pics/cover.png";
+    view.draft.platforms.toutiao.confirmed = ["ad"];
+    const prechecks: Array<{ envId: string; revision: number; title: string }> = [];
+    const confirmations: string[] = [];
+    const actions = pageActions({
+      async saveDraft(input) {
+        return { ok: true, code: "ok", message: "已保存", envId: input.envId, revision: input.revision + 1, savedAt: "2026-11-13T02:28:00.000Z", draft: input.draft };
+      },
+      async precheck(input) {
+        prechecks.push({ envId: input.envId, revision: input.revision, title: input.draft.title });
+        const first = prechecks.length === 1;
+        return {
+          ok: true,
+          code: "ok",
+          message: "",
+          precheckId: first ? "pre-unchecked" : "pre-rechecked",
+          envId: input.envId,
+          draftRevision: input.revision,
+          snapshotHash: "hash",
+          platforms: ["toutiao"],
+          rows: [{ platform: "toutiao", name: "头条", level: first ? "warn" : "ok", marks: [first ? "登录态未核验" : "预检通过"], skip: first }],
+        };
+      },
+      async checkAccounts(input) {
+        return {
+          ok: true,
+          code: "ok",
+          message: "核验完成",
+          envId: input.envId,
+          accounts: [{ platform: "toutiao", state: "ok", checkedAt: "2026-11-13T02:29:00.000Z" }],
+        };
+      },
+      async confirm(input) {
+        confirmations.push(input.precheckId);
+        return { ok: true, code: "ok", message: "确认已记下。这一步不向平台写稿。", envId: input.envId, confirmationId: input.confirmationId, precheckId: input.precheckId };
+      },
+    });
+    const container = document.createElement("div");
+    mount(container, view, actions);
+    click(container, '[data-action="check-publish"]');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(prechecks).toEqual([{ envId: SHOP_B, revision: 1, title: "合规" }]);
+    expect(container.querySelector('[data-action="confirm-publish"]')?.hasAttribute("disabled")).toBe(true);
+    click(container, '[data-action="confirm-publish"]');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(confirmations).toEqual([]);
+
+    click(container, '[data-action="recheck"][data-platform="toutiao"]');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(prechecks).toEqual([
+      { envId: SHOP_B, revision: 1, title: "合规" },
+      { envId: SHOP_B, revision: 2, title: "合规" },
+    ]);
+    expect(container.querySelector('.precheck-row[data-platform="toutiao"]')?.getAttribute("data-status")).toBe("ok");
+    expect(container.querySelector('[data-action="confirm-publish"]')?.hasAttribute("disabled")).toBe(false);
+    click(container, '[data-action="confirm-publish"]');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(confirmations).toEqual(["pre-rechecked"]);
   });
 
   it("平台卡同时只展开一张，准备好的平台才能确认", async () => {

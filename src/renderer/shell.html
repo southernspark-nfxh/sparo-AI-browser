@@ -864,6 +864,7 @@ body.side-collapsed .dock { display: none; }
   max-width: 100%;
 }
 .chat-log .bubble-row.me { flex-direction: row-reverse; }
+.chat-log .bubble-row.echo { opacity: .6; }
 .chat-log .avatar {
   flex: 0 0 22px;
   width: 22px;
@@ -2336,6 +2337,8 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
       let shellChat = [];
       let shellChatSeq = 0;
       let shellChatKey = "";
+      let chatEcho = [];
+      let echoSeq = 0;
       function sidebarDsCloud() {
         return {
           ds: lastSidebar && lastSidebar.deepseek,
@@ -3377,6 +3380,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           }
           root.appendChild(row);
         }
+        paintEcho();
         scrollChatToEnd();
       }
 
@@ -3424,21 +3428,97 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
       }
 
       function applyChatFrame(state, frame) {
-        const key = (frame && frame.selectedSession) || "user";
-        let next = state.key === key ? state : { key: key, seq: 0, texts: [] };
-        if (frame && frame.chatSync === "delta") {
+        if (!frame || (frame.chatSync !== "delta" && frame.chatSync !== "full")) {
+          return { state: state, requestFull: false };
+        }
+        const key = frame.selectedSession || "user";
+        const next = state.key === key ? state : { key: key, seq: 0, texts: [] };
+        if (frame.chatSync === "delta") {
           if (Number(frame.chatBase) !== next.seq) return { state: next, requestFull: true };
           const extra = Array.isArray(frame.chat) ? frame.chat : [];
-          next = {
-            key: key,
-            seq: Number(frame.chatSeq) || next.seq,
-            texts: next.texts.concat(extra),
+          return {
+            state: {
+              key: key,
+              seq: Number(frame.chatSeq) || next.seq,
+              texts: next.texts.concat(extra),
+            },
+            requestFull: false,
+            from: state.key === key ? state.texts.length : 0,
           };
-          return { state: next, requestFull: false, from: state.key === key ? state.texts.length : 0 };
         }
-        const all = frame && Array.isArray(frame.chat) ? frame.chat : [];
-        next = { key: key, seq: Number(frame && frame.chatSeq) || 0, texts: all.slice() };
-        return { state: next, requestFull: false, from: 0 };
+        if (!Array.isArray(frame.chat)) return { state: state, requestFull: true };
+        return {
+          state: { key: key, seq: Number(frame.chatSeq) || 0, texts: frame.chat.slice() },
+          requestFull: false,
+          from: 0,
+        };
+      }
+
+      function consumeChatEcho(prev, next, echoes) {
+        const count = (log, text) => {
+          let n = 0;
+          for (const item of log || []) {
+            if (item && item.role === "user" && (item.text || "") === text) n += 1;
+          }
+          return n;
+        };
+        const texts = [];
+        const seen = new Set();
+        for (const echo of echoes || []) {
+          if (seen.has(echo.text)) continue;
+          seen.add(echo.text);
+          texts.push(echo.text);
+        }
+        let left = (echoes || []).slice();
+        for (const text of texts) {
+          let added = count(next, text) - count(prev, text);
+          if (added < 0) added = 0;
+          left = left.filter((echo) => {
+            if (added > 0 && echo.text === text) {
+              added -= 1;
+              return false;
+            }
+            return true;
+          });
+        }
+        return left;
+      }
+
+      function paintEcho() {
+        const root = document.getElementById("chat");
+        if (!root) return;
+        root.querySelectorAll(".bubble-row.echo").forEach((el) => el.remove());
+        const meLabel = userProfile.nickname ? userProfile.nickname.slice(0, 1) : t("chat.me");
+        for (const echo of chatEcho) {
+          const row = document.createElement("div");
+          row.className = "bubble-row me echo";
+          row.dataset.echoId = echo.id;
+          const av = document.createElement("div");
+          av.className = "avatar";
+          av.textContent = meLabel;
+          const wrap = document.createElement("div");
+          wrap.className = "bubble-wrap";
+          const bub = document.createElement("div");
+          bub.className = "bubble me";
+          bub.textContent = echo.text;
+          wrap.appendChild(bub);
+          row.appendChild(wrap);
+          row.appendChild(av);
+          root.appendChild(row);
+        }
+      }
+
+      function pushEcho(text) {
+        const id = "echo-" + (++echoSeq);
+        chatEcho.push({ id: id, text: String(text || "") });
+        paintEcho();
+        scrollChatToEnd();
+        return id;
+      }
+
+      function dropEcho(id) {
+        chatEcho = chatEcho.filter((echo) => echo.id !== id);
+        paintEcho();
       }
 
       function applySidebar(payload) {
@@ -3533,6 +3613,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         renderLessons(payload.lessons);
         renderTriggers(payload.triggers);
         renderQa(payload.qa);
+        const prevChat = shellChat.slice();
         const framed = applyChatFrame(
           { key: shellChatKey, seq: shellChatSeq, texts: shellChat },
           payload,
@@ -3541,6 +3622,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           if (window.sparkShell && window.sparkShell.requestChatFull) window.sparkShell.requestChatFull();
         } else {
           const from = framed.from;
+          chatEcho = consumeChatEcho(prevChat, framed.state.texts, chatEcho);
           shellChat = framed.state.texts;
           shellChatSeq = framed.state.seq;
           shellChatKey = framed.state.key;
@@ -3780,6 +3862,9 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         setMoreOpen(true);
         setDsPanel(panel || "common");
       };
+      if (window.sparkShell) {
+        window.sparkShell.onOpenAccountSettings?.(() => window.__sparoOpenSettings("envs"));
+      }
       try {
         const lastPanel = localStorage.getItem("sparo.ds.panel");
         if (lastPanel) setDsPanel(lastPanel);
@@ -4701,10 +4786,12 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           sendBtn.dataset.sending = "1";
           syncSendButton();
           const outgoing = text || (images.length ? "请看附图，用中文说明。" : "");
+          const echoId = outgoing ? pushEcho(outgoing) : "";
           try {
             await window.sparkShell.chat(outgoing, images, quotes);
           } catch (err) {
             console.error(err);
+            if (echoId) dropEcho(echoId);
             pendingQuotes = quotes;
             renderQuoteStrip();
             toast(t("toast.fail"));

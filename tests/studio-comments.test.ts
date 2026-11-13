@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createEnv } from "../src/main/envs/store.js";
+import { SparkBrowser } from "../src/main/browser.js";
 import {
   buildCommentsViewModel,
   fillCommentReply,
@@ -167,6 +168,44 @@ const fakeDom = vi.hoisted(() => {
   return { FakeNode, fakeEl };
 });
 
+const commentSparo = vi.hoisted(() => ({
+  rows: [] as Array<{ id: string; url: string; envId?: string }>,
+  exec: vi.fn(),
+}));
+
+vi.mock("../strategies/skills/social-media-publish/scripts/sparo.mjs", () => ({
+  tabs: async () => ({ tabs: commentSparo.rows }),
+  tabRows: (listed: { tabs: Array<{ id: string; url: string; envId?: string }> }) => listed.tabs,
+  exec: commentSparo.exec,
+}));
+
+vi.mock("electron", () => ({
+  BrowserWindow: class BrowserWindow {},
+  WebContentsView: class WebContentsView {},
+  Menu: { buildFromTemplate: () => ({ popup: () => undefined }), setApplicationMenu: () => undefined },
+  dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
+  app: {
+    getPath: () => process.cwd(),
+    getAppPath: () => process.cwd(),
+    isReady: () => true,
+    isPackaged: false,
+    on: () => undefined,
+    whenReady: () => Promise.resolve(),
+    getAppMetrics: () => [],
+  },
+  ipcMain: { handle: () => undefined, on: () => undefined, removeHandler: () => undefined },
+  session: { defaultSession: {}, fromPartition: () => ({}) },
+  clipboard: { writeText: () => undefined, readText: () => "" },
+  shell: { openExternal: async () => undefined, openPath: async () => "" },
+  screen: {
+    getPrimaryDisplay: () => ({
+      workArea: { x: 0, y: 0, width: 1280, height: 800 },
+      workAreaSize: { width: 1280, height: 800 },
+    }),
+    getDisplayMatching: () => ({ workArea: { x: 0, y: 0, width: 1280, height: 800 } }),
+  },
+}));
+
 vi.mock("../src/renderer/studio/dom.ts", async () => {
   const actual = await vi.importActual<typeof import("../src/renderer/studio/dom.ts")>("../src/renderer/studio/dom.ts");
   return { ...actual, el: fakeDom.fakeEl };
@@ -185,6 +224,8 @@ const port = {
 } as CommentsPort;
 
 afterEach(() => {
+  commentSparo.rows = [];
+  commentSparo.exec.mockReset();
   resetCommentLock();
 });
 
@@ -563,6 +604,124 @@ describe("评论服务", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("评论生产链环境隔离", () => {
+  const creatorUrl = "https://mp.toutiao.com/profile_v4/graphic/articles";
+  const replyUrl = "https://mp.toutiao.com/profile_v4/manage/comment";
+
+  it("双环境 GET 各打各的标签，缓存也只归各自环境", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "studio-comment-two-env-"));
+    try {
+      commentSparo.rows = [
+        { id: "tab-a", url: creatorUrl, envId: "env-a" },
+        { id: "tab-b", url: creatorUrl, envId: "env-b" },
+      ];
+      commentSparo.exec.mockImplementation(async (_script: string, tabId: string) => {
+        const mine = tabId === "tab-a" ? "A" : "B";
+        return {
+          status: 200,
+          body: JSON.stringify({
+            data: [{
+              id_str: "comment-" + mine,
+              text: "来自环境 " + mine,
+              create_time: 1762828800,
+              user: { name: "作者 " + mine },
+              article_info: { group_id_str: "article-" + mine, title: "标题 " + mine },
+            }],
+          }),
+        };
+      });
+
+      const a = await listCommentsForEnv("env-a", { storeDir: dir });
+      const b = await listCommentsForEnv("env-b", { storeDir: dir });
+      expect(a.ok).toBe(true);
+      expect(b.ok).toBe(true);
+      expect(commentSparo.exec.mock.calls.map((call) => call[1])).toEqual(["tab-a", "tab-b"]);
+      expect(a.boards.find((board: { platform: string }) => board.platform === "toutiao")?.comments[0].author).toBe("作者 A");
+      expect(b.boards.find((board: { platform: string }) => board.platform === "toutiao")?.comments[0].author).toBe("作者 B");
+      expect(listCachedComments(dir, "env-a").map((item: CommentRecord) => item.author)).toEqual(["作者 A"]);
+      expect(listCachedComments(dir, "env-b").map((item: CommentRecord) => item.author)).toEqual(["作者 B"]);
+      expect(readCommentStore(dir).records).toHaveLength(2);
+      expect(JSON.stringify(listCachedComments(dir, "env-a"))).not.toContain("作者 B");
+      expect(JSON.stringify(listCachedComments(dir, "env-b"))).not.toContain("作者 A");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      name: "候选标签没有 envId",
+      code: "env_mismatch",
+      rows: [{ id: "unknown", url: creatorUrl }],
+    },
+    {
+      name: "当前环境的候选标签不唯一",
+      code: "ambiguous_env_tab",
+      rows: [
+        { id: "a-1", url: creatorUrl, envId: "env-a" },
+        { id: "a-2", url: creatorUrl, envId: "env-a" },
+      ],
+    },
+  ])("$name 时不 GET、不写缓存", async ({ code, rows }) => {
+    const dir = mkdtempSync(join(tmpdir(), "studio-comment-unowned-get-"));
+    try {
+      commentSparo.rows = rows;
+      commentSparo.exec.mockResolvedValue({
+        status: 200,
+        body: JSON.stringify({ data: [{ id_str: "wrong", text: "不该采集", user: { name: "错误归属" } }] }),
+      });
+      const result = await listCommentsForEnv("env-a", { storeDir: dir });
+      const board = result.boards.find((item: { platform: string }) => item.platform === "toutiao");
+      expect(board).toMatchObject({ code, canReply: false, comments: [] });
+      expect(board.envId).toBeUndefined();
+      expect(board.reason).toContain("停止");
+      expect(commentSparo.exec).not.toHaveBeenCalled();
+      expect(existsSync(join(dir, "comment-cache.json"))).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("回复页没有 envId 时拒绝填框，也不写回复缓存", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "studio-comment-unowned-reply-"));
+    const exec = vi.fn(async () => ({ ok: true, value: "不该填", readback: "不该填", n: 1 }));
+    try {
+      expect(resolveReplyTab([{ id: "unknown", url: replyUrl }], "toutiao", "env-a")).toMatchObject({
+        ok: false,
+        code: "env_mismatch",
+      });
+      const result = await fillOpenReply("toutiao", "不该填", {
+        envId: "env-a",
+        storeDir: dir,
+        commentId: "comment-a",
+        listTabs: async () => [{ id: "unknown", url: replyUrl }],
+        exec,
+      });
+      expect(result).toMatchObject({ ok: false, code: "env_mismatch", replied: false });
+      expect(result.message).toContain("不会改用默认登录");
+      expect(exec).not.toHaveBeenCalled();
+      expect(existsSync(join(dir, "comment-cache.json"))).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("listTabs 给环境标签投影真实 envId，普通标签不伪造环境", () => {
+    const browser = Object.create(SparkBrowser.prototype) as SparkBrowser & {
+      tabs: Map<string, { id: string; title: string; url: string; envId?: string; view: null; lastActiveAt: number }>;
+      activeTabId: string;
+    };
+    browser.tabs = new Map([
+      ["comment-env-a", { id: "comment-env-a", title: "环境甲", url: creatorUrl, envId: "env-a", view: null, lastActiveAt: 1 }],
+      ["comment-default", { id: "comment-default", title: "普通页", url: creatorUrl, view: null, lastActiveAt: 1 }],
+    ]);
+    browser.activeTabId = "comment-env-a";
+    const rows = browser.listTabs().tabs;
+    expect(rows.find((item) => item.id === "comment-env-a")?.envId).toBe("env-a");
+    expect(rows.find((item) => item.id === "comment-default")?.envId).toBeUndefined();
   });
 });
 

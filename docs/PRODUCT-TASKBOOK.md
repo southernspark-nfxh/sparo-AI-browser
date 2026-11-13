@@ -1,12 +1,23 @@
 # Sparo 现行产品任务书
 
 > 持续更新。与原版 **同一份正文**，便于两边对照。上一版见 [archive/2026-08/PRODUCT-TASKBOOK-20260811.md](./archive/2026-08/PRODUCT-TASKBOOK-20260811.md)。  
-> 版本：**v0.6.0 · 2026-11-12**（多账号环境 + 自媒体自动发布已打包：`release\Sparo-Setup-0.6.0.exe`）  
+> 版本：**v0.6.6 · 2026-11-13**（侧栏对话回显 / 页面洞钳制 / 关标签工具已落代码；安装包待打）  
+> 上一包：**v0.6.0 · 2026-11-12**（多账号环境 + 自媒体自动发布已打包：`release\Sparo-Setup-0.6.0.exe`）  
 > 状态：**进行中**（云订阅 M1 代码已落地并人测过登录/付款；上架未完；飞书网页已做；侧栏大脑已让模型编手；0.6.0 多账号环境 + social-media-publish v0.3.6 已随包发布）  
 > 产品文案仍以 [PRODUCT.md](./PRODUCT.md) 为准，不要把任务书当商店上架稿。  
-> 先读：[ARCHITECTURE.md](./ARCHITECTURE.md) · [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) · [CHANGELOG.md](../CHANGELOG.md) 0.6.0 · 根目录 [AGENTS.md](../AGENTS.md)
+> 先读：[ARCHITECTURE.md](./ARCHITECTURE.md) · [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) · [CHANGELOG.md](../CHANGELOG.md) 0.6.6 · 根目录 [AGENTS.md](../AGENTS.md)
 >
 > **大脑进度（0.1.19）：** 听整句、站点表换站、模型编 `handbook` / 写下一步已进代码。10-26 起任务循环硬规则：新任务出确认卡、关单必有声、跑完计划步才许收摊、挂起答复接得回。10-27 起同能力多段逐段对账，最小化不再把窗口拉回前台。`absorb`（页上价格对约束）未开工。9 月交接稿见 [archive/2026-09/TRAE-PROMPT-AGENT-BRAIN.md](./archive/2026-09/TRAE-PROMPT-AGENT-BRAIN.md)，以 changelog 和测试为准。
+
+## 2026-11-13 已落代码（0.6.6：侧栏对话 + 关标签）
+
+对外变更见 [CHANGELOG.md](../CHANGELOG.md) 0.6.6。安装包还没打。
+
+- 坏对话帧不再把侧栏清空；发送后先本地回显，回推后再一对一去掉
+- 状态查询和壳层诊断不推进对话游标
+- 网页视图宽度按当前侧栏宽钳制；活动页盖住壳层时继续拉回
+- 侧栏可 `list_tabs` / `close_tabs`。批量必须带 `match`，命中的页包括当前页一起关
+- 关窗即关完：撤掉 0.6.5 的标签会话落盘/恢复（`tabs.json`），重启永远是干净新标签页（2026-11-13 用户拍板，理由：恢复出的 30 多张标签全是空白，体验等同 bug）
 
 ## 2026-11-12 已落地（0.6.0：多账号环境 + 自媒体自动发布）
 

@@ -5,6 +5,8 @@
 import { api, type LegacyBoard, type LegacyMetrics, type StudioLoad } from "./studio/api.js";
 import { clear, el, field, icon, on } from "./studio/dom.js";
 import { PAGE_MODULES, type DraftInput, type PageActions, type PageMount, type StudioViewId } from "./studio/types.js";
+import { mount as mountAccountPage } from "./studio/pages/accounts.js";
+import "./studio/pages/accounts.css";
 
 export { PAGE_MODULES };
 
@@ -45,7 +47,9 @@ function emptyPage(title: string, reason: string): PageMount<{ title: string; re
   };
 }
 
-const mountAccounts = emptyPage("账号", "账号核验尚未接入。新建和删除环境仍在设置里的账号页，这里不会切换登录态。");
+function mountAccounts(container: HTMLElement, model: ReadyLoad, pageActions: PageActions): { destroy: () => void } {
+  return mountAccountPage(container, { envId: model.envId, envName: model.name || model.envId, rows: [] }, pageActions);
+}
 const mountTasks = emptyPage("发布记录", "发布记录页面尚未接入。这里不会创建发布批次，也不会代为发布。");
 
 function mountHome(container: HTMLElement, model: ReadyLoad): { destroy: () => void } {
@@ -470,6 +474,7 @@ function bindActions(): PageActions {
     pickImages: (input) => api.pickImages(input),
     checkAccounts: (input) => api.checkAccounts(input),
     openAccount: (input) => api.openAccount(input),
+    openAccountSettings: () => api.openAccountSettings(),
     refreshMetrics: async (id) => {
       const result = await api.refresh(id);
       if (!result.ok) return result;

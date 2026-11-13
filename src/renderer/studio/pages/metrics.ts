@@ -88,6 +88,9 @@ type Summary = {
   reads: number | null;
   follows: number | null;
   revenueCents: number | null;
+  readsCompleteness: Completeness;
+  followsCompleteness: Completeness;
+  revenueCompleteness: Completeness;
   partial: boolean;
   deltaText: string;
 };
@@ -201,10 +204,13 @@ function knownMetric(value: number | null | undefined, completeness?: string): n
   return value;
 }
 
-function sum(values: Array<number | null>): number | null {
-  const present = values.filter((value): value is number => value != null);
-  if (!present.length) return null;
-  return present.reduce((total, value) => total + value, 0);
+function sum(values: Array<{ value: number | null; completeness?: string }>): { value: number | null; completeness: Completeness } {
+  if (!values.length) return { value: null, completeness: "missing" };
+  if (values.every((item) => item.completeness === "unsupported")) return { value: null, completeness: "unsupported" };
+  const partial = values.some((item) => item.completeness === "partial" || item.value == null);
+  const present = values.filter((item): item is { value: number; completeness?: string } => item.value != null);
+  if (!present.length) return { value: null, completeness: values.some((item) => item.completeness === "partial") ? "partial" : "missing" };
+  return { value: present.reduce((total, item) => total + item.value, 0), completeness: partial ? "partial" : "full" };
 }
 
 export function centsOf(point: { revenueCents?: number | null; revenue?: string | null; completeness?: string }): number | null {
@@ -254,11 +260,11 @@ export function trendSegments(points: Array<{ date: string; value: number | null
 }
 
 function deltaOf(points: TrendPoint[]): string {
-  const byDate = new Map<string, Array<number | null>>();
+  const byDate = new Map<string, Array<{ value: number | null; completeness?: string }>>();
   for (const point of points) {
     if (!point.date) continue;
     const list = byDate.get(point.date) || [];
-    list.push(knownMetric(point.reads, point.completeness));
+    list.push({ value: knownMetric(point.reads, point.completeness), completeness: point.completeness });
     byDate.set(point.date, list);
   }
   const dates = [...byDate.keys()].sort();
@@ -268,17 +274,23 @@ function deltaOf(points: TrendPoint[]): string {
   if (!byDate.has(previous)) return "";
   const latestSum = sum(byDate.get(latest) || []);
   const previousSum = sum(byDate.get(previous) || []);
-  if (latestSum == null || previousSum == null || previousSum === 0) return "";
-  const pct = Math.round(((latestSum - previousSum) / Math.abs(previousSum)) * 100);
+  if (latestSum.value == null || previousSum.value == null || previousSum.value === 0 || latestSum.completeness !== "full" || previousSum.completeness !== "full") return "";
+  const pct = Math.round(((latestSum.value - previousSum.value) / Math.abs(previousSum.value)) * 100);
   return (pct > 0 ? "+" : "") + String(pct) + "%";
 }
 
 export function summarizeWindow(points: TrendPoint[]): Summary {
   const partial = points.some((point) => point.completeness === "partial");
+  const reads = sum(points.map((point) => ({ value: knownMetric(point.reads, point.completeness), completeness: point.completeness })));
+  const follows = sum(points.map((point) => ({ value: knownMetric(point.follows, point.completeness), completeness: point.completeness })));
+  const revenue = sum(points.map((point) => ({ value: centsOf(point), completeness: point.completeness })));
   return {
-    reads: sum(points.map((point) => knownMetric(point.reads, point.completeness))),
-    follows: sum(points.map((point) => knownMetric(point.follows, point.completeness))),
-    revenueCents: sum(points.map((point) => centsOf(point))),
+    reads: reads.value,
+    follows: follows.value,
+    revenueCents: revenue.value,
+    readsCompleteness: reads.completeness,
+    followsCompleteness: follows.completeness,
+    revenueCompleteness: revenue.completeness,
     partial,
     deltaText: partial ? "" : deltaOf(points),
   };
@@ -404,16 +416,13 @@ function renderCompare(host: HTMLElement, points: TrendPoint[]): void {
   }
   const rows = ids.map((platform) => {
     const mine = points.filter((point) => point.platform === platform);
-    const completeness = mine.some((point) => point.completeness === "partial")
-      ? "partial"
-      : mine.every((point) => point.completeness === "unsupported")
-        ? "unsupported"
-        : "full";
+    const readValues = mine.map((point) => ({ value: knownMetric(point.reads, point.completeness), completeness: point.completeness }));
+    const likeValues = mine.map((point) => ({ value: knownMetric(point.likes, point.completeness), completeness: point.completeness }));
     return {
       platform,
-      reads: sum(mine.map((point) => knownMetric(point.reads, point.completeness))),
-      likes: sum(mine.map((point) => knownMetric(point.likes, point.completeness))),
-      completeness,
+      reads: sum(readValues).value,
+      likes: sum(likeValues).value,
+      completeness: sum([...readValues, ...likeValues]).completeness,
       reason: mine.map((point) => point.reason || "").find(Boolean) || "",
     };
   });
@@ -432,8 +441,8 @@ function renderCompare(host: HTMLElement, points: TrendPoint[]): void {
       fill.style.width = (max > 0 ? Math.round((Number(row.reads) / max) * 100) : 0) + "%";
       track.append(fill);
       line.append(track);
-      line.append(el("span", "num", displayCount(row.reads, "full")));
-      line.append(el("span", "num", "点赞 " + displayCount(row.likes, row.likes == null ? "missing" : "full")));
+      line.append(el("span", "num", displayCount(row.reads, row.completeness)));
+      line.append(el("span", "num", "点赞 " + displayCount(row.likes, row.likes == null ? "missing" : row.completeness)));
     }
     host.append(line);
   }
@@ -597,15 +606,16 @@ export function mount(container: HTMLElement, input: MetricsInput, actions: Page
     const monthSummary = summarizeWindow(monthPoints);
     const known = snapshotKnown(model);
     const hide = summary.partial || monthSummary.partial;
-    const origin = trace(sourcesOf(ranged.length ? ranged : monthPoints), hide ? "partial" : known ? "full" : "missing", model.capturedAt);
+    const sources = sourcesOf(ranged.length ? ranged : monthPoints);
+    const origin = trace(sources, hide ? "partial" : known ? "full" : "missing", model.capturedAt);
     const cards = el("div", "metrics-kpis");
     cards.setAttribute("data-block", "overview");
     const compareNote = !known ? "数据还没读出来" : hide ? "" : summary.deltaText ? "较前一日 " + summary.deltaText : "较前一日 —";
     const compareReason = !known || hide || summary.deltaText ? "" : "没有前一日快照";
     cards.append(
-      card("总阅读", known ? displayCount(summary.reads, summary.reads == null ? "missing" : "full") : "—", known && summary.reads != null ? "相加，非去重" : "还没有阅读快照", origin),
-      card("净增粉丝", known ? displayFollows(summary.follows, summary.follows == null ? "missing" : "full") : "—", [compareNote, compareReason].filter(Boolean).join(" · ") || "有符号数", origin),
-      card("本月收益", known ? displayCents(monthSummary.revenueCents, monthSummary.revenueCents == null ? "missing" : "full") : "—", known && monthSummary.revenueCents != null ? "账面相加，非到账" : "还没有本月收益快照", origin),
+      card("总阅读", known ? displayCount(summary.reads, summary.readsCompleteness) : "—", known && summary.reads != null ? "相加，非去重" : "还没有阅读快照", trace(sources, summary.readsCompleteness, model.capturedAt)),
+      card("净增粉丝", known ? displayFollows(summary.follows, summary.followsCompleteness) : "—", [compareNote, compareReason].filter(Boolean).join(" · ") || "有符号数", trace(sources, summary.followsCompleteness, model.capturedAt)),
+      card("本月收益", known ? displayCents(monthSummary.revenueCents, monthSummary.revenueCompleteness) : "—", known && monthSummary.revenueCents != null ? "账面相加，非到账" : "还没有本月收益快照", trace(sources, monthSummary.revenueCompleteness, model.capturedAt)),
       card("数据异常", known ? formatInt(model.exceptions.filter((item) => (state.platform === "all" || item.platform === state.platform) && inWindow(item.date)).length) : "—", "查看原因", origin),
     );
     const layout = el("div", "metrics-layout");

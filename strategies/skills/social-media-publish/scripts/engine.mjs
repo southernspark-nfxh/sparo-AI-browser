@@ -4,7 +4,7 @@ import { sohu } from "./adapters/sohu.mjs";
 import { toutiao } from "./adapters/toutiao.mjs";
 import { activateEditor, blockedCall, canResume, restoreActive } from "./page.mjs";
 import { releaseRender } from "./sparo.mjs";
-import { appendLedger } from "./ledger.mjs";
+import { appendLegacyLedger } from "./ledger.mjs";
 import { activeIdOf, tabRows, tabs, useTab } from "./sparo.mjs";
 
 export const ADAPTERS = { toutiao, baijiahao, dayu, sohu };
@@ -178,7 +178,7 @@ export async function runPublish(args, article) {
 function writeLedger(ctx, report) {
   const verify = report.log?.find((item) => item.step === "verify" && item.ok);
   const detail = verify?.detail || {};
-  appendLedger(ctx.ledgerPath, {
+  appendLegacyLedger(ctx.ledgerPath, {
     at: new Date().toISOString(),
     platform: ctx.platform,
     title: ctx.title,

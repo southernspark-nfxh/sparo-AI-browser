@@ -243,17 +243,17 @@ export function saveDraftDir(root: string, draft: StudioDraft): string {
   mkdirSync(join(dir, "images"), { recursive: true });
   const body = draft.body || "";
   const stored: StudioDraft = { ...draft, body, schedule: {}, updatedAt: new Date().toISOString() };
-  writeFileSync(join(dir, "body.md"), body, "utf8");
-  writeFileSync(draftFile(dir), JSON.stringify({ ...stored, body: "" }, null, 2), "utf8");
   if (draft.cover && existsSync(draft.cover)) {
     const target = join(dir, "cover" + (extname(draft.cover) || ".jpg"));
     if (resolveCopy(draft.cover, target)) stored.cover = target;
   }
-  draft.images.forEach((file, index) => {
-    if (!file || !existsSync(file)) return;
+  stored.images = draft.images.map((file, index) => {
+    if (!file || !existsSync(file)) return file;
     const target = join(dir, "images", String(index + 1) + (extname(file) || ".jpg"));
-    resolveCopy(file, target);
+    return resolveCopy(file, target) ? target : file;
   });
+  writeFileSync(join(dir, "body.md"), body, "utf8");
+  writeFileSync(draftFile(dir), JSON.stringify({ ...stored, body: "" }, null, 2), "utf8");
   return dir;
 }
 

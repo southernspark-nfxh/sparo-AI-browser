@@ -89,26 +89,75 @@ export function formatPushFrame(input: {
 
 export type ShellChatState = { key: string; seq: number; texts: string[] };
 
-/** 壳层合并一帧。基线对不上就请求全量，先不改本地对话。 */
+export type EchoBubble = { id: string; text: string };
+
+/** 正式对话里新出现的用户句，按顺序吃掉对应的一条回显。同一句连发两次时，只吃掉已经回推的那一条。 */
+export function consumeChatEcho<T extends { role?: string; text?: string }>(
+  prev: T[],
+  next: T[],
+  echoes: EchoBubble[],
+): EchoBubble[] {
+  const count = (log: T[], text: string) => {
+    let n = 0;
+    for (const item of log || []) {
+      if (item && item.role === "user" && (item.text || "") === text) n += 1;
+    }
+    return n;
+  };
+  const texts: string[] = [];
+  const seen = new Set<string>();
+  for (const echo of echoes) {
+    if (seen.has(echo.text)) continue;
+    seen.add(echo.text);
+    texts.push(echo.text);
+  }
+  let left = echoes.slice();
+  for (const text of texts) {
+    let added = count(next, text) - count(prev, text);
+    if (added < 0) added = 0;
+    left = left.filter((echo) => {
+      if (added > 0 && echo.text === text) {
+        added -= 1;
+        return false;
+      }
+      return true;
+    });
+  }
+  return left;
+}
+
+/**
+ * 壳层合并一帧。基线对不上就请求全量，先不改本地对话。
+ * 没有 chatSync 的包不是对话帧，原样返回。
+ * 全量帧的 chat 不是数组时不清空，改为请求全量。空数组仍是清对话。
+ */
 export function applyChatFrame(
   state: ShellChatState,
   frame: { selectedSession?: string; chatSync?: string; chat?: Array<{ text?: string; seq?: number }>; chatBase?: number; chatSeq?: number },
 ): { state: ShellChatState; requestFull: boolean } {
+  if (!frame || (frame.chatSync !== "delta" && frame.chatSync !== "full")) {
+    return { state, requestFull: false };
+  }
   const key = frame.selectedSession || "user";
-  let next = state.key === key ? state : { key, seq: 0, texts: [] };
+  const next = state.key === key ? state : { key, seq: 0, texts: [] };
   if (frame.chatSync === "delta") {
     if (Number(frame.chatBase) !== next.seq) return { state: next, requestFull: true };
-    next = {
-      key,
-      seq: Number(frame.chatSeq) || next.seq,
-      texts: next.texts.concat((frame.chat || []).map((turn) => turn.text || "")),
+    return {
+      state: {
+        key,
+        seq: Number(frame.chatSeq) || next.seq,
+        texts: next.texts.concat((Array.isArray(frame.chat) ? frame.chat : []).map((turn) => turn.text || "")),
+      },
+      requestFull: false,
     };
-    return { state: next, requestFull: false };
   }
-  next = {
-    key,
-    seq: Number(frame.chatSeq) || 0,
-    texts: (frame.chat || []).map((turn) => turn.text || ""),
+  if (!Array.isArray(frame.chat)) return { state, requestFull: true };
+  return {
+    state: {
+      key,
+      seq: Number(frame.chatSeq) || 0,
+      texts: frame.chat.map((turn) => turn.text || ""),
+    },
+    requestFull: false,
   };
-  return { state: next, requestFull: false };
 }

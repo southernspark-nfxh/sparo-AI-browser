@@ -95,18 +95,32 @@ export function mapCommentList(profile, payload) {
   })).filter((item) => item.commentId || item.content);
 }
 
-function creatorTab(rows, profile) {
+function creatorTab(rows, profile, envId) {
   const host = profile.entry?.host || "";
   const marks = [profile.entry?.writeUrl, profile.entry?.listUrl]
     .map((url) => {
       try { return new URL(url).pathname.split("/").filter(Boolean)[0] || ""; } catch { return ""; }
     })
     .filter(Boolean);
-  return rows.find((item) => {
+  const candidates = (rows || []).filter((item) => {
     const url = String(item.url || "");
     if (!url.includes(host)) return false;
     return marks.some((mark) => url.includes("/" + mark));
   });
+  const matched = candidates.filter((item) => String(item?.envId || "").trim() === envId);
+  if (matched.length === 1) return { ok: true, tab: matched[0] };
+  if (matched.length > 1) {
+    return {
+      ok: false,
+      code: "ambiguous_env_tab",
+      message: "这个环境的平台页不唯一，已停止，不会读取或写入评论。",
+    };
+  }
+  return {
+    ok: false,
+    code: candidates.length ? "env_mismatch" : "no_env_tab",
+    message: "没有找到明确属于这个环境的唯一平台页，已停止，不会改用默认登录。",
+  };
 }
 
 async function readCommentJson(sparo, tab, url) {
@@ -127,11 +141,12 @@ async function readCommentJson(sparo, tab, url) {
 }
 
 export async function listComments(options = {}) {
-  if (options.requireEnv && !String(options.envId || "").trim()) {
+  const envId = String(options.envId || "").trim();
+  if (!envId) {
     return {
       ok: false,
       code: "missing_env",
-      message: "还没有选择账号环境，已停止。不会改用默认登录。",
+      message: MISSING_ENV,
       envId: "",
       boards: [],
     };
@@ -159,12 +174,16 @@ export async function listComments(options = {}) {
       sparo = await import("./sparo.mjs");
       rows = sparo.tabRows(await sparo.tabs());
     }
-    const tab = creatorTab(rows, profile);
-    if (!tab?.id) {
-      board.reason = "登录态缺失";
+    const found = creatorTab(rows, profile, envId);
+    if (!found.ok || !found.tab?.id) {
+      board.code = found.code || "no_env_tab";
+      board.reason = found.message || "没有找到明确属于这个环境的唯一平台页，已停止，不会改用默认登录。";
+      board.canReply = false;
       boards.push(board);
       continue;
     }
+    const tab = found.tab;
+    board.envId = envId;
     tab.expect = profile.entry.host;
     const got = await readCommentJson(sparo, tab, url);
     if (!got || got.status === 401 || got.status === 403) {
@@ -544,10 +563,10 @@ export function resolveReplyTab(rows, platform, envId) {
     const url = String(item?.url || "");
     return url.includes(host) && url.includes(page);
   };
-  const foreign = (rows || []).filter((item) => item?.envId && item.envId !== id && samePage(item));
-  const matched = (rows || []).filter((item) => samePage(item) && (!item.envId || item.envId === id));
-  if (!matched.length && foreign.length) {
-    return { ok: false, code: "env_mismatch", reason: "环境不匹配", message: "回复框不属于当前环境，已停止。不会改用默认登录。", n: foreign.length };
+  const candidates = (rows || []).filter((item) => samePage(item));
+  const matched = candidates.filter((item) => String(item?.envId || "").trim() === id);
+  if (!matched.length && candidates.length) {
+    return { ok: false, code: "env_mismatch", reason: "环境不匹配", message: "回复框不属于当前环境，已停止。不会改用默认登录。", n: candidates.length };
   }
   if (matched.length !== 1) {
     const ambiguous = matched.length > 1;
@@ -658,10 +677,12 @@ export async function fillOpenReply(platform, text, comment = {}) {
 export async function listCommentsForEnv(envId, options = {}) {
   const id = String(envId || "").trim();
   if (!id) return { ok: false, code: "missing_env", message: MISSING_ENV, envId: "", boards: [] };
-  const boards = Array.isArray(options.boards) ? options.boards : await listComments();
+  const listed = Array.isArray(options.boards) ? options.boards : await listComments({ envId: id });
+  if (!Array.isArray(listed)) return listed;
+  const boards = listed;
   if (options.storeDir) {
     for (const board of boards) {
-      if (!board?.open) continue;
+      if (!board?.open || String(board?.envId || "").trim() !== id) continue;
       if (board.reason && board.reason !== "列表为空") {
         const store = readCommentStore(options.storeDir);
         store.notes = (store.notes || []).filter((note) => !(note.envId === id && note.platform === board.platform));

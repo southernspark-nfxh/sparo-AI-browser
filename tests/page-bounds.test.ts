@@ -5,7 +5,9 @@ import {
   SHELL_PAINT_RELOAD_AFTER_REPAINTS,
   SHELL_PAINT_REPAINT_COOLDOWN_MS,
   SHELL_PAINT_STALL_BEATS,
+  MIN_SIDEBAR_W,
   boundsWithinOnePixel,
+  clampPageView,
   pageViewCoversChrome,
   resetChromeCoverBudget,
   shellPaintStalled,
@@ -54,6 +56,37 @@ describe("pageViewCoversChrome", () => {
 
   it("ignores a background tab parked offscreen", () => {
     expect(pageViewCoversChrome({ x: -20000, y: 0, width: 1020, height: 780 }, hole)).toBe(false);
+  });
+});
+
+describe("clampPageView", () => {
+  const limits = { contentWidth: 1400, contentHeight: 900, sidebarW: 340, chromeH: 76 };
+
+  it("超窗宽和超洞宽都夹回页面洞", () => {
+    const fitted = clampPageView(
+      { x: 0, y: 76, width: 1400, height: 824 },
+      { ...limits, hole: { x: 0, y: 76, width: 1060, height: 824 } },
+    );
+    expect(fitted.width).toBe(1060);
+    expect(fitted.x).toBe(0);
+    expect(fitted.width).toBeLessThan(limits.contentWidth - MIN_SIDEBAR_W);
+  });
+
+  it("侧栏宽度未知时至少留出工具轨", () => {
+    const fitted = clampPageView(
+      { x: 0, y: 76, width: 1400, height: 800 },
+      { ...limits, sidebarW: 0, hole: null },
+    );
+    expect(fitted.width).toBe(1400 - MIN_SIDEBAR_W);
+  });
+
+  it("y 进顶栏时拉回到顶栏之下", () => {
+    const fitted = clampPageView(
+      { x: 0, y: 0, width: 800, height: 900 },
+      { ...limits, hole: { x: 0, y: 76, width: 1060, height: 824 } },
+    );
+    expect(fitted.y).toBe(76);
+    expect(fitted.y).toBeGreaterThanOrEqual(76);
   });
 });
 

@@ -244,16 +244,16 @@ function fact(value: number | null, text: string, unit: string, completeness: Co
 function aggregate(rows: MetricRow[], field: "reads" | "follows" | "revenue"): { value: number | null; completeness: Completeness } {
   if (!rows.length) return { value: null, completeness: "missing" };
   if (rows.every((row) => row.completeness === "unsupported")) return { value: null, completeness: "unsupported" };
-  const partial = rows.some((row) => row.completeness === "partial");
+  const values = rows.map((row) => numberOf(row, field));
+  const partial = rows.some((row) => row.completeness === "partial") || values.some((value) => value == null);
   let any = false;
   let total = 0;
-  for (const row of rows) {
-    const value = numberOf(row, field);
+  for (const value of values) {
     if (value == null) continue;
     any = true;
     total += value;
   }
-  if (!any) return { value: null, completeness: partial ? "partial" : "missing" };
+  if (!any) return { value: null, completeness: rows.some((row) => row.completeness === "partial") ? "partial" : "missing" };
   return { value: total, completeness: partial ? "partial" : "full" };
 }
 

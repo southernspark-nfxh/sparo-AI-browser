@@ -2,7 +2,7 @@
 
 **Sparo** — *会动手的 AI 浏览器。发送前你确认。*  
 Sparo 本身是 Agent。浏览器是身体。MCP 只是对外再露一双手。操纵的是用户正在看的那一扇窗。  
-多个外部 Agent 可以同时连 3921：`initialize` 拿 `clientId`，之后用请求头 `x-sparo-client`。不带 `tabId` 的操作落在该 client 自己的标签上，不抢用户当前页。后台任务全局最多 3 个同时跑，满了排队（`queued`），空出来自动开跑。`list_tabs` 的 `owner` 是 `user` 或 `agent:<clientId>`。  
+多个外部 Agent 可以同时连 3921：`initialize` 拿 `clientId`，之后用请求头 `x-sparo-client`。不带 `tabId` 的操作落在该 client 自己的标签上，不抢用户当前页。后台任务全局最多 3 个同时跑，满了排队（`queued`），空出来自动开跑。`list_tabs` 的 `owner` 是 `user` 或 `agent:<clientId>`。侧栏要关网页：先 `list_tabs`，再 `close_tabs`，`match` 传站点或标题（今日头条 = `toutiao`），命中的页包括当前页一起关；不传 `match` 不会关标签。只有用户说留着当前页才传 `keepActive: true`。  
 **多账号（2026-11-12 起）：** 同一个站点能同时登录多个号，不是切换登录态。先 `list_envs` 拿 `envId`，再 `navigate({ url, envId })` / `new_tab({ url, envId })`；技能放 `run_skill({ query, params: { envId } })`。每个环境一套独立 Chromium partition（Cookie / localStorage / IndexedDB 互不可见），环境标签会认领给发起它的 client。不传 `envId` 就是默认登录态。详见 [MCP-API.md](./MCP-API.md) 的「多账号环境」。
 **主线在本目录。** 原版 `D:\download\Sparo` 只同步能力，不要把云订阅搬过去。对人说「技能」，不要说「妙招」。店小秘采集箱用 `match_skill` 查询「店小秘上品」，技能 id 是 `dxm-crawl-prep`。
 
@@ -90,7 +90,7 @@ Do **not** loop `fill` on multi-field pages.
 **死规则：** 多种信息调研（1688 筛选、比价、选品、对比、研报）最终必须形成报告页并在窗口打开，不能只在侧栏堆文字。  
 10 个基础场景用技能包：`run_skill({ query: "比价" })` 等，见 [SKILL-FORMAT.md](./SKILL-FORMAT.md)。  
 左上角只剩半截导航：网页没铺满页面洞，见 [ARCHITECTURE.md](./ARCHITECTURE.md)。  
-现行任务与 QA：[PRODUCT-TASKBOOK.md](./PRODUCT-TASKBOOK.md) v0.6.0（含多账号环境与自媒体自动发布）。  
+现行任务与 QA：[PRODUCT-TASKBOOK.md](./PRODUCT-TASKBOOK.md) v0.6.6（含多账号环境与自媒体自动发布；0.6.6 补侧栏对话与关标签）。  
 云端模型：侧栏设置「自己的 Key / 云端模型」；登录送 10 点（约 7 天）；一句对话一个任务。已登录后点套餐在本窗口付款。见 [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) · [PRICING.md](./PRICING.md)。不要把云端 Key 写进客户端。
 
 ### Customer service · 客服半自动

@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld("sparkStudio", {
   pickImages: (payload: { envId: string; draftId: string; kind: "body" | "cover" }) => ipcRenderer.invoke("studio:pick-images", payload),
   checkAccounts: (payload: { envId: string; platforms: string[] }) => ipcRenderer.invoke("studio:check-accounts", payload),
   openAccount: (payload: { envId: string; platform: string }) => ipcRenderer.invoke("studio:open-account", payload),
+  openAccountSettings: () => ipcRenderer.invoke("studio:open-account-settings"),
   queryTasks: (payload: { envId: string }) => ipcRenderer.invoke("studio:query-tasks", payload),
   openTask: (payload: { envId: string; jobId: string }) => ipcRenderer.invoke("studio:open-task", payload),
   verifyTask: (payload: { envId: string; jobId: string }) => ipcRenderer.invoke("studio:verify-task", payload),

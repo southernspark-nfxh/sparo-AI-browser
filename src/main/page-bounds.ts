@@ -137,6 +137,52 @@ export function shellRecoveryStep(
   return "repaint";
 }
 
+/** 侧栏收起后的工具轨。侧栏宽度还没报到时，至少留出这么宽，不能把网页铺满客户区。 */
+export const MIN_SIDEBAR_W = 56;
+
+export type PageViewLimits = {
+  contentWidth: number;
+  contentHeight: number;
+  /** 当前侧栏宽。0 表示还没报到，退到 MIN_SIDEBAR_W。展开时是 300–480，不要拿 56 当硬顶。 */
+  sidebarW: number;
+  chromeH: number;
+  /** 页面洞。比「客户区减侧栏」更窄时以洞为准。 */
+  hole?: PageRect | null;
+};
+
+/**
+ * 网页视图不得盖住顶栏，也不得宽过当前页面洞。
+ * 硬上限是客户区宽减去当前侧栏宽；侧栏宽度未知时才退到最小工具轨。
+ */
+export function clampPageView(view: PageRect, limits: PageViewLimits): PageRect {
+  const reserved = limits.sidebarW > 0 ? limits.sidebarW : MIN_SIDEBAR_W;
+  const contentW = Math.max(0, limits.contentWidth);
+  const contentH = Math.max(0, limits.contentHeight);
+  const hole = limits.hole && limits.hole.width >= 80 && limits.hole.height >= 80 ? limits.hole : null;
+  let x = hole ? hole.x : view.x;
+  let y = view.y;
+  if (y < limits.chromeH) y = hole && hole.y >= limits.chromeH ? hole.y : limits.chromeH;
+  if (hole && hole.y >= limits.chromeH && hole.y <= 200) y = hole.y;
+  let width = view.width;
+  let height = view.height;
+  if (hole) {
+    width = Math.min(width, hole.width);
+    height = Math.min(height, hole.height);
+  }
+  const maxW = Math.max(100, contentW - reserved - Math.max(0, x));
+  width = Math.min(width, maxW);
+  const maxH = Math.max(100, contentH - y);
+  height = Math.min(height, maxH);
+  width = Math.max(100, width);
+  height = Math.max(100, height);
+  return {
+    x: Math.round(x),
+    y: Math.round(y),
+    width: Math.round(width),
+    height: Math.round(height),
+  };
+}
+
 /** heal 日志里的差值。width 用 dw，正数表示视图比洞宽出多少。 */
 export function chromeCoverDelta(reason: Exclude<CoverReason, null>, actual: PageRect, hole: PageRect): string {
   if (reason === "y") return `dy=${actual.y - hole.y}`;

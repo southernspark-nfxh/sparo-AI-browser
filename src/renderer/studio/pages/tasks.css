@@ -1,0 +1,87 @@
+/* 发布记录页，以及右上 420px 任务抽屉里的内容。 */
+
+.tasks-page {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  max-width: 100%;
+  container-type: inline-size;
+}
+
+.tasks-drawer {
+  width: 420px;
+  max-width: 100%;
+}
+
+.tasks-run,
+.tasks-job,
+.tasks-history,
+.tasks-clip,
+.tasks-failure,
+.tasks-attempts {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.tasks-run,
+.tasks-history,
+.tasks-banner {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.tasks-job {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(72px, 0.8fr) minmax(0, auto);
+  gap: 8px 12px;
+  align-items: start;
+  padding-top: 12px;
+  border-top: 1px solid var(--border, #e5e6eb);
+}
+
+.tasks-main,
+.tasks-meta {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.tasks-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.tasks-stage {
+  justify-self: start;
+}
+
+.tasks-page[data-surface="drawer"] .tasks-job,
+.tasks-drawer .tasks-job {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.tasks-page[data-surface="drawer"] .tasks-actions,
+.tasks-drawer .tasks-actions {
+  justify-content: flex-start;
+}
+
+@container (max-width: 640px) {
+  .tasks-job {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tasks-actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tasks-page * {
+    transition: none;
+  }
+}

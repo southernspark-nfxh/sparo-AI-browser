@@ -81,18 +81,17 @@ export function mount(container: HTMLElement, viewModel: AccountsViewModel, acti
   }));
 
   session.track(on(container, "click", (event) => {
-    if (session.destroyed || !envId) return;
+    if (session.destroyed) return;
     const node = nodeOf(event.target);
     const actionNode = walk(node);
     if (!actionNode) return;
     const action = actionNode.getAttribute("data-action") || "";
     const platform = actionNode.getAttribute("data-platform") || "";
     if (action === "manage-envs") {
-      const note = container.querySelector("[data-role=manage-note]");
-      if (note) note.setAttribute("data-current", "true");
+      void actions.openAccountSettings();
       return;
     }
-    if (!platform) return;
+    if (!envId || !platform) return;
     if (action === "open-account" || action === "relogin") {
       void actions.openAccount({ envId, platform });
       return;

@@ -409,6 +409,24 @@ describe("指标环境", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("full 与 missing/null 混合时按字段保留已知合计但不标完整", () => {
+    const envId = "env-mixed";
+    const view = buildMetricsView({
+      envId,
+      now: new Date(2026, 10, 13, 10, 30),
+      rows: [
+        { platform: "toutiao", accountId: linkedAccountId(envId, "tt"), date: "2026-11-11", reads: 10, follows: 1, revenue: 100, completeness: "full" },
+        { platform: "baijiahao", accountId: linkedAccountId(envId, "bj"), date: "2026-11-11", reads: null, follows: null, revenue: null, completeness: "missing" },
+        { platform: "toutiao", accountId: linkedAccountId(envId, "tt"), date: "2026-11-12", reads: 20, follows: 3, revenue: 200, completeness: "full" },
+        { platform: "baijiahao", accountId: linkedAccountId(envId, "bj"), date: "2026-11-12", reads: null, follows: null, revenue: null, completeness: "full" },
+      ],
+    });
+    expect(view.overview.reads).toMatchObject({ value: 30, completeness: "partial" });
+    expect(view.overview.follows).toMatchObject({ value: 4, completeness: "partial" });
+    expect(view.overview.revenue).toMatchObject({ value: 300, completeness: "partial" });
+    expect(view.deltaText).toBe("");
+  });
 });
 
 function matches(node, sel: string): boolean {
@@ -646,6 +664,51 @@ describe("数据页", () => {
     expect(hole.segments).toHaveLength(2);
     expect(hole.segments[0]).toHaveLength(1);
     expect(hole.segments[1]).toHaveLength(1);
+  });
+
+  it("页面合计按 reads/follows/revenue 传播缺数且不给缺数区间涨跌", () => {
+    const summary = summarizeWindow([
+      point("2026-11-11", "toutiao", 10, { follows: 1, revenueCents: 100 }),
+      point("2026-11-11", "baijiahao", null, { completeness: "missing" }),
+      point("2026-11-12", "toutiao", 20, { follows: 3, revenueCents: 200 }),
+      point("2026-11-12", "baijiahao", null),
+    ]);
+    expect(summary).toMatchObject({
+      reads: 30,
+      follows: 4,
+      revenueCents: 300,
+      readsCompleteness: "partial",
+      followsCompleteness: "partial",
+      revenueCompleteness: "partial",
+      deltaText: "",
+    });
+    const unsupported = summarizeWindow([point("2026-11-12", "sohu", null, { completeness: "unsupported" })]);
+    expect(unsupported).toMatchObject({ readsCompleteness: "unsupported", followsCompleteness: "unsupported", revenueCompleteness: "unsupported" });
+    const missing = summarizeWindow([point("2026-11-12", "baijiahao", null, { completeness: "missing" })]);
+    expect(missing).toMatchObject({ readsCompleteness: "missing", followsCompleteness: "missing", revenueCompleteness: "missing" });
+  });
+
+  it("平台对比混入缺数时保留已知合计但不标 full", () => {
+    installDom();
+    const harness = actions("env-b");
+    const container = (globalThis as { document: { createElement: (tag: string) => HTMLElement } }).document.createElement("div");
+    mount(container, model({
+      trend: [
+        point("2026-11-11", "toutiao", 10, { likes: 1 }),
+        point("2026-11-12", "toutiao", 20, { likes: 2 }),
+        point("2026-11-12", "toutiao", null, { completeness: "missing", reason: "有一个账号没读到" }),
+        point("2026-11-12", "sohu", null, { completeness: "unsupported", reason: "平台未提供" }),
+      ],
+      ranking: [],
+      revenueSplit: [],
+      exceptions: [],
+    }), harness.page);
+    const rows = container.querySelectorAll(".compare-row");
+    const toutiao = rows.find((row) => String(row.textContent).includes("头条号"));
+    const sohu = rows.find((row) => String(row.textContent).includes("搜狐号"));
+    expect(toutiao?.getAttribute("data-state")).toBe("partial");
+    expect(toutiao?.textContent).toContain("30");
+    expect(sohu?.getAttribute("data-state")).toBe("unsupported");
   });
 
   it("六块都有内容，筛选、页签、失败刷新和销毁按约定工作", async () => {

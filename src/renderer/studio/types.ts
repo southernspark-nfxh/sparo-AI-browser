@@ -252,6 +252,7 @@ export type PageActions = {
   pickImages: (input: { envId: string; draftId: string; kind: "body" | "cover" }) => Promise<StudioError>;
   checkAccounts: (input: { envId: string; platforms: string[] }) => Promise<StudioError>;
   openAccount: (input: { envId: string; platform: string }) => Promise<StudioError>;
+  openAccountSettings: () => Promise<StudioError>;
   refreshMetrics: (envId: string) => Promise<StudioError | { ok: true; code: "ok"; message: string; envId: string }>;
   openTask: (input: { envId: string; jobId: string }) => Promise<StudioError>;
   verifyTask: (input: { envId: string; jobId: string }) => Promise<StudioError>;

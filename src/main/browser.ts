@@ -31,7 +31,8 @@ import {
 import { buildPrecheckResult, listStudioEnvs, resolveStudioEnv, snapshotHash, unsupported } from "./studio-env.js";
 import { randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { boundsWithinOnePixel, CHROME_HEAL_COOLDOWN_MS, CHROME_HEAL_STALL_LIMIT, chromeCoverDelta, chromeCoverReason, pageViewCoversChrome, resetChromeCoverBudget, SHELL_HEARTBEAT_GAP_MS, SHELL_PAINT_DIAG_BEATS, SHELL_PAINT_REPAINT_COOLDOWN_MS, SHELL_PAINT_STALL_BEATS, shellPaintStalled, shellRecoveryStep, shellSilentTooLong, takeChromeCoverFix, type ChromeCoverBudget, type CoverReason, type PageRect, type ShellPaintState } from "./page-bounds.js";
+import { boundsWithinOnePixel, CHROME_HEAL_COOLDOWN_MS, CHROME_HEAL_STALL_LIMIT, chromeCoverDelta, chromeCoverReason, clampPageView, pageViewCoversChrome, resetChromeCoverBudget, SHELL_HEARTBEAT_GAP_MS, SHELL_PAINT_DIAG_BEATS, SHELL_PAINT_REPAINT_COOLDOWN_MS, SHELL_PAINT_STALL_BEATS, shellPaintStalled, shellRecoveryStep, shellSilentTooLong, takeChromeCoverFix, type ChromeCoverBudget, type CoverReason, type PageRect, type ShellPaintState } from "./page-bounds.js";
+import { pickTabsToClose } from "./close-tabs.js";
 import { formatPushMinute, formatShellCrashContext, formatShellMemLine } from "./diag-log.js";
 import { clickPointUsable, offscreenAgentBounds, viewportTooSmall } from "./agent-viewport.js";
 import {
@@ -201,7 +202,6 @@ import {
   loadHistory,
   clearHistory,
 } from "./history.js";
-import { loadTabs, saveTabs, type TabSessionItem } from "./tabs-session.js";
 import { uniqueDownloadPath } from "./downloads.js";
 import { loadChatMemory, saveChatMemory, clearChatMemory, type ChatTurn } from "./profile/chat-memory.js";
 import { formatPushFrame, planChatFrame, stampChatSeq } from "./sidebar-sync.js";
@@ -563,6 +563,8 @@ function pruneStaleApprovals(
   maxAgeMs = Number(process.env.SPARO_APPROVAL_MAX_AGE_MS || 600_000),
 ): number {
   if (!(maxAgeMs > 0)) return 0;
+  // 侧栏诊断读过未初始化的 approvals 时曾整块抛错，连带把侧栏推送打断；这里直接兜住。
+  if (!(map instanceof Map)) return 0;
   const now = Date.now();
   let n = 0;
   for (const [id, req] of map) {
@@ -577,6 +579,26 @@ function pruneStaleApprovals(
     n += 1;
   }
   return n;
+}
+
+/** 单个本地数据源坏掉时降级为空列表，不能让它把整包侧栏状态带崩。 */
+function safeList<T>(read: () => T[]): T[] {
+  try {
+    return read();
+  } catch (error) {
+    console.error("[sidebar] field read failed:", error);
+    return [];
+  }
+}
+
+/** 同上，用于返回单个对象（或 null）的字段。 */
+function safeValue<T>(read: () => T, fallback: T): T {
+  try {
+    return read();
+  } catch (error) {
+    console.error("[sidebar] field read failed:", error);
+    return fallback;
+  }
 }
 
 function normalizeUrl(url: string): string {
@@ -1497,17 +1519,11 @@ export class SparkBrowser {
     });
     setTimeout(() => this.presentWindow(), 800);
     this.registerIpc();
-    if (!this.restoreTabs()) this.createTab(DEFAULT_URL, true, { userAction: true });
+    // 关窗即关完：重启永远从干净的新标签页开始，不再恢复上次的会话（2026-11-13 用户拍板）。
+    this.createTab(DEFAULT_URL, true, { userAction: true });
     this.memoryTimer = setInterval(() => this.autoDiscardIdleTabs(), 30_000);
     this.startChromeHoleWatch();
     this.startShellWatch();
-    this.win.on("close", () => {
-      if (this.tabsPersistTimer) {
-        clearTimeout(this.tabsPersistTimer);
-        this.tabsPersistTimer = null;
-      }
-      this.persistTabsNow();
-    });
     this.win.on("closed", () => {
       if (this.memoryTimer) {
         clearInterval(this.memoryTimer);
@@ -1706,7 +1722,6 @@ export class SparkBrowser {
       tab.title = wc.getTitle() || tab.title;
       this.pushChromeState();
       this.pushSidebarState();
-      this.schedulePersistTabs();
     };
     wc.on("page-title-updated", (_e, title) => {
       tab.title = title;
@@ -1962,7 +1977,6 @@ export class SparkBrowser {
     void view.webContents.loadURL(normalizeUrl(url));
     if (activate) this.switchTab(id, { userAction: opts?.userAction, actor: this.focusActor() });
     else this.layout();
-    this.schedulePersistTabs();
     return id;
   }
 
@@ -2145,6 +2159,7 @@ export class SparkBrowser {
       id: string;
       title: string;
       url: string;
+      envId?: string;
       discarded?: boolean;
       favIcon?: string;
       agentStatus?: "done";
@@ -2205,6 +2220,7 @@ export class SparkBrowser {
           url:
             t.url ||
             (t.view && !t.view.webContents.isDestroyed() ? t.view.webContents.getURL() : ""),
+          envId: t.envId,
           discarded: Boolean(t.discarded || !t.view),
           favIcon: t.favIcon || "",
           agentStatus: t.agentStatus === "done" ? "done" : undefined,
@@ -2267,7 +2283,6 @@ export class SparkBrowser {
     this.wakeTab(id);
     this.activeTabId = id;
     if (tab) tab.lastActiveAt = Date.now();
-    this.schedulePersistTabs();
     this.lastSnapshot = null;
     this.layout();
     if (opts?.focus !== false) this.focusActivePage();
@@ -2361,16 +2376,18 @@ export class SparkBrowser {
     };
   }
 
-  private async studioPayloadWithMetrics(collect: boolean) {
+  private async studioPayloadWithMetrics(collect: boolean, envId: string) {
     const base = this.studioPayload();
     const root = join(__dirname, "../../strategies/skills/social-media-publish/scripts");
     try {
       const collector = await import(pathToFileURL(join(root, "collector.mjs")).href);
       const db = await import(pathToFileURL(join(root, "metrics-db.mjs")).href);
-      if (collect) await collector.collectAll();
+      if (collect) await collector.collectAll({ envId });
       const rows = await db.listMetrics();
       const comments = await import(pathToFileURL(join(root, "comments.mjs")).href);
-      return { ...base, metrics: db.buildViews(rows), comments: await comments.listComments() };
+      const inbox = await comments.listCommentsForEnv(envId, { storeDir: comments.defaultCommentStoreDir() });
+      if (!inbox.ok) throw new Error(inbox.message);
+      return { ...base, metrics: db.buildViews(rows), comments: inbox.boards };
     } catch {
       return { ...base, metrics: null, comments: [], readError: "数据和评论这次没有读出来，原有记录还在。" };
     }
@@ -2482,82 +2499,7 @@ export class SparkBrowser {
     }
     this.layout();
     this.pushChromeState();
-    this.schedulePersistTabs();
     return { ok: true, message: `Closed tab ${id}`, data: this.listTabs() };
-  }
-
-  private tabsPersistTimer: NodeJS.Timeout | null = null;
-  private restoringTabs = false;
-
-  /**
-   * 重启后把上次的标签原样打开。没有记录时返回 false，交给调用方开默认页。
-   * 单张恢复失败只跳过这一张，不影响其余标签。
-   */
-  private restoreTabs(): boolean {
-    let items: TabSessionItem[] = [];
-    try {
-      items = loadTabs(this.configDir());
-    } catch {
-      items = [];
-    }
-    if (!items.length) return false;
-    this.restoringTabs = true;
-    let activeId = "";
-    try {
-      for (const item of items) {
-        try {
-          const id = item.envId
-            ? this.createEnvTab(item.envId, item.url, { userAction: false })
-            : this.createTab(item.url, false, { userAction: false });
-          if (item.active && !activeId) activeId = id;
-        } catch (e) {
-          console.warn("[tabs-restore] failed", item.url, String(e));
-          /* 环境已删除或地址非法：跳过这一张 */
-        }
-      }
-      console.log(`[tabs-restore] loaded=${items.length} restored=${this.tabs.size} active=${activeId}`);
-      // 恢复的是人自己上次的当前页，按用户动作放行；否则 tab-guard 会拒绝用户标签。
-      if (activeId) this.switchTab(activeId, { userAction: true, actor: this.focusActor() });
-      if (!this.activeTabId) {
-        const first = this.tabs.keys().next().value;
-        if (first) this.switchTab(first, { userAction: true, actor: this.focusActor() });
-      }
-    } finally {
-      this.restoringTabs = false;
-    }
-    return this.tabs.size > 0;
-  }
-
-  /** 落盘当前窗口的标签：地址、标题、账号环境、当前激活项。 */
-  private persistTabsNow(): void {
-    try {
-      const items: TabSessionItem[] = [];
-      for (const [id, tab] of this.tabs) {
-        if (!tab.url || tab.url === "about:blank") continue;
-        items.push({
-          url: tab.url,
-          title: tab.title,
-          envId: tab.envId,
-          active: id === this.activeTabId,
-        });
-      }
-      // 空列表不落盘：窗口销毁/多实例收尾时读到空标签表，不能把上次会话抹成 0 条。
-      if (!items.length) return;
-      if (!items.some((t) => t.active)) items[0].active = true;
-      saveTabs(this.configDir(), items);
-    } catch {
-      /* best-effort：写盘失败不能影响浏览 */
-    }
-  }
-
-  private schedulePersistTabs(): void {
-    if (this.restoringTabs) return;
-    if (this.tabsPersistTimer) return;
-    this.tabsPersistTimer = setTimeout(() => {
-      this.tabsPersistTimer = null;
-      this.persistTabsNow();
-    }, 800);
-    this.tabsPersistTimer.unref?.();
   }
 
   private windowIsMinimized(): boolean {
@@ -2601,7 +2543,7 @@ export class SparkBrowser {
    */
   private sidebarPayloadDiag(): string {
     try {
-      const payload = this.getSidebarPayload() as Record<string, unknown>;
+      const payload = this.getSidebarPayload(false, true) as Record<string, unknown>;
       let bytes = 0;
       for (const [key, value] of Object.entries(payload || {})) {
         try {
@@ -3558,9 +3500,46 @@ export class SparkBrowser {
       if (b.y < CHROME_H || b.y > 200) b.y = CHROME_H;
       const maxH = Math.max(100, height - b.y);
       if (b.height < 200 || b.height > maxH) b.height = maxH;
-      return b;
+      return this.clampViewBounds(b, width, height);
     }
-    return fallback;
+    return this.clampViewBounds(fallback, width, height);
+  }
+
+  /**
+   * 视图矩形夹进当前页面洞。洞宽以调用方算好的矩形为准（客户区减当前侧栏宽），
+   * 不回头采信壳层可能发来的旧洞，避免恢复瞬间被夹成窄条。
+   * 56 只在侧栏宽度还没报到时由 clampPageView 兜底。
+   */
+  private clampViewBounds(
+    bounds: PageRect,
+    contentWidth: number,
+    contentHeight: number,
+  ): PageRect {
+    return clampPageView(bounds, {
+      contentWidth,
+      contentHeight,
+      sidebarW: this.sidebarW,
+      chromeH: CHROME_H,
+      hole: bounds,
+    });
+  }
+
+  /** setBounds 前再夹一次。父布局把视图拉成整窗时，用真实客户区把宽收回到侧栏之外。 */
+  private fitPageView(bounds: PageRect): PageRect {
+    let contentW = bounds.width + Math.max(this.sidebarW, 0);
+    let contentH = bounds.y + bounds.height;
+    try {
+      if (this.win && !this.win.isDestroyed()) {
+        const [w, h] = this.win.getContentSize();
+        if (w >= 400) contentW = w;
+        if (h >= 300) contentH = h;
+      }
+    } catch {
+      /* 尺寸读不到就用矩形自己的估计 */
+    }
+    if (contentW < 400) contentW = this.lastGoodContent.width || contentW;
+    if (contentH < 300) contentH = this.lastGoodContent.height || contentH;
+    return this.clampViewBounds(bounds, contentW, contentH);
   }
 
   private rememberUserWindowBounds(): void {
@@ -3865,7 +3844,9 @@ export class SparkBrowser {
     const now = passNow;
     const stalls = this.chromeHealStalls();
     const prev = stalls.get(tabId);
-    if (prev && prev.count >= CHROME_HEAL_STALL_LIMIT && now < prev.retryAt) return;
+    const showActive = tabId === this.activeTabId && this.overlay === "none";
+    // 活动页正盖住壳层时不进 10 秒冷却。2 秒巡检已经限频，停手的那几秒侧栏会一直被网页盖住。
+    if (!showActive && prev && prev.count >= CHROME_HEAL_STALL_LIMIT && now < prev.retryAt) return;
 
     const cooledRetry = Boolean(prev && prev.count >= CHROME_HEAL_STALL_LIMIT);
     const taken = takeChromeCoverFix(this.chromeCover, now);
@@ -3876,7 +3857,6 @@ export class SparkBrowser {
     this.chromeCover = taken.state;
     if (!taken.allow && !samePass) return;
 
-    const showActive = tabId === this.activeTabId && this.overlay === "none";
     if (cooledRetry && showActive) this.requestHoleReport();
     if (!cooledRetry) this.logChromeHole("heal", actual, hole, reason, tabId);
 
@@ -4064,6 +4044,7 @@ export class SparkBrowser {
     bounds: { x: number; y: number; width: number; height: number },
     nudge: boolean,
   ): void {
+    bounds = this.fitPageView(bounds);
     const parent = this.win.contentView;
     let actual: { x: number; y: number; width: number; height: number } | null = null;
     try {
@@ -4097,6 +4078,7 @@ export class SparkBrowser {
     bounds: { x: number; y: number; width: number; height: number },
     nudge: boolean,
   ): void {
+    bounds = this.fitPageView(bounds);
     view.setVisible(false);
     let actual: { x: number; y: number; width: number; height: number } | null = null;
     try {
@@ -4574,7 +4556,7 @@ export class SparkBrowser {
       this.pushSidebarState();
       return { ok: true };
     });
-    handle("spark:get-status", async () => this.getSidebarPayload());
+    handle("spark:get-status", async () => this.getSidebarPayload(false, true));
     handle("spark:resolve-approval", async (_e, id: string, approved: boolean) =>
       this.resolveApproval(String(id), Boolean(approved)),
     );
@@ -4593,19 +4575,27 @@ export class SparkBrowser {
       if (!this.senderIsShell(e.sender)) return { ok: false, pending: 0 };
       return { ok: true, pending: listDrafts(this.studioDraftRoot()).length };
     });
+    handle("studio:open-account-settings", async (e) => {
+      if (!this.senderIsStudio(e.sender)) return { ok: false, code: "forbidden", message: "只能从工作台打开账号设置", envId: "" };
+      if (this.win.isDestroyed() || this.win.webContents.isDestroyed()) {
+        return { ok: false, code: "window_unavailable", message: "窗口已关闭，没有打开账号设置。", envId: "" };
+      }
+      this.win.webContents.send("spark:open-account-settings");
+      return { ok: true, code: "ok", message: "已打开设置 → 账号", envId: "" };
+    });
     handle("studio:load", async (e, payload?: { envId?: string }) => {
       if (!this.senderIsStudio(e.sender)) return { ok: false, code: "forbidden", message: "只能从工作台读取", envId: "" };
       const availableEnvs = listStudioEnvs(this.configDir());
       const env = resolveStudioEnv(this.configDir(), payload?.envId);
       if (!env.ok) return { ...env, availableEnvs };
-      const data = await this.studioPayloadWithMetrics(false);
+      const data = await this.studioPayloadWithMetrics(false, env.envId);
       return { ...data, code: "ok" as const, message: "", envId: env.envId, name: env.name, availableEnvs };
     });
     handle("studio:refresh", async (e, payload?: { envId?: string }) => {
       if (!this.senderIsStudio(e.sender)) return { ok: false, code: "forbidden", message: "只能从工作台读取", envId: "" };
       const env = resolveStudioEnv(this.configDir(), payload?.envId);
       if (!env.ok) return env;
-      const data = await this.studioPayloadWithMetrics(true);
+      const data = await this.studioPayloadWithMetrics(true, env.envId);
       return { ...data, code: "ok" as const, message: "", envId: env.envId, name: env.name, availableEnvs: listStudioEnvs(this.configDir()) };
     });
     handle("studio:reply", async (e, payload?: { envId?: string; platform?: string; text?: string; commentId?: string; content?: string }) => {
@@ -4617,10 +4607,14 @@ export class SparkBrowser {
       const text = String(payload?.text || "").trim();
       if (!comments.canReply(platform)) return { ok: false, code: "readonly", message: "只读，回复未开", envId: env.envId };
       if (!text) return { ok: false, code: "empty", message: "回复草稿是空的，没有填写。", envId: env.envId };
-      const saved = comments.saveReplyDraft(platform, text);
+      const commentId = String(payload?.commentId || "");
+      const saved = comments.saveReplyDraft(platform, text, { envId: env.envId, commentId });
       const filled = await comments.fillOpenReply(platform, text, {
-        commentId: String(payload?.commentId || ""),
+        envId: env.envId,
+        commentId,
         content: String(payload?.content || ""),
+        listTabs: async () => this.listTabs().tabs,
+        exec: (script: string, tabId: string) => this.execute(script, { tabId }),
       });
       return { ...filled, code: filled.ok ? "ok" : "reply", draft: saved, envId: env.envId };
     });
@@ -5394,6 +5388,34 @@ export class SparkBrowser {
       queueMicrotask(() => this.syncShellKeepalive());
     } catch (error) {
       console.error("[shell] pushSidebarState failed:", error);
+      this.pushSidebarFallback(wins);
+    }
+  }
+
+  /**
+   * 整包构建失败（某个本地库或缓存坏了）时，至少把对话帧推过去。
+   * 否则壳层收不到任何推送，用户看到的就是「发了命令没反应、对话不出现」。
+   */
+  private pushSidebarFallback(wins: Array<[string, BrowserWindow]>): void {
+    try {
+      const selectedSession = this.resolvedSession();
+      const chat = this.chatFrame(selectedSession, true);
+      const payload = {
+        ...chat,
+        selectedSession,
+        locale: this.settings.locale,
+        paused: this.paused,
+        chatRunning: Boolean(this.chatRunningFlag),
+        sidebarTaskId: this.sidebarTaskIdForShell(),
+        degraded: true,
+      };
+      for (const [, win] of wins) {
+        if (!win || win.isDestroyed()) continue;
+        win.webContents.send("spark:sidebar-state", payload);
+      }
+      this.noteSidebarMessages();
+    } catch (fallbackError) {
+      console.error("[shell] sidebar fallback failed:", fallbackError);
     }
   }
 
@@ -5476,10 +5498,10 @@ export class SparkBrowser {
     }
   }
 
-  private getSidebarPayload(incremental = false) {
+  private getSidebarPayload(incremental = false, readOnly = false) {
     pruneStaleApprovals(this.approvals);
     const selectedSession = this.resolvedSession();
-    const chat = this.chatFrame(selectedSession, !incremental);
+    const chat = this.chatFrame(selectedSession, !incremental, readOnly);
     return {
       paused: this.paused,
       chatRunning: Boolean(this.chatRunningFlag),
@@ -5489,18 +5511,21 @@ export class SparkBrowser {
       recordingTask: this.recordingTask,
       url: this.getUrl(),
       title: this.getTitle(),
-      approvals: [...this.approvals.values()].map((a) => ({
-        id: a.id,
-        action: a.action,
-        reason: a.reason,
-        risk: a.risk,
-        createdAt: a.createdAt,
-      })),
+      approvals:
+        this.approvals instanceof Map
+          ? [...this.approvals.values()].map((a) => ({
+              id: a.id,
+              action: a.action,
+              reason: a.reason,
+              risk: a.risk,
+              createdAt: a.createdAt,
+            }))
+          : [],
       qa: this.lastQa,
       ...chat,
       selectedSession,
       sessions: this.sessionViews(),
-      skills: this.skillsCache.map(skillSummary).slice(0, 30),
+      skills: safeList(() => this.skillsCache.map(skillSummary).slice(0, 30)),
       deepseek: this.settingsPublic(),
       cloud: this.cloudPublic(),
       profile: this.profilePublic(),
@@ -5540,37 +5565,48 @@ export class SparkBrowser {
             options: this.sidebarHelpAsk()!.options || [],
           }
         : null,
-      lessons: loadLessons(this.configDir()).slice(0, 40).map(lessonPublic),
-      triggers: loadTriggers(this.configDir()).slice(0, 40).map((row) => ({
-        id: row.id,
-        skillId: row.skillId,
-        text: row.text,
-        title: getSkill(this.configDir(), row.skillId)?.title || row.skillId,
-        runs: row.runs,
-        fails: row.fails,
-        enabled: row.enabled,
-      })),
-      plan: this.sidebarPlan(),
-      tasks: this.taskPool.visible(),
+      lessons: safeList(() => loadLessons(this.configDir()).slice(0, 40).map(lessonPublic)),
+      triggers: safeList(() =>
+        loadTriggers(this.configDir()).slice(0, 40).map((row) => ({
+          id: row.id,
+          skillId: row.skillId,
+          text: row.text,
+          title: getSkill(this.configDir(), row.skillId)?.title || row.skillId,
+          runs: row.runs,
+          fails: row.fails,
+          enabled: row.enabled,
+        })),
+      ),
+      plan: safeValue(() => this.sidebarPlan(), null),
+      tasks: safeList(() => this.taskPool.visible()),
     };
   }
 
-  /** 当前会话的对话帧。全量带最近 40 条；增量只带序号比上次大的。 */
-  private chatFrame(key: string, forceFull: boolean) {
-    if (!this.chatSeq) this.chatSeq = 1;
-    if (!this.chatCursor) this.chatCursor = new Map();
-    const stamped = stampChatSeq(this.turnsFor(key), this.chatSeq);
-    this.chatSeq = stamped.nextSeq;
+  /**
+   * 当前会话的对话帧。全量带最近 40 条；增量只带序号比上次大的。
+   * readOnly 用于状态查询和壳层诊断：不补序号、不推进游标、不清掉重同步标记。
+   */
+  private chatFrame(key: string, forceFull: boolean, readOnly = false) {
+    if (!readOnly) {
+      if (!this.chatSeq) this.chatSeq = 1;
+      if (!this.chatCursor) this.chatCursor = new Map();
+    }
+    const source = this.turnsFor(key);
+    const turnsIn = readOnly ? source.map((turn) => ({ ...turn })) : source;
+    const stamped = stampChatSeq(turnsIn, this.chatSeq || 1);
+    if (!readOnly) this.chatSeq = stamped.nextSeq;
     const turns = stamped.turns.slice(-40);
     const frame = planChatFrame({
       turns,
-      cursor: this.chatCursor.get(key) || 0,
-      sessionChanged: key !== this.lastChatKey,
-      resync: forceFull || this.chatResync,
+      cursor: readOnly ? 0 : this.chatCursor.get(key) || 0,
+      sessionChanged: readOnly ? false : key !== this.lastChatKey,
+      resync: readOnly ? true : forceFull || this.chatResync,
     });
-    this.lastChatKey = key;
-    this.chatCursor.set(key, frame.chatSeq);
-    this.chatResync = false;
+    if (!readOnly) {
+      this.lastChatKey = key;
+      this.chatCursor.set(key, frame.chatSeq);
+      this.chatResync = false;
+    }
     return frame;
   }
 
@@ -5762,6 +5798,88 @@ export class SparkBrowser {
           updatedAt: e.updatedAt,
         })),
       },
+    };
+  }
+
+  /** 侧栏 agent：列出标签页，供切换 / 批量关闭前确认目标。 */
+  listTabsTool(): ToolResult {
+    const tabs = this.listTabs();
+    return {
+      ok: true,
+      message: `共 ${tabs.tabs.length} 个标签页`,
+      data: {
+        activeId: tabs.activeId,
+        tabs: tabs.tabs.map((tab) => ({
+          id: tab.id,
+          title: tab.title,
+          url: tab.url,
+          active: tab.id === tabs.activeId,
+        })),
+      },
+    };
+  }
+
+  /** 侧栏 agent：切到指定标签页。id 优先，其次按地址 / 标题关键字匹配。 */
+  switchTabTool(args: Record<string, unknown>): ToolResult {
+    const id = String(args.id || "").trim();
+    const match = String(args.match || "").trim().toLowerCase();
+    const target = id
+      ? this.tabs.get(id)
+      : [...this.tabs.values()].find((tab) =>
+          `${tab.url || ""}\n${tab.title || ""}`.toLowerCase().includes(match),
+        );
+    if (!target) {
+      return {
+        ok: false,
+        message: id ? `没有这个标签页：${id}` : `没有匹配「${match}」的标签页`,
+      };
+    }
+    const switched = this.switchTab(target.id, { userAction: true });
+    if (!switched.ok) return switched;
+    return {
+      ok: true,
+      message: `已切换到：${target.title || target.url || target.id}`,
+      data: { id: target.id, url: target.url, title: target.title },
+    };
+  }
+
+  /**
+   * 侧栏 agent：关闭标签页。
+   * 单个关闭：id 优先，其次 match 的第一个。
+   * 批量关闭必须带 match，命中的页全部关掉（含当前页）。keepActive 仅在显式为 true 时留着当前页。
+   * 批量时跳过工作台 / 阅读页。
+   */
+  closeTabsTool(args: Record<string, unknown>, batch: boolean): ToolResult {
+    const picked = pickTabsToClose({
+      tabs: [...this.tabs.values()].map((tab) => ({
+        id: tab.id,
+        url: tab.url,
+        title: tab.title,
+      })),
+      activeId: this.activeTabId,
+      studioId: this.studioTabId,
+      readerId: this.readerTabId,
+      id: String(args.id || ""),
+      match: String(args.match || ""),
+      batch,
+      keepActive: args.keepActive === true,
+    });
+    if (!picked.ok) return picked;
+
+    const closed: string[] = [];
+    for (const tabId of picked.ids) {
+      const tab = this.tabs.get(tabId);
+      const label = tab ? tab.title || tab.url || tabId : tabId;
+      const result = this.closeTab(tabId);
+      if (result.ok) closed.push(label);
+    }
+    this.layout();
+    this.pushChromeState();
+    if (!closed.length) return { ok: false, message: "没有可关闭的标签页" };
+    return {
+      ok: true,
+      message: `已关闭 ${closed.length} 个标签页：${closed.slice(0, 8).join("、")}${closed.length > 8 ? " 等" : ""}`,
+      data: { closed: closed.length },
     };
   }
 
@@ -6914,6 +7032,10 @@ export class SparkBrowser {
       };
     }
     if (name === "list_envs") return this.listEnvsTool();
+    if (name === "list_tabs") return this.listTabsTool();
+    if (name === "switch_tab") return this.switchTabTool(args);
+    if (name === "close_tab") return this.closeTabsTool(args, false);
+    if (name === "close_tabs") return this.closeTabsTool(args, true);
     if (name === "navigate") {
       const requested = String(args.url || "");
       const envId = args.envId ? String(args.envId) : "";

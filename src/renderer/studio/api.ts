@@ -64,6 +64,7 @@ type SparkBridge = {
   pickImages: (payload: { envId: string; draftId: string; kind: "body" | "cover" }) => Promise<StudioError>;
   checkAccounts: (payload: { envId: string; platforms: string[] }) => Promise<StudioError>;
   openAccount: (payload: { envId: string; platform: string }) => Promise<StudioError>;
+  openAccountSettings: () => Promise<StudioError>;
   queryTasks: (payload: { envId: string }) => Promise<StudioError>;
   openTask: (payload: { envId: string; jobId: string }) => Promise<StudioError>;
   verifyTask: (payload: { envId: string; jobId: string }) => Promise<StudioError>;
@@ -144,6 +145,11 @@ export const api = {
     const spark = bridge();
     if (!spark) return Promise.resolve(offline(input.envId));
     return spark.openAccount(input);
+  },
+  openAccountSettings() {
+    const spark = bridge();
+    if (!spark) return Promise.resolve(offline());
+    return spark.openAccountSettings();
   },
   queryTasks(envId: string) {
     const spark = bridge();

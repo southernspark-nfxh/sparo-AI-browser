@@ -12,6 +12,7 @@ import {
   shownAccountState,
   writeAccountBook,
 } from "../src/main/studio-accounts.js";
+import { api } from "../src/renderer/studio/api.js";
 import { mount, type AccountsViewModel } from "../src/renderer/studio/pages/accounts.js";
 import type { PageActions, StudioError } from "../src/renderer/studio/types.js";
 
@@ -103,6 +104,27 @@ describe("账号状态", () => {
 });
 
 describe("账号页", () => {
+  it("专用 API 只调用打开账号设置桥，不传面板或脚本", async () => {
+    const host = globalThis as { sparkStudio?: { openAccountSettings?: (...args: unknown[]) => Promise<unknown> } };
+    const previous = host.sparkStudio;
+    const calls: unknown[][] = [];
+    host.sparkStudio = {
+      openAccountSettings: async (...args: unknown[]) => {
+        calls.push(args);
+        return { ok: true, code: "ok", message: "" };
+      },
+    };
+    try {
+      expect(typeof api.openAccountSettings).toBe("function");
+      const result = await api.openAccountSettings();
+      expect(result).toMatchObject({ ok: true, code: "ok" });
+      expect(calls).toEqual([[]]);
+    } finally {
+      if (previous) host.sparkStudio = previous;
+      else delete host.sparkStudio;
+    }
+  });
+
   it("未核验不显示正常，核验和打开都带着当前环境", async () => {
     installDom();
     const opened: Array<{ envId: string; platform: string }> = [];
@@ -131,28 +153,55 @@ describe("账号页", () => {
     expect(opened).toEqual([{ envId: SHOP_B, platform: "baijiahao" }]);
     expect(checked).toEqual([["toutiao"]]);
     expect(container.querySelector('[data-platform="toutiao"]')?.textContent).toContain("未核验");
-    click(container, '[data-action="manage-envs"]');
     expect(opened).toHaveLength(1);
-    expect(container.querySelector("[data-role=manage-note]")?.textContent).toContain("设置 → 账号");
     page.destroy();
     click(container, '[data-platform="baijiahao"][data-action="relogin"]');
     expect(opened).toHaveLength(1);
     expect(listenerCount(container, "click")).toBe(0);
   });
 
-  it("没有环境时停止，不打开默认后台", () => {
+  it("管理账号环境通过专用动作打开设置账号页", () => {
+    installDom();
+    let settingsOpened = 0;
+    const opened: Array<{ envId: string; platform: string }> = [];
+    const actions = accountActions({
+      async openAccountSettings() {
+        settingsOpened += 1;
+        return { ok: true, code: "ok", message: "", envId: SHOP_B } as unknown as StudioError;
+      },
+      async openAccount(input) {
+        opened.push(input);
+        return { ok: false, code: "unsupported", message: "", envId: input.envId };
+      },
+    });
+    const container = document.createElement("div");
+    const page = mount(container, accountModel(), actions);
+    click(container, '[data-action="manage-envs"]');
+    expect(settingsOpened).toBe(1);
+    expect(opened).toEqual([]);
+    page.destroy();
+  });
+
+  it("没有环境时停止打开后台，但仍可去设置新建环境", () => {
     installDom();
     const opened: string[] = [];
+    let settingsOpened = 0;
     const actions = accountActions({
       async openAccount(input) {
         opened.push(input.envId);
         return { ok: false, code: "missing_env", message: "", envId: "" };
+      },
+      async openAccountSettings() {
+        settingsOpened += 1;
+        return { ok: true, code: "ok", message: "", envId: "" } as unknown as StudioError;
       },
     });
     const container = document.createElement("div");
     mount(container, { ...accountModel(), envId: " " }, actions);
     expect(container.textContent).toContain("不会改用默认登录");
     expect(container.querySelector("[data-action=open-account]")).toBeNull();
+    click(container, '[data-action="manage-envs"]');
+    expect(settingsOpened).toBe(1);
     expect(opened).toEqual([]);
   });
 });
@@ -180,6 +229,7 @@ function accountActions(over: Partial<PageActions> = {}): PageActions {
     pickImages: async () => error(),
     checkAccounts: async () => error(),
     openAccount: async () => error(),
+    openAccountSettings: async () => error(),
     refreshMetrics: async () => error(),
     openTask: async () => error(),
     verifyTask: async () => error(),

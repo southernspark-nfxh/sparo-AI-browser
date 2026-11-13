@@ -340,7 +340,7 @@ describe("T2 降频恢复", () => {
     expect(CHROME_HEAL_STALL_LIMIT).toBe(3);
   });
 
-  it("连续 3 次同几何后第 4 个两秒 tick 不重排，冷却后会再试且不永久放弃", () => {
+  it("活动页盖住壳层时不进长冷却，切走后后台页仍会降频", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-11-07T02:00:00Z"));
     const browser = bare();
@@ -396,7 +396,7 @@ describe("T2 降频恢复", () => {
       expect(remounts).toBe(1);
       expect(holeReqs).toBe(1);
       browser.assertChromeHole();
-      expect(pulls).toBe(3);
+      expect(pulls).toBe(4);
       expect(remounts).toBe(1);
       expect(lines.some((line) => line.includes("[chrome-hole] retry-deferred tab=a reason=width"))).toBe(true);
       expect(lines.some((line) => line.includes("before=") && line.includes("after=") && line.includes("cooldown="))).toBe(true);
@@ -405,24 +405,24 @@ describe("T2 降频恢复", () => {
       expect(lines.some((line) => /https?:/.test(line))).toBe(false);
       browser.switchTab("b", { userAction: true });
       browser.assertChromeHole();
-      expect(pulls).toBe(4);
+      expect(pulls).toBe(5);
       expect(remounts).toBe(1);
       for (let i = 0; i < 2; i += 1) {
         vi.advanceTimersByTime(2_000);
         browser.assertChromeHole();
       }
-      expect(pulls).toBe(6);
+      expect(pulls).toBe(7);
       expect(remounts).toBe(2);
       browser.assertChromeHole();
-      expect(pulls).toBe(6);
+      expect(pulls).toBe(7);
       vi.advanceTimersByTime(CHROME_HEAL_COOLDOWN_MS);
       browser.assertChromeHole();
-      expect(pulls).toBe(7);
+      expect(pulls).toBe(8);
       expect(remounts).toBe(2);
       expect(lines.some((line) => line.includes("[chrome-hole] retry tab=b reason=width"))).toBe(true);
       host.resetChromeCoverState();
       browser.assertChromeHole();
-      expect(pulls).toBe(8);
+      expect(pulls).toBe(9);
     } finally {
       spy.mockRestore();
     }

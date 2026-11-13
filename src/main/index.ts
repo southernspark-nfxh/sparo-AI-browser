@@ -88,6 +88,10 @@ async function main(): Promise<void> {
     "disable-features",
     "ThirdPartyCookiePhaseout,TrackingProtection3pcd",
   );
+  // 仅 dev：SPARO_DEBUG_PORT=9222 时开 CDP，给自动化自测用；安装包不带。
+  if (!app.isPackaged && process.env.SPARO_DEBUG_PORT) {
+    app.commandLine.appendSwitch("remote-debugging-port", process.env.SPARO_DEBUG_PORT);
+  }
 
   // Store edition keeps its own tree so it never shares cookies with the original Sparo.
   const configDir = resolveConfigDir();

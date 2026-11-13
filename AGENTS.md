@@ -18,10 +18,10 @@ Tagline: *会动手的 AI 浏览器 — 发送前你确认。*
 | [docs/SKILL-COMMUNITY-M2.md](./docs/SKILL-COMMUNITY-M2.md) | 技能社区（**未开工**，M1 人测过完再开） |
 | [docs/SKILL-FORMAT.md](./docs/SKILL-FORMAT.md) | 技能包命名与字段（本机 `run_skill`，以后才分享） |
 | [docs/THREE-CHANNEL-DESIGN.md](./docs/THREE-CHANNEL-DESIGN.md) | 三通道架构（**设计稿，未开工**，评审后按分期落地） |
-| [docs/PRODUCT-TASKBOOK.md](./docs/PRODUCT-TASKBOOK.md) | 现行任务、QA、待办（v0.6.0） |
+| [docs/PRODUCT-TASKBOOK.md](./docs/PRODUCT-TASKBOOK.md) | 现行任务、QA、待办（v0.6.6） |
 | [docs/DECISION-POINTS.md](./docs/DECISION-POINTS.md) | 能提前结束任务的本地判断，先登记再合码 |
 | [docs/QA-GOLDEN-SCENARIOS.md](./docs/QA-GOLDEN-SCENARIOS.md) | 黄金场景，用底账核对，不看侧栏感觉 |
-| [CHANGELOG.md](./CHANGELOG.md) | 对外变更（现 0.6.5） |
+| [CHANGELOG.md](./CHANGELOG.md) | 对外变更（现 0.6.6） |
 | [docs/PRODUCT.md](./docs/PRODUCT.md) | 商店定位，不是任务书 |
 
 **此后主线就在本目录改。** 原版 `D:\download\Sparo`（3920 / `%APPDATA%\sparo`）只同步侧栏能力，不要把云订阅搬过去。
@@ -54,6 +54,10 @@ Developer:
 - Agent：`list_envs` 拿 `envId` → `navigate({ url, envId })` / `new_tab({ url, envId })`；技能用 `run_skill({ query, params: { envId } })`。不传 `envId` = 默认登录态。
 - 环境标签会认领给发起调用的 client，后续不带 `tabId` 的 click / fill / execute 仍停在这个号里。
 - 细节见 [docs/MCP-API.md](./docs/MCP-API.md#多账号环境account-envs) 与 [docs/MULTI-ACCOUNT.md](./docs/MULTI-ACCOUNT.md)。
+
+## 标签
+
+侧栏要关网页：先 `list_tabs`，再 `close_tabs`，`match` 传站点或标题关键字（今日头条 = `toutiao`）。命中的页全部关掉，包括当前页。只有用户说留着当前页时才传 `keepActive: true`。不传 `match` 不会关标签。关掉眼前这一个用 `close_tab`，切换用 `switch_tab`。
 
 ## Publish
 

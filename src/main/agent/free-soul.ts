@@ -34,7 +34,11 @@ export type FreeSoulToolName =
   | "run_workflow"
   | "save_skill"
   | "save_doc"
-  | "list_envs";
+  | "list_envs"
+  | "list_tabs"
+  | "switch_tab"
+  | "close_tab"
+  | "close_tabs";
 
 export type FreeSoulToolRunner = (
   name: FreeSoulToolName,
@@ -277,6 +281,25 @@ const TOOLS = [
     ["title", "body"],
   ),
   tool("list_envs", "列出本机已保存的账号环境（每个环境一套独立 Cookie，可同时登录同站点的多个号）。用户说「用 A 号」「发到第二个账号」时先调用它，拿到 id 再传给 navigate 的 envId。"),
+  tool(
+    "list_tabs",
+    "列出当前打开的所有标签页（id、标题、地址、是否当前页）。用户要切换、关闭、整理网页时先调用它看清有哪些页，不要靠猜。",
+  ),
+  tool(
+    "switch_tab",
+    "切换到指定标签页。参数 id 来自 list_tabs；也可以给 match，匹配地址或标题里的一段文字。",
+    { id: { type: "string" }, match: { type: "string" } },
+  ),
+  tool(
+    "close_tab",
+    "关闭一个标签页。参数 id 来自 list_tabs；或给 match，只关闭第一个地址或标题匹配的标签。",
+    { id: { type: "string" }, match: { type: "string" } },
+  ),
+  tool(
+    "close_tabs",
+    "批量关闭标签页。必须带 match（地址或标题，不区分大小写）。用户说「关掉所有今日头条相关的网页」就传 match=\"toutiao\"：命中的页全部关掉，包括当前正在看的，并返回实际关闭数量。只有用户明确说留着当前页、关掉其他页时才传 keepActive=true。不传 match 不会关任何页。",
+    { match: { type: "string" }, keepActive: { type: "boolean", description: "仅当用户要留着当前页时传 true" } },
+  ),
 ];
 
 const STUCK_HINT =
@@ -304,6 +327,7 @@ function systemPrompt(url: string, title: string, execMode?: "step" | "auto"): s
     "发布、发送、支付、删除等不可逆动作：先用 request_confirm 向用户确认，得到用户明确同意后才执行。用户此前下过的命令不算同意，必须经过一次确认往返。客服回复只把草稿填进输入框，发送仍由用户在页面上点。",
     "用户说「直接」「以后」「全部」「别让我看了」等全量授权措辞时，同类批量操作（归档、清理、翻页处理）自主连续执行到做完或真卡住，不中途问「要不要继续」；跨到新的操作类型（改账号设置、订阅、付费、删除不可恢复内容）仍必须先确认。",
     "批量清理长列表时：优先找「选择所有/全部匹配…会话」类横幅链接一次全选；snapshot 里没有但按理该出现的动态元素（如全选后新出现的横幅），用 click_text 按可见文字再试一次，别急着下「取不到」的结论；Gmail 键盘全选是连按 * 和 a；批与批之间沿用同一搜索结果页，不要每批重新构造搜索。",
+    "用户要求关闭、整理或切换标签页时：先 list_tabs 看清有哪些页。关掉某一类网页用 close_tabs，match 传站点或标题关键字（「关掉所有今日头条的网页」= toutiao），命中的页全部关掉，包括当前正在看的。只有用户明确说留着当前页时才传 keepActive=true。不传 match 不会关页面，不要回答做不到，也不要一个一个点开页面去关。关掉当前这一个用 close_tab。切换用 switch_tab。",
     "查询火车、机票、酒店时优先用 search_site 拿结果页 URL 再 navigate，不要硬刚这些站点的首页。",
     "发布到微博、知乎、小红书等社交平台的正文要用自然的口语段落：不用 markdown 标题、加粗、编号列表、分割线和序号 emoji（如 1️⃣）；需要分点时用『一、二、三』或自然过渡衔接。在侧栏里直接回复用户的总结不受此限。",
     "用户给出本地文件路径让你上传（视频、图片、附件）时，用 set_file 把文件放进文件选择框，不要试图用 fill 填路径或用 file:// 打开本地目录。",
