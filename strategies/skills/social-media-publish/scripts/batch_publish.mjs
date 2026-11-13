@@ -14,7 +14,6 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { appendLegacyLedger } from "./ledger.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLISH = path.join(__dirname, "publish.mjs");
@@ -114,8 +113,9 @@ function log(msg) {
 }
 
 function saveLedger(ledgerPath, entries) {
-  const saved = appendLegacyLedger(ledgerPath, { time: new Date().toISOString(), entries });
-  if (!saved.ok) throw new Error(saved.message || "台账没有写下");
+  fs.mkdirSync(path.dirname(ledgerPath), { recursive: true });
+  const line = JSON.stringify({ time: new Date().toISOString(), entries }) + "\n";
+  fs.appendFileSync(ledgerPath, line);
 }
 
 async function main() {

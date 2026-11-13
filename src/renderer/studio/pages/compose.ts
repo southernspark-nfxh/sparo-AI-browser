@@ -419,8 +419,7 @@ export function mount(container: HTMLElement, viewModel: ComposeViewModel, actio
       if (index >= 0) accounts[index] = next;
       else accounts.push(next);
     }
-    invalidate();
-    await runPrecheck();
+    if (held) openDialog(held.result, readDraft());
   }
 
   function publishable(snapshot: ComposeDraft, result: PrecheckResult): string[] {

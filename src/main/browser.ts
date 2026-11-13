@@ -2376,18 +2376,16 @@ export class SparkBrowser {
     };
   }
 
-  private async studioPayloadWithMetrics(collect: boolean, envId: string) {
+  private async studioPayloadWithMetrics(collect: boolean) {
     const base = this.studioPayload();
     const root = join(__dirname, "../../strategies/skills/social-media-publish/scripts");
     try {
       const collector = await import(pathToFileURL(join(root, "collector.mjs")).href);
       const db = await import(pathToFileURL(join(root, "metrics-db.mjs")).href);
-      if (collect) await collector.collectAll({ envId });
+      if (collect) await collector.collectAll();
       const rows = await db.listMetrics();
       const comments = await import(pathToFileURL(join(root, "comments.mjs")).href);
-      const inbox = await comments.listCommentsForEnv(envId, { storeDir: comments.defaultCommentStoreDir() });
-      if (!inbox.ok) throw new Error(inbox.message);
-      return { ...base, metrics: db.buildViews(rows), comments: inbox.boards };
+      return { ...base, metrics: db.buildViews(rows), comments: await comments.listComments() };
     } catch {
       return { ...base, metrics: null, comments: [], readError: "数据和评论这次没有读出来，原有记录还在。" };
     }
@@ -4575,27 +4573,19 @@ export class SparkBrowser {
       if (!this.senderIsShell(e.sender)) return { ok: false, pending: 0 };
       return { ok: true, pending: listDrafts(this.studioDraftRoot()).length };
     });
-    handle("studio:open-account-settings", async (e) => {
-      if (!this.senderIsStudio(e.sender)) return { ok: false, code: "forbidden", message: "只能从工作台打开账号设置", envId: "" };
-      if (this.win.isDestroyed() || this.win.webContents.isDestroyed()) {
-        return { ok: false, code: "window_unavailable", message: "窗口已关闭，没有打开账号设置。", envId: "" };
-      }
-      this.win.webContents.send("spark:open-account-settings");
-      return { ok: true, code: "ok", message: "已打开设置 → 账号", envId: "" };
-    });
     handle("studio:load", async (e, payload?: { envId?: string }) => {
       if (!this.senderIsStudio(e.sender)) return { ok: false, code: "forbidden", message: "只能从工作台读取", envId: "" };
       const availableEnvs = listStudioEnvs(this.configDir());
       const env = resolveStudioEnv(this.configDir(), payload?.envId);
       if (!env.ok) return { ...env, availableEnvs };
-      const data = await this.studioPayloadWithMetrics(false, env.envId);
+      const data = await this.studioPayloadWithMetrics(false);
       return { ...data, code: "ok" as const, message: "", envId: env.envId, name: env.name, availableEnvs };
     });
     handle("studio:refresh", async (e, payload?: { envId?: string }) => {
       if (!this.senderIsStudio(e.sender)) return { ok: false, code: "forbidden", message: "只能从工作台读取", envId: "" };
       const env = resolveStudioEnv(this.configDir(), payload?.envId);
       if (!env.ok) return env;
-      const data = await this.studioPayloadWithMetrics(true, env.envId);
+      const data = await this.studioPayloadWithMetrics(true);
       return { ...data, code: "ok" as const, message: "", envId: env.envId, name: env.name, availableEnvs: listStudioEnvs(this.configDir()) };
     });
     handle("studio:reply", async (e, payload?: { envId?: string; platform?: string; text?: string; commentId?: string; content?: string }) => {
@@ -4607,14 +4597,10 @@ export class SparkBrowser {
       const text = String(payload?.text || "").trim();
       if (!comments.canReply(platform)) return { ok: false, code: "readonly", message: "只读，回复未开", envId: env.envId };
       if (!text) return { ok: false, code: "empty", message: "回复草稿是空的，没有填写。", envId: env.envId };
-      const commentId = String(payload?.commentId || "");
-      const saved = comments.saveReplyDraft(platform, text, { envId: env.envId, commentId });
+      const saved = comments.saveReplyDraft(platform, text);
       const filled = await comments.fillOpenReply(platform, text, {
-        envId: env.envId,
-        commentId,
+        commentId: String(payload?.commentId || ""),
         content: String(payload?.content || ""),
-        listTabs: async () => this.listTabs().tabs,
-        exec: (script: string, tabId: string) => this.execute(script, { tabId }),
       });
       return { ...filled, code: filled.ok ? "ok" : "reply", draft: saved, envId: env.envId };
     });
