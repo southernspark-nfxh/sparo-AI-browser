@@ -93,7 +93,12 @@ function harness() {
     agentTabId: string;
     activeMission?: { state?: string };
     readerTabId: string | null;
-    settings: { locale: string; memorySaver?: boolean; memorySaverIdleMinutes?: number };
+    settings: {
+      locale: string;
+      memorySaver?: boolean;
+      memorySaverMode?: "smart" | "off" | "aggressive";
+      memorySaverIdleMinutes?: number;
+    };
     window: { contentView: { removeChildView: () => void } };
     layout: () => void;
     pushChromeState: () => void;
@@ -300,6 +305,7 @@ describe("T70 休眠后仍是已下班", () => {
 
   it("自动休眠后 listTabs 仍是 done", () => {
     const { browser } = harness();
+    browser.settings.memorySaverMode = "aggressive";
     const tab = ownJob(browser);
     tab.lastActiveAt = Date.now() - 6 * 60_000;
     (browser as unknown as { autoDiscardIdleTabs: () => void }).autoDiscardIdleTabs();
@@ -311,8 +317,19 @@ describe("T70 休眠后仍是已下班", () => {
 });
 
 describe("autoDiscardIdleTabs default", () => {
-  it("sleeps after the 5 minute default and still honors an explicit 2", () => {
+  it("智能档闲置再久也不卸用户的页", () => {
     const { browser } = harness();
+    (browser as unknown as { systemFreeRatio: () => number }).systemFreeRatio = () => 0.8;
+    const tab = browser.tabs.get("job");
+    if (!tab) throw new Error("missing job");
+    tab.lastActiveAt = Date.now() - 10 * 60_000;
+    (browser as unknown as { autoDiscardIdleTabs: () => void }).autoDiscardIdleTabs();
+    expect(tab.discarded).toBeFalsy();
+  });
+
+  it("激进档按闲置分钟卸后台页，另一扇窗正在看的不卸", () => {
+    const { browser } = harness();
+    browser.settings.memorySaverMode = "aggressive";
     browser.settings.memorySaverIdleMinutes = 0;
     const tab = browser.tabs.get("job");
     if (!tab) throw new Error("missing job");
@@ -320,19 +337,38 @@ describe("autoDiscardIdleTabs default", () => {
     (browser as unknown as { autoDiscardIdleTabs: () => void }).autoDiscardIdleTabs();
     expect(tab.discarded).toBeFalsy();
     tab.lastActiveAt = Date.now() - 6 * 60_000;
+    (browser as unknown as { _activeTabs: Map<string, string> })._activeTabs = new Map([
+      ["main", "active"],
+      ["side", "job"],
+    ]);
+    (browser as unknown as { autoDiscardIdleTabs: () => void }).autoDiscardIdleTabs();
+    expect(tab.discarded).toBeFalsy();
+    (browser as unknown as { _activeTabs: Map<string, string> })._activeTabs = new Map([["main", "active"]]);
     (browser as unknown as { autoDiscardIdleTabs: () => void }).autoDiscardIdleTabs();
     expect(tab.discarded).toBe(true);
+  });
 
-    const again = harness();
-    again.browser.settings.memorySaverIdleMinutes = 2;
-    const other = again.browser.tabs.get("job");
-    if (!other) throw new Error("missing job");
-    other.lastActiveAt = Date.now() - 90_000;
-    (again.browser as unknown as { autoDiscardIdleTabs: () => void }).autoDiscardIdleTabs();
-    expect(other.discarded).toBeFalsy();
-    other.lastActiveAt = Date.now() - 3 * 60_000;
-    (again.browser as unknown as { autoDiscardIdleTabs: () => void }).autoDiscardIdleTabs();
-    expect(other.discarded).toBe(true);
+  it("运行中的工位在激进档第 6 分钟也不卸", () => {
+    const { browser } = harness();
+    browser.settings.memorySaverMode = "aggressive";
+    const tab = browser.tabs.get("job");
+    if (!tab) throw new Error("missing job");
+    tab.lastActiveAt = Date.now() - 6 * 60_000;
+    (browser as unknown as { taskPool: { tasks: Array<{ tabId: string; state: string }> } }).taskPool = {
+      tasks: [{ tabId: "job", state: "running" }],
+    };
+    (browser as unknown as { autoDiscardIdleTabs: () => void }).autoDiscardIdleTabs();
+    expect(tab.discarded).toBeFalsy();
+  });
+});
+
+describe("壳层诊断读不到标签表", () => {
+  it("没有 tabs 时不因 get 崩掉", () => {
+    const browser = Object.create(SparkBrowser.prototype) as SparkBrowser;
+    expect(browser.getUrl()).toBe("");
+    expect(browser.getTitle()).toBe("");
+    const diag = (browser as unknown as { sidebarPayloadDiag: () => string }).sidebarPayloadDiag();
+    expect(diag).not.toContain("reading 'get'");
   });
 });
 
@@ -341,6 +377,7 @@ describe("memory saver defaults", () => {
     const dir = tmpDir();
     const fresh = loadSettings(dir);
     expect(fresh.memorySaver).toBe(true);
+    expect(fresh.memorySaverMode).toBe("smart");
     expect(fresh.memorySaverIdleMinutes).toBe(5);
     expect(formatTabMemoryBoard("zh", 2, 512)).toBe("2 个标签进程 · 约 512 MB");
   });

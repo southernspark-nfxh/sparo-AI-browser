@@ -944,7 +944,14 @@ async function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
   }
   const raw = Buffer.concat(chunks).toString("utf8").trim();
   if (!raw) return undefined;
-  return JSON.parse(raw);
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // 坏帧只废这一条请求：调用方拿到 400，主进程不能跟着炸。
+    const error = new Error("invalid JSON body") as Error & { statusCode?: number };
+    error.statusCode = 400;
+    throw error;
+  }
 }
 
 export async function startMcpServer(handlers: ToolHandlers): Promise<{
@@ -1029,7 +1036,16 @@ export async function startMcpServer(handlers: ToolHandlers): Promise<{
 
     // Stateless mode: one transport + server per request (SDK recommended pattern).
     const headerClient = String(req.headers["x-sparo-client"] || "").trim();
-    const parsedEarly = req.method === "POST" ? await readJsonBody(req) : undefined;
+    let parsedEarly: unknown;
+    if (req.method === "POST") {
+      try {
+        parsedEarly = await readJsonBody(req);
+      } catch (error) {
+        const status = (error as { statusCode?: number }).statusCode || 400;
+        jsonError(res, status, "Invalid JSON body");
+        return;
+      }
+    }
     const rpcMethod = parsedEarly && typeof parsedEarly === "object" && "method" in parsedEarly
       ? String((parsedEarly as { method?: unknown }).method || "")
       : "";

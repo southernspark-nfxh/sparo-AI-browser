@@ -104,11 +104,14 @@ describe("loadSettings", () => {
   it("defaults memory saver on and persists idle minutes", () => {
     const dir = tmpDir();
     expect(loadSettings(dir).memorySaver).toBe(true);
+    expect(loadSettings(dir).memorySaverMode).toBe("smart");
     expect(loadSettings(dir).memorySaverIdleMinutes).toBe(5);
     const s = saveSettings(dir, { memorySaver: false, memorySaverIdleMinutes: 5 });
     expect(s.memorySaver).toBe(false);
+    expect(s.memorySaverMode).toBe("off");
     expect(s.memorySaverIdleMinutes).toBe(5);
     expect(loadSettings(dir).memorySaver).toBe(false);
+    expect(loadSettings(dir).memorySaverMode).toBe("off");
     expect(settingsPublicView(s).memorySaverIdleMinutes).toBe(5);
   });
 

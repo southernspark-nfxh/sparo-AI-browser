@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { migrateMemorySaverMode, normalizeMemorySaverMode, type MemorySaverMode } from "../memory-policy.js";
 import { normalizeLocale, type AppLocale } from "../../shared/i18n.js";
 
 export type ProviderGroup = "cn" | "global" | "local" | "custom";
@@ -168,9 +169,11 @@ export type SparoSettings = {
   onboardingDismissed: boolean;
   /** 配好后的「先做一件事」提示已关掉。 */
   firstJobHintDismissed: boolean;
-  /** Discard inactive tab renderers to free RAM (Chrome-style Memory Saver). */
+  /** false 只表示全保活。智能和激进都是 true，具体看 memorySaverMode。 */
   memorySaver: boolean;
-  /** Minutes a background tab may stay alive before discard. */
+  /** 智能：看剩余内存。全保活：不自动休眠。激进：按闲置分钟杀后台页。 */
+  memorySaverMode: MemorySaverMode;
+  /** Minutes a background tab may stay alive before discard. 只在激进档使用。 */
   memorySaverIdleMinutes: number;
   /** 阅读模式：主题、字号、AI伴读开关。 */
   reader: ReaderPrefs;
@@ -211,6 +214,20 @@ export function normalizeReader(raw: unknown): ReaderPrefs {
   };
 }
 
+function modeFromMemoryPatch(
+  patch: Partial<SparoSettings>,
+  file: Partial<SparoSettings>,
+): MemorySaverMode {
+  const fromPatch = normalizeMemorySaverMode(patch.memorySaverMode);
+  if (fromPatch) return fromPatch;
+  if (patch.memorySaver === false) return "off";
+  if (patch.memorySaver === true) {
+    const current = migrateMemorySaverMode(file);
+    return current === "off" ? "smart" : current;
+  }
+  return migrateMemorySaverMode(file);
+}
+
 function clampIdleMinutes(n: unknown): number {
   const v = Number(n);
   // 缺省 5 分钟。文件里已经写了的数字保持原值，不改写老用户的 settings.json。
@@ -229,6 +246,7 @@ const DEFAULTS: SparoSettings = {
   onboardingDismissed: false,
   firstJobHintDismissed: false,
   memorySaver: true,
+  memorySaverMode: "smart",
   memorySaverIdleMinutes: 5,
   reader: { ...DEFAULT_READER },
 };
@@ -299,7 +317,8 @@ export function loadSettings(configDir: string, fallbackLocale?: string): SparoS
     execMode: normalizeExecMode(file.execMode),
     onboardingDismissed: Boolean(file.onboardingDismissed),
     firstJobHintDismissed: Boolean(file.firstJobHintDismissed),
-    memorySaver: file.memorySaver !== false,
+    memorySaver: migrateMemorySaverMode(file) !== "off",
+    memorySaverMode: migrateMemorySaverMode(file),
     memorySaverIdleMinutes: clampIdleMinutes(file.memorySaverIdleMinutes),
     reader: normalizeReader(file.reader),
   };
@@ -376,10 +395,8 @@ export function saveSettings(
       patch.firstJobHintDismissed !== undefined
         ? Boolean(patch.firstJobHintDismissed)
         : Boolean(file.firstJobHintDismissed),
-    memorySaver:
-      patch.memorySaver !== undefined
-        ? Boolean(patch.memorySaver)
-        : file.memorySaver !== false,
+    memorySaver: modeFromMemoryPatch(patch, file) !== "off",
+    memorySaverMode: modeFromMemoryPatch(patch, file),
     memorySaverIdleMinutes: clampIdleMinutes(
       patch.memorySaverIdleMinutes !== undefined
         ? patch.memorySaverIdleMinutes
@@ -409,6 +426,7 @@ export function settingsPublicView(settings: SparoSettings): {
   presets: typeof PROVIDER_PRESETS;
   gateways: CompatGateway[];
   memorySaver: boolean;
+  memorySaverMode: MemorySaverMode;
   memorySaverIdleMinutes: number;
 } {
   const key = settings.apiKey;
@@ -432,7 +450,8 @@ export function settingsPublicView(settings: SparoSettings): {
     firstJobHintDismissed: Boolean(settings.firstJobHintDismissed),
     presets: PROVIDER_PRESETS,
     gateways: COMPAT_GATEWAYS,
-    memorySaver: settings.memorySaver !== false,
+    memorySaver: settings.memorySaverMode !== "off",
+    memorySaverMode: settings.memorySaverMode || "smart",
     memorySaverIdleMinutes: clampIdleMinutes(settings.memorySaverIdleMinutes),
   };
 }

@@ -3,6 +3,7 @@
 <html lang="zh-CN" data-theme="light">
   <head>
     <meta charset="UTF-8" />
+    <link rel="icon" href="./icon.png" />
     <title>Sparo</title>
     <style>
 :root {
@@ -2236,14 +2237,17 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           </div>
             <div class="block">
               <h3 data-i18n="mem.label">内存</h3>
-              <button type="button" class="ghost" id="btnMemory" title="休眠后台标签，释放内存。点休眠的标签会重新加载。">优化内存</button>
-              <p class="hint" data-i18n="mem.hint">闲置后台标签会休眠。点回去再加载，登录还在。</p>
-              <label class="switch">
-                <input id="memSaver" type="checkbox" checked />
-                <span class="track" aria-hidden="true"></span>
-                <span data-i18n="mem.auto">闲置后台标签自动休眠</span>
+              <button type="button" class="ghost" id="btnMemory" title="立刻休眠后台标签，释放内存。点休眠的标签会重新加载。">优化内存</button>
+              <p class="hint" id="memModeHint" data-i18n="mem.hintSmart">内存宽裕时不休眠。内存紧时先收已完成的工位，再收最久没看的页。</p>
+              <label class="field" for="memMode">
+                <span data-i18n="mem.mode">保活</span>
+                <select id="memMode">
+                  <option value="smart">智能（默认）</option>
+                  <option value="off">全保活</option>
+                  <option value="aggressive">激进</option>
+                </select>
               </label>
-              <div class="idle-row" id="memIdleRow">
+              <div class="idle-row" id="memIdleRow" style="display:none">
                 <span data-i18n="mem.idleBefore">闲置</span>
                 <input id="memIdle" type="number" min="1" max="60" value="5" />
                 <span data-i18n="mem.idleAfter">分钟后休眠</span>
@@ -3571,14 +3575,19 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
             hintEl.textContent = t("ds.hint." + p) || t("ds.hint.custom");
           }
           toggleCustomBaseRow(p);
-          const memEl = document.getElementById("memSaver");
+          const memEl = document.getElementById("memMode");
           const idleEl = document.getElementById("memIdle");
-          if (memEl && document.activeElement !== memEl) memEl.checked = ds.memorySaver !== false;
+          const mode = ds.memorySaverMode || (ds.memorySaver === false ? "off" : "smart");
+          if (memEl && document.activeElement !== memEl) memEl.value = mode;
           if (idleEl && document.activeElement !== idleEl) {
             idleEl.value = String(ds.memorySaverIdleMinutes || 5);
           }
           const idleRow = document.getElementById("memIdleRow");
-          if (idleRow) idleRow.style.display = ds.memorySaver === false ? "none" : "";
+          if (idleRow) idleRow.style.display = mode === "aggressive" ? "" : "none";
+          const modeHint = document.getElementById("memModeHint");
+          if (modeHint) {
+            modeHint.textContent = t(mode === "off" ? "mem.hintOff" : mode === "aggressive" ? "mem.hintAggressive" : "mem.hintSmart");
+          }
           const execEl = document.getElementById("execMode");
           if (execEl && document.activeElement !== execEl) {
             execEl.value = ds.execMode === "auto" ? "auto" : "step";
@@ -5160,27 +5169,33 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         }
 
         async function saveMemoryPrefs(quiet) {
-          const memEl = document.getElementById("memSaver");
+          const memEl = document.getElementById("memMode");
           const idleEl = document.getElementById("memIdle");
           if (!memEl || !idleEl) return;
-          const on = memEl.checked;
-          const mins = Number(idleEl.value) || 2;
+          const mode = memEl.value === "off" || memEl.value === "aggressive" ? memEl.value : "smart";
+          const mins = Number(idleEl.value) || 5;
           const idleRow = document.getElementById("memIdleRow");
-          if (idleRow) idleRow.style.display = on ? "" : "none";
+          if (idleRow) idleRow.style.display = mode === "aggressive" ? "" : "none";
+          const modeHint = document.getElementById("memModeHint");
+          if (modeHint) {
+            modeHint.textContent = t(mode === "off" ? "mem.hintOff" : mode === "aggressive" ? "mem.hintAggressive" : "mem.hintSmart");
+          }
           try {
             const r = await window.sparkShell.saveSettings({
-              memorySaver: on,
+              memorySaverMode: mode,
+              memorySaver: mode !== "off",
               memorySaverIdleMinutes: mins,
             });
             if (!quiet) {
-              toast(r && r.ok ? (on ? t("mem.autoOn") : t("mem.autoOff")) : t("toast.saveFail"));
+              const note = mode === "off" ? "mem.autoOff" : mode === "aggressive" ? "mem.autoAggressive" : "mem.autoSmart";
+              toast(r && r.ok ? t(note) : t("toast.saveFail"));
             }
           } catch (err) {
             console.error(err);
             if (!quiet) toast(t("toast.saveFail"));
           }
         }
-        const memSaver = document.getElementById("memSaver");
+        const memSaver = document.getElementById("memMode");
         if (memSaver) memSaver.onchange = () => saveMemoryPrefs(false);
         const memBtn = document.getElementById("btnMemory");
         if (memBtn) {

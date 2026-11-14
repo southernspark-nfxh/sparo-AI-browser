@@ -148,9 +148,16 @@ async function main(): Promise<void> {
     } catch {
       url = "";
     }
+    let dump = "";
+    try {
+      const last = crashReporter.getLastCrashReport?.();
+      if (last?.id) dump = ` dumpId=${last.id}`;
+    } catch {
+      dump = "";
+    }
     appendCrash(
       "render-process-gone",
-      `reason=${details.reason} exitCode=${details.exitCode} url=${url}`,
+      `reason=${details.reason} exitCode=${details.exitCode} url=${url} dumps=${join(configDir, "diag", "dumps")}${dump}`,
     );
     try {
       const extra = liveBrowser?.diagCrashContext({ reason: details.reason, exitCode: details.exitCode });

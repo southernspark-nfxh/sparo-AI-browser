@@ -51,6 +51,35 @@ describe("pickTabsToClose", () => {
     expect(picked.ids).toEqual(["a", "b"]);
   });
 
+  it("all=true 关掉除工作台和阅读页以外的全部，包括当前页", () => {
+    const picked = pickTabsToClose({
+      tabs,
+      activeId: "a",
+      studioId: "studio",
+      readerId: "reader",
+      batch: true,
+      all: true,
+    });
+    expect(picked.ok).toBe(true);
+    if (!picked.ok) return;
+    expect(picked.ids).toEqual(["a", "b", "c"]);
+  });
+
+  it("all=true 且 keepActive 时留着当前页", () => {
+    const picked = pickTabsToClose({
+      tabs,
+      activeId: "a",
+      studioId: "studio",
+      readerId: "reader",
+      batch: true,
+      all: true,
+      keepActive: true,
+    });
+    expect(picked.ok).toBe(true);
+    if (!picked.ok) return;
+    expect(picked.ids).toEqual(["b", "c"]);
+  });
+
   it("不带 match 的批量关闭直接失败", () => {
     const picked = pickTabsToClose({ tabs, activeId: "c", batch: true });
     expect(picked.ok).toBe(false);

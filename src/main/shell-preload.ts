@@ -110,6 +110,7 @@ contextBridge.exposeInMainWorld("sparkShell", {
     onboardingDismissed?: boolean;
     firstJobHintDismissed?: boolean;
     memorySaver?: boolean;
+    memorySaverMode?: "smart" | "off" | "aggressive";
     memorySaverIdleMinutes?: number;
   }) => ipcRenderer.invoke("spark:save-settings", patch),
   cloudSendCode: (email: string) => ipcRenderer.invoke("spark:cloud-send-code", email),

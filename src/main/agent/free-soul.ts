@@ -140,8 +140,11 @@ const tool = (
   },
 });
 
+export const LIST_ENVS_DESCRIPTION =
+  "列出本机已保存的账号环境（每个环境一套独立 Cookie，可同时登录同站点的多个号）。系统提示里已有名册时直接用那份 id，不必再调。名字对不上就说没有这个环境，不要新建，也不要挑一个最接近的。用户说另一个或第二个账号时，除当前页外只剩一个环境才用它，并且不要回默认登录态；还剩多个就列出名字问，不要自己挑。";
+
 const TOOLS = [
-  tool("navigate", "在当前有头浏览器标签打开完整 URL，并返回实际落地地址和标题。用户点名要用某个账号时，先 list_envs 拿到 envId，再把它传给 envId 参数；不传就是默认登录态。", {
+  tool("navigate", "在当前有头浏览器标签打开完整 URL，并返回实际落地地址和标题。用户点名某个账号时，用系统提示名册里的 envId；名册里没有再 list_envs。不传则沿用当前页的环境；当前页没有环境才是默认登录态。", {
     url: { type: "string" },
     envId: { type: "string", description: "可选，账号环境 id。传入后在这个环境的独立 Cookie 里打开，互不干扰。" },
   }, ["url"]),
@@ -280,7 +283,7 @@ const TOOLS = [
     },
     ["title", "body"],
   ),
-  tool("list_envs", "列出本机已保存的账号环境（每个环境一套独立 Cookie，可同时登录同站点的多个号）。用户说「用 A 号」「发到第二个账号」时先调用它，拿到 id 再传给 navigate 的 envId。"),
+  tool("list_envs", LIST_ENVS_DESCRIPTION),
   tool(
     "list_tabs",
     "列出当前打开的所有标签页（id、标题、地址、是否当前页）。用户要切换、关闭、整理网页时先调用它看清有哪些页，不要靠猜。",
@@ -297,8 +300,12 @@ const TOOLS = [
   ),
   tool(
     "close_tabs",
-    "批量关闭标签页。必须带 match（地址或标题，不区分大小写）。用户说「关掉所有今日头条相关的网页」就传 match=\"toutiao\"：命中的页全部关掉，包括当前正在看的，并返回实际关闭数量。只有用户明确说留着当前页、关掉其他页时才传 keepActive=true。不传 match 不会关任何页。",
-    { match: { type: "string" }, keepActive: { type: "boolean", description: "仅当用户要留着当前页时传 true" } },
+    "批量关闭标签页。必须带 match（地址或标题，不区分大小写），或显式 all=true。用户说「关掉所有今日头条相关的网页」就传 match=\"toutiao\"：命中的页全部关掉，包括当前正在看的。用户说「关掉所有网页/标签」时传 all=true，关掉除工作台和阅读页以外的全部标签。只有用户明确说留着当前页、关掉其他页时才传 keepActive=true。不传 match 且不传 all 不会关任何页。",
+    {
+      match: { type: "string" },
+      all: { type: "boolean", description: "用户要关掉所有网页或标签时传 true" },
+      keepActive: { type: "boolean", description: "仅当用户要留着当前页时传 true" },
+    },
   ),
 ];
 
@@ -310,7 +317,49 @@ const PAGE_SAME_HINT =
 
 const TOOL_NAMES = new Set<string>(TOOLS.map((item) => item.function.name));
 
-function systemPrompt(url: string, title: string, execMode?: "step" | "auto"): string {
+/** 当前页已经在某个账号环境里时，告诉模型不要漏传 envId 退回默认登录态。 */
+export function currentPageEnvLine(envId?: string, envName?: string): string {
+  const id = String(envId || "").trim();
+  if (!id) return "";
+  const name = String(envName || "").trim() || id;
+  return `当前页在账号环境 ${name}（envId=${id}）。用户让打开同站点页面、继续该站任务或发布、且没点名别的账号时，navigate / run_skill 默认带 envId=${id}，禁止回默认登录态（那是另一个账号）。`;
+}
+
+export type EnvRosterItem = { id: string; name: string };
+
+/** 把本机环境的 id 和名字写进提示。本地不按「另一个」或数字写法挑环境。 */
+export function envRosterLine(
+  envs: EnvRosterItem[] | undefined,
+  page?: { envId?: string; envName?: string },
+): string {
+  const items = (envs || [])
+    .map((env) => {
+      const id = String(env?.id || "").trim();
+      const name = String(env?.name || "").trim() || id;
+      return id ? { id, name } : null;
+    })
+    .filter((env): env is { id: string; name: string } => Boolean(env));
+  if (!items.length) return "";
+  const list = items.map((env) => `${env.name}（id=${env.id}）`).join("、");
+  const curId = String(page?.envId || "").trim();
+  const curName = String(page?.envName || "").trim() || items.find((env) => env.id === curId)?.name || curId;
+  const here = curId ? `当前页在${curName}（id=${curId}）。` : "当前页在默认登录态。";
+  return `本机账号环境：${list}。${here}`;
+}
+
+/** 名册在场时才交给模型的挑选规则。本地没有对应的匹配器。 */
+export const ENV_PICK_RULES =
+  "对账号时只用上面这份名册里的 id，不要另猜，也不要新建环境。名字对得上才用那个 id；阿拉伯数字和汉字数字视为同一个，例如「3」和「三」、「2」和「二」。完全对不上（名册里没有用户说的那个名字）就如实说没有这个环境，禁止硬挑最接近的，禁止新建环境。用户说「另一个」或「第二个账号」时：除当前页环境外只剩一个，就用那一个，并且不要回默认登录态；还剩两个或更多，列出名字问用户，不要自己挑。";
+
+export function systemPrompt(
+  url: string,
+  title: string,
+  execMode?: "step" | "auto",
+  pageEnv?: { envId?: string; envName?: string },
+  envs?: EnvRosterItem[],
+): string {
+  const envLine = currentPageEnvLine(pageEnv?.envId, pageEnv?.envName);
+  const roster = envRosterLine(envs, pageEnv);
   const lines = [
     "你是 Sparo 有头浏览器里的 Pi Agent。用户通过浏览器侧栏把任务交给你，你直接操作当前真实浏览器，而不是只给操作建议。",
     "你负责理解目标、自主安排和修改步骤。每轮都根据完整对话、此前的工具调用和真实工具结果决定下一步；不要机械重复固定流程。",
@@ -327,7 +376,7 @@ function systemPrompt(url: string, title: string, execMode?: "step" | "auto"): s
     "发布、发送、支付、删除等不可逆动作：先用 request_confirm 向用户确认，得到用户明确同意后才执行。用户此前下过的命令不算同意，必须经过一次确认往返。客服回复只把草稿填进输入框，发送仍由用户在页面上点。",
     "用户说「直接」「以后」「全部」「别让我看了」等全量授权措辞时，同类批量操作（归档、清理、翻页处理）自主连续执行到做完或真卡住，不中途问「要不要继续」；跨到新的操作类型（改账号设置、订阅、付费、删除不可恢复内容）仍必须先确认。",
     "批量清理长列表时：优先找「选择所有/全部匹配…会话」类横幅链接一次全选；snapshot 里没有但按理该出现的动态元素（如全选后新出现的横幅），用 click_text 按可见文字再试一次，别急着下「取不到」的结论；Gmail 键盘全选是连按 * 和 a；批与批之间沿用同一搜索结果页，不要每批重新构造搜索。",
-    "用户要求关闭、整理或切换标签页时：先 list_tabs 看清有哪些页。关掉某一类网页用 close_tabs，match 传站点或标题关键字（「关掉所有今日头条的网页」= toutiao），命中的页全部关掉，包括当前正在看的。只有用户明确说留着当前页时才传 keepActive=true。不传 match 不会关页面，不要回答做不到，也不要一个一个点开页面去关。关掉当前这一个用 close_tab。切换用 switch_tab。",
+    "用户要求关闭、整理或切换标签页时：先 list_tabs 看清有哪些页。关掉某一类网页用 close_tabs，match 传站点或标题关键字（「关掉所有今日头条的网页」= toutiao），命中的页全部关掉，包括当前正在看的。用户说「关掉所有网页/标签」时传 all=true。只有用户明确说留着当前页时才传 keepActive=true。不传 match 且不传 all 不会关页面，不要回答做不到，也不要一个一个点开页面去关。关掉当前这一个用 close_tab。切换用 switch_tab。",
     "查询火车、机票、酒店时优先用 search_site 拿结果页 URL 再 navigate，不要硬刚这些站点的首页。",
     "发布到微博、知乎、小红书等社交平台的正文要用自然的口语段落：不用 markdown 标题、加粗、编号列表、分割线和序号 emoji（如 1️⃣）；需要分点时用『一、二、三』或自然过渡衔接。在侧栏里直接回复用户的总结不受此限。",
     "用户给出本地文件路径让你上传（视频、图片、附件）时，用 set_file 把文件放进文件选择框，不要试图用 fill 填路径或用 file:// 打开本地目录。",
@@ -338,7 +387,14 @@ function systemPrompt(url: string, title: string, execMode?: "step" | "auto"): s
     "历史对话里的工具结果都是当时真实读回的，是可信的。浏览器或应用重启后页面状态会重置，当前标签页在哪、显示什么，都不能用来否定历史里已完成的动作。需要核实历史发布是否生效时，去对应平台实际查看（例如打开微博个人主页看时间线），不要凭当前页面状态下结论。",
     "使用用户最新一条消息的语言回复。",
     "多窗口协作：你只操作自己绑定的那一扇窗口和它名下的标签。别的窗口有人在看，或有别的 agent 在干活时，不要把那扇窗口还原到前台，也不要抢它的焦点。",
-    "账号隔离：本机可以存多个「账号环境」，每个环境是一套独立的 Cookie 和本地存储，同一个网站能同时登录多个号、互不干扰。用户点名「用 A 号」「发到第二个账号」「另一个百家号」时，先调用 list_envs 拿到 id，再把 id 传给 navigate 的 envId（run_skill 则放在 params.envId）。不点名就保持默认登录态，不要自己挑环境。环境里还没登录过时，页面会要求登录，如实告诉用户「这个环境还没登录，需要手动登一次」，不要反复重试。",
+    roster
+      ? "账号隔离：本机可以存多个「账号环境」，每个环境是一套独立的 Cookie 和本地存储，同一个网站能同时登录多个号、互不干扰。名册已经写在下面，点名某个账号时用名册里的 id 传给 navigate 的 envId（run_skill 则放在 params.envId）。没点名别的账号时沿用当前页的环境，不要回默认登录态，也不要自己挑一个。环境里还没登录过时，页面会要求登录，如实告诉用户「这个环境还没登录，需要手动登一次」，不要反复重试。"
+      : envLine
+        ? "账号隔离：本机可以存多个「账号环境」，每个环境是一套独立的 Cookie 和本地存储，同一个网站能同时登录多个号、互不干扰。用户点名别的账号时，先调用 list_envs 拿到那个 id，再传给 navigate 的 envId（run_skill 则放在 params.envId）。没点名别的账号时沿用当前页的环境，不要回默认登录态。环境里还没登录过时，页面会要求登录，如实告诉用户「这个环境还没登录，需要手动登一次」，不要反复重试。"
+        : "账号隔离：本机可以存多个「账号环境」，每个环境是一套独立的 Cookie 和本地存储，同一个网站能同时登录多个号、互不干扰。用户点名「用 A 号」「发到第二个账号」「另一个百家号」时，先调用 list_envs 拿到 id，再把 id 传给 navigate 的 envId（run_skill 则放在 params.envId）。不点名就保持默认登录态，不要自己挑环境。环境里还没登录过时，页面会要求登录，如实告诉用户「这个环境还没登录，需要手动登一次」，不要反复重试。",
+    envLine,
+    roster,
+    roster ? ENV_PICK_RULES : "",
     "需要继续干活时留在自己的窗口里静默做完。做完只闪任务栏，不把别人的窗口拉到最前。多个 agent 同时在线时各做各的任务，不改别人的标签，不替别人点确认。",
     `当前页面标题：${title || "（无）"}`,
     `当前页面 URL：${url || "about:blank"}`,
@@ -355,8 +411,27 @@ function systemPrompt(url: string, title: string, execMode?: "step" | "auto"): s
       );
     }
   }
-  return lines.join("\n");
+  return lines.filter(Boolean).join("\n");
 }
+
+export type FreeSoulRunInput = {
+  input: string;
+  url: string;
+  title: string;
+  locale?: string;
+  history?: Array<{ role: "user" | "assistant"; text: string }>;
+  signal?: AbortSignal;
+  execMode?: "step" | "auto";
+  taskId?: string;
+  /** 当前工具标签所属账号环境。没点名别的账号时，navigate / run_skill 应带上它。 */
+  envId?: string;
+  envName?: string;
+  /** 本机账号环境名册。只交给模型对照名字，本地不按这句话挑环境。 */
+  envs?: EnvRosterItem[];
+  onRound?: (round: number) => void;
+  onSidebar?: (text: string) => void;
+  onTrace?: (trace: SoulRunTrace) => void;
+};
 
 function pageTextBody(data: unknown): string {
   if (!data || typeof data !== "object") return "";
@@ -529,19 +604,7 @@ export class FreeSoul {
     this.config.taskId = taskId;
   }
 
-  async run(input: {
-    input: string;
-    url: string;
-    title: string;
-    locale?: string;
-    history?: Array<{ role: "user" | "assistant"; text: string }>;
-    signal?: AbortSignal;
-    execMode?: "step" | "auto";
-    taskId?: string;
-    onRound?: (round: number) => void;
-    onSidebar?: (text: string) => void;
-    onTrace?: (trace: SoulRunTrace) => void;
-  }): Promise<{ ok: boolean; text: string; awaitingConfirm?: boolean; interrupted?: boolean; data?: Record<string, unknown> }> {
+  async run(input: FreeSoulRunInput): Promise<{ ok: boolean; text: string; awaitingConfirm?: boolean; interrupted?: boolean; data?: Record<string, unknown> }> {
     if (!this.config.apiKey && this.config.mode !== "cloud") {
       return { ok: false, text: "请先在设置里配置模型 Key。" };
     }
@@ -558,7 +621,16 @@ export class FreeSoul {
       {
         role: "system",
         content: [
-          systemPrompt(input.url, input.title, input.execMode === "auto" ? "auto" : "step"),
+          systemPrompt(
+            input.url,
+            input.title,
+            input.execMode === "auto" ? "auto" : "step",
+            {
+              envId: input.envId,
+              envName: input.envName,
+            },
+            input.envs,
+          ),
           handed
             ? `内部收费确认句柄是 ${handed}。只有用户这一条是明确同意时，调用 dxm_smt_prepare 才把这个句柄原样放进 paidConsent.confirmId，并带上同一张请求里的 group 和 srcDigest。不要把句柄写给用户。`
             : "",

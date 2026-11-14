@@ -30,9 +30,11 @@ import {
 } from "./studio-store.js";
 import { buildPrecheckResult, listStudioEnvs, resolveStudioEnv, snapshotHash, unsupported } from "./studio-env.js";
 import { randomBytes } from "node:crypto";
+import { freemem, totalmem } from "node:os";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { boundsWithinOnePixel, CHROME_HEAL_COOLDOWN_MS, CHROME_HEAL_STALL_LIMIT, chromeCoverDelta, chromeCoverReason, clampPageView, pageViewCoversChrome, resetChromeCoverBudget, SHELL_HEARTBEAT_GAP_MS, SHELL_PAINT_DIAG_BEATS, SHELL_PAINT_REPAINT_COOLDOWN_MS, SHELL_PAINT_STALL_BEATS, shellPaintStalled, shellRecoveryStep, shellSilentTooLong, takeChromeCoverFix, type ChromeCoverBudget, type CoverReason, type PageRect, type ShellPaintState } from "./page-bounds.js";
 import { pickTabsToClose } from "./close-tabs.js";
+import { migrateMemorySaverMode, pickTabsToDiscard, type DiscardCandidate } from "./memory-policy.js";
 import { formatPushMinute, formatShellCrashContext, formatShellMemLine } from "./diag-log.js";
 import { clickPointUsable, offscreenAgentBounds, viewportTooSmall } from "./agent-viewport.js";
 import {
@@ -1308,6 +1310,7 @@ export class SparkBrowser {
 
   /** Active page view — keeps existing tool code working. */
   private getActiveTab(): TabInfo | null {
+    if (!this.tabs || typeof this.tabs.get !== "function") return null;
     return this.tabs.get(this.activeTabId) ?? null;
   }
 
@@ -1863,10 +1866,10 @@ export class SparkBrowser {
     tab.view = null;
   }
 
-  /** Sleep every background tab now. Playing audio is skipped. */
+  /** 菜单「优化内存」：立刻按激进档收后台页，不进定时扫描。各窗当前页、在播声音、还在跑或等人的不卸。 */
   discardInactiveTabs(): ToolResult {
     let n = 0;
-    for (const id of [...this.tabs.keys()]) {
+    for (const id of this.pickIdleDiscardIds("aggressive", 0)) {
       if (this.discardTab(id)) n += 1;
     }
     this.layout();
@@ -1882,20 +1885,89 @@ export class SparkBrowser {
   }
 
   private autoDiscardIdleTabs(): void {
-    if (!this.settings?.memorySaver) return;
-    if (this.tabs.size <= 1) return;
-    const idleMs = (this.settings.memorySaverIdleMinutes || 5) * 60_000;
-    const now = Date.now();
+    const mode = migrateMemorySaverMode(this.settings || {});
+    if (mode === "off") return;
+    if (!this.tabs || this.tabs.size <= 1) return;
+    const idleMs = (this.settings?.memorySaverIdleMinutes || 5) * 60_000;
     let n = 0;
-    for (const [id, tab] of this.tabs) {
-      if (id === this.activeTabId || tab.discarded) continue;
-      if (now - (tab.lastActiveAt || 0) < idleMs) continue;
+    for (const id of this.pickIdleDiscardIds(mode, idleMs)) {
       if (this.discardTab(id)) n += 1;
     }
     if (n > 0) {
       this.layout();
       this.pushChromeState();
     }
+  }
+
+  /** 各扇窗口正看着的标签。测试里如果只写了 activeTabId，也算当前页。 */
+  private protectedTabIds(): string[] {
+    const ids: string[] = [];
+    if (this.activeTabId) ids.push(this.activeTabId);
+    const map = this._activeTabs;
+    if (map && typeof map.values === "function") {
+      for (const id of map.values()) if (id) ids.push(id);
+    }
+    return ids;
+  }
+
+  private tabIsAudible(tab: TabInfo): boolean {
+    try {
+      const wc = tab.view?.webContents;
+      if (!wc || wc.isDestroyed()) return false;
+      return Boolean(wc.isCurrentlyAudible());
+    } catch {
+      return false;
+    }
+  }
+
+  /** 剩余内存占总量的比例。优先 Electron 的系统读数，没有再用 Node。 */
+  private systemFreeRatio(): number {
+    try {
+      const info = (
+        process as { getSystemMemoryInfo?: () => { total?: number; free?: number } }
+      ).getSystemMemoryInfo?.();
+      const total = Number(info?.total) || 0;
+      const free = Number(info?.free) || 0;
+      if (total > 0) return free / total;
+    } catch {
+      /* 落到 os */
+    }
+    const total = totalmem();
+    if (!total) return 1;
+    return freemem() / total;
+  }
+
+  private pickIdleDiscardIds(mode: "smart" | "off" | "aggressive", idleMs: number): string[] {
+    if (!this.tabs) return [];
+    const tasks = this.taskPool?.tasks || [];
+    const rank = (state: string) =>
+      state === "running" ? 3 : state === "waiting_human" ? 2 : state === "queued" ? 1 : 0;
+    const tabs: DiscardCandidate[] = [];
+    for (const [id, tab] of this.tabs) {
+      const related = tasks.filter((task) => task.tabId === id);
+      related.sort((a, b) => rank(String(b.state)) - rank(String(a.state)));
+      const live = related[0];
+      const owner = ownerForTab(id);
+      const userOwned = tab.agentOwned !== true && !owner.startsWith("agent:");
+      const state = String(live?.state || "") as DiscardCandidate["taskState"];
+      tabs.push({
+        id,
+        discarded: tab.discarded === true,
+        audible: this.tabIsAudible(tab),
+        lastActiveAt: tab.lastActiveAt || 0,
+        userOwned,
+        agentDone: !userOwned && (tab.agentStatus === "done" || state === "done"),
+        taskState: state,
+      });
+    }
+    return pickTabsToDiscard({
+      mode,
+      now: Date.now(),
+      idleMs,
+      activeIds: this.protectedTabIds(),
+      freeRatio: this.systemFreeRatio(),
+      tabs,
+    });
   }
 
   /** 汇总仍活着的标签渲染进程。Electron 的 workingSetSize 单位是 KB。 */
@@ -2069,19 +2141,25 @@ export class SparkBrowser {
       tasks = "error";
     }
     const since = this.lastShellUnresponsiveAt ? Date.now() - this.lastShellUnresponsiveAt : null;
-    return formatShellCrashContext({
-      reason: details?.reason || "unknown",
-      exitCode: Number(details?.exitCode ?? -1),
-      bounds,
-      tabs: this.tabs?.size || 0,
-      chats,
-      tasks,
-      sinceUnresponsiveMs: since,
-      chromeReq: meter.chromeReq,
-      chromeFlush: meter.chromeFlush,
-      sidebarReq: meter.sidebarReq,
-      sidebarBytes: meter.sidebarBytes,
-    });
+    const beatAt = this.shellBeatAt instanceof Map ? this.shellBeatAt.get(this.activeWinId || "main") || 0 : 0;
+    const beatAge = beatAt ? Date.now() - beatAt : -1;
+    const frames = Array.isArray(this.sidebarFrameLog) ? this.sidebarFrameLog.slice(-8).join(" || ") : "";
+    return (
+      formatShellCrashContext({
+        reason: details?.reason || "unknown",
+        exitCode: Number(details?.exitCode ?? -1),
+        bounds,
+        tabs: this.tabs?.size || 0,
+        chats,
+        tasks,
+        sinceUnresponsiveMs: since,
+        chromeReq: meter.chromeReq,
+        chromeFlush: meter.chromeFlush,
+        sidebarReq: meter.sidebarReq,
+        sidebarBytes: meter.sidebarBytes,
+      }) +
+      ` heartbeatAgeMs=${beatAge} sidebarFrames=${frames || "none"}`
+    );
   }
 
   /** 取出这一分钟的推送计数并清零。没有推送也返回一行，方便确认采样还在。 */
@@ -4108,6 +4186,8 @@ export class SparkBrowser {
   private sidebarTabShownForTurn = true;
   /** 每扇窗口最后一次收到壳层心跳的时间。渲染进程彻底卡死时，这是主进程唯一的凭据。 */
   private shellBeatAt = new Map<string, number>();
+  /** 最近几拍侧栏推送，崩溃时写进 crash.log。只留摘要，不留对话正文。 */
+  private sidebarFrameLog: string[] = [];
   /** 壳层看门狗：1 秒一拍，不依赖渲染进程主动上报。 */
   private shellWatchTimer: ReturnType<typeof setInterval> | null = null;
   /** 壳层被迫重启的时间，按窗口存，防死循环。 */
@@ -5349,17 +5429,19 @@ export class SparkBrowser {
       } catch {
         /* 体积量不到不影响推送 */
       }
-      console.log(
-        formatPushFrame({
-          key: String(payload.selectedSession || "user"),
-          sync: payload.chatSync,
-          chatN: Array.isArray(payload.chat) ? payload.chat.length : 0,
-          chatBytes,
-          totalBytes,
-          cursor: Number(payload.chatSeq) || 0,
-          why: payload.why,
-        }),
-      );
+      const frameLine = formatPushFrame({
+        key: String(payload.selectedSession || "user"),
+        sync: payload.chatSync,
+        chatN: Array.isArray(payload.chat) ? payload.chat.length : 0,
+        chatBytes,
+        totalBytes,
+        cursor: Number(payload.chatSeq) || 0,
+        why: payload.why,
+      });
+      console.log(frameLine);
+      if (!Array.isArray(this.sidebarFrameLog)) this.sidebarFrameLog = [];
+      this.sidebarFrameLog.push(frameLine);
+      if (this.sidebarFrameLog.length > 8) this.sidebarFrameLog.splice(0, this.sidebarFrameLog.length - 8);
       // 对话是一份，所有窗口都要收到；地址/标题只属于自己那扇窗口。
       for (const [winId, win] of wins) {
         const tid = this.activeTabs.get(winId) || "";
@@ -5511,7 +5593,7 @@ export class SparkBrowser {
       ...chat,
       selectedSession,
       sessions: this.sessionViews(),
-      skills: safeList(() => this.skillsCache.map(skillSummary).slice(0, 30)),
+      skills: safeList(() => (Array.isArray(this.skillsCache) ? this.skillsCache : []).map(skillSummary).slice(0, 30)),
       deepseek: this.settingsPublic(),
       cloud: this.cloudPublic(),
       profile: this.profilePublic(),
@@ -5582,15 +5664,16 @@ export class SparkBrowser {
     const stamped = stampChatSeq(turnsIn, this.chatSeq || 1);
     if (!readOnly) this.chatSeq = stamped.nextSeq;
     const turns = stamped.turns.slice(-40);
+    const cursorMap = this.chatCursor instanceof Map ? this.chatCursor : null;
     const frame = planChatFrame({
       turns,
-      cursor: readOnly ? 0 : this.chatCursor.get(key) || 0,
+      cursor: readOnly || !cursorMap ? 0 : cursorMap.get(key) || 0,
       sessionChanged: readOnly ? false : key !== this.lastChatKey,
       resync: readOnly ? true : forceFull || this.chatResync,
     });
-    if (!readOnly) {
+    if (!readOnly && cursorMap) {
       this.lastChatKey = key;
-      this.chatCursor.set(key, frame.chatSeq);
+      cursorMap.set(key, frame.chatSeq);
       this.chatResync = false;
     }
     return frame;
@@ -5848,6 +5931,7 @@ export class SparkBrowser {
       id: String(args.id || ""),
       match: String(args.match || ""),
       batch,
+      all: args.all === true,
       keepActive: args.keepActive === true,
     });
     if (!picked.ok) return picked;
@@ -6945,6 +7029,91 @@ export class SparkBrowser {
     return tabId;
   }
 
+  /** 切到侧栏工位之前，模型要继承的那张页。有任务标签就用它，否则用眼前这一页。 */
+  private tabBeforeWorkTab(): string {
+    const scoped = String(this.taskStore()?.tabId || "").trim();
+    if (scoped) return scoped;
+    return this.fallbackAgentTabId || this.activeTabId || "";
+  }
+
+  /** 人在前台发话、窗口没最小化时，环境页要摆到眼前。后台车道不抢用户正在看的页。 */
+  private envOpenShowsPage(): boolean {
+    if (this.taskStore()?.lane === "background") return false;
+    try {
+      return !this.windowIsMinimized();
+    } catch {
+      return false;
+    }
+  }
+
+  /** 本机环境名册，只交给模型。本地不按「另一个」或数字写法挑。 */
+  private envRoster(): Array<{ id: string; name: string }> {
+    try {
+      return listEnvs(this.configDir())
+        .map((env) => ({
+          id: env.id,
+          name: String(env.account?.name || "").trim() || env.id,
+        }))
+        .filter((env) => env.id);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * 要进账号环境时，用切工位之前那张页的 envId，并且不要先把旧工位摆到眼前。
+   * 前台只在 createEnvTab 里切一次；后台不传 userAction。没有环境则返回 null，走默认登录态。
+   */
+  private async navigateInEnv(args: Record<string, unknown>): Promise<ToolResult | null> {
+    const requested = String(args.url || "");
+    const prior = this.tabBeforeWorkTab();
+    const envId = this.navigateEnvId(args.envId, this.tabs?.get(prior)?.envId);
+    if (!envId) return null;
+    const show = this.envOpenShowsPage();
+    let envTabId = "";
+    try {
+      envTabId = show
+        ? this.createEnvTab(envId, "about:blank", { userAction: true })
+        : this.createEnvTab(envId, "about:blank");
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    }
+    const scope = this.taskStore();
+    if (scope) scope.tabId = envTabId;
+    if (show) this.sidebarTabShownForTurn = true;
+    const result = await this.watchPageTool(
+      "navigate",
+      { url: requested, tabId: envTabId, envId },
+      () => this.navigate(requested, { asHuman: true, tabId: envTabId }),
+      envTabId,
+    );
+    if (result.ok) await this.repair12306QueryOnce(requested);
+    return result;
+  }
+
+  /** 当前标签所属账号环境。没有 envId 就不带名字，避免提示词里出现空环境。 */
+  private pageEnv(tabId: string): { envId?: string; envName?: string } {
+    const envId = String(this.tabs?.get(tabId)?.envId || "").trim();
+    if (!envId) return {};
+    let envName = envId;
+    try {
+      envName = getEnv(this.configDir(), envId)?.account.name || envId;
+    } catch {
+      envName = envId;
+    }
+    return { envId, envName };
+  }
+
+  /**
+   * 模型显式传了 envId 就用它。没传、且当前工具标签已经在某个账号环境里，就沿用那个环境。
+   * 两边都没有才回默认登录态。
+   */
+  private navigateEnvId(argsEnvId: unknown, tabEnvId?: string): string {
+    const explicit = String(argsEnvId || "").trim();
+    if (explicit) return explicit;
+    return String(tabEnvId || "").trim();
+  }
+
   /** MCP 作用域里的标签优先。侧栏开站才在需要页面时绑定自己的工位。 */
   private resolveToolTab(needsPage: boolean): string {
     const scope = this.taskStore();
@@ -6961,6 +7130,10 @@ export class SparkBrowser {
     name: FreeSoulToolName,
     args: Record<string, unknown>,
   ): Promise<ToolResult> {
+    if (name === "navigate") {
+      const inEnv = await this.navigateInEnv(args);
+      if (inEnv) return inEnv;
+    }
     const tabId = this.resolveToolTab(sidebarToolNeedsPage(name));
     if (name === "scroll") {
       const direction = args.direction === "up" ? -1 : 1;
@@ -7024,25 +7197,6 @@ export class SparkBrowser {
     if (name === "close_tabs") return this.closeTabsTool(args, true);
     if (name === "navigate") {
       const requested = String(args.url || "");
-      const envId = args.envId ? String(args.envId) : "";
-      if (envId) {
-        let envTabId = "";
-        try {
-          envTabId = this.createEnvTab(envId, "about:blank");
-        } catch (error) {
-          return { ok: false, message: error instanceof Error ? error.message : String(error) };
-        }
-        const scope = this.taskStore();
-        if (scope) scope.tabId = envTabId;
-        const result = await this.watchPageTool(
-          "navigate",
-          { url: requested, tabId: envTabId, envId },
-          () => this.navigate(requested, { asHuman: true, tabId: envTabId }),
-          envTabId,
-        );
-        if (result.ok) await this.repair12306QueryOnce(requested);
-        return result;
-      }
       const result = await this.runAgentTool(name, args);
       if (result.ok) await this.repair12306QueryOnce(requested);
       return result;
@@ -8819,6 +8973,7 @@ export class SparkBrowser {
       const abortSignal = this.activePiAbort.signal;
       const cloudTaskId = this.cloudTaskId;
       const homeWin = this.activeWinId || "main";
+      const pageEnv = this.pageEnv(this.agentTabId || this.activeTabId || "");
       const result = await this.runWithClientWindow(SIDEBAR_CLIENT_ID, homeWin, () => soul.run({
         input: prompt,
         url: this.getUrl(this.agentTabId),
@@ -8828,6 +8983,9 @@ export class SparkBrowser {
         signal: abortSignal,
         execMode: this.execModeForActiveTask(),
         taskId: cloudTaskId,
+        envId: pageEnv.envId,
+        envName: pageEnv.envName,
+        envs: this.envRoster(),
         onRound: (round) => this.noteMcpRound(round),
         onSidebar: (text) => {
           this.chatLog.push({ role: "assistant", text });
@@ -9467,6 +9625,7 @@ export class SparkBrowser {
             }
             this.chatLog.push({ role: "user", text: task.text });
             const cloudTaskId = this.cloudTaskId;
+            const pageEnv = this.pageEnv(tabId);
             const result = await this.freeSoul.run({
               input: task.text,
               url: this.getUrl(tabId),
@@ -9478,6 +9637,9 @@ export class SparkBrowser {
               signal: controller.signal,
               execMode: task.execMode === "step" ? "step" : "auto",
               taskId: cloudTaskId,
+              envId: pageEnv.envId,
+              envName: pageEnv.envName,
+              envs: this.envRoster(),
               onRound: (round) => {
                 if (task.status === "running") task.rounds = round;
                 this.syncTaskChrome();
@@ -14070,6 +14232,7 @@ export class SparkBrowser {
   }
 
   getUrl(tabId?: string): string {
+    if (!this.tabs || typeof this.tabs.get !== "function") return "";
     const tab = tabId ? (this.tabs.get(tabId) ?? null) : this.getActiveTab();
     if (!tab) return "";
     try {
@@ -14083,6 +14246,7 @@ export class SparkBrowser {
   }
 
   getTitle(tabId?: string): string {
+    if (!this.tabs || typeof this.tabs.get !== "function") return "";
     const tab = tabId ? (this.tabs.get(tabId) ?? null) : this.getActiveTab();
     if (!tab) return "";
     try {

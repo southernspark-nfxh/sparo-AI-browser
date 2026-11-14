@@ -11,8 +11,9 @@ export type CloseTabChoice =
 /**
  * 选出要关的标签。
  * match 命中的全部关掉，包括当前页。
+ * all 为 true 时关掉除工作台 / 阅读页以外的全部标签。当前页默认一起关，keepActive 为 true 才留。
  * keepActive 只有显式为 true 才留着当前页（用户说「关掉其他的」）。
- * 批量关闭必须带 match 或 id，避免漏参数把除当前页以外的标签清掉。
+ * 批量关闭必须带 match、id 或 all，避免漏参数把标签清掉。
  * 单关按 match 时只关第一个。批量时跳过工作台和阅读页。
  */
 export function pickTabsToClose(input: {
@@ -23,15 +24,18 @@ export function pickTabsToClose(input: {
   id?: string;
   match?: string;
   batch: boolean;
+  /** 用户说关掉所有网页 / 标签。只在批量关闭时生效。 */
+  all?: boolean;
   keepActive?: boolean;
 }): CloseTabChoice {
   const id = String(input.id || "").trim();
   const match = String(input.match || "").trim().toLowerCase();
   const keepActive = input.keepActive === true;
+  const closeAll = input.batch && input.all === true;
   const hits = (tab: CloseTabPick) =>
     `${tab.url || ""}\n${tab.title || ""}`.toLowerCase().includes(match);
 
-  if (input.batch && !id && !match) {
+  if (input.batch && !id && !match && !closeAll) {
     return { ok: false, message: "批量关闭要带上 match，说明要关的站点或标题" };
   }
 
@@ -55,6 +59,8 @@ export function pickTabsToClose(input: {
       return { ok: false, message: `没有匹配「${match}」的标签页` };
     }
     if (!input.batch) targets = targets.slice(0, 1);
+  } else if (closeAll) {
+    targets = input.tabs.filter((tab) => !(keepActive && tab.id === input.activeId));
   } else {
     return { ok: false, message: "没有可关闭的标签页" };
   }
