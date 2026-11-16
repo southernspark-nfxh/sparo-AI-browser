@@ -1,13 +1,25 @@
 # Sparo 现行产品任务书
 
 > 持续更新。与原版 **同一份正文**，便于两边对照。上一版见 [archive/2026-08/PRODUCT-TASKBOOK-20260811.md](./archive/2026-08/PRODUCT-TASKBOOK-20260811.md)。  
-> 版本：**v0.6.7 · 2026-11-13**（0.6.6 误收工作台半成品已回滚重打；0.6.6 安装包作废）  
+> 版本：**v0.6.7 · 2026-11-16**（0.6.6 误收工作台半成品已回滚重打；0.6.6 安装包作废；0.6.7 安装包按用户要求重建，含外部发布技能账号环境修复）  
 > 上一包：**v0.6.0 · 2026-11-12**（多账号环境 + 自媒体自动发布已打包：`release\Sparo-Setup-0.6.0.exe`）  
 > 状态：**进行中**（云订阅 M1 代码已落地并人测过登录/付款；上架未完；飞书网页已做；侧栏大脑已让模型编手；0.6.0 多账号环境 + social-media-publish v0.3.6 已随包发布）  
 > 产品文案仍以 [PRODUCT.md](./PRODUCT.md) 为准，不要把任务书当商店上架稿。  
-> 先读：[ARCHITECTURE.md](./ARCHITECTURE.md) · [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) · [CHANGELOG.md](../CHANGELOG.md) 0.6.6 · 根目录 [AGENTS.md](../AGENTS.md)
+> 先读：[ARCHITECTURE.md](./ARCHITECTURE.md) · [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) · [CHANGELOG.md](../CHANGELOG.md) 0.6.7 · 根目录 [AGENTS.md](../AGENTS.md)
 >
 > **大脑进度（0.1.19）：** 听整句、站点表换站、模型编 `handbook` / 写下一步已进代码。10-26 起任务循环硬规则：新任务出确认卡、关单必有声、跑完计划步才许收摊、挂起答复接得回。10-27 起同能力多段逐段对账，最小化不再把窗口拉回前台。`absorb`（页上价格对约束）未开工。9 月交接稿见 [archive/2026-09/TRAE-PROMPT-AGENT-BRAIN.md](./archive/2026-09/TRAE-PROMPT-AGENT-BRAIN.md)，以 changelog 和测试为准。
+
+## 2026-11-16 已落代码（外部发布技能：点名账号不再退回默认登录态）
+
+任务书与验收细节见 [SOCIAL-PUBLISH-R4-ACCOUNT-ENV-TASKBOOK.md](./SOCIAL-PUBLISH-R4-ACCOUNT-ENV-TASKBOOK.md) 第 9 节；决策见 [DECISION-POINTS.md](./DECISION-POINTS.md) 第 59 条。改动只在 `strategies\skills\social-media-publish`（外部技能，不随安装包分发），Sparo 主进程未动。
+
+- 图文 `publish.mjs`、视频 `video.mjs` 支持显式 `--env <envId>`；缺值 / 环境不存在 / 归一后重名都失败关闭，不回默认账号
+- `navigate` / `new_tab` / 搜狐开页 / 视频新建统一携带 `envId`；默认任务不再复用非默认账号标签
+- 编辑页复用与 `--from` 续跑按 `owner + envId` 过滤；同 owner 跨环境草稿不接管，多份空草稿报 `RESUME_AMBIGUOUS`
+- 立即发布、定时发布、dry-run 前统一硬门：标签环境 + 页面账号名（`ENV_MISMATCH` / `ACCOUNT_NAME_UNAVAILABLE` / `ACCOUNT_MISMATCH`）
+- 报告、失败诊断、台账带 `envId` / `envName` / `accountName`；`probe` 按环境过滤标签
+- 验收：两副本 `--self-check` 全绿、`.mjs` 全过 `node --check`；真机只测了名册解析，编辑页 dry-run 待 Sparo 启动后补
+- 0.6.7 安装包按用户要求重建（`release\Sparo-Setup-0.6.7.exe`），代码已推 `origin/master`（`c3036f7`）
 
 ## 2026-11-13 已落代码（0.6.7：0.6.6 内容 + 摘除误收的半成品）
 

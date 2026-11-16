@@ -3,8 +3,8 @@
 > 交付对象：Cursor 开发窗口  
 > 主工作目录：`d:\download\sparo上架应用商店版`  
 > 技能源目录：`strategies\skills\social-media-publish\`  
-> 全局安装目录：`C:\Users\60914\.trae-cn\skills\social-media-publish\`  
-> 旧百家号技能：`C:\Users\60914\.trae-cn\skills\baijiahao-publish\`  
+> 全局安装目录：`C:\Users\<用户名>\.trae-cn\skills\social-media-publish\`  
+> 旧百家号技能：`C:\Users\<用户名>\.trae-cn\skills\baijiahao-publish\`  
 > 本轮只修外部技能与对应说明，不改 Sparo 主进程，不操作真实稿件，不打包。
 
 ---
@@ -415,6 +415,8 @@ A、B、D、E、F、G 是必须真机证据；C、H 可先用确定性的单元�
 - [ ] 真机 dry-run 证据齐全，未点击真实「发布」或「定时发布」。
 - [ ] 未修改 Sparo 主进程，未执行 `npm run dist`。
 
+> 2026-11-16 更新：用户另行明确要求「审核完毕就推送并打包」，`npm run dist` 已执行，其余完成情况见第 9 节。
+
 ---
 
 ## 7. 交付时必须附上的证据
@@ -443,3 +445,62 @@ A、B、D、E、F、G 是必须真机证据；C、H 可先用确定性的单元�
 7. **dry-run 直接跳过整个提交步骤，连同硬门一起跳过。** 应先验收硬门，再只跳过点击和提交后验证。
 8. **把安装版视频能力覆盖没。** 两边是双向分叉，不是单向旧副本。
 9. **为了测试点一次真实发布。** 本轮 DoD 不需要真实提交，且明确禁止。
+
+---
+
+## 9. 交付结果（2026-11-16）
+
+审核结论：Cursor 交付的主干方向正确（名册解析、显式 `--env`、提交前硬门、dry-run 不点提交），但有 7 处漏洞会让真实使用退回错号或假成功，已修复后再交付。
+
+### 9.1 双向合并清单
+
+| 方向 | 文件 | 说明 |
+|---|---|---|
+| 安装版 → 源仓库 | `scripts/video.mjs`、`scripts/video-cover.mjs`、`scripts/adapters/baijiahao-video.mjs`、`SKILL.md`、`references/platforms.md` | 视频入口与封面能力安装版更全，作为 canonical 回补源仓库，再在其上补本轮环境修复 |
+| 源仓库 → 安装版 | `scripts/page.mjs`、`scripts/sparo.mjs`、`scripts/engine.mjs`、`scripts/publish.mjs`、`scripts/env-account.mjs`、`scripts/article.mjs`、`scripts/ledger.mjs`、`scripts/collector.mjs`、`scripts/comments.mjs`、`scripts/metrics-db.mjs`、四个图文适配器、四个 `platforms/*.json` | 逐文件覆盖，未整目录复制 |
+| 两边各自保留 | 台账、`_probe_*.mjs` | 本机运行产物，不参与同步 |
+
+### 9.2 修复清单（审核发现 → 处理）
+
+| # | 问题 | 处理 |
+|---|---|---|
+| 1 | 默认任务（未点名账号）可能 `navigate` 进非默认账号标签（固定 clientId 会被 `bindClientTab` 复用） | `page.mjs` 新增 `openPayloadFor()`：显式环境带 `envId`；默认任务只有活动页确实属于默认登录态才 `navigate`，否则 `new_tab`；搜狐 `openBlank()` 同步改用 |
+| 2 | 视频 `--env` 后跟空白会静默回退默认登录态 | 参数解析遇到空值或下一个 `--` 直接报错 |
+| 3 | `--auto-cover` 不抽帧，竖版文件名与文档不一致 | 新增 `prepareAutoCover()` 真实抽帧；`coverOutputPath()` 统一 `cover_land.jpg` / `cover_portrait.jpg` |
+| 4 | 封面 CLI 在中文路径下不执行 | 入口判断改用 `fileURLToPath(import.meta.url)` 与 `process.argv[1]` 比较 |
+| 5 | 早期步骤（填标题 / 传视频前）中断后 `--from` 无法续跑 | `findResumeEditor()` 统一按 `owner + envId` 过滤并用 verify 页兜底；只接受唯一空标题草稿，多份返回 `RESUME_AMBIGUOUS` |
+| 6 | 视频环境解析失败不写失败台账 | `resolveEnvFailure()` 走统一 `finish()`，非 dry-run / probe 落一条失败记录 |
+| 7 | `probe` 列标签不按环境过滤 | `buildProbeReport()` 按 `envAllows` 过滤，输出 `envId` / `envName` / `accountName` |
+
+自检同步补了对应断言：`openPayloadFor` 三态、`prepareAutoCover`、`coverOutputPath` 映射、歧义续跑、失败台账、dry-run 不写台账、probe 过滤。
+
+### 9.3 自检结果
+
+| 目录 | 命令 | 结果 |
+|---|---|---|
+| `strategies\skills\social-media-publish` | `node scripts/publish.mjs --self-check` | `SELF_CHECK_OK` |
+| `strategies\skills\social-media-publish` | `node scripts/video.mjs --self-check` | `SELF_CHECK_OK` |
+| `C:\Users\<用户名>\.trae-cn\skills\social-media-publish` | 同上两条 | 均 `SELF_CHECK_OK` |
+
+两个目录全部 `.mjs` 通过 `node --check`。
+
+### 9.4 真机验收（只做 dry-run / 只读名册）
+
+| 项 | 状态 |
+|---|---|
+| 名称解析：`百家号二` → `ad0fe9db`、`百家号三` → `3c8b923f`、`百家号四` → `ENV_NOT_FOUND` | 已测；解析失败时未开页、未填稿 |
+| A / B / E / F / G（编辑页 dry-run、账号名读取、跨环境复用、续跑、视频新建） | **未测**：验收时 Sparo 进程已退出，MCP 3921 不可用 |
+| H（环境 / 账号名不一致夹具） | 由确定性自检覆盖，未上真机 |
+
+未测部分不以自检绿代替，需在 Sparo 启动后补一轮 dry-run。
+
+### 9.5 与任务书原约定的偏离
+
+- 第 2.2 条与 DoD 最后一条写明「不执行 `npm run dist`」。2026-11-16 用户明确要求「审核完毕就推送并打包」，已在代码提交后执行；产出 `release\Sparo-Setup-0.6.7.exe`（104,940,222 字节，`--publish never`，未对外发布任何 release）。
+- 仍守住：没有真实发布、没有定时发布、没有修改用户既有稿件、没有改 Sparo 主进程的账号环境实现。
+
+### 9.6 提交与推送
+
+- 提交：`c3036f7 fix: 发布脚本按账号环境隔离并加固提交前核验`（16 个文件）
+- 远端：`origin/master` = `c3036f7`，已推送
+- 新增决策点：[DECISION-POINTS.md](./DECISION-POINTS.md) 第 59 条「外部发布脚本点名账号就失败关闭」

@@ -28,6 +28,10 @@ run_skill({ query: "发百家号", params: { envId } })   # 技能也支持
 - 环境里还没登录时，如实告诉用户「在这个环境里登录一次」，不要反复重试或换号硬试。
 - 用户说「发到 A 号 / 第二个百家号」时，先 `list_envs`，按名字选 `envId`。
 
+## 外部发布技能怎么认环境（2026-11-16）
+
+`social-media-publish` 的图文 / 视频脚本不再只靠 `run_skill` 透传：直接跑命令行时用 `--env <envId>`，脚本自己 `list_envs` 解析名称（`百家号二` = `百家号2`），全程带着同一个 `envId` 开页、复用标签和 `--from` 续跑。找不到、归一后重名、标签环境对不上或页面账号名读不到都直接失败关闭，不会退回默认登录态；dry-run 同样要过环境与账号名硬门，只是不点提交。详见 [SOCIAL-PUBLISH-R4-ACCOUNT-ENV-TASKBOOK.md](./SOCIAL-PUBLISH-R4-ACCOUNT-ENV-TASKBOOK.md)。
+
 ## 实现位置
 
 | 层 | 文件 | 做什么 |
