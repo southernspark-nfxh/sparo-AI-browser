@@ -191,11 +191,21 @@ async function gate(tabId, expect) {
 async function loadToolProps() {
   if (toolProps) return toolProps;
   await connect();
-  const listed = await rpc("tools/list");
-  toolProps = new Map();
-  for (const tool of listed?.result?.tools || []) {
-    toolProps.set(tool.name, tool?.inputSchema?.properties || {});
+  // tools/list 偶发返回空表（会话被顶掉/服务刚重启），空表会让所有带 tabId 的动作被误判成 SERVER_NO_TABID。
+  // 拿到包含 execute 的完整清单才缓存，否则短暂等待后重试。
+  for (let i = 0; i < 3; i++) {
+    const listed = await rpc("tools/list");
+    const tools = listed?.result?.tools || [];
+    if (tools.some((tool) => tool?.name === "execute")) {
+      toolProps = new Map();
+      for (const tool of tools) {
+        toolProps.set(tool.name, tool?.inputSchema?.properties || {});
+      }
+      return toolProps;
+    }
+    if (i < 2) await sleep(500);
   }
+  toolProps = new Map();
   return toolProps;
 }
 

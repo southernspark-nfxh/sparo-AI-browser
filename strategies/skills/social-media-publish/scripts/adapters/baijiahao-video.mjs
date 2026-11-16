@@ -725,6 +725,24 @@ function assertPublishReady(state) {
 }
 
 /**
+ * 作品描述上限 50 字：标题 + 每个话题按「#话题#」计。超了平台直接拒收，必须先拦住。
+ * 立即发布和定时发布都要过这一关。
+ */
+async function assertTextBudget(ctx) {
+  const counter = await page(
+    ctx,
+    "(() => { const m = (document.body.innerText || '').match(/(\\d{1,3})\\s*\\/\\s*(50)\\b/);" +
+      "return JSON.stringify({ n: m ? Number(m[1]) : -1, limit: m ? Number(m[2]) : 50 }); })()",
+  );
+  if (counter.stop) return counter.stop;
+  const used = Number(counter.value?.n ?? -1);
+  if (used > 50) {
+    return fail("TEXT_TOO_LONG", counter.value, "作品描述 " + used + "/50，标题+话题超字数，平台会拒收，先删话题或缩标题");
+  }
+  return pass({ used });
+}
+
+/**
  * 定时发布。
  * ctx.scheduleAt 形如 "2026-11-15 05:00"。平台入口是底部「定时发布」按钮，点开要选日期+时间。
  */
@@ -736,17 +754,8 @@ async function schedule(ctx) {
   const date = m[1];
   const time = String(m[2]).padStart(2, "0") + ":" + m[3];
 
-  // 作品描述上限 50 字：标题 + 每个话题按「#话题#」计。超了平台直接拒收，必须先拦住
-  const counter = await page(
-    ctx,
-    "(() => { const m = (document.body.innerText || '').match(/(\\d{1,3})\\s*\\/\\s*(50)\\b/);" +
-      "return JSON.stringify({ n: m ? Number(m[1]) : -1, limit: m ? Number(m[2]) : 50 }); })()",
-  );
-  if (counter.stop) return counter.stop;
-  const used = Number(counter.value?.n ?? -1);
-  if (used > 50) {
-    return fail("TEXT_TOO_LONG", counter.value, "作品描述 " + used + "/50，标题+话题超字数，平台会拒收，先删话题或缩标题");
-  }
+  const budget = await assertTextBudget(ctx);
+  if (!budget.ok) return budget;
 
   // 创作声明之类的残留弹窗会挡住底部工具栏，先把它们清干净
   const cleared = await dismissOtherModals(ctx);
@@ -906,6 +915,8 @@ async function schedule(ctx) {
 async function publish(ctx) {
   // 定时任务在「定时发布」弹窗点确定那一刻就已经提交，页面会离开编辑器；这里不能再点「发布」
   if (ctx.scheduledSubmitted) return pass({ skipped: "定时任务已提交，无需再点发布" });
+  const budget = await assertTextBudget(ctx);
+  if (!budget.ok) return budget;
   const account = await enforceAccountGate(ctx, (item) => readBaijiahaoAccount(item));
   if (!account.ok) return account;
   const state = await readState(ctx);
@@ -1077,6 +1088,61 @@ async function verify(ctx) {
   return pass({ status: list.value.status || "已提交", href: list.value.href });
 }
 
+/**
+ * 上错号兜底：把刚挂进编辑页的视频删掉，绝不留在别人的号里。
+ * 先点视频模块里的「删除」并确认；页面没有删除入口（或删不掉）就清本地 videoV2 草稿。
+ */
+async function removeVideo(ctx) {
+  const hasVideoScript = "(() => { const v = document.querySelector('video'); return JSON.stringify({ has: !!v && !!(v.currentSrc || v.src) }); })()";
+  const clicked = await page(
+    ctx,
+    "(() => {" +
+      "const inVideo = (el) => { let p = el; for (let i = 0; i < 6 && p; i++, p = p.parentElement) { const c = typeof p.className === 'string' ? p.className : ''; if (/video/i.test(c)) return true; } return false; };" +
+      "const hits = Array.from(document.querySelectorAll('div,span,button,a')).filter((el) => {" +
+      "const t = (el.innerText || '').trim();" +
+      "if (t !== '删除' && t !== '删除视频') return false;" +
+      "if (el.children.length) return false;" +
+      "const box = el.getBoundingClientRect();" +
+      "return box.width > 0 && box.height > 0 && inVideo(el);" +
+      "});" +
+      "if (!hits.length) return JSON.stringify({ clicked: false });" +
+      "const el = hits[hits.length - 1];" +
+      "['pointerdown','mousedown','pointerup','mouseup','click'].forEach((t) => el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })));" +
+      "return JSON.stringify({ clicked: true, text: (el.innerText || '').trim() });" +
+      "})()",
+  );
+  if (clicked.stop) return clicked.stop;
+  let via = "";
+  if (clicked.value?.clicked) {
+    via = "delete-button";
+    await sleep(1500);
+    const confirmed = await page(
+      ctx,
+      "(() => {" +
+        "const modals = Array.from(document.querySelectorAll('.cheetah-modal')).filter((m) => m.getBoundingClientRect().width > 0);" +
+        "const box = modals[modals.length - 1];" +
+        "if (!box) return JSON.stringify({ confirmed: false });" +
+        "const btn = Array.from(box.querySelectorAll('button, [class*=btn]')).find((b) => /^(确定|删除|确认)$/.test((b.innerText || '').trim()) && b.getBoundingClientRect().width > 0);" +
+        "if (!btn) return JSON.stringify({ confirmed: false });" +
+        "btn.click();" +
+        "return JSON.stringify({ confirmed: true, text: (btn.innerText || '').trim() });" +
+        "})()",
+    );
+    if (confirmed.stop) return confirmed.stop;
+    await sleep(1500);
+  }
+  const still = await page(ctx, hasVideoScript);
+  if (still.stop) return still.stop;
+  if (!still.value?.has) return pass({ deleted: true, via: via || "already-gone" });
+  const cleared = await page(
+    ctx,
+    "(() => { const keys = Object.keys(localStorage).filter((k) => /^edit-.*-videoV2$/.test(k)); keys.forEach((k) => localStorage.removeItem(k)); return JSON.stringify({ cleared: keys.length, keys }); })()",
+  );
+  if (cleared.stop) return cleared.stop;
+  if (!Number(cleared.value?.cleared || 0)) return fail("VIDEO_REMOVE_FAILED", { clicked: clicked.value || {}, cleared: cleared.value || {} }, "视频没删掉，也没找到可清的草稿，请人工处理这个号");
+  return pass({ deleted: false, draftCleared: cleared.value.cleared, via: via || "draft" });
+}
+
 export const baijiahaoVideo = {
   host: "baijiahao.baidu.com",
   writeUrl: "https://baijiahao.baidu.com/builder/rc/edit?type=video",
@@ -1098,5 +1164,6 @@ export const baijiahaoVideo = {
   schedule,
   publish,
   verify,
+  removeVideo,
   readAccountName: (ctx) => readBaijiahaoAccount(ctx),
 };

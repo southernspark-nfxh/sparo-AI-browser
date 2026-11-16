@@ -589,7 +589,10 @@ export async function enforceAccountGate(ctx, readAccountName) {
   const listed = await tabs();
   const tab = tabRows(listed).find((item) => item.id === ctx.tabId) || null;
   let url = String(tab?.url || "");
-  if (!tab || tab.id !== ctx.tabId || String(tab.envId || "") !== envId) {
+  const sameEnv = Boolean(tab && tab.id === ctx.tabId && String(tab.envId || "") === envId);
+  // 这一版 Sparo 的 list_tabs 不带 envId；视频流程允许退回「站点昵称对得上」来兜底
+  const canFallback = !sameEnv && ctx.envFallback === "account" && tab && tab.id === ctx.tabId && !String(tab.envId || "").trim();
+  if (!sameEnv && !canFallback) {
     return fail(
       "ENV_MISMATCH",
       { expectedEnvId: envId, actualEnvId: String(tab?.envId || ""), tabId: ctx.tabId || "", url },
@@ -604,6 +607,17 @@ export async function enforceAccountGate(ctx, readAccountName) {
     actual = String(read?.detail?.accountName || "").trim();
     url = String(read?.detail?.url || url);
   }
+  if (!sameEnv) {
+    const want = String(ctx.expectedAccountName || "").trim();
+    if (!actual) {
+      return fail("ACCOUNT_NAME_UNAVAILABLE", { envId, tabId: ctx.tabId || "", url }, "环境信息缺失，又读不到账号名");
+    }
+    if (!want || want !== actual) {
+      return fail("ACCOUNT_MISMATCH", { expected: want, actual, tabId: ctx.tabId || "", url }, "提交前账号名变了");
+    }
+    ctx.accountName = actual;
+    return pass({ via: "account-fallback", accountName: actual });
+  }
   const judged = judgeSubmitGate({
     envId,
     tabId: ctx.tabId,
@@ -615,6 +629,34 @@ export async function enforceAccountGate(ctx, readAccountName) {
   if (!judged.ok) return fail(judged.code, judged, judged.hint || judged.code);
   ctx.accountName = judged.accountName;
   return pass(judged);
+}
+
+/**
+ * 视频专用：不管有没有指定环境，都按站点昵称核对目标账号。
+ * 读不到或对不上都失败关闭，绝不"没读到就当通过"。
+ */
+export async function assertAccountName(ctx, readAccountName, expected) {
+  const want = String(expected || "").trim();
+  if (!want) return fail("ACCOUNT_NOT_SET", { tabId: ctx.tabId || "" }, "没有给出目标账号");
+  if (typeof readAccountName !== "function") {
+    return fail("ACCOUNT_NAME_UNAVAILABLE", { tabId: ctx.tabId || "" }, "这个平台还不能核对页面账号名");
+  }
+  const read = await readAccountName(ctx);
+  if (read?.stop) return read.stop;
+  if (read && read.ok === false) return read;
+  const actual = String(read?.detail?.accountName || "").trim();
+  if (!actual) {
+    return fail("ACCOUNT_NAME_UNAVAILABLE", { tabId: ctx.tabId || "", url: read?.detail?.url || "" }, "页面账号名读不到");
+  }
+  ctx.accountName = actual;
+  if (actual !== want) {
+    return fail(
+      "ACCOUNT_NOT_ALLOWED",
+      { expected: want, actual, tabId: ctx.tabId || "", url: read?.detail?.url || "" },
+      "当前登的是「" + actual + "」，目标账号是「" + want + "」",
+    );
+  }
+  return pass({ accountName: actual, via: read?.detail?.via || "" });
 }
 
 export function assertEnvEditorFixtures() {

@@ -15,12 +15,27 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { baijiahaoVideo } from "./adapters/baijiahao-video.mjs";
 import { envAllows, ledgerEnvFields, resolveEnv } from "./env-account.mjs";
-import { activateEditor, blockedCall, captureAccountName, editorCandidates, enforceAccountGate, fail, page, pass, restoreActive } from "./page.mjs";
+import { activateEditor, assertAccountName, blockedCall, editorCandidates, enforceAccountGate, fail, page, pass, restoreActive } from "./page.mjs";
 import { activeIdOf, call, exec, listEnvs, releaseRender, sessionStamp, sleep, tabRows, tabs, useTab, withEnv } from "./sparo.mjs";
 import { appendLedger } from "./ledger.mjs";
 import { coverOutputPath, generate as generateCover } from "./video-cover.mjs";
 
 const ADAPTERS = { baijiahao: baijiahaoVideo };
+
+/**
+ * 本版 Sparo 的 list_tabs 不返回 envId。视频流程允许 envFallback="account"：
+ * 全部标签都缺 envId 时不按环境过滤，改由昵称门复核；只要有一个标签带 envId，就仍按环境严格过滤。
+ */
+function envFilterFor(ctx, rows) {
+  const want = String(ctx.envId || "").trim();
+  if (!want) return "";
+  if (ctx.envFallback !== "account") return want;
+  const anyKnown = (rows || []).some((tab) => String(tab?.envId || "").trim());
+  return anyKnown ? want : "";
+}
+
+/** 视频默认只发这个号。换号必须显式给 --account，不要靠换登录态。 */
+export const DEFAULT_VIDEO_ACCOUNT = "图一乐研究所";
 
 export const STEPS = [
   "openWrite",
@@ -40,9 +55,10 @@ export const STEPS = [
 export const USAGE = [
   "用法：node video.mjs --platform baijiahao --video <mp4> --title <标题> --topics 搞笑,沙雕,名场面,夫妻日常,生活",
   "      [--cover auto|always|never] [--cover-land <jpg>] [--cover-portrait <jpg>] [--schedule \"YYYY-MM-DD HH:mm\"] [--expect-dur <秒>]",
-  "      [--tab <tabId>] [--env <envId>] [--title-file <txt>] [--auto-cover] [--at <秒>] [--from <步骤>] [--until <步骤>] [--dry-run] [--probe]",
+  "      [--tab <tabId>] [--env <envId>] [--account <站点昵称>] [--title-file <txt>] [--auto-cover] [--at <秒>] [--from <步骤>] [--until <步骤>] [--dry-run] [--probe]",
   "步骤：" + STEPS.join(" → "),
-  "话题：5–10 个，少于 5 个直接失败；每个都要走联想点选。",
+  "账号：默认只发「" + DEFAULT_VIDEO_ACCOUNT + "」。开跑前、上传后、发布前各核对一次站点昵称，不是这个号就停；上传后才发现上错号会自动删掉已上传的视频。",
+  "话题：5–10 个，少于 5 个直接失败；每个都要走联想点选。「标题 + 话题」总字数 ≤ 50（含 # 号），超了发不出去。",
   "封面：默认 --cover auto —— 平台已自动选好封面且无「不合格」提示就保留，不覆盖；always 强制重传；never 不碰。",
   "定时：--schedule 走「定时发布」，弹窗里的「定时发布」按钮即提交；提交后 publish 自动跳过。",
   "续跑：--from setCover（开跑前编辑页里必须已是这篇标题）；--until setDeclaration 可以分段跑。",
@@ -64,6 +80,7 @@ function parseArgs(argv) {
     probe: false,
     from: "",
     env: "",
+    account: "",
     ledger: "",
     tab: "",
     coverMode: "auto",
@@ -103,6 +120,11 @@ function parseArgs(argv) {
       const next = argv[++i] || "";
       if (!STEPS.includes(next)) out.error = "--until 只能是 " + STEPS.join(" / ");
       else out.until = next;
+    }
+    else if (arg === "--account") {
+      const next = argv[i + 1];
+      if (!next || next.startsWith("--") || !next.trim()) out.error = "--account 后面要跟站点昵称（默认 " + DEFAULT_VIDEO_ACCOUNT + "）";
+      else out.account = argv[++i];
     }
     else if (arg === "--env") {
       const next = argv[i + 1];
@@ -193,27 +215,30 @@ async function openOwnEditor(ctx) {
     writeMark: ctx.writeMark,
     editExisting: ctx.editExisting,
     stamp,
-    envId: ctx.envId || "",
+    envId: envFilterFor(ctx, rows),
   });
   const reusable = picked.accepted[0];
   if (reusable) {
     const pin = await useTab(reusable.id, ctx.host);
     const stopped = blockedCall(String(pin));
     if (!stopped) {
-      // 复用前先看有没有未完成的草稿：空页才重载，避免把别人的半成品刷掉
+      // 复用前先看有没有未完成的草稿：空页才重载；标题是别的视频时绝不复用，避免在别人的稿子上续写
       const read = await page({ ...ctx, tabId: reusable.id }, "(() => { const e = document.querySelector('[class*=\"contentEditable\"][contenteditable=\"true\"]'); return JSON.stringify({ title: e ? (e.innerText || '').trim() : '' }); })()");
-      if (!read.stop && !read.value?.title) {
-        // is_from_cms=1 这类残留状态会让上传不触发，必须重载成干净编辑页
-        await exec("(() => { location.replace(" + JSON.stringify(ctx.writeUrl) + "); return JSON.stringify({ ok: true }); })()", reusable.id, ctx.host);
-        for (let i = 0; i < 40; i++) {
-          await sleep(300);
-          const again = await page({ ...ctx, tabId: reusable.id }, "(() => { const e = document.querySelector('[class*=\"contentEditable\"][contenteditable=\"true\"]'); return JSON.stringify({ ready: !!e, href: location.href }); })()");
-          if (again.stop) break;
-          if (again.value?.ready) break;
+      const existingTitle = String(read?.value?.title || "").trim();
+      if (!read.stop && (!existingTitle || existingTitle === String(ctx.title || "").trim())) {
+        if (!existingTitle) {
+          // is_from_cms=1 这类残留状态会让上传不触发，必须重载成干净编辑页
+          await exec("(() => { location.replace(" + JSON.stringify(ctx.writeUrl) + "); return JSON.stringify({ ok: true }); })()", reusable.id, ctx.host);
+          for (let i = 0; i < 40; i++) {
+            await sleep(300);
+            const again = await page({ ...ctx, tabId: reusable.id }, "(() => { const e = document.querySelector('[class*=\"contentEditable\"][contenteditable=\"true\"]'); return JSON.stringify({ ready: !!e, href: location.href }); })()");
+            if (again.stop) break;
+            if (again.value?.ready) break;
+          }
         }
+        ctx.tabId = reusable.id;
+        return pass({ tabId: reusable.id, reused: true, owner: stamp.owner, envId: reusable.envId || "" });
       }
-      ctx.tabId = reusable.id;
-      return pass({ tabId: reusable.id, reused: true, owner: stamp.owner, envId: reusable.envId || "" });
     }
   }
   const wantEnv = String(ctx.envId || "").trim();
@@ -230,8 +255,8 @@ async function openOwnEditor(ctx) {
         !/auth\/page\/login|passport/i.test(String(t.url || "")),
     );
     if (hit) {
-      if (wantEnv && !String(hit.envId || "")) continue;
-      if (wantEnv && String(hit.envId || "") !== wantEnv) {
+      // 本版 Sparo 的 list_tabs 不返回 envId：new_tab 已确认落在目标环境，缺字段时交给后续昵称门复核
+      if (wantEnv && String(hit.envId || "") && String(hit.envId) !== wantEnv) {
         return fail("ENV_MISMATCH", { expectedEnvId: wantEnv, actualEnvId: hit.envId || "", tabId: hit.id, excluded: picked.excluded }, "新标签不在目标账号环境");
       }
       if (!wantEnv && String(hit.envId || "").trim()) continue;
@@ -262,7 +287,7 @@ export async function findResumeEditor(ctx, adapter, from, io) {
     writeMark,
     editExisting: writeMark === ctx.writeMark ? ctx.editExisting : null,
     stamp,
-    envId: ctx.envId || "",
+    envId: envFilterFor(ctx, rows),
   });
   const reads = [];
   const empties = [];
@@ -270,7 +295,7 @@ export async function findResumeEditor(ctx, adapter, from, io) {
   if (from === "verify") {
     // 刚发完可能停在 clue 引导页，退一步认自己名下的百家号任意页
     const hasOwner = rows.some((tab) => Object.prototype.hasOwnProperty.call(tab, "owner"));
-    const ours = (tab) => (hasOwner ? String(tab.owner || "") === stamp.owner : true) && envAllows(tab, ctx.envId || "");
+    const ours = (tab) => (hasOwner ? String(tab.owner || "") === stamp.owner : true) && envAllows(tab, envFilterFor(ctx, rows));
     resumed = rows.find((tab) => /\/builder\/rc\/content/.test(String(tab.url || "")) && ours(tab))
       || rows.find((tab) => /baijiahao\.baidu\.com/.test(String(tab.url || "")) && ours(tab))
       || null;
@@ -391,7 +416,9 @@ export async function runVideoPublish(args) {
     videoDuration: args.expectDur || 0,
     envId: resolved.envId,
     envName: resolved.envName,
-    expectedAccountName: "",
+    envFallback: "account",
+    expectAccount: String(args.account || DEFAULT_VIDEO_ACCOUNT).trim(),
+    expectedAccountName: String(args.account || DEFAULT_VIDEO_ACCOUNT).trim(),
     accountName: "",
     tabId: "",
   };
@@ -477,15 +504,22 @@ export async function runVideoPublish(args) {
       ctx.innerHeight = ready.detail?.innerHeight || 0;
     }
 
-    const named = await captureAccountName(ctx, typeof adapter.readAccountName === "function" ? (item) => adapter.readAccountName(item) : null);
+    const named = await assertAccountName(ctx, typeof adapter.readAccountName === "function" ? (item) => adapter.readAccountName(item) : null, ctx.expectAccount);
     log.push({ step: "accountName", ...named });
+    console.log(line(ctx, "accountName", named.ok ? { ok: true, hint: named.detail?.accountName || "" } : named));
     if (!named.ok) {
-      return finish(ctx, { ok: false, platform: ctx.platform, step: "accountName", reason: named.code || "ACCOUNT_NAME_UNAVAILABLE", tabId: ctx.tabId || "", hint: named.hint || "", log });
+      return finish(ctx, { ok: false, platform: ctx.platform, step: "accountName", reason: named.code || "ACCOUNT_NAME_UNAVAILABLE", tabId: ctx.tabId || "", hint: named.hint || "", expectedAccount: ctx.expectAccount, log });
     }
 
     for (const step of steps) {
       if (step === "openWrite") continue;
       if (step === "publish") {
+        const nick = await assertAccountName(ctx, typeof adapter.readAccountName === "function" ? (item) => adapter.readAccountName(item) : null, ctx.expectAccount);
+        log.push({ step: "accountGateNick", ...nick });
+        console.log(line(ctx, "accountGateNick", nick.ok ? { ok: true, hint: nick.detail?.accountName || "" } : nick));
+        if (!nick.ok) {
+          return finish(ctx, { ok: false, platform: ctx.platform, step: "accountGateNick", reason: nick.code || "ACCOUNT_NAME_UNAVAILABLE", tabId: ctx.tabId || "", hint: nick.hint || "", expectedAccount: ctx.expectAccount, log });
+        }
         const account = await enforceAccountGate(ctx, typeof adapter.readAccountName === "function" ? (item) => adapter.readAccountName(item) : null);
         log.push({ step: "accountGate", ...account });
         console.log(line(ctx, "accountGate", account.ok ? { ok: true, hint: account.detail?.accountName || account.detail?.skipped || "" } : account));
@@ -503,6 +537,28 @@ export async function runVideoPublish(args) {
       console.log(line(ctx, step, result));
       if (!result?.ok) {
         return finish(ctx, { ok: false, platform: ctx.platform, step, reason: result.code || "FAIL", tabId: ctx.tabId || "", hint: result.hint || "", log });
+      }
+      // 上传后复核账号：上错号就把刚传的视频删掉，绝不留在别人号里
+      if (step === "uploadVideo") {
+        const after = await assertAccountName(ctx, typeof adapter.readAccountName === "function" ? (item) => adapter.readAccountName(item) : null, ctx.expectAccount);
+        log.push({ step: "accountAfterUpload", ...after });
+        console.log(line(ctx, "accountAfterUpload", after.ok ? { ok: true, hint: after.detail?.accountName || "" } : after));
+        if (!after.ok) {
+          const removed = typeof adapter.removeVideo === "function" ? await adapter.removeVideo(ctx) : { ok: false, code: "NO_REMOVE" };
+          log.push({ step: "removeVideo", ...removed });
+          console.log(line(ctx, "removeVideo", removed));
+          return finish(ctx, {
+            ok: false,
+            platform: ctx.platform,
+            step: "accountAfterUpload",
+            reason: after.code || "ACCOUNT_NOT_ALLOWED",
+            tabId: ctx.tabId || "",
+            hint: after.hint || "",
+            expectedAccount: ctx.expectAccount,
+            removed: removed?.detail || removed?.code || "否",
+            log,
+          });
+        }
       }
       if (args.until && step === args.until) {
         return finish(ctx, { ok: true, platform: ctx.platform, stopped: "until:" + args.until, tabId: ctx.tabId, previousActiveId, log });
@@ -552,9 +608,26 @@ async function selfCheck() {
   if (named.error || !named.selfCheck || named.env !== "百家号二") throw new Error("视频 --env 没有原样收下");
   const omitted = parseArgs(["--self-check"]);
   if (omitted.env) throw new Error("视频没写 --env 却自动选了环境");
+  if (omitted.account) throw new Error("视频没写 --account 却自动填了账号");
+  if (DEFAULT_VIDEO_ACCOUNT !== "图一乐研究所") throw new Error("视频默认账号不是图一乐研究所");
+  const namedAccount = parseArgs(["--self-check", "--account", "东望"]);
+  if (namedAccount.error || namedAccount.account !== "东望") throw new Error("视频 --account 没有原样收下");
+  const bareAccount = parseArgs(["--account"]);
+  if (!String(bareAccount.error).includes("--account")) throw new Error("缺 --account 值时应拒绝开跑");
   const src = fs.readFileSync(fileURLToPath(import.meta.url), "utf8");
   if (!src.includes('call("new_tab", withEnv(ctx.writeUrl, wantEnv))')) throw new Error("视频 new_tab 没有带上环境");
   if (!src.includes("enforceAccountGate")) throw new Error("视频提交前没有硬门");
+  if (!src.includes("assertAccountName")) throw new Error("视频没有按昵称核对目标账号");
+  if (!src.includes('envFallback: "account"')) throw new Error("视频没有给 list_tabs 缺失 envId 留昵称兜底");
+  if (!src.includes("accountAfterUpload")) throw new Error("视频上传后没有复核账号");
+  if (typeof baijiahaoVideo.removeVideo !== "function") throw new Error("视频适配器没有 removeVideo");
+  const nickCtx = { tabId: "t" };
+  const nickOk = await assertAccountName(nickCtx, async () => pass({ accountName: "图一乐研究所" }), "图一乐研究所");
+  if (!nickOk.ok || nickCtx.accountName !== "图一乐研究所") throw new Error("账号对得上却被拦下");
+  const nickWrong = await assertAccountName({ tabId: "t" }, async () => pass({ accountName: "东望" }), "图一乐研究所");
+  if (nickWrong.ok || nickWrong.code !== "ACCOUNT_NOT_ALLOWED") throw new Error("上错号没有失败关闭");
+  const nickUnread = await assertAccountName({ tabId: "t" }, async () => fail("ACCOUNT_NAME_UNAVAILABLE", {}, "x"), "图一乐研究所");
+  if (nickUnread.ok) throw new Error("账号名读不到仍然放行");
   const { runEnvFixtures } = await import("./env-account.mjs");
   const { assertEnvEditorFixtures } = await import("./page.mjs");
   const { withEnv } = await import("./sparo.mjs");

@@ -128,13 +128,27 @@ export function ledgerEnvFields(ctx) {
 export const BAIJIAHAO_ACCOUNT_SCRIPT =
   "(() => {" +
   "const bad = /发布|编辑|首页|消息|通知|设置|退出|登录|创作|数据|内容|评论|粉丝|收益|百家号|头像|搜索/;" +
+  "const exactBad = new Set(['图文','视频','音频','动态','合集','作品','管理','发布','首页','消息','通知','设置','退出','登录','创作','数据','内容','评论','粉丝','收益','百家号','头像','搜索']);" +
   "const clean = (el) => ((el && (el.innerText || el.textContent)) || '').replace(/\\s+/g, ' ').trim();" +
-  "const ok = (name) => !!name && name.length <= 32 && !bad.test(name);" +
+  "const ok = (name) => !!name && name.length <= 32 && !bad.test(name) && !exactBad.has(name);" +
   "const sels = ['.mp-header-user-name','.header-user-name','.user-name','.cheetah-public-header .name','[class*=\"userName\"]','[class*=\"nickName\"]','[class*=\"nickname\"]','[class*=\"account-name\"]','[class*=\"accountName\"]'];" +
   "for (const sel of sels) {" +
   "const name = clean(document.querySelector(sel));" +
   "if (ok(name)) return JSON.stringify({ name, via: sel, href: location.href });" +
   "}" +
+  // 视频编辑页头部只有头像、没有昵称，直接问百家号自己的 appinfo 接口要 data.user.name
+  "try {" +
+  "const xhr = new XMLHttpRequest();" +
+  "xhr.open('GET', '/builder/app/appinfo', false);" +
+  "xhr.withCredentials = true;" +
+  "xhr.send();" +
+  "if (xhr.status === 200) {" +
+  "const j = JSON.parse(xhr.responseText || '{}');" +
+  "const user = (j && j.data && j.data.user) || {};" +
+  "const name = String(user.name || user.author_name || '').trim();" +
+  "if (ok(name)) return JSON.stringify({ name, via: 'appinfo', href: location.href });" +
+  "}" +
+  "} catch (e) {}" +
   "const roots = document.querySelectorAll('header, [class*=\"header\"], [class*=\"Header\"]');" +
   "for (const root of roots) {" +
   "const bits = root.querySelectorAll('span, a, div, p');" +
@@ -219,5 +233,12 @@ export function runEnvFixtures() {
   if (old.title !== "更早的稿" || old.envId !== "") throw new Error("旧台账字段被挤掉了");
   if (BAIJIAHAO_ACCOUNT_SCRIPT.includes("百家号2") || BAIJIAHAO_ACCOUNT_SCRIPT.includes("envName")) {
     throw new Error("读账号名脚本拿环境名去对站点昵称");
+  }
+  if (!BAIJIAHAO_ACCOUNT_SCRIPT.includes("/builder/app/appinfo")) throw new Error("视频编辑页没有 appinfo 兜底就真读不到昵称");
+  if (!BAIJIAHAO_ACCOUNT_SCRIPT.includes("data.user") && !BAIJIAHAO_ACCOUNT_SCRIPT.includes("data && j.data.user")) {
+    throw new Error("appinfo 没有读 data.user");
+  }
+  if (!BAIJIAHAO_ACCOUNT_SCRIPT.includes("exactBad") || !BAIJIAHAO_ACCOUNT_SCRIPT.includes("图文")) {
+    throw new Error("头部兜底会把「图文」这种导航词当成昵称");
   }
 }

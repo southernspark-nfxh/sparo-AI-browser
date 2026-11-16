@@ -336,7 +336,7 @@ async function selfCheck() {
   if (plainOpen.tool !== "navigate" || plainOpen.payload.tabId !== "plain" || plainOpen.payload.envId) throw new Error("默认任务没有复用空白环境当前标签");
   if (!pageSrc.includes('envId: choice.tab.envId || ""')) throw new Error("新建编辑页回执丢了 envId");
   const accountGate = between(pageSrc, "export async function enforceAccountGate", "export function assertEnvEditorFixtures");
-  const envCheckAt = accountGate.indexOf('if (!tab || tab.id !== ctx.tabId || String(tab.envId || "") !== envId)');
+  const envCheckAt = accountGate.indexOf('"ENV_MISMATCH"');
   const accountReadAt = accountGate.indexOf("readAccountName(ctx)");
   if (envCheckAt < 0 || accountReadAt < 0 || envCheckAt > accountReadAt) throw new Error("提交硬门没有在读取页面前先拒绝错误环境");
   const navBlock = between(sparoSrc, "export async function nav(", "// ---------------- CLI");

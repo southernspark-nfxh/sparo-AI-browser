@@ -221,6 +221,10 @@ C:\Users\60914\.trae-cn\skills\social-media-publish/
 
 视频走 `scripts/video.mjs`，与图文共用 `sparo.mjs` / `page.mjs` 的纪律，但适配器是 `scripts/adapters/baijiahao-video.mjs`。
 
+**账号默认只发「图一乐研究所」（2026-11-16 定）**：不写 `--account` 就是这个号。开跑传视频前、上传后、发布前各核对一次页面昵称；不是这个号就不发；上传后才发现上错号，会先把刚传的视频删掉再停。要发别的号必须显式 `--account <昵称>`，不要靠换登录态碰运气。
+
+**环境对应（2026-11-16 实测）**：`百家号2` = `ad0fe9db` = 图一乐研究所；Sparo 默认登录态是「东望」，所以视频必须带 `--env 百家号2`，裸跑会被账号硬门直接拦下。视频编辑页头部只有头像、没有昵称，`readBaijiahaoAccount` 现在优先读 `/builder/app/appinfo` 的 `data.user.name`（`via=appinfo`）。这版 Sparo 的 `list_tabs` 不返回 `envId`，视频流程允许退回「昵称对得上」兜底（`ctx.envFallback="account"`），环境 id 缺失不再直接卡死。
+
 ### 8.0 先分工：哪些交给脚本，哪些必须大脑判断
 
 发布视频不是纯脚本任务，也不是纯人工任务。每次动手前先划两栏：
@@ -256,7 +260,9 @@ node video.mjs --platform baijiahao --until setDeclaration --tab <tabId> --video
 node video.mjs --probe          # 只读标签现场，不开页、不填、不发
 ```
 
-步骤固定：`openWrite → uploadVideo → waitVideo → probeCover → fillTitle → appendTopic → setCover → setCoverPortrait → setDeclaration → schedule → publish → verify`。任一步失败即停，输出 step / code / tabId / 页面提示；改了封面或话题用 `--from` 续跑，不重传视频。
+步骤固定：`openWrite → uploadVideo → accountAfterUpload → probeCover → fillTitle → appendTopic → setCover → setCoverPortrait → setDeclaration → schedule → publish → verify`，其中传视频前和发布前各有一次账号昵称核对。任一步失败即停，输出 step / code / tabId / 页面提示；改了封面或话题用 `--from` 续跑，不重传视频。
+
+- `--account <昵称>` 不写默认「图一乐研究所」；写了就发那个号，但页面昵称对不上仍然停。
 
 - `--cover auto`（默认）保留平台自动封面；`always` 强制重传；`never` 完全不碰封面。
 - `--schedule "YYYY-MM-DD HH:mm"` 走定时发布；**「定时发布」弹窗的「确定」= 直接提交定时任务**，提交后页面会离开编辑器，`publish` 会自动跳过，不要再去点「发布」。
@@ -274,7 +280,7 @@ node video.mjs --probe          # 只读标签现场，不开页、不填、不�
    - 合成 `el.click()` 即可，不必强求 CDP 真实点击；CDP 只在 JS 点击无效时兜底。
    - 实测「确定」有时不关弹窗，但封面其实已经生效。等 3 秒仍开着就点右上角 `.cheetah-modal-close` 兜底，并记 `forcedClose: true`，不要判失败。
 6. **话题 5–10 个，一个都不能少，但字数是硬上限**：输入框旁 `# 话题 n/10`，右下角还有 `n/50` 的**作品描述字数计数**。
-   - **50 字硬顶（2026-11-15 加）**：`作品描述` = 标题 + 话题，按「`#话题#`」计字（每个话题 = 词长 + 2）。**总数必须 ≤ 50**，超了计数变红，点「定时发布」/「发布」都发不出去（之前连挂就是标题 18 字 + 7 个话题 = 58/50）。脚本 `schedule` 提交前会读页面计数，> 50 直接 `TEXT_TOO_LONG` 拦下。
+   - **50 字硬顶（2026-11-15 加，2026-11-16 扩到立即发布）**：`作品描述` = 标题 + 话题，按「`#话题#`」计字（每个话题 = 词长 + 2）。**总数必须 ≤ 50**，超了计数变红，点「定时发布」/「发布」都发不出去（之前连挂就是标题 18 字 + 7 个话题 = 58/50）。`assertTextBudget` 在 `schedule` 和 `publish` 提交前都会读页面计数，> 50 直接 `TEXT_TOO_LONG` 拦下。
    - 所以**排话题要按预算来**：先扣标题字数，剩下的额度按流量优先级塞短词，塞不下就少塞，但**少于 5 个直接 `TOPICS_TOO_FEW` 停下**。宁可把话题从 7 个降到 5 个，也不能超 50 字。
    - 挑流量大的词，优先：搞笑 / 沙雕 / 名场面 / 生活 / 日常 / 搞笑视频 / 美食 / 吃货 / 宠物 / 妙招。**每个话题都要点联想列表，不能塞纯文字**：联想项文案是**带空格的 `# 搞笑 #`**（class 含 `topicName`），按去空格后的文本匹配；点选后编辑器里会出现 `span.video-title-tag[data-tag-type=topic][data-tag-text="#搞笑#"]`，这才是真话题实体。
    - **打 `#` 和打话题词必须分两步**（中间停 ~800ms）：一次性 `insertText('#宠物')` 时 Lexical 把两次改动并成一批，联想列表根本不弹。分两步实测 100% 出联想。
@@ -295,6 +301,11 @@ node video.mjs --probe          # 只读标签现场，不开页、不填、不�
 13. **草稿不是服务端草稿，是 localStorage**：键名 `edit-<账号hash>-videoV2`（约 9KB JSON，含 title/topics/videoModule.mediaId）。所以每次打开 `edit?type=videoV2` 都会把上一条视频、标题、话题一起带回来 —— `uploadVideo` 必须用 `--expect-dur` 比对时长，否则会把上一条当成这一条（`已有视频` 跳过），最后发出去的是旧素材。`edit-token` 那个键是鉴权用的，别清。
 14. **列表页要翻页看**：`?type=video` 一页 10 条，底部有 `1 2` 分页，`共N篇` 是当前筛选条件下的总数。只截第一页文本就判「没发出去」会误判（2026-11-15 就因此白折腾了一轮）。「已发布」的定时内容显示的是**实际发布时间**，定时中的显示「提交时间 + 预计 X 发布」，两者别混。
 15. **同一素材重复提交会产出重复作品**：`--expect-dur` 只能防止拿错视频，防不了「同一视频再提交一次」。重跑前先回列表页确认该标题是否已存在。
+16. **账号硬门（2026-11-16 加）**：视频默认只发「图一乐研究所」。`assertAccountName` 在传视频前、`uploadVideo` 之后、点发布前各读一次页面昵称：
+   - 传视频前就对不上 → 直接停（`ACCOUNT_NOT_ALLOWED`），页面上什么都没传，换号重跑即可。
+   - 上传后才发现对不上 → 调 `removeVideo` 把刚传的视频删掉：先点视频模块里的「删除」并确认；没有删除入口就清 `edit-*-videoV2` 本地草稿，让这条视频不残留，然后再停。
+   - 昵称读不到同样按失败处理（`ACCOUNT_NAME_UNAVAILABLE`），不要「没读到就当通过」。
+   - 换号只能显式 `--account <昵称>`；`--env` 是浏览器环境，不等于站点昵称，不要拿环境名去对账号。
 
 ### 8.4 封面生成
 
