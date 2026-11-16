@@ -5,18 +5,23 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadArticle, toParagraphHtml } from "./article.mjs";
+import { loadArticle, markdownBlocks, plainTextLength, planImages, toParagraphHtml } from "./article.mjs";
+import { themeNames } from "./format.mjs";
 
 const PLATFORMS = ["toutiao", "baijiahao", "dayu", "sohu", "weixin"];
 const SCHEDULE_RE = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})$/;
 
 export const USAGE = [
-  "用法：node publish.mjs --platform toutiao|baijiahao|dayu|sohu|weixin --article <目录> [--env <envId>] [--schedule \"YYYY-MM-DD HH:mm\"] [--from 步骤] [--dry-run] [--ai-images] [--probe] [--ledger <文件>]",
+  "用法：node publish.mjs --platform toutiao|baijiahao|dayu|sohu|weixin --article <目录> [--env <envId>] [--schedule \"YYYY-MM-DD HH:mm\"] [--from 步骤] [--dry-run] [--ai-images] [--docx-import] [--images N] [--theme 主题] [--probe] [--ledger <文件>]",
   "用法：node publish.mjs --platforms toutiao,baijiahao,dayu,sohu,weixin --plan",
   "平台：toutiao、baijiahao、dayu、sohu、weixin。--plan 只读规则表，不连接 Sparo，不打开编辑页，不填稿。",
   "文章目录：title.txt、body.md、cover.jpg、images/",
   "定时必须带时间。搜狐找不到定时入口会停手，不会改点发布。",
   "大鱼封面前正文要有 3 张不同的图。头条必勾「投放广告赚收益」。百家不勾「采用AI生成内容」。",
+  "微信默认走 Word 文档导入（0 图 / 1 图 / 多图都一样），导入后统一排版；--no-docx 才改回直填正文。",
+  "其它平台 --docx-import：正文 ≥ 3 张插图时改走文档导入，图片全带上；不足 3 张仍直填。",
+  "排版主题：--theme editorial|ink|green（默认 editorial，改 scripts/format.mjs 即可调字号/主色/圆角）。",
+  "配图默认：正文 ≤ 2000 字插 1 张，> 2000 字插 2 张；--images N 覆盖张数。",
 ].join("\n");
 
 export function parseArgs(argv) {
@@ -26,6 +31,10 @@ export function parseArgs(argv) {
     schedule: null,
     dryRun: false,
     aiImages: false,
+    docxImport: false,
+    noDocx: false,
+    theme: "editorial",
+    images: 0,
     probe: false,
     ledger: "",
     selfCheck: false,
@@ -42,6 +51,26 @@ export function parseArgs(argv) {
     else if (arg === "--self-check") out.selfCheck = true;
     else if (arg === "--dry-run") out.dryRun = true;
     else if (arg === "--ai-images") out.aiImages = true;
+    else if (arg === "--docx-import") out.docxImport = true;
+    else if (arg === "--no-docx") out.noDocx = true;
+    else if (arg === "--theme") {
+      const next = argv[i + 1];
+      if (!next || next.startsWith("--") || !themeNames().includes(next)) {
+        out.error = "--theme 只能是 " + themeNames().join(" / ");
+      } else {
+        out.theme = argv[++i];
+      }
+    }
+    else if (arg === "--images") {
+      const next = argv[i + 1];
+      const count = Number(next);
+      if (!next || next.startsWith("--") || !Number.isInteger(count) || count < 1 || count > 20) {
+        out.error = "--images 后面要跟 1-20 的整数";
+      } else {
+        out.images = count;
+        i++;
+      }
+    }
     else if (arg === "--probe") out.probe = true;
     else if (arg === "--plan") out.plan = true;
     else if (arg === "--platform") out.platform = argv[++i] || "";
@@ -120,6 +149,45 @@ async function selfCheck() {
   if (!toParagraphHtml("## 小标题", {}).includes("<h3>")) throw new Error("## 没有转成小标题");
   if (!toParagraphHtml("# 我的标题\n\n正文", { title: "我的标题" }).startsWith("<p>正文</p>")) {
     throw new Error("正文首行重复标题没有被去掉");
+  }
+  // 2026-11-16 配图策略：≥3 图且开关打开才走 docx；否则 ≤2000 字 1 张、>2000 字 2 张
+  const blocks = markdownBlocks("## 小标题\n\n正文段落\n\n- 列表一\n\n1. 列表甲", {});
+  if (!blocks.some((b) => b.type === "h") || !blocks.some((b) => b.type === "li" && !b.ordered) || !blocks.some((b) => b.type === "li" && b.ordered)) {
+    throw new Error("markdownBlocks 没有拆出标题/有序/无序列表");
+  }
+  if (plainTextLength(blocks) !== 13) throw new Error("正文字数没有按纯文本统计：" + plainTextLength(blocks));
+  const imgs = ["a.jpg", "b.jpg", "c.jpg"];
+  const shortPlan = planImages({ body: "短文", images: imgs }, {});
+  if (shortPlan.mode !== "html" || shortPlan.count !== 1) throw new Error("2000 字以内默认应 1 张图");
+  const longPlan = planImages({ body: "字".repeat(2100), images: imgs }, {});
+  if (longPlan.count !== 2) throw new Error("超过 2000 字默认应 2 张图");
+  const docxPlan = planImages({ body: "短文", images: imgs }, { docxImport: true });
+  if (docxPlan.mode !== "docx" || docxPlan.count !== 3) throw new Error("≥3 图且开关打开应走 docx 并带全图");
+  const twoPlan = planImages({ body: "短文", images: ["a.jpg", "b.jpg"] }, { docxImport: true });
+  if (twoPlan.mode !== "html" || twoPlan.count !== 1) throw new Error("不足 3 图即使开关打开也不该走 docx");
+  const argPlan = planImages({ body: "短文", images: imgs }, { images: 2 });
+  if (argPlan.count !== 2) throw new Error("--images 没有覆盖默认张数");
+  const forceOne = planImages({ body: "短文", images: imgs }, { docxImport: true, images: 1 });
+  if (forceOne.mode !== "docx" || forceOne.count !== 1) throw new Error("--docx-import --images 1 应走 docx 且只带 1 张");
+  // 2026-11-16 晚：微信默认 docx（0 图 / 1 图 / 多图都走），导入后统一排版
+  const forced = planImages({ body: "短文", images: imgs }, { forceDocx: true });
+  if (forced.mode !== "docx" || forced.count !== 3) throw new Error("微信默认应走 docx 并带上全部插图");
+  const forcedOne = planImages({ body: "短文", images: ["a.jpg"] }, { forceDocx: true });
+  if (forcedOne.mode !== "docx" || forcedOne.count !== 1) throw new Error("单图也要走 docx");
+  const forcedZero = planImages({ body: "短文", images: [] }, { forceDocx: true });
+  if (forcedZero.mode !== "docx" || forcedZero.count !== 0) throw new Error("0 图也要走 docx");
+  if (parseArgs(["--platform", "weixin", "--article", "demo", "--no-docx"]).noDocx !== true) throw new Error("--no-docx 没有解析出来");
+  if (parseArgs(["--platform", "weixin", "--article", "demo", "--theme", "green"]).theme !== "green") throw new Error("--theme 没有解析出来");
+  if (parseArgs(["--platform", "weixin", "--article", "demo", "--theme", "nope"]).error === "") throw new Error("非法 --theme 应拒绝");
+  if (parseArgs(["--platform", "weixin", "--article", "demo", "--images", "0"]).error === "") throw new Error("--images 0 应拒绝");
+  if (parseArgs(["--platform", "weixin", "--article", "demo", "--docx-import"]).docxImport !== true) throw new Error("--docx-import 没有解析出来");
+  // docx 生成冒烟：ZIP 头 + 必需部件 + 图片关系
+  const { buildDocx } = await import("./docx.mjs");
+  const built = buildDocx({ blocks, images: [] });
+  if (built.buffer.slice(0, 2).toString("latin1") !== "PK") throw new Error("docx 不是 ZIP 包");
+  const zipText = built.buffer.toString("latin1");
+  for (const part of ["[Content_Types].xml", "word/document.xml", "word/styles.xml", "word/_rels/document.xml.rels"]) {
+    if (!zipText.includes(part)) throw new Error("docx 缺少部件：" + part);
   }
   const read = (name) => fs.readFileSync(fileURLToPath(new URL(name, import.meta.url)), "utf8");
   const baijia = read("./adapters/baijiahao.mjs");
@@ -300,11 +368,19 @@ async function selfCheck() {
   const schedule = { date: "2026-11-11", time: "19:30" };
   if (!scheduleMatches({ date: "2026-11-11", hour: "19", minute: "30" }, schedule)) throw new Error("定时回读三项没有对齐");
   if (scheduleMatches({ date: "2026-11-11", hour: "19", minute: "00" }, schedule)) throw new Error("分钟不对也算通过了");
-  const { planSteps } = await import("./engine.mjs");
+  const { planSteps, routeSteps } = await import("./engine.mjs");
   const resumed = planSteps("setCover", false);
   if (resumed[0] !== "setCover" || resumed.includes("fillTitle") || resumed.includes("fillBody")) {
     throw new Error("--from setCover 仍会重写标题或正文");
   }
+  const formatted = routeSteps(planSteps("openBlank", false), { docxMode: true, format: true });
+  const atImport = formatted.indexOf("importDocx");
+  const atFormat = formatted.indexOf("formatBody");
+  const atTitle = formatted.indexOf("fillTitle");
+  if (atImport < 0 || atFormat < atImport || atTitle < atFormat) throw new Error("导入 → 排版 → 覆盖标题的顺序不对");
+  if (formatted.includes("fillBody") || formatted.includes("insertImages")) throw new Error("docx 模式仍在直填正文/插图");
+  const htmlFormatted = routeSteps(planSteps("openBlank", false), { docxMode: false, format: true });
+  if (htmlFormatted.indexOf("formatBody") < htmlFormatted.indexOf("insertImages")) throw new Error("直填路径的排版没有排在插图之后");
   if (canResume({ href: "https://www.baidu.com/", writeMark: "/builder/rc/edit", pageTitle: longTitle, title: longTitle }).code !== "RESUME_NOT_EDITOR") {
     throw new Error("不在编辑页也应允许续跑");
   }
@@ -330,6 +406,11 @@ async function selfCheck() {
     throw new Error("技能里调用了 win.focus 或 win.show");
   }
   const engineSrc = read("./engine.mjs");
+  if (!engineSrc.includes("routeSteps")) throw new Error("docx 导入没有接进步骤路由");
+  if (!engineSrc.includes("planImages")) throw new Error("引擎没有按配图策略决策");
+  const weixinSrc = read("./adapters/weixin.mjs");
+  if (!weixinSrc.includes("#js_import_file") || !weixinSrc.includes("importDocx")) throw new Error("微信文档导入入口没有接上");
+  if (!weixinSrc.includes("async formatBody(ctx)") || !weixinSrc.includes("resolveTheme")) throw new Error("微信排版步骤没有接上");
   if (!engineSrc.includes("releaseRender")) throw new Error("任务结束没有归还渲染");
   if (!engineSrc.includes("report.ok && ctx.schedule")) throw new Error("失败台账仍会写成已定时");
   const bareEnv = parseArgs(["--env"]);

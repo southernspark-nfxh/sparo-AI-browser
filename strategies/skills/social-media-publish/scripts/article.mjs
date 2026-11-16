@@ -29,6 +29,112 @@ function inlineHtml(text) {
   return s.replace(/\u0000(\d+)\u0000/g, (_, i) => slots[Number(i)]);
 }
 
+/** 行内 Markdown 去掉标记，只留纯文本（docx 正文与字数统计用）。 */
+function inlinePlain(text) {
+  return String(text)
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/~~([^~]+)~~/g, "$1")
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, (_, pre, t) => pre + t)
+    .replace(/(^|[^_\w])_([^_\n]+)_/g, (_, pre, t) => pre + t)
+    .trim();
+}
+
+/**
+ * 正文 Markdown → 顺序块（docx 生成用）。
+ * 块：{type:'h',level,text} {type:'p',text} {type:'li',ordered,text} {type:'quote',text} {type:'hr'}
+ */
+export function markdownBlocks(markdown, opts = {}) {
+  const title = String(opts.title || "").trim();
+  const text = String(markdown || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/^---[\s\S]*?---\n*/, "")
+    .trim();
+  const blocks = [];
+  let headingConsumed = false;
+
+  for (const raw of text.split("\n")) {
+    const line = raw.replace(/\s+$/, "");
+    if (!line.trim()) continue;
+
+    const heading = line.match(/^(#{1,6})\s+(.+)$/);
+    if (heading) {
+      const body = heading[2].trim();
+      const plain = body.replace(/[*_`]/g, "").trim();
+      if (!headingConsumed && title && plain === title) {
+        headingConsumed = true;
+        continue;
+      }
+      blocks.push({ type: "h", level: Math.min(heading[1].length, 3), text: inlinePlain(body) });
+      continue;
+    }
+    if (/^([-*_])\1{2,}$/.test(line.trim())) {
+      blocks.push({ type: "hr" });
+      continue;
+    }
+    const quote = line.match(/^>\s?(.*)$/);
+    if (quote) {
+      blocks.push({ type: "quote", text: inlinePlain(quote[1]) });
+      continue;
+    }
+    const ul = line.match(/^\s*[-*+]\s+(.+)$/);
+    if (ul) {
+      blocks.push({ type: "li", ordered: false, text: inlinePlain(ul[1]) });
+      continue;
+    }
+    const ol = line.match(/^\s*\d+[.)]\s+(.+)$/);
+    if (ol) {
+      blocks.push({ type: "li", ordered: true, text: inlinePlain(ol[1]) });
+      continue;
+    }
+    blocks.push({ type: "p", text: inlinePlain(line) });
+  }
+  return blocks;
+}
+
+/** 正文字数（去掉 Markdown 标记和空白后的字符数）。 */
+export function plainTextLength(blocks) {
+  return (blocks || []).reduce((sum, block) => {
+    if (block.type === "hr") return sum;
+    return sum + String(block.text || "").replace(/\s+/g, "").length;
+  }, 0);
+}
+
+/**
+ * 配图策略（2026-11-16 拍板，2026-11-16 晚更新）：
+ * - forceDocx（微信公众号默认）：0 图 / 1 图 / 多图一律走 docx 导入，导入后再统一排版；
+ * - 其它平台加 --docx-import：文中插图 ≥ 3 张或 --images N 才走 docx；
+ * - 直填 HTML 时：正文 ≤ 2000 字默认 1 张，> 2000 字默认 2 张；
+ * - --images N 可覆盖张数（docx 模式下同样生效）。
+ */
+export function planImages(article, opts = {}) {
+  const all = Array.isArray(article?.images) ? article.images : [];
+  const blocks = article?.blocks || markdownBlocks(article?.body || "", { title: article?.title || "" });
+  const textLen = article?.textLen || plainTextLength(blocks);
+  const total = all.length;
+  const override = Number(opts.images) || 0;
+  const docx = !!opts.forceDocx || (!!opts.docxImport && (total >= 3 || override >= 1));
+
+  if (docx) {
+    const count = override > 0 ? Math.min(override, total) : total;
+    return {
+      mode: "docx",
+      textLen,
+      total,
+      count,
+      use: all.slice(0, count),
+      reason: (opts.forceDocx ? "DOCX_DEFAULT_" : "DOCX_IMAGES_") + total,
+    };
+  }
+  const target = override > 0 ? override : textLen > 2000 ? 2 : 1;
+  const count = Math.min(target, total);
+  const reason = override > 0 ? "IMAGES_ARG_" + override : textLen > 2000 ? "LONG_TEXT_2" : "SHORT_TEXT_1";
+  return { mode: "html", textLen, total, count, use: all.slice(0, count), reason };
+}
+
 /**
  * 正文 Markdown → 平台编辑器可用的 HTML。
  * 小标题、加粗、斜体、引用、有序/无序列表、分隔线都渲染成标签；
@@ -169,11 +275,14 @@ export function loadArticle(dir) {
         .map((name) => path.join(imagesDir, name))
     : [];
   const images = distinctImages(listed);
+  const blocks = markdownBlocks(body, { title });
   return {
     dir: root,
     title,
     body,
     bodyHtml: toParagraphHtml(body, { title }),
+    blocks,
+    textLen: plainTextLength(blocks),
     cover,
     images,
     droppedDuplicates: listed.length - images.length,

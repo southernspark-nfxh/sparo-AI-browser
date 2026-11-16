@@ -3,6 +3,7 @@ import { dayu } from "./adapters/dayu.mjs";
 import { sohu } from "./adapters/sohu.mjs";
 import { toutiao } from "./adapters/toutiao.mjs";
 import { weixin } from "./adapters/weixin.mjs";
+import { planImages } from "./article.mjs";
 import { ledgerEnvFields, resolveEnv } from "./env-account.mjs";
 import { activateEditor, blockedCall, canResume, captureAccountName, editorCandidates, enforceAccountGate, restoreActive } from "./page.mjs";
 import { appendLedger } from "./ledger.mjs";
@@ -27,6 +28,32 @@ export function planSteps(from, probe) {
   const index = STEPS.indexOf(from);
   if (index < 0) return null;
   return STEPS.slice(index);
+}
+
+/** docx 模式下用 importDocx 顶掉 fillBody + insertImages；标题仍由 fillTitle 覆盖文件名。
+ *  有 formatBody 的平台在落稿后统一排版（微信：种下划线/字号/图片圆角）。 */
+export function routeSteps(steps, { docxMode = false, format = false } = {}) {
+  if (!steps) return steps;
+  const out = [];
+  for (const step of steps) {
+    if (step === "fillTitle") {
+      if (docxMode) {
+        out.push("importDocx");
+        if (format) out.push("formatBody");
+      }
+      out.push("fillTitle");
+    } else if (step === "fillBody") {
+      if (docxMode) continue;
+      out.push("fillBody");
+    } else if (step === "insertImages") {
+      if (docxMode) continue;
+      out.push("insertImages");
+      if (format) out.push("formatBody");
+    } else {
+      out.push(step);
+    }
+  }
+  return out;
 }
 
 function line(ctx, step, result) {
@@ -115,18 +142,48 @@ export async function runPublish(args, article) {
     from: args.from || "",
     tabId: "",
     imageCount: 0,
+    theme: args.theme || "editorial",
     ...article,
+    imagePlan: null,
+    docxMode: false,
     envId: resolved.envId,
     envName: resolved.envName,
     expectedAccountName: "",
     accountName: "",
   };
+  const imagePlan = planImages(article, {
+    docxImport: args.docxImport,
+    images: args.images,
+    forceDocx: ctx.platform === "weixin" && !args.noDocx,
+  });
+  ctx.imagePlan = imagePlan;
+  ctx.docxMode = imagePlan.mode === "docx";
+  if (ctx.docxMode && typeof adapter.importDocx !== "function") {
+    return stopReport(ctx, {
+      ok: false,
+      platform: ctx.platform,
+      step: "imagePlan",
+      reason: "DOCX_UNSUPPORTED",
+      tabId: "",
+      hint: ctx.platform + " 还没有接文档导入，去掉 --docx-import 或换平台",
+      log: [],
+    });
+  }
   const listedAtStart = await tabs();
   const previousActiveId = activeIdOf(listedAtStart);
   ctx.previousActiveId = previousActiveId;
   try {
   const log = [];
-  const steps = planSteps(args.from, args.probe);
+  if (imagePlan.mode === "docx" && typeof adapter.formatBody === "function") {
+    log.push({ step: "formatPlan", theme: ctx.theme });
+    console.log(line(ctx, "formatPlan", { ok: true, hint: "theme=" + ctx.theme }));
+  }
+  log.push({ step: "imagePlan", mode: imagePlan.mode, textLen: imagePlan.textLen, images: imagePlan.total, use: imagePlan.count, reason: imagePlan.reason });
+  console.log(line(ctx, "imagePlan", { ok: true, hint: imagePlan.mode + " 图=" + imagePlan.count + "/" + imagePlan.total + " 字=" + imagePlan.textLen + " " + imagePlan.reason }));
+  const steps = routeSteps(planSteps(args.from, args.probe), {
+    docxMode: ctx.docxMode,
+    format: typeof adapter.formatBody === "function",
+  });
   if (!steps) {
     return stopReport(ctx, {
       ok: false,

@@ -27,6 +27,11 @@ extraResources:
     filter:
       - "**/*.mjs"
       - "**/*.json"
+  # profile.mjs 从 social-publish-scripts/../platforms 读取平台规则，运行和 --plan 都依赖这些 JSON。
+  - from: strategies/skills/social-media-publish/platforms
+    to: platforms
+    filter:
+      - "**/*.json"
 extraFiles:
   # 与 Sparo.exe 同一层。Hermes、Cursor、Trae、Codex 打开安装目录就能读到。
   - from: packaging/AGENTS.md

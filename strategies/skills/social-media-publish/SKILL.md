@@ -27,11 +27,21 @@ node publish.mjs --platform baijiahao --article <目录> --schedule "2026-11-11 
 node publish.mjs --platform dayu --article <目录> --dry-run
 node publish.mjs --platform sohu --article <目录> --probe
 node publish.mjs --platform weixin --article <目录>
+node publish.mjs --platform weixin --article <目录> --no-docx
+node publish.mjs --platform weixin --article <目录> --theme green
 ```
 
 平台只认 `toutiao`、`baijiahao`、`dayu`、`sohu`、`weixin`。文章目录固定是 `title.txt`、`body.md`、`cover.jpg`、`images/`。微信公众号只存草稿，群发由人点（细节见 `weixin-publish` 技能）。
 
 步骤固定为：`openBlank → fillTitle → fillBody → insertImages → setCover → setOptions → publishOrSchedule → verify`。任一步失败就停，输出平台、步骤、原因、tabId、页面提示。`--dry-run` 填到选项回读为止，不点发布。定时必须写成 `--schedule "YYYY-MM-DD HH:mm"`，不带时间不会开跑。
+
+**配图与 Word 导入（2026-11-16 拍板，当晚更新）：**
+
+- **微信默认全走 `docx` 导入**：0 图 / 1 图 / 多图都一样，导入后由 `formatBody` 统一排版；只有 `--no-docx` 才改回直填正文。
+- 其它平台要 `--docx-import` 才走导入：正文插图 **≥ 3 张** → 走平台「文档导入」，`scripts/docx.mjs` 零依赖生成 .docx（ZIP + 最小 OOXML + 内嵌图片），一次把图文送进编辑器；图片全带上。
+- 直填路径的配图默认：正文 **≤ 2000 字 1 张**，**> 2000 字 2 张**；`--images N` 覆盖张数（docx 模式同样生效）。
+- docx 模式下步骤改为 `openBlank → importDocx → formatBody → fillTitle → setCover → ...`（importDocx 顶掉 fillBody + insertImages；导入会覆盖全文，所以不要混用）。
+- 排版主题 `--theme editorial|ink|green`，默认 `editorial`；字号/行高/主色/圆角都集中在 `scripts/format.mjs`，改一处全文生效。
 
 搜狐号探测不到定时入口就停手，不改点「发布」。大鱼号 `images/` 里不足 3 张不同图时，封面和发表都不会开始。正文或封面是 AI 图时加大鱼参数 `--ai-images`，信息来源才会选「AI生成」；否则选「无需标注」。
 

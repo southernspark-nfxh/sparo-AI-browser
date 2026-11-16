@@ -290,6 +290,44 @@ const up = await call('upload', {
 
 **通用规律（适用于所有新平台）**：CDP click 只解决「元素在视口外/需要真实坐标」，不解决「框架自定义事件」；Vue/React 组件按钮一律优先 JS `.click()`，再用回读状态判定是否真的生效。
 
+### 文档导入（图文一次落稿，2026-11-16 微信实测通过）
+
+三家后台都有「导入 Word」：头条 / 百家号 / 公众号。微信已接进 adapter，其余两家只做过人工实测。
+
+**微信入口与链路**：`#js_import_file`（顶部「导入」LI）→ `.import-file-dialog`（内含 `input[type=file]`，接受 doc/docx/markdown，≤15M）→ Sparo upload → 对话框自动关闭、正文与图片一次落稿（单次 5-8 秒）。导入会覆盖原有内容，且标题取文件名。
+
+**两条关键经验**：
+
+| 坑 | 现象 | 解法 |
+|---|---|---|
+| 微信在 change 里立刻清空 `input.files` | 上传回执 ok，但读 `files.length` 是 0 | 别用 files 判定；只认「对话框关闭 + 正文 >20 字」 |
+| 导入面板刚弹出还在动画 | 立即 upload 有时不生效，之后 90 秒白等 | 先等 800ms 再传；20 秒没落稿就换新 id 重传（≤3 次）|
+
+**生成 .docx 不用第三方库**：仓库没有 jszip/adm-zip/archiver/docx，用 Node 内建 `zlib.deflateRawSync` + 手写 CRC32 + 最小 OOXML 即可（`[Content_Types].xml`、`_rels/.rels`、`word/document.xml`、`word/_rels/document.xml.rels`、`word/styles.xml`、`word/media/*`）。图片按固定版心宽（4 英寸 = 3657600 EMU）插入，省掉解析真实像素。
+
+**三家实测差异（人工拖拽，未接入）**：头条 docx/pdf/txt 15M，标题不填会进正文首段；百家号 docx/pdf/txt 10M，标题=文件名，两级标题塌成 h3；公众号残留少量 mso/Calibri 垃圾字体。三家共同缺陷：List Bullet 全丢（我们在 docx 里已用「• 」前缀兜底），封面/摘要/作者仍需补。
+
+**导入之后还要排版（微信，2026-11-16 实测）**：
+
+Word 导入会把样式带成一堆 `mso-*` 内联 CSS（正文 18pt、标题带大纲样式），直接发不好看。统一排版走 `formatBody`：
+
+| 步骤 | 做法 |
+|---|---|
+| 读回 | 摊平 `section/div` 壳，收集 `H1-H6 / P / UL / OL / BLOCKQUOTE / HR / img[data-src]` |
+| 重建 | 按主题重建带内联样式的 HTML（正文 15px/1.75、H2 左竖条、引用浅灰底、图片整宽圆角） |
+| 粘贴 | 整段包 `<section>`；先 `execCommand('formatBlock', false, 'p')`，再全选 → delete → `insertHTML` |
+| 回读 | 真实图片数、首段 `font-size`、H2 `border-left`、mso 残留 = 0 |
+
+**三条只在这类编辑器上才踩得到的坑：**
+
+| 坑 | 现象 | 原因 / 解法 |
+|---|---|---|
+| 直接改 DOM `el.style` | 编辑时正常，存草稿后样式全丢 | ProseMirror 只认文档模型，不认裸 DOM；必须重建 HTML 再 `insertHTML` |
+| 从导入稿直接粘 | 段落被塞进 `h1` 壳（`h1 > section > p`） | 导入后当前块类型是 h1；先 `formatBlock('p')` 改回正文块 |
+| 粘裸 `<p>` | 空编辑器会自动包 `section`，从 h1 起粘就乱 | 显式包一层 `<section>...</section>`，结构稳定 |
+
+主题（字号/行高/段距/主色/圆角）集中在 `format.mjs` 的 `THEMES`，命令行 `--theme editorial|ink|green` 切换；微信默认走 docx，`--no-docx` 才改直填。
+
 ### 还没做的
 
 - 正文插图（找 ProseMirror 工具栏图片入口）
