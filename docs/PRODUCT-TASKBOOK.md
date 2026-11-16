@@ -19,6 +19,9 @@
 - `strategies/skills/qie-publish/` 入仓（4 文件，token 只读环境变量或 `mcp-auth.json`，无密钥）
 - 验证：8 个脚本 `node --check` 全过；图文 / 视频 `--self-check` 均 `SELF_CHECK_OK`；`tests/skills-format.test.ts` 2 条通过。本轮未改主进程，G1–G3 未重测，沿用 0.6.9 包结论
 - 边界：不做群发发表、定时发布、正文插图；`docs/listings/` 未动
+- 安装包：`release\Sparo-Setup-0.7.0.exe`，105,004,670 字节，2026-11-16 20:00:02，SHA-256 `905FAA4E58719DB8D8E8B538A72C6D34DD8DE5EA24BAAAE3FE0AE333179B20DD`；HEAD `807673a`
+- 产物核对：`resources\social-publish-scripts\adapters\weixin.mjs` 存在且含 `export const weixin`；`resources\platforms\weixin.json` 存在；`app.asar` 内 `weixin-publish/SKILL.md` 与 `qie-publish/` 可寻；包内 `publish.mjs --self-check` = `SELF_CHECK_OK`
+- `--probe` 真机结果 `PROBE_OK`（`tab=c2e740b7`，`innerHeight=974`，默认登录态）。探针会新开一个公众号编辑空页并把活动标签切过去，收尾已关闭该探针标签；其原活动标签 `5f6ea6bb` 属于用户，客户端归属校验拒绝切回，故活动标签停在 `c34bc0bf`
 
 ## 2026-11-16 收尾验收（0.6.9：店小秘 v5 + 外部发布 dry-run）
 

@@ -126,6 +126,14 @@ $chat | Where-Object { $_.text -like "*$($want.Substring(0, [Math]::Min(12, $wan
 
 安装包复测至少 G1、G2、G3。记下 `git rev-parse --short HEAD` 和 `release\Sparo-Setup.exe` 的修改时间。开发窗绿了，不能代替安装包。
 
+### 2026-11-16 0.7.0 安装包（G1–G3 未重测，只做发布链路自检）
+
+- 包：`release\Sparo-Setup-0.7.0.exe`（105,004,670 字节，2026-11-16 20:00:02，SHA-256 `905FAA4E58719DB8D8E8B538A72C6D34DD8DE5EA24BAAAE3FE0AE333179B20DD`），HEAD `807673a`。
+- **G1–G3 本轮未重测**：0.7.0 只改 `strategies/skills/**` 与 `electron-builder.yml` 的资源复制，主进程未改，沿用 0.6.9 包结论。这是偏离，不冒充已复测。
+- 产物核对：`resources\social-publish-scripts\adapters\weixin.mjs` 存在且含 `export const weixin`；`resources\platforms\weixin.json` 存在；`app.asar` 内 `weixin-publish/SKILL.md`、`qie-publish/` 均在；包内 `publish.mjs --self-check` = `SELF_CHECK_OK`。
+- 微信 `--probe`：`PROBE_OK`（`innerHeight=974`，默认登录态）。探针新开的公众号编辑空页已关闭，其原活动标签属于用户、客户端归属校验拒绝切回。
+- 未做：真实存草稿、群发发表、定时发布、正文插图。
+
 ### 2026-11-16 0.6.9 安装包 G1–G3 复测
 
 - HEAD `b4a6fa3`。最终包 `release\Sparo-Setup-0.6.9.exe`（104,950,266 字节，2026-11-16 16:48:23，SHA-256 `38E2E2C3283B94A2C3D04F282058F7260EDFA166AD8AC63F76AA89D4BF62324D`），已静默安装到 `D:\Program Files\Sparo`。
