@@ -11,7 +11,7 @@ const PLATFORMS = ["toutiao", "baijiahao", "dayu", "sohu"];
 const SCHEDULE_RE = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})$/;
 
 export const USAGE = [
-  "用法：node publish.mjs --platform toutiao|baijiahao|dayu|sohu --article <目录> [--schedule \"YYYY-MM-DD HH:mm\"] [--from 步骤] [--dry-run] [--ai-images] [--probe] [--ledger <文件>]",
+  "用法：node publish.mjs --platform toutiao|baijiahao|dayu|sohu --article <目录> [--env <envId>] [--schedule \"YYYY-MM-DD HH:mm\"] [--from 步骤] [--dry-run] [--ai-images] [--probe] [--ledger <文件>]",
   "用法：node publish.mjs --platforms toutiao,baijiahao,dayu,sohu --plan",
   "平台：toutiao、baijiahao、dayu、sohu。--plan 只读规则表，不连接 Sparo，不打开编辑页，不填稿。",
   "文章目录：title.txt、body.md、cover.jpg、images/",
@@ -30,6 +30,7 @@ export function parseArgs(argv) {
     ledger: "",
     selfCheck: false,
     from: "",
+    env: "",
     platforms: [],
     plan: false,
     help: false,
@@ -52,6 +53,11 @@ export function parseArgs(argv) {
     }
     else if (arg === "--article") out.article = argv[++i] || "";
     else if (arg === "--ledger") out.ledger = argv[++i] || "";
+    else if (arg === "--env") {
+      const next = argv[i + 1];
+      if (!next || next.startsWith("--") || !next.trim()) out.error = "--env 后面要跟环境 id 或环境名";
+      else out.env = argv[++i];
+    }
     else if (arg === "--from") {
       const next = argv[++i] || "";
       const allowed = ["openBlank", "fillTitle", "fillBody", "insertImages", "setCover", "setOptions", "publishOrSchedule", "verify"];
@@ -118,6 +124,8 @@ async function selfCheck() {
   const read = (name) => fs.readFileSync(fileURLToPath(new URL(name, import.meta.url)), "utf8");
   const baijia = read("./adapters/baijiahao.mjs");
   const toutiaoSrc = read("./adapters/toutiao.mjs");
+  const dayuSrc = read("./adapters/dayu.mjs");
+  const sohuSrc = read("./adapters/sohu.mjs");
   const pageSrc = read("./page.mjs");
   const sparoSrc = read("./sparo.mjs");
   if (!baijia.includes("ue.setContent(html);")) throw new Error("百家号 setContent 调用丢了");
@@ -310,6 +318,61 @@ async function selfCheck() {
   const engineSrc = read("./engine.mjs");
   if (!engineSrc.includes("releaseRender")) throw new Error("任务结束没有归还渲染");
   if (!engineSrc.includes("report.ok && ctx.schedule")) throw new Error("失败台账仍会写成已定时");
+  const bareEnv = parseArgs(["--env"]);
+  if (!String(bareEnv.error).includes("--env")) throw new Error("缺 --env 值时应拒绝开跑");
+  const blankEnv = parseArgs(["--platform", "baijiahao", "--article", "demo", "--env", "   "]);
+  if (!String(blankEnv.error).includes("--env")) throw new Error("空白 --env 会静默回退默认登录态");
+  const namedEnv = parseArgs(["--platform", "baijiahao", "--article", "demo", "--env", "百家号二"]);
+  if (namedEnv.error || namedEnv.env !== "百家号二") throw new Error("--env 没有原样收下");
+  const omittedEnv = parseArgs(["--platform", "baijiahao", "--article", "demo"]);
+  if (omittedEnv.env) throw new Error("没写 --env 却自动选了环境");
+  if (!pageSrc.includes("openPayloadFor(ctx.writeUrl")) throw new Error("打开编辑页没有带上环境");
+  const { openPayloadFor } = await import("./page.mjs");
+  const explicitOpen = openPayloadFor("https://baijiahao.baidu.com/x", "ad0fe9db", [], "");
+  if (explicitOpen.tool !== "navigate" || explicitOpen.payload.envId !== "ad0fe9db") throw new Error("显式环境开页没有带 envId");
+  const defaultOpen = openPayloadFor("https://baijiahao.baidu.com/x", "", [{ id: "env", envId: "ad0fe9db" }], "env");
+  if (defaultOpen.tool !== "new_tab" || defaultOpen.payload.envId) throw new Error("默认任务会导航进非默认账号标签");
+  const plainOpen = openPayloadFor("https://baijiahao.baidu.com/x", "", [{ id: "plain", envId: "" }], "plain");
+  if (plainOpen.tool !== "navigate" || plainOpen.payload.tabId !== "plain" || plainOpen.payload.envId) throw new Error("默认任务没有复用空白环境当前标签");
+  if (!pageSrc.includes('envId: choice.tab.envId || ""')) throw new Error("新建编辑页回执丢了 envId");
+  const accountGate = between(pageSrc, "export async function enforceAccountGate", "export function assertEnvEditorFixtures");
+  const envCheckAt = accountGate.indexOf('if (!tab || tab.id !== ctx.tabId || String(tab.envId || "") !== envId)');
+  const accountReadAt = accountGate.indexOf("readAccountName(ctx)");
+  if (envCheckAt < 0 || accountReadAt < 0 || envCheckAt > accountReadAt) throw new Error("提交硬门没有在读取页面前先拒绝错误环境");
+  const navBlock = between(sparoSrc, "export async function nav(", "// ---------------- CLI");
+  const navEnvCheckAt = navBlock.indexOf('if (!current || String(current.envId || "") !== envId) return envMismatch');
+  const navCallAt = navBlock.indexOf('await call("navigate", withEnv(url, envId, gated.tabId))');
+  if (navEnvCheckAt < 0 || navCallAt < 0 || navEnvCheckAt > navCallAt) throw new Error("通用 nav 在导航前没有核对标签环境");
+  if (!engineSrc.includes("resolveEnv") || !engineSrc.includes("enforceAccountGate")) throw new Error("开跑前没有解析环境或提交前没有硬门");
+  const envFailure = between(engineSrc, "if (!resolved.ok) {", "const ctx = {");
+  if (!envFailure.includes("return stopReport(") || envFailure.includes("writeLedger(")) throw new Error("环境解析失败绕过统一报告，dry-run/probe 可能写台账");
+  const badFromBlock = between(engineSrc, "if (!steps) {", "if (args.from &&");
+  if (!badFromBlock.includes("return stopReport(") || badFromBlock.includes("writeLedger(")) throw new Error("BAD_FROM 失败报告缺环境字段或 dry-run 仍写台账");
+  const drySkip = between(engineSrc, 'if (args.dryRun && (step === "publishOrSchedule"', "const result = await adapter[step]");
+  if (!drySkip.includes('step === "verify"') || !drySkip.includes("clicks: 0")) throw new Error("dry-run 没有同时跳过最终提交和提交后 verify");
+  const sohuOpen = between(sohuSrc, "async openBlank(ctx", "async fillTitle(ctx)");
+  for (const marker of ["sessionStamp", "editorCandidates", "chooseEditorTab", "openPayloadFor(LIST_URL", "excluded"]) {
+    if (!sohuOpen.includes(marker)) throw new Error("搜狐开页缺 owner/env 隔离：" + marker);
+  }
+  if (sohuOpen.includes('call("navigate", { url: LIST_URL })')) throw new Error("搜狐首次导航漏传账号环境");
+  const { ADAPTERS } = await import("./engine.mjs");
+  for (const [id, adapter] of Object.entries(ADAPTERS)) {
+    if (typeof adapter.readAccountName !== "function") throw new Error(id + " 缺站点账号名读取，显式环境无法完成身份硬门");
+    if (typeof adapter.readTitle !== "function") throw new Error(id + " 缺标题读取，--from 无法核验当前稿件");
+  }
+  for (const [id, src] of Object.entries({ baijiahao: baijia, toutiao: toutiaoSrc, dayu: dayuSrc, sohu: sohuSrc })) {
+    const navCalls = src.match(/\bnav\([\s\S]*?\);/g) || [];
+    if (!navCalls.length || navCalls.some((call) => !call.includes('{ envId: ctx.envId || "" }'))) throw new Error(id + " 有 nav 未显式传账号环境");
+  }
+  const { runEnvFixtures } = await import("./env-account.mjs");
+  const { withEnv } = await import("./sparo.mjs");
+  const { assertEnvEditorFixtures } = await import("./page.mjs");
+  runEnvFixtures();
+  assertEnvEditorFixtures();
+  const opened = withEnv("https://baijiahao.baidu.com/builder/rc/edit?type=news", "ad0fe9db");
+  if (opened.envId !== "ad0fe9db" || opened.tabId) throw new Error("图文 navigate 没有带上 envId");
+  const plain = withEnv("https://baijiahao.baidu.com/builder/rc/edit?type=news", "");
+  if (Object.prototype.hasOwnProperty.call(plain, "envId")) throw new Error("默认登录态仍然传了 envId");
   console.log("SELF_CHECK_OK");
 }
 

@@ -4,6 +4,7 @@
 import {
   blockedCall,
   confirmCoverScript,
+  envNavStop,
   fail,
   guard,
   openWriteTab,
@@ -11,6 +12,7 @@ import {
   pageHint,
   pass,
   readHref,
+  readSiteAccount,
   setNativeValue,
   sleep,
   uploadPicked,
@@ -44,6 +46,10 @@ export const toutiao = {
     );
     if (read.stop) return read.stop;
     return pass(read.value || {});
+  },
+
+  async readAccountName(ctx) {
+    return readSiteAccount(ctx);
   },
 
   async fillTitle(ctx) {
@@ -351,7 +357,9 @@ export const toutiao = {
 
   async verify(ctx) {
     if (ctx.schedule) return verifyScheduled(ctx);
-    const moved = await nav(this.listUrl, ctx.tabId);
+    const moved = await nav(this.listUrl, ctx.tabId, { envId: ctx.envId || "" });
+    const envStop = envNavStop(moved);
+    if (envStop) return envStop;
     if (String(moved).startsWith("URL_UNREAD") || String(moved).startsWith("MISMATCH")) return blockedCall(moved);
     await sleep(1500);
     return readReceipt(ctx, this.id);
@@ -944,7 +952,9 @@ async function schedule(ctx) {
 
 /** 定时稿不在 /graphic/articles 里，只能到作品管理按标题找「定时发布中」。 */
 async function verifyScheduled(ctx) {
-  const moved = await nav(MANAGE_URL, ctx.tabId);
+  const moved = await nav(MANAGE_URL, ctx.tabId, { envId: ctx.envId || "" });
+  const envStop = envNavStop(moved);
+  if (envStop) return envStop;
   if (String(moved).startsWith("URL_UNREAD") || String(moved).startsWith("MISMATCH")) return blockedCall(moved);
   const [, month, day] = String(ctx.schedule.date).split("-");
   const expectTime = month + "-" + day + " " + ctx.schedule.time;

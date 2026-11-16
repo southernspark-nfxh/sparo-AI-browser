@@ -3,10 +3,13 @@ import {
   blockedCall,
   clickLabeled,
   confirmCoverScript,
+  enforceAccountGate,
+  envNavStop,
   fail,
   guard,
   openWriteTab,
   page,
+  readBaijiahaoAccount,
   pageHint,
   pass,
   runSchedule,
@@ -258,7 +261,9 @@ export const baijiahao = {
     if (!opened.ok) return opened;
     if (opened.detail && opened.detail.reused) {
       // 复用旧编辑器会带着上一篇的草稿和半初始化的工具栏：重载一次，保证从空白页开始
-      const moved = await nav(ctx.writeUrl, ctx.tabId);
+      const moved = await nav(ctx.writeUrl, ctx.tabId, { envId: ctx.envId || "" });
+      const envStop = envNavStop(moved);
+      if (envStop) return envStop;
       if (typeof moved === "string" && /MISMATCH|UNREAD/.test(moved)) {
         return fail("NAV_FAIL", moved, "重载空白编辑页失败");
       }
@@ -404,7 +409,9 @@ export const baijiahao = {
     let opened = await tryOpenCoverDialog(ctx);
     if (!opened.ok) {
       // 重载兜底：navigate 回当前编辑页，等标题+正文都回来，再试一次
-      const refreshed = await nav(ctx.writeUrl + "&article_id=" + (ctx.articleId || ""), ctx.tabId);
+      const refreshed = await nav(ctx.writeUrl + "&article_id=" + (ctx.articleId || ""), ctx.tabId, { envId: ctx.envId || "" });
+      const envStop = envNavStop(refreshed);
+      if (envStop) return envStop;
       if (!String(refreshed).startsWith("URL_UNREAD") && !String(refreshed).startsWith("MISMATCH")) {
         await sleep(3500);
         // 重载后重新点「单图」+ 打开弹窗
@@ -518,6 +525,8 @@ export const baijiahao = {
   },
 
   async publishOrSchedule(ctx) {
+    const account = await enforceAccountGate(ctx, (item) => readBaijiahaoAccount(item));
+    if (!account.ok) return account;
     const blocked = await guard(ctx);
     if (blocked) return blocked;
     // 续跑时上一次没关掉的定时弹层会挡住封面和 AI 选项
@@ -645,8 +654,14 @@ export const baijiahao = {
     return pass({ mode: "now", receipt: receipt.value || hook, articleId: hook.articleId || "" });
   },
 
+  async readAccountName(ctx) {
+    return readBaijiahaoAccount(ctx);
+  },
+
   async verify(ctx) {
-    const moved = await nav(this.listUrl, ctx.tabId);
+    const moved = await nav(this.listUrl, ctx.tabId, { envId: ctx.envId || "" });
+    const envStop = envNavStop(moved);
+    if (envStop) return envStop;
     if (String(moved).startsWith("URL_UNREAD") || String(moved).startsWith("MISMATCH")) return blockedCall(moved);
     // 百家号列表页加载慢，等 3 秒让标题渲染出来
     await sleep(3000);

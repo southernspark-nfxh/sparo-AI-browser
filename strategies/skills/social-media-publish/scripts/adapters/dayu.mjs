@@ -1,12 +1,14 @@
 // 大鱼号。封面只能从正文里选，所以正文要先有 3 张不同的图。
 import {
   clickLabeled,
+  envNavStop,
   fail,
   guard,
   openWriteTab,
   page,
   pageHint,
   pass,
+  readSiteAccount,
   setNativeValue,
   sleep,
   uploadPicked,
@@ -33,6 +35,19 @@ export const dayu = {
     const editor = await waitEditor(ctx, "#ueditor_0");
     if (!editor.ok) return editor;
     return pass({ tabId: ctx.tabId, href: editor.detail.href });
+  },
+
+  async readTitle(ctx) {
+    const read = await page(
+      ctx,
+      "(() => { const el = document.querySelector('.article-write_box-title-input, input[placeholder*=\"标题\"]'); return JSON.stringify({ href: location.href, title: (el && el.value || '').trim() }); })()",
+    );
+    if (read.stop) return read.stop;
+    return pass(read.value || {});
+  },
+
+  async readAccountName(ctx) {
+    return readSiteAccount(ctx);
   },
 
   async fillTitle(ctx) {
@@ -213,7 +228,9 @@ export const dayu = {
   },
 
   async verify(ctx) {
-    const moved = await nav(this.listUrl, ctx.tabId);
+    const moved = await nav(this.listUrl, ctx.tabId, { envId: ctx.envId || "" });
+    const envStop = envNavStop(moved);
+    if (envStop) return envStop;
     if (String(moved).startsWith("MISMATCH")) return fail("MISMATCH", moved);
     await sleep(1500);
     const script =

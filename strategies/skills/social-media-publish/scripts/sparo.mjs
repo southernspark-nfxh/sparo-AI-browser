@@ -284,8 +284,42 @@ export async function menuClick(trigger, item, tabId, expect) {
 }
 
 export function tabRows(listed) {
-  if (Array.isArray(listed)) return listed;
-  return Array.isArray(listed?.tabs) ? listed.tabs : [];
+  const rows = Array.isArray(listed) ? listed : Array.isArray(listed?.tabs) ? listed.tabs : [];
+  return rows.map((tab) => ({ ...tab, envId: String(tab?.envId || "") }));
+}
+
+/** navigate / new_tab 共用。没传环境就不带 envId，避免把默认登录态绑到某个环境。 */
+export function withEnv(url, envId, tabId) {
+  const payload = { url };
+  const id = String(envId || "").trim();
+  const tab = String(tabId || "").trim();
+  if (id) payload.envId = id;
+  if (tab) payload.tabId = tab;
+  return payload;
+}
+
+export function parseEnvsPayload(raw) {
+  let parsed = raw;
+  if (typeof raw === "string") {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  }
+  const data = parsed?.data || parsed?.result || parsed || {};
+  const list = data.envs || parsed?.envs || [];
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((env) => ({
+      id: String(env?.id || "").trim(),
+      name: String(env?.name || env?.account?.name || "").trim(),
+    }))
+    .filter((env) => env.id);
+}
+
+export async function listEnvs() {
+  return parseEnvsPayload(await call("list_envs"));
 }
 
 export function activeIdOf(listed) {
@@ -304,7 +338,7 @@ export async function tabs() {
   const data = parsed?.data || parsed?.result || parsed || {};
   const list = data.tabs || parsed?.tabs || [];
   return {
-    tabs: Array.isArray(list) ? list : [],
+    tabs: Array.isArray(list) ? list.map((tab) => ({ ...tab, envId: String(tab?.envId || "") })) : [],
     activeId: String(data.activeId || parsed?.activeId || ""),
   };
 }
@@ -342,19 +376,37 @@ export async function releaseRender() {
   return call("ensure_render", { release: true });
 }
 
-export async function nav(url, tabId) {
+function envMismatch(expectedEnvId, actualEnvId, tabId) {
+  return "ENV_MISMATCH " + JSON.stringify({
+    expectedEnvId,
+    actualEnvId: String(actualEnvId || ""),
+    tabId: tabId || "",
+  });
+}
+
+export async function nav(url, tabId, options = {}) {
+  const envId = String(options?.envId || "").trim();
   if (!tabId) {
     const before = new Set(tabRows(await tabs()).map((tab) => tab.id));
-    const raw = await call("navigate", { url });
+    const raw = await call("navigate", withEnv(url, envId));
     const after = tabRows(await tabs());
     const created = after.find((tab) => !before.has(tab.id));
+    if (envId && created?.id && String(created.envId || "") !== envId) {
+      return envMismatch(envId, created.envId, created.id);
+    }
     const href = created?.id ? await readHref(created.id) : "";
     if (created?.id) pin = { tabId: created.id, expect: hostOf(href) || hostOf(url) };
-    return JSON.stringify({ opened: raw, tabId: created?.id || "", href });
+    return JSON.stringify({ opened: raw, tabId: created?.id || "", href, envId: created?.envId || "" });
   }
   const gated = await gate(tabId);
   if (typeof gated === "string") return gated;
-  const raw = await call("navigate", { url, tabId: gated.tabId });
+  const current = tabRows(await tabs()).find((item) => item.id === gated.tabId);
+  if (!current || String(current.envId || "") !== envId) return envMismatch(envId, current?.envId, gated.tabId);
+  const raw = await call("navigate", withEnv(url, envId, gated.tabId));
+  if (envId) {
+    const tab = tabRows(await tabs()).find((item) => item.id === gated.tabId);
+    if (!tab || String(tab.envId || "") !== envId) return envMismatch(envId, tab?.envId, gated.tabId);
+  }
   pin = { tabId: gated.tabId, expect: hostOf(url) };
   return raw;
 }

@@ -66,6 +66,7 @@
 | 56 | 关闭所有标签必须显式 all | `close-tabs.ts` `pickTabsToClose` 的 `all: true`；`free-soul.ts` `close_tabs` 工具说明 | 模型传 `all=true` 时关掉除工作台和阅读页以外的全部标签。当前页默认一起关，只有 `keepActive: true` 才留。不传 match 且不传 all 仍然一页都不关 | 模型显式参数，不是本地从原句猜「所有」 | 保留。只执行模型点名的批量关闭，不提前结束任务。工作台和阅读页继续跳过 |
 | 57 | 账号名册只交给模型 | `free-soul.ts` `envRosterLine` / `ENV_PICK_RULES`；`browser.ts` 两处 `soul.run` 传入 `listEnvs` 的 id 和名字 | 本机环境的 id 和名字写进系统提示。名字对得上才用那个 id，阿拉伯数字和汉字数字视为同一个。对不上就说没有这个环境，不硬挑、不新建。说「另一个」或「第二个账号」时，除当前页外只剩一个环境才用它，并且不回默认登录态；还剩两个或更多就列出名字问，不替用户挑 | `listEnvs` 的 id 和账号名，加上当前页 envId。本地没有按「另一个」或数字写法做的匹配 | 保留。只把名册和规则交给模型，不结束任务，不新建环境，不改任务走向 |
 | 58 | 标签保活看剩余内存 | `memory-policy.ts` `pickTabsToDiscard` / `migrateMemorySaverMode`；`browser.ts` `autoDiscardIdleTabs` | 智能是新默认：用户手开的页（含环境里人自己开的）不按闲置时间休眠。每一扇窗口正在看的页都不进自动回收。运行中、等人、排队、正在播声音的标签也不卸。只有剩余内存低于总内存 20% 才回收：先收已完成的 agent 工位，再收一张最久没看的用户页；内存宽裕时一张不杀。激进档仍按闲置分钟杀后台页。文件里 `memorySaver: true` 或没写，迁到智能；显式 `false` 迁到全保活。手动「优化内存」不进定时扫描 | 剩余内存 / 总内存（`process.getSystemMemoryInfo`，没有就用 `os.freemem` / `os.totalmem`），加上标签归属、各窗当前页和任务状态。不是原句路由 | 保留。只决定卸不卸渲染进程，不结束任务，不改任务走向，不处理切换时的丢帧白一下 |
+| 59 | 外部发布脚本点名账号就失败关闭 | `strategies/skills/social-media-publish/scripts/env-account.mjs` `resolveEnv`；`publish.mjs` / `video.mjs` 的 `--env` | 图文和视频脚本自己查 `list_envs`。`百家号二` 与 `百家号2` 只按归一后的全名相等。找不到、有歧义、标签环境不对、页面账号名读不到或变了，都停在提交前。不去掉 `--env` 改走默认登录态。没写 `--env` 仍走原来的默认登录态。环境名不拿去对站点昵称 | 环境 id、名册全名、标签 `envId`、打开编辑页时读到的页面账号名 | 保留。只约束外部发布脚本，不改侧栏选号，不新建环境 |
 
 模型把采集句编成「一步 navigate + 只有 answer」时，第 1 条仍会当成只是开站。这是信脑区计划的残留，不是词表漏洞。无计划又带「复制」的句子在过期日前仍走第 2 条。
 

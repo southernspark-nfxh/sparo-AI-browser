@@ -1,6 +1,6 @@
 // 搜狐号。定时入口没探测到就停，不改点「发布」。
-import { clickExact, clickLabeled, fail, guard, page, pageHint, pass, setNativeValue, sleep, uploadPicked, waitEditor } from "../page.mjs";
-import { call, nav, tabRows, tabs, useTab } from "../sparo.mjs";
+import { chooseEditorTab, clickExact, clickLabeled, editorCandidates, envNavStop, fail, guard, openPayloadFor, page, pageHint, pass, readSiteAccount, setNativeValue, sleep, uploadPicked, waitEditor } from "../page.mjs";
+import { call, nav, sessionStamp, tabRows, tabs, useTab, withEnv } from "../sparo.mjs";
 import { loadProfile } from "../profile.mjs";
 
 const profile = loadProfile("sohu");
@@ -14,42 +14,72 @@ export const sohu = {
   writeMark: "addarticle",
   listUrl: profile.entry.listUrl,
 
-  async openBlank(ctx) {
-    const list = tabRows(await tabs());
-    const mine = list.filter((tab) => String(tab.url || "").includes(ctx.host));
-    const editor = mine.find((tab) => String(tab.url || "").includes("addarticle"));
-    const home = mine.find((tab) => String(tab.url || "").includes("contentManagement/first"));
-    let tabId = editor?.id || home?.id || "";
+  async openBlank(ctx, io) {
+    const deps = io || { sessionStamp, tabs, call, sleep, useTab, page, nav, clickLabeled, waitEditor };
+    const stamp = await deps.sessionStamp();
+    const listed = await deps.tabs();
+    const list = tabRows(listed);
+    const candidates = (writeMark) => editorCandidates(list, { host: ctx.host, writeMark, editExisting: null, stamp, envId: ctx.envId || "" });
+    const editorPicked = candidates("addarticle");
+    const homePicked = candidates("contentManagement/first");
+    const excluded = [...editorPicked.excluded, ...homePicked.excluded];
+    let selected = editorPicked.accepted[0] || homePicked.accepted[0] || null;
+    let tabId = selected?.id || "";
     if (!tabId) {
-      const before = new Set(list.map((tab) => tab.id));
-      await call("navigate", { url: LIST_URL });
-      await sleep(1000);
-      const created = tabRows(await tabs()).find((tab) => !before.has(tab.id) && String(tab.url || "").includes(ctx.host));
-      if (!created?.id) return fail("NO_TAB", LIST_URL, "没有打开搜狐号标签");
-      tabId = created.id;
+      const snapshot = (rows, activeId) => ({
+        activeId,
+        tabs: rows.map((tab) => ({ id: tab.id, url: tab.url || "", owner: tab.owner || "", envId: tab.envId || "" })),
+      });
+      const before = snapshot(list, listed.activeId || "");
+      const opener = openPayloadFor(LIST_URL, ctx.envId || "", list, listed.activeId || "");
+      await deps.call(opener.tool, opener.payload);
+      await deps.sleep(1000);
+      const afterListed = await deps.tabs();
+      const after = snapshot(tabRows(afterListed), afterListed.activeId || "");
+      const choice = chooseEditorTab({ before, after, stamp, writeMark: "contentManagement/first", envId: ctx.envId || "" });
+      if (!choice.ok) {
+        return fail("NO_TAB", { url: LIST_URL, envId: ctx.envId || "", excluded, landing: choice.landing || "", tried: choice.tried || [], tabs: after.tabs }, "没有打开属于当前账号环境的搜狐号标签");
+      }
+      selected = choice.tab;
+      tabId = selected.id;
     }
-    const pin = await useTab(tabId, ctx.host);
+    const pin = await deps.useTab(tabId, ctx.host);
     if (String(pin).startsWith("MISMATCH")) return fail("MISMATCH", pin);
     ctx.tabId = tabId;
-    const href = await page(ctx, "(() => JSON.stringify({ href: location.href }))()");
+    const href = await deps.page(ctx, "(() => JSON.stringify({ href: location.href }))()");
     if (href.mismatch) return fail("MISMATCH", href.mismatch);
     if (/clientAuth|login/i.test(href.value?.href || "")) return fail("LOGIN", href.value.href, "搜狐号要短信验证，交给用户");
     if (!String(href.value?.href || "").includes("addarticle")) {
       if (!String(href.value?.href || "").includes("contentManagement/first")) {
-        const moved = await nav(LIST_URL, ctx.tabId);
+        const moved = await deps.nav(LIST_URL, ctx.tabId, { envId: ctx.envId || "" });
+        const envStop = envNavStop(moved);
+        if (envStop) return envStop;
         if (String(moved).startsWith("MISMATCH")) return fail("MISMATCH", moved);
-        await sleep(800);
+        await deps.sleep(800);
       }
-      const entry = await clickLabeled(ctx, "发布内容");
+      const entry = await deps.clickLabeled(ctx, "发布内容");
       if (!entry.ok) return fail("ENTRY_NOT_FOUND", "发布内容", "搜狐后台入口没出现");
-      await sleep(500);
-      const article = await clickLabeled(ctx, "文章");
+      await deps.sleep(500);
+      const article = await deps.clickLabeled(ctx, "文章");
       if (!article.ok) return fail("ENTRY_NOT_FOUND", "文章", "没有点到搜狐发文章");
-      await sleep(1000);
+      await deps.sleep(1000);
     }
-    const ready = await waitEditor(ctx, ".ql-editor");
+    const ready = await deps.waitEditor(ctx, ".ql-editor");
     if (!ready.ok) return ready;
-    return pass({ tabId: ctx.tabId, href: ready.detail.href });
+    return pass({ tabId: ctx.tabId, href: ready.detail.href, owner: selected?.owner || stamp.owner, envId: selected?.envId || ctx.envId || "" });
+  },
+
+  async readTitle(ctx) {
+    const read = await page(
+      ctx,
+      "(() => { const el = document.querySelector('input[placeholder*=\"请输入标题\"], input[placeholder*=\"标题\"]'); return JSON.stringify({ href: location.href, title: (el && el.value || '').trim() }); })()",
+    );
+    if (read.stop) return read.stop;
+    return pass(read.value || {});
+  },
+
+  async readAccountName(ctx) {
+    return readSiteAccount(ctx);
   },
 
   async fillTitle(ctx) {
@@ -241,7 +271,9 @@ export const sohu = {
   },
 
   async verify(ctx) {
-    const moved = await nav(LIST_URL, ctx.tabId);
+    const moved = await nav(LIST_URL, ctx.tabId, { envId: ctx.envId || "" });
+    const envStop = envNavStop(moved);
+    if (envStop) return envStop;
     if (String(moved).startsWith("MISMATCH")) return fail("MISMATCH", moved);
     await sleep(1500);
     const script =

@@ -2,10 +2,10 @@ import { baijiahao } from "./adapters/baijiahao.mjs";
 import { dayu } from "./adapters/dayu.mjs";
 import { sohu } from "./adapters/sohu.mjs";
 import { toutiao } from "./adapters/toutiao.mjs";
-import { activateEditor, blockedCall, canResume, restoreActive } from "./page.mjs";
-import { releaseRender } from "./sparo.mjs";
+import { ledgerEnvFields, resolveEnv } from "./env-account.mjs";
+import { activateEditor, blockedCall, canResume, captureAccountName, editorCandidates, enforceAccountGate, restoreActive } from "./page.mjs";
 import { appendLedger } from "./ledger.mjs";
-import { activeIdOf, tabRows, tabs, useTab } from "./sparo.mjs";
+import { activeIdOf, listEnvs, releaseRender, sessionStamp, tabRows, tabs, useTab } from "./sparo.mjs";
 
 export const ADAPTERS = { toutiao, baijiahao, dayu, sohu };
 
@@ -34,8 +34,72 @@ function line(ctx, step, result) {
   return [ctx.platform, step, reason, "tab=" + (ctx.tabId || "-"), hint].filter((part, index) => index < 4 || part).join(" / ");
 }
 
+function expose(ctx, report) {
+  return {
+    ...report,
+    envId: ctx?.envId || report.envId || "",
+    envName: ctx?.envName || report.envName || "",
+    accountName: ctx?.accountName || ctx?.expectedAccountName || report.accountName || "",
+  };
+}
+
+function accountReader(adapter) {
+  return typeof adapter.readAccountName === "function" ? (ctx) => adapter.readAccountName(ctx) : null;
+}
+
+async function resolveRequestedEnv(query) {
+  const text = String(query || "").trim();
+  if (!text) return { ok: true, envId: "", envName: "" };
+  let roster;
+  try {
+    roster = await listEnvs();
+  } catch (error) {
+    return {
+      ok: false,
+      code: "ENV_NOT_FOUND",
+      input: text,
+      envs: [],
+      hint: "读不到账号名册，没有改走默认登录态：" + (error?.message || error),
+    };
+  }
+  return resolveEnv(roster, text);
+}
+
+function stopReport(ctx, report) {
+  const stamped = expose(ctx, report);
+  if (!ctx?.dryRun && !ctx?.probe) writeLedger(ctx, stamped);
+  console.log(JSON.stringify(stamped));
+  return stamped;
+}
+
 export async function runPublish(args, article) {
   const adapter = ADAPTERS[args.platform];
+  const resolved = await resolveRequestedEnv(args.env);
+  if (!resolved.ok) {
+    const failedCtx = {
+      platform: args.platform,
+      title: article?.title || "",
+      ledgerPath: args.ledger,
+      from: args.from || "",
+      schedule: args.schedule,
+      dryRun: args.dryRun,
+      probe: args.probe,
+      envId: "",
+      envName: "",
+      accountName: "",
+    };
+    return stopReport(failedCtx, {
+      ok: false,
+      platform: args.platform,
+      step: "resolveEnv",
+      reason: resolved.code,
+      tabId: "",
+      hint: resolved.hint || "",
+      input: resolved.input || args.env || "",
+      envs: resolved.envs || [],
+      log: [],
+    });
+  }
   const ctx = {
     platform: args.platform,
     host: adapter.host,
@@ -51,6 +115,10 @@ export async function runPublish(args, article) {
     tabId: "",
     imageCount: 0,
     ...article,
+    envId: resolved.envId,
+    envName: resolved.envName,
+    expectedAccountName: "",
+    accountName: "",
   };
   const listedAtStart = await tabs();
   const previousActiveId = activeIdOf(listedAtStart);
@@ -59,7 +127,7 @@ export async function runPublish(args, article) {
   const log = [];
   const steps = planSteps(args.from, args.probe);
   if (!steps) {
-    const report = {
+    return stopReport(ctx, {
       ok: false,
       platform: ctx.platform,
       step: args.from || "",
@@ -67,21 +135,25 @@ export async function runPublish(args, article) {
       tabId: "",
       hint: "续跑步骤不存在，请从头跑",
       log,
-    };
-    writeLedger(ctx, report);
-    console.log(JSON.stringify(report));
-    return report;
+    });
   }
   if (args.from && args.from !== "openBlank" && !args.probe) {
     const listed = await tabs();
-    const list = tabRows(listed);
-    const editors = list.filter(
-      (tab) =>
-        String(tab.url || "").includes(adapter.host) &&
-        String(tab.url || "").includes(adapter.writeMark) &&
-        !(adapter.editExisting && adapter.editExisting.test(String(tab.url || ""))),
-    );
-    let gate = { ok: false, code: "RESUME_NOT_EDITOR", hint: "没有找到可续跑的编辑页，请从头跑" };
+    const stamp = await sessionStamp();
+    const picked = editorCandidates(tabRows(listed), {
+      host: adapter.host,
+      writeMark: adapter.writeMark,
+      editExisting: adapter.editExisting,
+      stamp,
+      envId: ctx.envId || "",
+    });
+    const editors = picked.accepted;
+    let gate = {
+      ok: false,
+      code: picked.excluded.some((item) => item.reason === "env") && !editors.length ? "NO_EDITOR_TAB" : "RESUME_NOT_EDITOR",
+      hint: "没有找到可续跑的编辑页，请从头跑",
+      detail: { envId: ctx.envId || "", excluded: picked.excluded },
+    };
     for (const tab of editors) {
       const pin = await useTab(tab.id, adapter.host);
       const stopped = blockedCall(pin);
@@ -101,19 +173,30 @@ export async function runPublish(args, article) {
     log.push({ step: "openBlank", ok: gate.ok, resume: true, tabId: ctx.tabId || "" });
     if (!gate.ok) {
       ctx.tabId = "";
-      const report = {
+      console.log(line(ctx, args.from, { ok: false, code: gate.code, hint: gate.hint }));
+      return stopReport(ctx, {
         ok: false,
         platform: ctx.platform,
         step: args.from,
         reason: gate.code,
         tabId: "",
         hint: gate.hint,
+        excluded: picked.excluded,
         log,
-      };
-      writeLedger(ctx, report);
-      console.log(line(ctx, args.from, { ok: false, code: gate.code, hint: gate.hint }));
-      console.log(JSON.stringify(report));
-      return report;
+      });
+    }
+    const named = await captureAccountName(ctx, accountReader(adapter));
+    log.push({ step: "accountName", ...named });
+    if (!named.ok) {
+      return stopReport(ctx, {
+        ok: false,
+        platform: ctx.platform,
+        step: "accountName",
+        reason: named.code || "ACCOUNT_NAME_UNAVAILABLE",
+        tabId: ctx.tabId || "",
+        hint: named.hint || "",
+        log,
+      });
     }
     console.log(line(ctx, "openBlank", { ok: true, hint: "续跑定位" }));
   }
@@ -125,7 +208,7 @@ export async function runPublish(args, article) {
       log.push({ step: "render", ...ready });
       console.log(line(ctx, "render", ready.ok ? { ok: true, hint: "innerHeight=" + ctx.innerHeight } : ready));
       if (!ready.ok) {
-        const report = {
+        return stopReport(ctx, {
           ok: false,
           platform: ctx.platform,
           step: "render",
@@ -135,14 +218,27 @@ export async function runPublish(args, article) {
           diagnosis: ready.diagnosis || ready.hint || "",
           next: ready.next || [],
           log,
-        };
-        if (!args.dryRun && !args.probe) writeLedger(ctx, report);
-        console.log(JSON.stringify(report));
-        return report;
+        });
+      }
+    }
+    if (step === "publishOrSchedule") {
+      const account = await enforceAccountGate(ctx, accountReader(adapter));
+      log.push({ step: "accountGate", ...account });
+      console.log(line(ctx, "accountGate", account.ok ? { ok: true, hint: account.detail?.accountName || account.detail?.skipped || "" } : account));
+      if (!account.ok) {
+        return stopReport(ctx, {
+          ok: false,
+          platform: ctx.platform,
+          step: "accountGate",
+          reason: account.code || "ACCOUNT_NAME_UNAVAILABLE",
+          tabId: ctx.tabId || "",
+          hint: account.hint || "",
+          log,
+        });
       }
     }
     if (args.dryRun && (step === "publishOrSchedule" || step === "verify")) {
-      const skipped = { ok: true, skipped: "dry-run" };
+      const skipped = { ok: true, skipped: "dry-run", clicks: 0 };
       log.push({ step, ...skipped });
       console.log(line(ctx, step, { ok: true, hint: "dry-run" }));
       continue;
@@ -151,7 +247,7 @@ export async function runPublish(args, article) {
     log.push({ step, ...result });
     console.log(line(ctx, step, result));
     if (!result?.ok) {
-      const report = {
+      return stopReport(ctx, {
         ok: false,
         platform: ctx.platform,
         step,
@@ -159,13 +255,26 @@ export async function runPublish(args, article) {
         tabId: ctx.tabId || "",
         hint: result.hint || result.detail || "",
         log,
-      };
-      if (!args.dryRun && !args.probe) writeLedger(ctx, report);
-      console.log(JSON.stringify(report));
-      return report;
+      });
+    }
+    if (step === "openBlank") {
+      const named = await captureAccountName(ctx, accountReader(adapter));
+      log.push({ step: "accountName", ...named });
+      console.log(line(ctx, "accountName", named.ok ? { ok: true, hint: named.detail?.accountName || named.detail?.skipped || "" } : named));
+      if (!named.ok) {
+        return stopReport(ctx, {
+          ok: false,
+          platform: ctx.platform,
+          step: "accountName",
+          reason: named.code || "ACCOUNT_NAME_UNAVAILABLE",
+          tabId: ctx.tabId || "",
+          hint: named.hint || "",
+          log,
+        });
+      }
     }
   }
-  const report = { ok: true, platform: ctx.platform, dryRun: args.dryRun, probe: args.probe, tabId: ctx.tabId, innerHeight: ctx.innerHeight || 0, previousActiveId, log };
+  const report = expose(ctx, { ok: true, platform: ctx.platform, dryRun: args.dryRun, probe: args.probe, tabId: ctx.tabId, innerHeight: ctx.innerHeight || 0, previousActiveId, log });
   if (!args.dryRun && !args.probe) writeLedger(ctx, report);
   console.log(JSON.stringify(report));
   return report;
@@ -183,6 +292,7 @@ function writeLedger(ctx, report) {
     platform: ctx.platform,
     title: ctx.title,
     tabId: ctx.tabId || "",
+    ...ledgerEnvFields(ctx),
     ok: report.ok,
     step: report.step || "verify",
     reason: report.reason || "",

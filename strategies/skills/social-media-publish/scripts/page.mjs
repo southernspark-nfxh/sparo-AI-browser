@@ -1,5 +1,6 @@
 // 页面动作都走带 tabId 的客户端。地址不对就停，不再发这一步。
-import { activeIdOf, call, click, ensureRender, exec, nav, sessionStamp, sleep, switchTab, tabRows, tabs, uploadFile, useTab } from "./sparo.mjs";
+import { BAIJIAHAO_ACCOUNT_SCRIPT, envAllows, judgeSubmitGate } from "./env-account.mjs";
+import { activeIdOf, call, click, ensureRender, exec, nav, sessionStamp, sleep, switchTab, tabRows, tabs, uploadFile, useTab, withEnv } from "./sparo.mjs";
 
 export { sleep };
 
@@ -41,8 +42,14 @@ export function renderGate(innerHeight) {
 export function blockedCall(raw) {
   if (typeof raw !== "string") return null;
   if (raw.startsWith("URL_UNREAD")) return fail("URL_UNREAD", raw, "读不到标签地址");
+  if (raw.startsWith("ENV_MISMATCH")) return fail("ENV_MISMATCH", raw, "标签不在目标账号环境");
   if (raw.startsWith("MISMATCH")) return fail("MISMATCH", raw, raw);
   return null;
+}
+
+export function envNavStop(moved) {
+  if (typeof moved !== "string" || !moved.startsWith("ENV_MISMATCH")) return null;
+  return blockedCall(moved);
 }
 
 export function titlesEqual(actual, expected) {
@@ -330,12 +337,44 @@ function tabIsOurs(tab, stamp, hasOwner) {
   return owner === stamp.owner || owner === stamp.clientId || owner === "agent:" + stamp.clientId;
 }
 
-export function findOwnedEditor(rows, stamp, writeMark) {
+export function findOwnedEditor(rows, stamp, writeMark, envId = "") {
   const hasOwner = rows.some((tab) => Object.prototype.hasOwnProperty.call(tab, "owner"));
-  return rows.find((tab) => String(tab.url || "").includes(writeMark) && tabIsOurs(tab, stamp, hasOwner)) || null;
+  return rows.find((tab) => String(tab.url || "").includes(writeMark) && tabIsOurs(tab, stamp, hasOwner) && envAllows(tab, envId)) || null;
 }
 
-export function chooseEditorTab({ before, after, stamp, writeMark }) {
+/** 复用和续跑共用：owner、环境、站点、编辑页标记都要对上。错环境只记在排除原因里，不拿来导航。 */
+export function editorCandidates(rows, { host, writeMark, editExisting, stamp, envId = "" }) {
+  const hasOwner = rows.some((tab) => Object.prototype.hasOwnProperty.call(tab, "owner"));
+  const accepted = [];
+  const excluded = [];
+  for (const tab of rows || []) {
+    const url = String(tab?.url || "");
+    if (host && !url.includes(host)) {
+      excluded.push({ id: tab?.id || "", reason: "host", envId: String(tab?.envId || "") });
+      continue;
+    }
+    if (writeMark && !url.includes(writeMark)) {
+      excluded.push({ id: tab?.id || "", reason: "writeMark", envId: String(tab?.envId || "") });
+      continue;
+    }
+    if (editExisting && editExisting.test(url)) {
+      excluded.push({ id: tab?.id || "", reason: "editExisting", envId: String(tab?.envId || "") });
+      continue;
+    }
+    if (!tabIsOurs(tab, stamp, hasOwner)) {
+      excluded.push({ id: tab?.id || "", reason: "owner", envId: String(tab?.envId || "") });
+      continue;
+    }
+    if (!envAllows(tab, envId)) {
+      excluded.push({ id: tab?.id || "", reason: "env", envId: String(tab?.envId || "") });
+      continue;
+    }
+    accepted.push(tab);
+  }
+  return { accepted, excluded };
+}
+
+export function chooseEditorTab({ before, after, stamp, writeMark, envId = "" }) {
   const beforeTabs = before?.tabs || [];
   const afterTabs = after?.tabs || [];
   const hasOwner = afterTabs.some((tab) => Object.prototype.hasOwnProperty.call(tab, "owner"));
@@ -343,7 +382,7 @@ export function chooseEditorTab({ before, after, stamp, writeMark }) {
   const beforeUrl = new Map(beforeTabs.map((tab) => [tab.id, String(tab.url || "")]));
   const tried = ["new-id", "url-became-editor", "active-became-editor"];
   const editorUrl = (url) => String(url || "").includes(writeMark);
-  const ours = (tab) => tabIsOurs(tab, stamp, hasOwner);
+  const ours = (tab) => tabIsOurs(tab, stamp, hasOwner) && envAllows(tab, envId);
   const fresh = afterTabs.filter((tab) => !beforeIds.has(tab.id));
   const created = fresh.find((tab) => editorUrl(tab.url) && ours(tab));
   if (created) return { ok: true, tab: created, via: "new-id" };
@@ -360,74 +399,248 @@ export function chooseEditorTab({ before, after, stamp, writeMark }) {
   const ownFresh = fresh.find((tab) => ours(tab) && tab.url);
   const ownChanged = afterTabs.find((tab) => ours(tab) && String(tab.url || "") !== (beforeUrl.get(tab.id) || ""));
   const landing = ownFresh?.url || ownChanged?.url || (active && ours(active) ? active.url : "") || fresh[0]?.url || "";
+  const excluded = editorCandidates(afterTabs, { host: "", writeMark, editExisting: null, stamp, envId }).excluded;
   return {
     ok: false,
     code: "NO_EDITOR_TAB",
     tried,
     landing,
+    excluded,
     activeId: after?.activeId || "",
     tabs: afterTabs,
   };
 }
 
 /**
+ * 开页动作：显式环境一定带 envId；默认登录态优先用当前空白环境标签，
+ * 没有就新建标签，避免不带 tabId 的 navigate 落到固定 client 上次认领的账号标签。
+ */
+export function openPayloadFor(url, envId, rows, activeId) {
+  const want = String(envId || "").trim();
+  if (want) return { tool: "navigate", payload: withEnv(url, want) };
+  const target = (rows || []).find((tab) => tab.id === activeId && !String(tab.envId || "").trim());
+  if (target) return { tool: "navigate", payload: withEnv(url, "", target.id) };
+  return { tool: "new_tab", payload: { url } };
+}
+
+/**
  * 只复用 owner 是自己的编辑页。对不上就报错，不接管。
  */
-export async function openWriteTab(ctx) {
-  const stamp = await sessionStamp();
-  const beforeListed = await tabs();
+export async function openWriteTab(ctx, io) {
+  const deps = io || { sessionStamp, tabs, useTab, call, sleep };
+  const stamp = await deps.sessionStamp();
+  const beforeListed = await deps.tabs();
   const beforeRows = tabRows(beforeListed);
   // 「修改已发布文章」的编辑页长得和新建页一样，复用它会改错稿：带 article_id / online_modify 的一律不复用
   const reusable = ctx.editExisting
     ? beforeRows.filter((tab) => !ctx.editExisting.test(String(tab.url || "")))
     : beforeRows;
-  const ready = findOwnedEditor(reusable, stamp, ctx.writeMark);
+  const picked = editorCandidates(reusable, {
+    host: ctx.host,
+    writeMark: ctx.writeMark,
+    editExisting: null,
+    stamp,
+    envId: ctx.envId || "",
+  });
+  const ready = picked.accepted[0];
   if (ready && String(ready.url || "").includes(ctx.host)) {
-    const pin = await useTab(ready.id, ctx.host);
+    const pin = await deps.useTab(ready.id, ctx.host);
     const stopped = blockedCall(pin);
     if (stopped) return stopped;
     ctx.tabId = ready.id;
-    return pass({ tabId: ctx.tabId, reused: true, owner: ready.owner || stamp.owner, via: "already-editor" });
+    return pass({ tabId: ctx.tabId, reused: true, owner: ready.owner || stamp.owner, envId: ready.envId || "", via: "already-editor" });
   }
-  const before = {
-    activeId: activeIdOf(beforeListed),
-    tabs: beforeRows.map((tab) => ({ id: tab.id, url: tab.url || "", owner: tab.owner || "" })),
-  };
-  await call("navigate", { url: ctx.writeUrl });
+  const snapshot = (rows, activeId) => ({
+    activeId,
+    tabs: rows.map((tab) => ({ id: tab.id, url: tab.url || "", owner: tab.owner || "", envId: tab.envId || "" })),
+  });
+  const before = snapshot(beforeRows, activeIdOf(beforeListed));
+  const wantEnv = String(ctx.envId || "").trim();
+  const opener = openPayloadFor(ctx.writeUrl, wantEnv, beforeRows, before.activeId);
+  await deps.call(opener.tool, opener.payload);
   const deadline = Date.now() + 15000;
   let last = before;
   while (Date.now() <= deadline) {
-    const listed = await tabs();
+    const listed = await deps.tabs();
     const rows = tabRows(listed);
-    last = {
-      activeId: activeIdOf(listed),
-      tabs: rows.map((tab) => ({ id: tab.id, url: tab.url || "", owner: tab.owner || "" })),
-    };
-    const choice = chooseEditorTab({ before, after: last, stamp, writeMark: ctx.writeMark });
+    last = snapshot(rows, activeIdOf(listed));
+    if (wantEnv) {
+      const fresh = last.tabs.filter((tab) => !before.tabs.some((old) => old.id === tab.id));
+      const wrong = fresh.find((tab) => tab.envId && tab.envId !== wantEnv);
+      const right = fresh.find((tab) => tab.envId === wantEnv);
+      if (wrong && !right) {
+        return fail("ENV_MISMATCH", { expectedEnvId: wantEnv, actualEnvId: wrong.envId, tabId: wrong.id, excluded: picked.excluded }, "新标签不在目标账号环境");
+      }
+    }
+    const choice = chooseEditorTab({ before, after: last, stamp, writeMark: ctx.writeMark, envId: wantEnv });
     if (choice.ok && String(choice.tab.url || "").includes(ctx.host)) {
-      const pin = await useTab(choice.tab.id, ctx.host);
+      const pin = await deps.useTab(choice.tab.id, ctx.host);
       const stopped = blockedCall(pin);
       if (stopped?.code === "URL_UNREAD") {
-        await sleep(200);
+        await deps.sleep(200);
         continue;
       }
       if (stopped) return stopped;
       createdIds.add(choice.tab.id);
       ctx.tabId = choice.tab.id;
-      return pass({ tabId: ctx.tabId, reused: choice.via !== "new-id", owner: choice.tab.owner || stamp.owner, via: choice.via });
+      return pass({ tabId: ctx.tabId, reused: choice.via !== "new-id", owner: choice.tab.owner || stamp.owner, envId: choice.tab.envId || "", via: choice.via });
     }
-    await sleep(200);
+    await deps.sleep(200);
   }
-  const choice = chooseEditorTab({ before, after: last, stamp, writeMark: ctx.writeMark });
+  const choice = chooseEditorTab({ before, after: last, stamp, writeMark: ctx.writeMark, envId: String(ctx.envId || "").trim() });
   const landing = choice.landing || "";
+  const excluded = editorCandidates(last.tabs, {
+    host: ctx.host,
+    writeMark: ctx.writeMark,
+    editExisting: ctx.editExisting,
+    stamp,
+    envId: ctx.envId || "",
+  }).excluded;
   return {
     ok: false,
     code: "NO_EDITOR_TAB",
-    detail: { tabs: last.tabs, activeId: last.activeId, tried: choice.tried, landing, writeUrl: ctx.writeUrl },
+    detail: { tabs: last.tabs, activeId: last.activeId, tried: choice.tried, landing, writeUrl: ctx.writeUrl, excluded, envId: ctx.envId || "" },
     hint: "没有进入编辑页，实际落在 " + (landing || "未知地址"),
     tried: choice.tried,
     landing,
   };
+}
+
+async function readAccountScript(ctx, script) {
+  const read = await page(ctx, script);
+  if (read.stop) return read.stop;
+  let value = read.value;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      value = { name: "" };
+    }
+  }
+  const name = String(value?.name || "").trim();
+  const url = String(value?.href || "");
+  if (!name) {
+    return fail("ACCOUNT_NAME_UNAVAILABLE", { envId: String(ctx.envId || ""), tabId: ctx.tabId || "", url }, "页面账号名读不到");
+  }
+  return pass({ accountName: name, via: String(value?.via || ""), url });
+}
+
+export async function readBaijiahaoAccount(ctx) {
+  return readAccountScript(ctx, BAIJIAHAO_ACCOUNT_SCRIPT);
+}
+
+/** 其他平台只认明确的账号/昵称元素；隐藏元素和宽泛 header 文案都不能充当账号名。 */
+export async function readSiteAccount(ctx) {
+  const selectors = [
+    ".header-user-name",
+    ".user-name",
+    ".user_name",
+    ".nick-name",
+    ".nickname",
+    ".account-name",
+    ".account_name",
+    ".user-info-name",
+    ".user-info .name",
+    ".account-info .name",
+    '[class*="userName"]',
+    '[class*="nickName"]',
+    '[class*="nickname"]',
+    '[class*="accountName"]',
+  ];
+  const script =
+    "(() => {" +
+    "const sels = " + JSON.stringify(selectors) + ";" +
+    "const bad = /发布|编辑|首页|消息|通知|设置|退出|登录|创作|数据|内容|评论|粉丝|收益|头像|搜索|头条号|大鱼号|搜狐号|百家号/;" +
+    "for (const sel of sels) {" +
+    "for (const el of document.querySelectorAll(sel)) {" +
+    "const style = window.getComputedStyle(el);" +
+    "if (el.hidden || el.getAttribute('aria-hidden') === 'true' || style.display === 'none' || style.visibility === 'hidden') continue;" +
+    "const name = ((el.innerText || el.textContent) || '').replace(/\\s+/g, ' ').trim();" +
+    "if (!name || name.length > 64 || bad.test(name)) continue;" +
+    "return JSON.stringify({ name, via: sel, href: location.href });" +
+    "}" +
+    "}" +
+    "return JSON.stringify({ name: '', href: location.href });" +
+    "})()";
+  return readAccountScript(ctx, script);
+}
+
+export async function captureAccountName(ctx, readAccountName) {
+  const envId = String(ctx.envId || "").trim();
+  if (!envId) return pass({ skipped: "default-login" });
+  if (typeof readAccountName !== "function") {
+    return fail("ACCOUNT_NAME_UNAVAILABLE", { envId, tabId: ctx.tabId || "", url: "" }, "这个平台还不能核对页面账号名");
+  }
+  const read = await readAccountName(ctx);
+  if (read?.stop) return read.stop;
+  if (read && read.ok === false) return read;
+  const name = String(read?.detail?.accountName || "").trim();
+  if (!name) {
+    return fail("ACCOUNT_NAME_UNAVAILABLE", { envId, tabId: ctx.tabId || "", url: read?.detail?.url || "" }, "打开编辑页时没有读到账号名");
+  }
+  ctx.expectedAccountName = name;
+  ctx.accountName = name;
+  return pass({ accountName: name });
+}
+
+export async function enforceAccountGate(ctx, readAccountName) {
+  const envId = String(ctx.envId || "").trim();
+  if (!envId) return pass({ skipped: "default-login" });
+  const listed = await tabs();
+  const tab = tabRows(listed).find((item) => item.id === ctx.tabId) || null;
+  let url = String(tab?.url || "");
+  if (!tab || tab.id !== ctx.tabId || String(tab.envId || "") !== envId) {
+    return fail(
+      "ENV_MISMATCH",
+      { expectedEnvId: envId, actualEnvId: String(tab?.envId || ""), tabId: ctx.tabId || "", url },
+      "提交前编辑标签不在目标账号环境",
+    );
+  }
+  let actual = "";
+  if (typeof readAccountName === "function") {
+    const read = await readAccountName(ctx);
+    if (read?.stop) return read.stop;
+    if (read && read.ok === false && read.code !== "ACCOUNT_NAME_UNAVAILABLE") return read;
+    actual = String(read?.detail?.accountName || "").trim();
+    url = String(read?.detail?.url || url);
+  }
+  const judged = judgeSubmitGate({
+    envId,
+    tabId: ctx.tabId,
+    tab,
+    expectedAccountName: ctx.expectedAccountName || "",
+    actualAccountName: actual,
+    url,
+  });
+  if (!judged.ok) return fail(judged.code, judged, judged.hint || judged.code);
+  ctx.accountName = judged.accountName;
+  return pass(judged);
+}
+
+export function assertEnvEditorFixtures() {
+  const stamp = { clientId: "social-media-publish", owner: "agent:social-media-publish" };
+  const base = "https://baijiahao.baidu.com/builder/rc/edit?type=news";
+  const rows = [
+    { id: "right", url: base, owner: stamp.owner, envId: "ad0fe9db" },
+    { id: "wrong", url: base, owner: stamp.owner, envId: "4cc12233" },
+    { id: "plain", url: base, owner: stamp.owner, envId: "" },
+  ];
+  const picked = editorCandidates(rows, { host: "baijiahao.baidu.com", writeMark: "/builder/rc/edit", editExisting: null, stamp, envId: "ad0fe9db" });
+  if (picked.accepted.length !== 1 || picked.accepted[0].id !== "right") throw new Error("同 owner 不同环境没有被排除");
+  if (!picked.excluded.some((item) => item.id === "wrong" && item.reason === "env")) throw new Error("错误环境没有写出排除原因");
+  const defaults = editorCandidates(rows, { host: "baijiahao.baidu.com", writeMark: "/builder/rc/edit", editExisting: null, stamp, envId: "" });
+  if (defaults.accepted.some((tab) => tab.envId)) throw new Error("默认登录态复用了环境标签");
+  if (!defaults.accepted.some((tab) => tab.id === "plain")) throw new Error("默认登录态没有留下空环境标签");
+  const wrongChoice = chooseEditorTab({
+    before: { tabs: [], activeId: "" },
+    after: { tabs: [rows[1]], activeId: "wrong" },
+    stamp,
+    writeMark: "/builder/rc/edit",
+    envId: "ad0fe9db",
+  });
+  if (wrongChoice.ok || !wrongChoice.excluded?.some((item) => item.id === "wrong" && item.reason === "env")) {
+    throw new Error("新建/变更标签识别没有留下跨环境排除诊断");
+  }
 }
 
 export async function readHref(ctx) {
