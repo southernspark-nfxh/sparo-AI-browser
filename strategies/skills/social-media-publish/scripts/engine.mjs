@@ -2,12 +2,13 @@ import { baijiahao } from "./adapters/baijiahao.mjs";
 import { dayu } from "./adapters/dayu.mjs";
 import { sohu } from "./adapters/sohu.mjs";
 import { toutiao } from "./adapters/toutiao.mjs";
+import { weixin } from "./adapters/weixin.mjs";
 import { ledgerEnvFields, resolveEnv } from "./env-account.mjs";
 import { activateEditor, blockedCall, canResume, captureAccountName, editorCandidates, enforceAccountGate, restoreActive } from "./page.mjs";
 import { appendLedger } from "./ledger.mjs";
 import { activeIdOf, listEnvs, releaseRender, sessionStamp, tabRows, tabs, useTab } from "./sparo.mjs";
 
-export const ADAPTERS = { toutiao, baijiahao, dayu, sohu };
+export const ADAPTERS = { toutiao, baijiahao, dayu, sohu, weixin };
 
 export const STEPS = [
   "openBlank",

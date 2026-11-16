@@ -7,13 +7,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadArticle, toParagraphHtml } from "./article.mjs";
 
-const PLATFORMS = ["toutiao", "baijiahao", "dayu", "sohu"];
+const PLATFORMS = ["toutiao", "baijiahao", "dayu", "sohu", "weixin"];
 const SCHEDULE_RE = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})$/;
 
 export const USAGE = [
-  "用法：node publish.mjs --platform toutiao|baijiahao|dayu|sohu --article <目录> [--env <envId>] [--schedule \"YYYY-MM-DD HH:mm\"] [--from 步骤] [--dry-run] [--ai-images] [--probe] [--ledger <文件>]",
-  "用法：node publish.mjs --platforms toutiao,baijiahao,dayu,sohu --plan",
-  "平台：toutiao、baijiahao、dayu、sohu。--plan 只读规则表，不连接 Sparo，不打开编辑页，不填稿。",
+  "用法：node publish.mjs --platform toutiao|baijiahao|dayu|sohu|weixin --article <目录> [--env <envId>] [--schedule \"YYYY-MM-DD HH:mm\"] [--from 步骤] [--dry-run] [--ai-images] [--probe] [--ledger <文件>]",
+  "用法：node publish.mjs --platforms toutiao,baijiahao,dayu,sohu,weixin --plan",
+  "平台：toutiao、baijiahao、dayu、sohu、weixin。--plan 只读规则表，不连接 Sparo，不打开编辑页，不填稿。",
   "文章目录：title.txt、body.md、cover.jpg、images/",
   "定时必须带时间。搜狐找不到定时入口会停手，不会改点发布。",
   "大鱼封面前正文要有 3 张不同的图。头条必勾「投放广告赚收益」。百家不勾「采用AI生成内容」。",
@@ -247,7 +247,7 @@ async function selfCheck() {
   const mismatch = classifyHref("https://mp.toutiao.com/graphic/publish", "baijiahao.baidu.com");
   if (!mismatch.startsWith("MISMATCH:") || !mismatch.includes("toutiao.com")) throw new Error("地址不对时应带上读到的 URL");
   if (classifyHref("https://mp.toutiao.com/graphic/publish", "mp.toutiao.com") !== "") throw new Error("正确地址不应拦截");
-  const { titlesEqual, scheduleMatches, canResume, renderGate, explainReach, chooseEditorTab, findOwnedEditor } = await import("./page.mjs");
+  const { titlesEqual, scheduleMatches, canResume, renderGate, explainReach, chooseEditorTab, findOwnedEditor, editorCandidates } = await import("./page.mjs");
   const hidden = renderGate(0);
   if (!hidden || hidden.code !== "RENDER_NOT_READY") throw new Error("innerHeight 为 0 时应是 RENDER_NOT_READY");
   if (renderGate(800)) throw new Error("有高度时不应拦截");
@@ -271,6 +271,20 @@ async function selfCheck() {
   if (!reused.ok || reused.via !== "url-became-editor" || reused.tab.id !== "mine") throw new Error("同地址复用后没有认回自己的编辑页");
   if (!findOwnedEditor([became], stamp, "/builder/rc/edit")) throw new Error("自己的编辑页没有被复用");
   if (findOwnedEditor([foreign], stamp, "/builder/rc/edit")) throw new Error("按 owner 仍会拿别人的标签");
+  const { baijiahao: baijiaAdapter } = await import("./adapters/baijiahao.mjs");
+  const typed = editorCandidates([
+    { ...became, id: "events", url: "https://baijiahao.baidu.com/builder/rc/edit?type=events", envId: "ad0fe9db" },
+    { ...became, id: "news", url: "https://baijiahao.baidu.com/builder/rc/edit?type=news", envId: "ad0fe9db" },
+  ], {
+    host: baijiaAdapter.host,
+    writeMark: baijiaAdapter.writeMark,
+    editExisting: baijiaAdapter.editExisting,
+    stamp,
+    envId: "ad0fe9db",
+  });
+  if (typed.accepted.length !== 1 || typed.accepted[0].id !== "news" || !typed.excluded.some((item) => item.id === "events" && item.reason === "writeMark")) {
+    throw new Error("百家号图文复用了 events 等其他类型的编辑页");
+  }
   const diagnosis = explainReach(
     "定时发布",
     { viewport: { w: 0, h: 0 }, target: { left: 12, top: -49, right: 100, bottom: -13 }, inside: { x: false, y: false }, scrollers: [], blockers: [] },

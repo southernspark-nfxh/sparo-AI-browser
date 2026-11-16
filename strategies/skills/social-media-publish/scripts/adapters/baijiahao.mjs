@@ -251,7 +251,7 @@ export const baijiahao = {
   id: "baijiahao",
   host: "baijiahao.baidu.com",
   writeUrl: "https://baijiahao.baidu.com/builder/rc/edit?type=news",
-  writeMark: "/builder/rc/edit",
+  writeMark: "/builder/rc/edit?type=news",
   // 带 article_id / online_modify 的是「修改已发布文章」，不能当新稿空白页复用
   editExisting: /[?&]article_id=|\bonline_modify\b/,
   listUrl: "https://baijiahao.baidu.com/builder/rc/content",

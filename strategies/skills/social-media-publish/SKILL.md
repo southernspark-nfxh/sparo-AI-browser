@@ -26,9 +26,10 @@ node publish.mjs --platform toutiao --article <目录>
 node publish.mjs --platform baijiahao --article <目录> --schedule "2026-11-11 12:00"
 node publish.mjs --platform dayu --article <目录> --dry-run
 node publish.mjs --platform sohu --article <目录> --probe
+node publish.mjs --platform weixin --article <目录>
 ```
 
-平台只认 `toutiao`、`baijiahao`、`dayu`、`sohu`。文章目录固定是 `title.txt`、`body.md`、`cover.jpg`、`images/`。
+平台只认 `toutiao`、`baijiahao`、`dayu`、`sohu`、`weixin`。文章目录固定是 `title.txt`、`body.md`、`cover.jpg`、`images/`。微信公众号只存草稿，群发由人点（细节见 `weixin-publish` 技能）。
 
 步骤固定为：`openBlank → fillTitle → fillBody → insertImages → setCover → setOptions → publishOrSchedule → verify`。任一步失败就停，输出平台、步骤、原因、tabId、页面提示。`--dry-run` 填到选项回读为止，不点发布。定时必须写成 `--schedule "YYYY-MM-DD HH:mm"`，不带时间不会开跑。
 

@@ -1146,7 +1146,7 @@ async function removeVideo(ctx) {
 export const baijiahaoVideo = {
   host: "baijiahao.baidu.com",
   writeUrl: "https://baijiahao.baidu.com/builder/rc/edit?type=video",
-  writeMark: "/builder/rc/edit",
+  writeMark: "/builder/rc/edit?type=video",
   editExisting: /article_id=|online_modify/,
   readTitle: async (ctx) => {
     const state = await readState(ctx);

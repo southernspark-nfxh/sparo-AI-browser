@@ -1,0 +1,50 @@
+{
+  "id": "weixin",
+  "name": "微信公众号",
+  "entry": {
+    "host": "mp.weixin.qq.com",
+    "writeUrl": "https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit_v2&action=edit&isNew=1&lang=zh_CN",
+    "listUrl": "https://mp.weixin.qq.com/cgi-bin/appmsg?begin=0&count=10&t=media/appmsg_list&type=77&action=list_card&lang=zh_CN",
+    "dataUrl": "",
+    "commentUrl": ""
+  },
+  "auth": {
+    "tokenSource": "url",
+    "csrfHeader": ""
+  },
+  "limits": {
+    "titleMin": null,
+    "titleMax": 64,
+    "bodyMax": null,
+    "imagesMax": null,
+    "perDay": null,
+    "minGapMinutes": null
+  },
+  "image": {
+    "rehost": true,
+    "stripExternal": null,
+    "minDistinctImages": null,
+    "coverMode": "1张（2.35:1，可裁剪）"
+  },
+  "switches": {
+    "required": [],
+    "forbidden": [],
+    "defaults": []
+  },
+  "schedule": {
+    "supported": false,
+    "uiPath": "",
+    "note": "定时发布暂未接入；群发由人工点"
+  },
+  "readback": ["COVER_NOT_APPLIED", "SAVE_NO_APPMSGID", "COVER_LOST"],
+  "data": {
+    "metricsMap": {},
+    "delayDays": null,
+    "revenueTypes": [],
+    "pageLimit": null
+  },
+  "capabilities": {
+    "supportsDraft": true,
+    "supportsUpdate": false
+  }
+}

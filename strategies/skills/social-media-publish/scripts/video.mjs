@@ -651,13 +651,19 @@ async function selfCheck() {
   if (!seeded.coverPortrait.endsWith("cover_portrait.jpg")) throw new Error("--auto-cover 没有回填竖版封面路径");
 
   const stamp = { owner: "agent:social-media-publish" };
+  const typed = editorCandidates([
+    { id: "news", url: "https://baijiahao.baidu.com/builder/rc/edit?type=news", owner: stamp.owner, envId: "ad0fe9db" },
+    { id: "events", url: "https://baijiahao.baidu.com/builder/rc/edit?type=events", owner: stamp.owner, envId: "ad0fe9db" },
+    { id: "video-v2", url: "https://baijiahao.baidu.com/builder/rc/edit?type=videoV2", owner: stamp.owner, envId: "ad0fe9db" },
+  ], { host: baijiahaoVideo.host, writeMark: baijiahaoVideo.writeMark, editExisting: baijiahaoVideo.editExisting, stamp, envId: "ad0fe9db" });
+  if (typed.accepted.length !== 1 || typed.accepted[0].id !== "video-v2") throw new Error("视频复用了图文或动态编辑页");
   const rows = [
     { id: "right", url: "https://baijiahao.baidu.com/builder/rc/edit?type=video", owner: stamp.owner, envId: "ad0fe9db" },
     { id: "other-env", url: "https://baijiahao.baidu.com/builder/rc/edit?type=video", owner: stamp.owner, envId: "3c8b923f" },
     { id: "other-owner", url: "https://baijiahao.baidu.com/builder/rc/edit?type=video", owner: "someone-else", envId: "ad0fe9db" },
     { id: "list", url: "https://baijiahao.baidu.com/builder/rc/content?type=video", owner: stamp.owner, envId: "ad0fe9db" },
   ];
-  const ctx = { host: "baijiahao.baidu.com", writeMark: "/builder/rc/edit", editExisting: null, envId: "ad0fe9db", title: "本任务标题" };
+  const ctx = { host: "baijiahao.baidu.com", writeMark: baijiahaoVideo.writeMark, editExisting: null, envId: "ad0fe9db", title: "本任务标题" };
   const io = (list) => ({
     sessionStamp: async () => stamp,
     tabs: async () => ({ activeId: "right", tabs: list }),
