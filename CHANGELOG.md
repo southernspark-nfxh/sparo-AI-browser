@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.7.0] — 2026-11-16 微信公众号图文发布（存草稿）、排版与 docx 导入
+
+**新增微信公众号发布适配器。** `social-media-publish` 接入第五个平台 `weixin`（`scripts/adapters/weixin.mjs` + `platforms/weixin.json`），与头条 / 百家号 / 大鱼号 / 搜狐号共用同一套 `publish.mjs` 与账号环境门。流程走到「存草稿」为止：标题、正文、封面进入编辑器后在公众号后台草稿箱可核验；群发发表仍由人点，未知表单不猜。`--probe` 返回 `PROBE_OK`；实测草稿 appmsgid `100001874`、`100001881`、`100001886`。
+
+**公众号排版与 docx 正文导入。** 新增 `scripts/format.mjs`（正文 15px / 行高 1.75、H2 主色竖条、引用浅灰底、图片整宽圆角）与 `scripts/docx.mjs`（默认从 docx 导入正文），`article.mjs` 支持 `@@IMG1@@` 占位符按序替换。无新增 npm 依赖。
+
+**企鹅号发布技能入仓。** `strategies/skills/qie-publish/` 收录 SKILL.md 与四个脚本（`qie.mjs`、`sparo.mjs`、`make_docx.py`），token 只从环境变量或 `%APPDATA%\sparo-store\mcp-auth.json` 读取，不含密钥。同步核对见 [docs/QIE-PUBLISH-SYNC-REPORT.md](./docs/QIE-PUBLISH-SYNC-REPORT.md)。
+
+**安装包资源补齐。** `electron-builder.yml` 新增把 `strategies/skills/social-media-publish/platforms` 复制到 `resources/platforms`（`profile.mjs` 依赖相邻平台 JSON）；`resources/social-publish-scripts` 继续随包提供可读脚本副本。
+
+**边界声明：** 只做存草稿；群发发表、定时发布、正文插图（`insertImages` 仍跳过）未接入。发布脚本随安装包分发，主进程未改。
+
+**验证：** 8 个本轮脚本 `node --check` 全通过；`publish.mjs --self-check` 与 `video.mjs --self-check` 均 `SELF_CHECK_OK`；`npx vitest run tests/skills-format.test.ts` 2 条通过。黄金场景 G1–G3 未重测，沿用 0.6.9 包结论（本轮只改技能脚本与打包资源）。
+
+## [0.6.9] — 2026-11-16 店小秘后台填表修复与百家号编辑页类型隔离
+
+**店小秘速卖通编辑技能升 v5。** P4 填表 job 的行间让出由 `requestAnimationFrame` 改为 `setTimeout(0)`，避免后台 hidden 标签永久卡在首行。真实考试单中 v5 P4 428ms 完成；主图、英文标题、14 个英文属性、关税、29 行 SKU 和 18 张 800 宽图片通过保存前 QA。图片翻译只读到「6 张预计 30 秘豆」费用闸门，未点一键翻译，未扣费、未保存、未提交平台。
+
+**百家号图文与视频不再互相复用错类型编辑页。** 图文 `writeMark` 限定 `/builder/rc/edit?type=news`，视频限定 `/builder/rc/edit?type=video` 并兼容 `videoV2`；`news / events / videoV2` 夹具进入两副本自检，避免把动态或其他内容类型页面当成本次草稿。
+
+**补完提交前真机验收。** 图文完整 dry-run 与 `--from setOptions` 续跑均在 `百家号2 / ad0fe9db`、同一编辑标签和「图一乐研究所」账号下完成；全新 8 秒视频 dry-run 读回时长、标题和 5 个话题，并在上传前、上传后、提交前三次通过账号门。提交与核验均为 `clicks:0`，没有真实发布或定时发布，结束后恢复原活动标签。A / B / D / F / G / I / J 通过；E 因 `百家号三 / 3c8b923f` 未登录保留阻塞，没有用自检冒充真机通过。
+
+**安装包补齐平台规则资源。** `profile.mjs` 在模块加载时读取 `social-publish-scripts/../platforms/*.json`，初版候选包漏拷该目录会让所有图文平台在开页前失败。现由 `electron-builder.yml` 将四个平台 JSON 放进 `resources/platforms`；重打包后 release 与最终安装目录的图文 / 视频自检均 `SELF_CHECK_OK`，四个平台 `--plan` 全部实际读回。
+
+**验证：** 源仓库与安装副本的图文 / 视频自检均 `SELF_CHECK_OK`，4 个本轮脚本逐文件同步且 SHA-256 一致；`npm run typecheck` 0 错误，`npm test` 137 文件 / 1052 条全绿。最终安装版 G1 / G2 / G3 已复测：G1 开微博通过，G2 文档真实落盘并明示首轮边界，G3 独立新文档在「继续」后补出 40 条续篇；首轮缺口和续篇回执路径少写一个 `.md` 的瑕疵均记录在黄金场景底账。公众号原编辑页 `5866bad9` 未恢复，另一编辑页 `37b0037e` 未动，已在收尾任务书保留现场说明。
+
 ## [0.6.8] — 2026-11-16 外部发布技能按账号环境隔离与视频账号硬门
 
 **TRAE 外部发布技能以前不认 Sparo 账号环境。** 用户点名「百家号二」时，图文和视频脚本仍可能落到默认登录态，提交前也不核对标签属于哪个号。现在 `--env <envId>` 贯穿参数解析、开页、标签复用和 `--from` 续跑；名册按「汉字 / 阿拉伯数字归一后全名精确匹配」，缺值、找不到、归一后重名都失败关闭，绝不回退默认账号；立即发布、定时发布和 dry-run 都要过「标签环境 + 页面账号名」硬门，账号名读不到就不提交。

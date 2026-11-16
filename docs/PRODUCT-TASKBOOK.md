@@ -1,15 +1,43 @@
 # Sparo 现行产品任务书
 
 > 持续更新。与原版 **同一份正文**，便于两边对照。上一版见 [archive/2026-08/PRODUCT-TASKBOOK-20260811.md](./archive/2026-08/PRODUCT-TASKBOOK-20260811.md)。  
-> 版本：**v0.6.8 · 2026-11-16**（0.6.6 误收工作台半成品已回滚重打；0.6.6 安装包作废；0.6.8 把外部发布技能的账号环境隔离与视频账号硬门打进安装包）  
-> 上一包：**v0.6.0 · 2026-11-12**（多账号环境 + 自媒体自动发布已打包：`release\Sparo-Setup-0.6.0.exe`）  
+> 版本：**v0.7.0 · 2026-11-16**（微信公众号图文发布只到存草稿；公众号排版与 docx 导入；企鹅号技能入仓）  
+> 上一包：**v0.6.9 · 2026-11-16**（店小秘 v5 后台填表修复；百家号图文 / 视频编辑页类型隔离；补齐 `resources/platforms`）  
 > 状态：**进行中**（云订阅 M1 代码已落地并人测过登录/付款；上架未完；飞书网页已做；侧栏大脑已让模型编手；0.6.0 多账号环境 + social-media-publish v0.3.6 已随包发布）  
 > 产品文案仍以 [PRODUCT.md](./PRODUCT.md) 为准，不要把任务书当商店上架稿。  
-> 先读：[ARCHITECTURE.md](./ARCHITECTURE.md) · [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) · [CHANGELOG.md](../CHANGELOG.md) 0.6.8 · 根目录 [AGENTS.md](../AGENTS.md)
+> 先读：[ARCHITECTURE.md](./ARCHITECTURE.md) · [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) · [CHANGELOG.md](../CHANGELOG.md) 0.7.0 · 根目录 [AGENTS.md](../AGENTS.md)
 >
 > **大脑进度（0.1.19）：** 听整句、站点表换站、模型编 `handbook` / 写下一步已进代码。10-26 起任务循环硬规则：新任务出确认卡、关单必有声、跑完计划步才许收摊、挂起答复接得回。10-27 起同能力多段逐段对账，最小化不再把窗口拉回前台。`absorb`（页上价格对约束）未开工。9 月交接稿见 [archive/2026-09/TRAE-PROMPT-AGENT-BRAIN.md](./archive/2026-09/TRAE-PROMPT-AGENT-BRAIN.md)，以 changelog 和测试为准。
 
-## 2026-11-16 已落代码（外部发布技能：点名账号不再退回默认登录态）
+## 2026-11-16 已落代码（0.7.0：微信公众号图文存草稿、排版与 docx 导入）
+
+对外变更见 [CHANGELOG.md](../CHANGELOG.md) 0.7.0；打包与同步细节见 [NOTICE-20261116-WEIXIN-PACKAGING.md](./NOTICE-20261116-WEIXIN-PACKAGING.md)、[NOTICE-20261116-SKILL-WEIXIN-FORMAT-SYNC.md](./NOTICE-20261116-SKILL-WEIXIN-FORMAT-SYNC.md)、[QIE-PUBLISH-SYNC-REPORT.md](./QIE-PUBLISH-SYNC-REPORT.md)。
+
+- `social-media-publish` 接入第五个平台 `weixin`：新增 `scripts/adapters/weixin.mjs`、`platforms/weixin.json`、`strategies/skills/weixin-publish/SKILL.md`，`engine.mjs` / `publish.mjs` 注册平台；只做到「存草稿」，群发仍由人点
+- 新增 `scripts/format.mjs`（公众号排版）与 `scripts/docx.mjs`（默认 docx 导入正文）；`article.mjs` 支持 `@@IMG1@@` 占位符；无新增 npm 依赖
+- `electron-builder.yml` 增加 `platforms` → `resources/platforms`，打包后 `resources/social-publish-scripts/adapters/weixin.mjs` 与 `resources/platforms/weixin.json` 均可寻
+- `strategies/skills/qie-publish/` 入仓（4 文件，token 只读环境变量或 `mcp-auth.json`，无密钥）
+- 验证：8 个脚本 `node --check` 全过；图文 / 视频 `--self-check` 均 `SELF_CHECK_OK`；`tests/skills-format.test.ts` 2 条通过。本轮未改主进程，G1–G3 未重测，沿用 0.6.9 包结论
+- 边界：不做群发发表、定时发布、正文插图；`docs/listings/` 未动
+
+## 2026-11-16 收尾验收（0.6.9：店小秘 v5 + 外部发布 dry-run）
+
+执行任务书：[TASKBOOK-20261116-CLOSEOUT.md](./TASKBOOK-20261116-CLOSEOUT.md)。Trae 主责真机验收与交付；本轮发现的缺陷均由 Trae 最小修复，没有派 Cursor。基线为 0.6.8；因技能与发布脚本有实际修复，进入 0.6.9 打包门禁。
+
+本轮不重新加回标签会话恢复：0.6.6 / 0.6.7 已按用户后来的决定撤掉，原因是恢复出大量空白标签；若将来重开必须另立任务，先证明恢复页真实加载。
+
+- 店小秘 `dxm-smt-editor-ops` 升 v5：P4 行间让出由 `requestAnimationFrame` 改为 `setTimeout(0)`，后台 hidden 标签真机 428ms 完成；保存前 QA 全绿，图片翻译停在 30 秘豆费用闸门前，未付费、未保存、未提交平台
+- 百家号图文 / 视频编辑页复用分别限定 `type=news` / `type=video`（兼容 `videoV2`），不再把 `events`、图文、视频编辑页互相当草稿；两副本自检均补类型夹具并通过
+- 真机通过 A / B / D / F / G / I / J：图文完整 dry-run 与 `--from setOptions` 续跑同页同账号；全新 8 秒视频 dry-run 读完时长、标题、5 个话题和三次账号门；提交 / 核验均 `clicks:0`，结束后恢复原活动标签
+- E 未通过真机验收：`百家号三 / 3c8b923f` 未登录，无法构造已登录跨环境编辑页。只保留自检覆盖，不冒充真机通过
+- 完整回归：`npm run typecheck` 0 错误；`npm test` 137 文件 / 1052 条全绿。4 个本轮发布脚本已逐文件同步安装副本，SHA-256 一致，两副本图文 / 视频自检全绿
+- 初版 0.6.9 候选包暴露运行资源缺漏：`profile.mjs` 需要相邻的 `platforms/*.json`，而 `electron-builder.yml` 原先只复制脚本。已补齐 `resources/platforms`；重打包后 release 与最终安装目录的图文 / 视频自检均 `SELF_CHECK_OK`，四个平台 `--plan` 均实际读回规则
+- 最终安装包：`release\Sparo-Setup-0.6.9.exe`，104,950,266 字节，2026-11-16 16:48:23，SHA-256 `38E2E2C3283B94A2C3D04F282058F7260EDFA166AD8AC63F76AA89D4BF62324D`；HEAD `b4a6fa3`。已静默安装到 `D:\Program Files\Sparo`，安装目录 `app.asar` 与 `release\win-unpacked` 一致
+- 安装版最终验收使用隔离配置 `%TEMP%\sparo-069-qa-profile` 与 MCP 3922，保留原登录态但不污染原 `%APPDATA%\sparo-store` 底账；`/health` 正常、81 个工具，店小秘技能读回 v5
+- 安装版黄金场景：G1 通过；G2 新文档真实落盘并明示首轮采集边界；G3 另起独立逐条稿，首轮有缺口，发「继续」后补出 40 条续篇，记为续跑后通过。续篇回执路径少写一个 `.md`（实际 `.md.md`），已在 [QA-GOLDEN-SCENARIOS.md](./QA-GOLDEN-SCENARIOS.md) 单独保留，不伪称路径一致
+- 现场遗留：公众号原编辑页 `5866bad9` 未恢复，`37b0037e` 未动；没有真实发布、定时发布、付费翻译或保存店小秘商品
+
+## 2026-11-16 已落代码（0.6.8：外部发布技能点名账号不再退回默认登录态）
 
 任务书与验收细节见 [SOCIAL-PUBLISH-R4-ACCOUNT-ENV-TASKBOOK.md](./SOCIAL-PUBLISH-R4-ACCOUNT-ENV-TASKBOOK.md) 第 9 节；决策见 [DECISION-POINTS.md](./DECISION-POINTS.md) 第 59 条。改动在 `strategies\skills\social-media-publish`（随安装包分发：asar 内 `strategies/skills/**`，`resources/social-publish-scripts` 为可读副本），Sparo 主进程未动。
 
@@ -20,7 +48,7 @@
 - 报告、失败诊断、台账带 `envId` / `envName` / `accountName`；`probe` 按环境过滤标签
 - 视频默认只发「图一乐研究所」（`百家号2` = `ad0fe9db`）：传视频前、上传后、发布前各核对一次站点昵称，不是这个号就停，上传后才发现上错号会先删掉刚传的视频
 - 视频脚本新增 `--account <昵称>`；标题 + 话题 ≤ 50 字在立即发布与定时发布前都校验，话题少于 5 个直接失败
-- 验收：两副本 `--self-check` 全绿、`.mjs` 全过 `node --check`；真机只测了名册解析，编辑页 dry-run 待 Sparo 启动后补
+- 当时只完成两副本自检与名册解析；编辑页 dry-run 已在上方 0.6.9 收尾段补测
 - 0.6.8 安装包：`release\Sparo-Setup-0.6.8.exe`；代码已推 `origin/master`（`6a934fe`）
 
 ## 2026-11-13 已落代码（0.6.7：0.6.6 内容 + 摘除误收的半成品）
