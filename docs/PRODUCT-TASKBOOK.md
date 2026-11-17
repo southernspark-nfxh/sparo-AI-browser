@@ -19,7 +19,8 @@ Cursor 复核 0.7.5 通过（[CHANGE-REPORT §7](./CHANGE-REPORT-20261117-075-DE
 - R3：`reopenLastTab` 对已删环境改开普通标签并回执「环境已删除，已改开普通标签」，Ctrl+Shift+T 不再抛未捕获异常
 - 文档：MULTI-ACCOUNT 第 48 行旧口径改写
 - 验证：typecheck 0 错误；vitest 139 文件 / 1062 条全绿（env-delete 5 条）
-- 安装包：`release\Sparo-Setup-0.7.6.exe`，见 [QA-GOLDEN-SCENARIOS.md](./QA-GOLDEN-SCENARIOS.md) 0.7.6 段
+- 安装包：`release\Sparo-Setup-0.7.6.exe`，105,007,212 字节，2026-11-17 17:47:36，SHA-256 `9C10066742AC169BF8A3CCA3835374E9E87F9D02E9DE4D2B5A45A1C7878FF58B`；构建时 HEAD `3231342`
+- 真机（隔离 3928）：删除链路七步过；R2 的 EBUSY 留壳 warn 日志实证；停进程后 Cookies 库 `iso_del_rows=0 total_rows=0`；包内 `publish.mjs --self-check` = `SELF_CHECK_OK`；未审适配器改动经 stash 隔离未进包，见 [QA-GOLDEN-SCENARIOS.md](./QA-GOLDEN-SCENARIOS.md) 0.7.6 段
 - 遗留：N3 `sparo_info` 版本仍 0.1.0；登录态验收（G5/五站 probe/四站 dry-run/真实输入法 60 秒）待补
 
 ## 2026-11-17 已落代码（0.7.5：删除环境即失效 + 台账不进包）

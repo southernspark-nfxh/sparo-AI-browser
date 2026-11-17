@@ -126,6 +126,18 @@ $chat | Where-Object { $_.text -like "*$($want.Substring(0, [Math]::Min(12, $wan
 
 安装包复测至少 G1、G2、G3。记下 `git rev-parse --short HEAD` 和 `release\Sparo-Setup.exe` 的修改时间。开发窗绿了，不能代替安装包。
 
+### 2026-11-17 0.7.6 安装包（删除环境 R2/R3 加固真机复测）
+
+- 包：`release\Sparo-Setup-0.7.6.exe`（105,007,212 字节，2026-11-17 17:47:36，SHA-256 `9C10066742AC169BF8A3CCA3835374E9E87F9D02E9DE4D2B5A45A1C7878FF58B`），构建时 HEAD `3231342`（chore(release): 0.7.6）。
+- 环境隔离：`SPARO_CONFIG_DIR=%TEMP%\sparo-qa-076`、`SPARO_MCP_PORT=3928`；用户 0.7.0（3921）全程未动。静态：typecheck 0 错误；vitest **139 文件 / 1062 条全绿**（`tests/env-delete.test.ts` 增至 5 条：R2 清存储失败保环境可重试、R3 恢复指向已删环境改开普通标签）。
+- **删除链路七步过**：`create_env`（10567960）→ `navigate({url, envId})` 开环境标签（91c996e7）→ `execute` 写 `iso_del=A` Cookie + localStorage 并读回 → `delete_env` 回执 `env 10567960 deleted, closed 1 env tabs` → 环境标签已关（只剩默认标签）→ 名册不含该环境。`/health` 81 个工具在线。
+- **R2 真机实证**：删除时主进程日志出现新加的 `[env] partition dir left behind: EBUSY … DIPS`——目录因 Windows 文件锁留空壳不再静默，且 clearStorageData 已先行成功（下一条核验）。0.7.5 同场景这条是静默的。
+- **停进程后存储核验**：sql.js 读 `Partitions/env_10567960/Network/Cookies`：`iso_del_rows=0 total_rows=0`。
+- **包内核对**：asar 主包含 R2 字符串 `clear storage failed, env kept` 与 R3 字符串 `环境已删除，已改开普通标签`；`ledger/2026-11.jsonl` 仍排除（仅 `scripts/ledger.mjs`）；`publish.mjs --self-check` = `SELF_CHECK_OK`；social-media-publish 的 `baijiahao/toutiao/page/engine` 四文件哈希与提交版一致——**未审适配器改动（插图弹窗续跑、owner="user"）经 stash 隔离未进包**。
+- **复现坑（新增）**：Sparo.exe 是 GUI 子系统，PowerShell `&` 立即返回，`run_in_background` shell 一退出就按 job object 回收子进程——实例秒退。须带输出管道挂住：`& Sparo.exe 2>&1 | ForEach-Object { "$_" }`。
+- **未重测**：G1–G3 沿用 0.7.4 记录（0.7.6 只改 deleteEnv/reopen 链路、测试与文档，任务循环与发布链路零改动，未审适配器改动未进包）；登录态相关（G5/五站 probe/四站 dry-run/真实输入法 60 秒）仍待补；R3 的 Ctrl+Shift+T 真机按键待下版人测（单测已覆盖）。
+
+
 ### 2026-11-17 0.7.5 安装包（删除环境即失效真机复测，决策点 #63）
 
 - 包：`release\Sparo-Setup-0.7.5.exe`（105,006,100 字节，2026-11-17 16:25:41，SHA-256 `960B3F17DB235ED8F3EF3BCD139370AFA56B7F14D50BAE313556095C43535FFC`），文件版本 0.7.5。真机跑同一轮产出的 `release\win-unpacked\Sparo.exe`。
