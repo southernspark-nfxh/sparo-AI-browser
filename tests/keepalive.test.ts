@@ -72,7 +72,6 @@ type KeepBrowser = SparkBrowser & {
     webContents: { isDestroyed: () => boolean; setBackgroundThrottling: (on: boolean) => void };
   };
   syncShellKeepalive: () => void;
-  setShellBackgroundThrottling: (throttle: boolean) => void;
   noteSidebarMessages: () => void;
   maybeRestoreForCoPresence: (actionType?: string, userAsk?: string) => void;
   restoreForCoPresence: () => void;
@@ -194,18 +193,19 @@ describe("background tasks do not steal the window", () => {
     };
   }
 
-  it("holds shell throttling only while a task runs minimized", () => {
+  it("keeps shell throttling off even while minimized", () => {
     const { browser, throttle } = shell();
     browser.syncShellKeepalive();
-    expect(throttle.at(-1)).toBe(true);
     browser.chatRunning = true;
     browser.syncShellKeepalive();
-    expect(throttle.at(-1)).toBe(false);
     browser.chatRunning = false;
     browser.activeMission = { state: "running", goal: { kind: "research" } };
     browser.syncShellKeepalive();
     expect(browser.agentTasksRunning()).toBe(true);
-    expect(throttle.at(-1)).toBe(false);
+    // 节流一旦打开就不会自己关，窗口被判遮挡后 rAF 整条停掉，顶栏和侧栏白掉。
+    // 所以不管最小化还是没活儿，壳层一律不节流。
+    expect(throttle.length).toBeGreaterThan(0);
+    expect(throttle.every((on) => on === false)).toBe(true);
   });
 
   it("flashes the taskbar for a new sidebar line and does not restore", () => {

@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.7.2] — 2026-11-17 壳层白屏：真正可疑的那根线——壳层被重新打开了后台节流
+
+**0.7.1 只是把恢复从 13 秒压到 6.7 秒，白还是白。** 这次在用户机器 12:23–12:28 的 `crash.log` 里看到可疑链路：最小化回调与 `restore` 都会调用 `setBackgroundThrottling(true)`，把窗口创建时的 `backgroundThrottling: false` 又关回去。节流一旦打开就不会自己关；此后 Chromium 只要认为窗口被遮挡（被别的窗口盖一下、锁屏、休眠回来），壳层的 rAF 与计时器就整条停掉——网页视图照常画，顶栏和侧栏白成一张壳，人再最小化一次才恢复。这解释了为什么每次都在修、却总复发：0.7.1 只改了恢复阶梯，没动这条开关。
+
+**壳层永不节流。** `syncShellKeepalive` 现在对每扇窗口只下发 `false`，`restore` 也只重申 `false`；旧策略「最小化且没活儿就省 CPU」整个去掉。省的那点 CPU，不值得再白一次。
+
+**关掉 Windows 原生遮挡判定。** 启动参数 `disable-features` 增加 `CalculateNativeWinOcclusion`。被别的窗口盖过、锁屏解锁、休眠回来之后，它会把这扇窗一直当成「被挡住」，浏览器进程不再给页面发 BeginFrame；`disable-backgrounding-occluded-windows` 只管渲染进程优先级，管不了这一层。
+
+**重绘不再用同步 IPC。** `invalidateShell` 去掉 `getZoomFactor / setZoomFactor` 的缩放轻推：渲染进程真卡住时这两个同步调用会把主进程一起拖住十秒，反而让 `unresponsive` 一次次重来。0.6.0–0.6.3 的账上四十次重绘从没救回来，这个轻推本来也没用。
+
+**诊断修两处。** 长任务上报以前按 `{ d }` 读，而壳层报的是 number，`long=` 永远是 `none`——现在能真的看到是谁占住主线程；壳层首屏还没读出 `settings` 时，`unresponsive` 诊断不再抛 `apiKey` 错误盖掉现场，且首屏 15 秒内一次心跳都没有的 `unresponsive` 不再触发重挂窗口（加载期误伤）。
+
+**验证：** `tsc --noEmit` 0 错误；`vitest run` 137 文件 / 1052 条全绿（节流用例改为「壳层永远不节流」）。
+
+## [0.7.1] — 2026-11-17 壳层白屏：白屏时间从十几秒压到五秒，并开始记「是谁卡住了」
+
+**0.6.4 的重启是有效的，但太慢，而且没治到根。** 今天 12:17 的 `crash.log` 里，壳层连报 14 拍 0 帧：`repaint ×3` 全部无效，直到 `restart` 才回来，中间白了 13 秒。0.6.4 起「重启渲染进程」确实是唯一有效的招（0.6.0–0.6.3 的 40 次重绘一次都没救回来），所以这次不再把时间浪费在反复重绘上。
+
+**先学人那招：把窗口重新挂一次，再不行才重启。** 人手动最小化再还原就能恢复，说明卡住的是窗口这块合成面。心跳还在、只是 0 帧时，停帧第 3 拍先对窗口做一次隐藏再显示（不重载页面、不丢侧栏状态，人在这扇窗上才还焦点），下一拍还没出帧就重启渲染进程；连心跳都断了说明渲染进程整条停了，重挂没用，4 秒判死后直接重启。`SHELL_PAINT_RELOAD_AFTER_REPAINTS` 从 3 改成 1，重绘间隔 3 秒缩到 1.5 秒。
+
+**壳层不再被后台节流。** 网页视图铺满内容区后，窗口自己的 WebContents 只剩顶栏和侧栏一条边，Chromium 的遮挡判定可能把它当成后台页而停掉 rAF。窗口加 `backgroundThrottling: false`，启动加 `disable-backgrounding-occluded-windows` / `disable-renderer-backgrounding`，从源头排除这一类停帧。
+
+**停帧时开始记「长任务」。** 壳层用 `PerformanceObserver` 采集主线程长任务耗时，随每秒心跳上报；`stalled` / `repaint` / `restart` 三类日志都带上 `long=…` 和 `docVisible=…`。下次再白屏，日志能直接分出是「JS 占住主线程」还是「只剩合成分不出帧」，不用再猜。
+
+**验证：** `tsc --noEmit` 0 错误，`vitest run` 137 文件 / 1052 条全绿（恢复阶梯用例改为「一次重绘后重启」）。
+
 ## [0.7.0] — 2026-11-16 微信公众号图文发布（存草稿）、排版与 docx 导入
 
 **新增微信公众号发布适配器。** `social-media-publish` 接入第五个平台 `weixin`（`scripts/adapters/weixin.mjs` + `platforms/weixin.json`），与头条 / 百家号 / 大鱼号 / 搜狐号共用同一套 `publish.mjs` 与账号环境门。流程走到「存草稿」为止：标题、正文、封面进入编辑器后在公众号后台草稿箱可核验；群发发表仍由人点，未知表单不猜。`--probe` 返回 `PROBE_OK`；实测草稿 appmsgid `100001874`、`100001881`、`100001886`。

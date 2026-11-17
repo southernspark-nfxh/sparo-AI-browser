@@ -4169,6 +4169,20 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
 
         // 帧心跳。合成器一旦停帧，顶栏和侧栏会整块发白、网页却照常显示，
         // 人得最小化再最大化才恢复。主进程按「连续几拍 0 帧」判停帧并主动重绘。
+        // 同时把主线程上的长任务耗时报上去：分得清是 JS 占住了主线程，还是只剩合成停了。
+        const longTasks = [];
+        try {
+          if (typeof PerformanceObserver === "function") {
+            new PerformanceObserver((list) => {
+              for (const entry of list.getEntries()) {
+                longTasks.push(Math.round(entry.duration));
+                if (longTasks.length > 8) longTasks.shift();
+              }
+            }).observe({ entryTypes: ["longtask"] });
+          }
+        } catch {
+          /* 内核不支持长任务采样时只报帧数 */
+        }
         let beats = 0;
         const countFrame = () => {
           beats += 1;
@@ -4178,7 +4192,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         let reported = 0;
         setInterval(() => {
           if (!window.sparkShell || typeof window.sparkShell.shellHeartbeat !== "function") return;
-          window.sparkShell.shellHeartbeat(beats - reported, document.visibilityState === "visible");
+          window.sparkShell.shellHeartbeat(beats - reported, document.visibilityState === "visible", longTasks.splice(0, longTasks.length));
           reported = beats;
         }, 1000);
 

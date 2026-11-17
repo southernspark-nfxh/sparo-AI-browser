@@ -1406,6 +1406,11 @@ export class SparkBrowser {
         nodeIntegration: false,
         // Sandboxed ESM preload often fails to expose contextBridge APIs.
         sandbox: false,
+        // 网页视图铺满内容区后，窗口自己的 WebContents 只剩顶栏和侧栏一条边；
+        // Chromium 的遮挡判定会把它当成「被遮住的后台页」而停掉 rAF 与计时器，
+        // 壳层从此不再出帧——网页照常画，顶栏和侧栏白在那儿，只能最小化再还原。
+        // 壳层必须关掉后台节流，让它在任何遮挡判定下都持续出帧。
+        backgroundThrottling: false,
         preload: this.shellPreload(),
       },
     });
@@ -1419,6 +1424,7 @@ export class SparkBrowser {
     this.window = this.buildWindow();
     this.wins.set("main", this.window);
     this.shellFocusAt.set("main", Date.now());
+    this.shellBornAt.set("main", Date.now());
     this.window.on("focus", () => this.shellFocusAt.set("main", Date.now()));
     this.win.setMenuBarVisibility(false);
     traceMainWindow(this.window);
@@ -1498,8 +1504,8 @@ export class SparkBrowser {
       this.armChromeGuard();
       // 恢复过渡最容易留下「网页在画、壳层不画」，回来先强制重绘一次。
       this.invalidateShell(this.win);
-      // 壳层回到前台就恢复节流。Agent 标签是独立 webContents，不受这条影响。
-      this.setShellBackgroundThrottling(true);
+      // 壳层永不后台节流：节流会让 rAF 在窗口被判遮挡时整块停掉，白成一张壳。
+      this.setWinThrottling(this.win, false);
     });
     this.win.on("minimize", () => this.syncShellKeepalive());
     this.win.on("focus", () => {
@@ -2600,6 +2606,10 @@ export class SparkBrowser {
     const win = this.wins.get(winId) || this.window;
     this.lastShellUnresponsiveAt = Date.now();
     noteHang("shell-unresponsive", `win=${winId} ${this.sidebarPayloadDiag()}`);
+    // 首屏还在加载（一次心跳都没来过）时的 unresponsive 是正常的：壳层 DOM 大、
+    // 侧栏数据还在灌。这时候 hide/show 只会把正在加载的壳层再打断一次。
+    const bornAt = this.shellBornAt?.get(winId) || 0;
+    if (!this.shellBeatAt?.get(winId) && bornAt && Date.now() - bornAt < 15_000) return;
     if (this.windowIsMinimized()) {
       this.flashTaskbarIfHidden();
       return;
@@ -2618,6 +2628,9 @@ export class SparkBrowser {
    * 这里按字段量体积，并把真正的错误消息落盘。
    */
   private sidebarPayloadDiag(): string {
+    // 壳层首屏还没加载完就可能先报 unresponsive，这时 settings 还没读出来。
+    // 诊断不该再抛一个 apiKey 错误，把真正的现场盖掉。
+    if (!this.settings) return "sidebar skipped: settings not loaded";
     try {
       const payload = this.getSidebarPayload(false, true) as Record<string, unknown>;
       let bytes = 0;
@@ -2669,6 +2682,7 @@ export class SparkBrowser {
     const winId = `w${++this.winSeq}`;
     const win = this.buildWindow();
     this.wins.set(winId, win);
+    this.shellBornAt.set(winId, Date.now());
     this.bindWindow(win, winId);
     this.activeWinId = winId;
     this.withWin(winId, () => {
@@ -2731,7 +2745,8 @@ export class SparkBrowser {
         this.scheduleLayout(150);
         this.armChromeGuard();
         this.invalidateShell(win);
-        this.setShellBackgroundThrottling(true);
+        // 多开窗口同样永不节流，理由同主窗口。
+        this.setWinThrottling(win, false);
       }),
     );
     win.on("show", () =>
@@ -2782,6 +2797,7 @@ export class SparkBrowser {
   private closeWindow(winId: string): void {
     this.wins.delete(winId);
     this.shellReadyWins.delete(winId);
+    this.shellBornAt.delete(winId);
     this.placedWins.delete(winId);
     this.activeTabs.delete(winId);
     this.holeBoundsByWin.delete(winId);
@@ -2975,12 +2991,6 @@ export class SparkBrowser {
     return state === "running" || state === "waiting_human";
   }
 
-  private setShellBackgroundThrottling(throttle: boolean): void {
-    for (const [, win] of this.liveWins()) {
-      this.setWinThrottling(win, throttle);
-    }
-  }
-
   private setWinThrottling(win: BrowserWindow, throttle: boolean): void {
     try {
       win.webContents.setBackgroundThrottling(throttle);
@@ -2989,22 +2999,18 @@ export class SparkBrowser {
     }
   }
 
-  /** 最小化且还有 Agent 任务时，壳层定时器不节流；任务结束或窗口恢复后回到节流。 */
+  /**
+   * 壳层永远不节流。
+   *
+   * 0.6.5 起这里是「最小化且没活儿就开节流」，可节流一旦打开就不会自己关：窗口 restore
+   * 回来之后，Chromium 仍会在它认为被遮挡时停掉 rAF 和计时器——顶栏、侧栏整块发白，
+   * 网页照常画，人得再最小化一次才恢复。省的那点 CPU 不值得再白一次。
+   */
   private syncShellKeepalive(): void {
     const wins = this.liveWins();
     if (!wins.length) return;
-    const running = this.agentTasksRunning();
-    if (!running) this.coPresenceRestored = false;
-    for (const [, win] of wins) {
-      let minimized = false;
-      try {
-        minimized = win.isMinimized();
-      } catch {
-        continue;
-      }
-      // 这扇窗口最小化且还有活干：不节流，让它继续收推送。
-      this.setWinThrottling(win, !(minimized && running));
-    }
+    if (!this.agentTasksRunning()) this.coPresenceRestored = false;
+    for (const [, win] of wins) this.setWinThrottling(win, false);
   }
 
   /** 侧栏新消息在窗口最小化或未聚焦时只闪任务栏，不把窗口弹回来。 */
@@ -4186,6 +4192,10 @@ export class SparkBrowser {
   private sidebarTabShownForTurn = true;
   /** 每扇窗口最后一次收到壳层心跳的时间。渲染进程彻底卡死时，这是主进程唯一的凭据。 */
   private shellBeatAt = new Map<string, number>();
+  /** 每扇窗口壳层的创建时间。首屏加载期间报 unresponsive 是常态，别拿它去重挂窗口。 */
+  private shellBornAt = new Map<string, number>();
+  /** 壳层报上来的长任务耗时（毫秒）。停帧时写进日志，用来分清是 JS 占住主线程还是合成停了。 */
+  private shellLongTask = new Map<string, number[]>();
   /** 最近几拍侧栏推送，崩溃时写进 crash.log。只留摘要，不留对话正文。 */
   private sidebarFrameLog: string[] = [];
   /** 壳层看门狗：1 秒一拍，不依赖渲染进程主动上报。 */
@@ -4217,6 +4227,18 @@ export class SparkBrowser {
     }
     const frames = Math.max(0, Math.round(Number((raw as { frames?: unknown } | null)?.frames) || 0));
     const documentVisible = (raw as { documentVisible?: unknown } | null)?.documentVisible !== false;
+    const reportedTasks = (raw as { longTasks?: unknown } | null)?.longTasks;
+    if (Array.isArray(reportedTasks) && reportedTasks.length) {
+      const kept = this.shellLongTask?.get(winId) || [];
+      for (const item of reportedTasks) {
+        // shell.html 报的是 number；这里以前按 { d } 取，永远读成 0，long= 一直是 none。
+        const d = Math.round(
+          typeof item === "number" ? item : Number((item as { d?: unknown })?.d) || 0,
+        );
+        if (d >= 200) kept.push(d);
+      }
+      this.shellLongTask?.set(winId, kept.slice(-8));
+    }
     const now = Date.now();
     const prev = this.shellPaint.get(winId) || { zeroStreak: 0, repaints: 0, lastRepaintAt: 0 };
     if (!this.shellPaint.has(winId)) {
@@ -4232,10 +4254,16 @@ export class SparkBrowser {
       return;
     }
     if (next.state.zeroStreak === SHELL_PAINT_DIAG_BEATS) {
-      const line = `[shell-paint] stalled win=${winId} beats=${next.state.zeroStreak} repaints=${next.state.repaints}`;
+      const line = `[shell-paint] stalled win=${winId} beats=${next.state.zeroStreak} repaints=${next.state.repaints} docVisible=${documentVisible} long=${this.longTaskSummary(winId)}`;
       console.log(line);
       noteHang("shell-paint-stall", line);
     }
+  }
+
+  /** 停帧发生前壳层自己报上来的长任务耗时，写进日志用来定位是谁占住了主线程。 */
+  private longTaskSummary(winId: string): string {
+    const kept = this.shellLongTask?.get(winId);
+    return kept && kept.length ? kept.join("/") : "none";
   }
 
   private safeMaximized(win: BrowserWindow): boolean {
@@ -4258,7 +4286,9 @@ export class SparkBrowser {
     reason: "beat-stall" | "silent" | "unresponsive",
   ): void {
     const now = Date.now();
-    const step = shellRecoveryStep(prev, reason === "unresponsive");
+    // 连心跳都没了，说明渲染进程整条停了，重挂窗口救不回来，直接重启；
+    // 心跳还在、只是 0 帧，才是「窗口合成面卡住」，先重挂一次。
+    const step = reason === "silent" ? "reload" : shellRecoveryStep(prev, reason === "unresponsive");
     const next: ShellPaintState = {
       zeroStreak: Math.max(prev.zeroStreak + 1, SHELL_PAINT_STALL_BEATS),
       repaints: prev.repaints + 1,
@@ -4266,15 +4296,37 @@ export class SparkBrowser {
     };
     this.shellPaint.set(winId, next);
     if (step === "reload" && this.restartShellRenderer(winId, win)) {
-      const line = `[shell-paint] restart win=${winId} reason=${reason} streak=${next.zeroStreak} count=${next.repaints} maximized=${this.safeMaximized(win)}`;
+      const line = `[shell-paint] restart win=${winId} reason=${reason} streak=${next.zeroStreak} count=${next.repaints} maximized=${this.safeMaximized(win)} long=${this.longTaskSummary(winId)}`;
       console.log(line);
       noteHang("shell-paint-recover", line);
       return;
     }
-    const line = `[shell-paint] repaint win=${winId} reason=${reason} streak=${next.zeroStreak} count=${next.repaints} maximized=${this.safeMaximized(win)}`;
+    const line = `[shell-paint] repaint win=${winId} reason=${reason} streak=${next.zeroStreak} count=${next.repaints} maximized=${this.safeMaximized(win)} long=${this.longTaskSummary(winId)}`;
     console.log(line);
     noteHang("shell-paint-recover", line);
-    this.invalidateShell(win);
+    this.remountShell(win);
+  }
+
+  /**
+   * 人手动最小化再还原能救回来，说明卡住的是窗口这块合成面，不是页面内容。
+   * 先照这个动作做一次隐藏再显示：不重载页面、不丢侧栏状态，成不成 1 秒内就知道。
+   * 不成再看门狗下一拍直接重启渲染进程。
+   */
+  private remountShell(win: BrowserWindow): void {
+    try {
+      this.invalidateShell(win);
+      if (win.isDestroyed() || win.isMinimized() || !win.isVisible()) return;
+      const wasMaximized = win.isMaximized();
+      const wasFocused = win.isFocused();
+      win.hide();
+      // 人没在这扇窗上时不许抢焦点，只把画面重新挂上。
+      if (wasFocused) win.show();
+      else win.showInactive();
+      if (wasMaximized) win.maximize();
+      if (wasFocused) win.focus();
+    } catch {
+      /* 窗口已销毁：交给下一拍重启 */
+    }
   }
 
   /** 重启壳层渲染进程。同一窗口 2 分钟内最多一次；之后交给 render-process-gone 自动重载。 */
@@ -4336,25 +4388,24 @@ export class SparkBrowser {
   /** 壳层重载 / 重启后清账，避免新渲染进程一上线就被上一轮的停帧计数判死。 */
   private resetShellPaintState(winId: string): void {
     this.shellPaint.delete(winId);
+    this.shellLongTask.delete(winId);
     // 心跳未知 ≠ 心跳超时：没收到过心跳之前不判死，否则首屏加载慢一点就被白白重绘两次。
     this.shellBeatAt.delete(winId);
   }
 
   /**
-   * 强制壳层整窗重绘。比窗口 resize 轻，不动布局、不抢焦点。
-   * 合成器停住时单纯 invalidate 推不动，再把缩放轻推一丝逼它重新提交一帧，
-   * 60ms 后还原（肉眼看不出，也不会影响网页视图）。
+   * 强制壳层整窗重绘。只走异步的 invalidate——不用 zoomFactor。
+   * setZoomFactor / getZoomFactor 是同步 IPC，渲染进程真卡住时会把主进程一起拖住十秒，
+   * 反而让「无响应」反复触发；而且 0.6.0–0.6.3 的账上四十次重绘一次都没救回来。
    */
   private invalidateShell(win: BrowserWindow): void {
     try {
       if (win.isDestroyed() || win.webContents.isDestroyed()) return;
       const wc = win.webContents;
       wc.invalidate();
-      const zoom = wc.getZoomFactor();
-      wc.setZoomFactor(zoom === 1 ? 1.0001 : 1);
       setTimeout(() => {
         try {
-          if (!win.isDestroyed() && !wc.isDestroyed()) wc.setZoomFactor(zoom);
+          if (!win.isDestroyed() && !wc.isDestroyed()) wc.invalidate();
         } catch {
           /* 窗口正在销毁 */
         }

@@ -72,7 +72,7 @@ export type ShellPaintState = { zeroStreak: number; repaints: number; lastRepain
 /** 连续这么多拍一帧没画才算停帧。一拍只是抖动。 */
 export const SHELL_PAINT_STALL_BEATS = 3;
 /** 两次强制重绘的最小间隔，别对着没救回来的窗口每秒打一枪。 */
-export const SHELL_PAINT_REPAINT_COOLDOWN_MS = 3_000;
+export const SHELL_PAINT_REPAINT_COOLDOWN_MS = 1_500;
 /** 连续这么多拍还没恢复就落一次盘，下次复现有账可查。 */
 export const SHELL_PAINT_DIAG_BEATS = 9;
 
@@ -107,9 +107,13 @@ export function shellPaintStalled(
  * 渲染进程连心跳都不发时，主进程这边的停帧计数永远不会再更新，光看 0 帧发现不了。
  * 前台窗口超过这个时间没心跳，就按「壳层已卡死」处理。
  */
-export const SHELL_HEARTBEAT_GAP_MS = 5_000;
-/** 轻推重绘这么多次还推不动，就不能再推了，得重启渲染进程。 */
-export const SHELL_PAINT_RELOAD_AFTER_REPAINTS = 3;
+export const SHELL_HEARTBEAT_GAP_MS = 4_000;
+/**
+ * 轻推重绘这么多次还推不动，就不能再推了，得重启渲染进程。
+ * 0.6.0–0.6.3 的账上 40 次重绘一次都没救回来，所以只留一次机会，
+ * 第二次停帧直接重启，把白屏时间从十几秒压到五秒左右。
+ */
+export const SHELL_PAINT_RELOAD_AFTER_REPAINTS = 1;
 
 /**
  * 窗口在前台、可见、未最小化，却超过 SHELL_HEARTBEAT_GAP_MS 没收到壳层心跳。

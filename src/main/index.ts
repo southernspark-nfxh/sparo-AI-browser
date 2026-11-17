@@ -86,8 +86,17 @@ async function main(): Promise<void> {
   app.userAgentFallback = chromeUserAgent();
   app.commandLine.appendSwitch(
     "disable-features",
-    "ThirdPartyCookiePhaseout,TrackingProtection3pcd",
+    // CalculateNativeWinOcclusion：Windows 自带的窗口遮挡判定。被别的窗口盖一下、
+    // 锁屏解锁、休眠回来之后，它会把这扇窗一直当成「被挡住」，于是浏览器进程不再给
+    // 页面发 BeginFrame——rAF 停、顶栏和侧栏整块发白，网页视图却照常画。
+    // 两个后台降频开关管的是渲染进程优先级，管不了这层，必须把判定本身关掉。
+    "ThirdPartyCookiePhaseout,TrackingProtection3pcd,CalculateNativeWinOcclusion",
   );
+  // 页面视图（WebContentsView）盖在窗口自己的 WebContents 上面时，Chromium 会把整扇窗口
+  // 判成「被遮挡的后台窗口」，停掉壳层的渲染与 rAF —— 顶栏、侧栏白掉，网页却照常显示。
+  // 这两个开关让壳层永不被遮挡降频，和 webPreferences.backgroundThrottling=false 一起兜住。
+  app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
+  app.commandLine.appendSwitch("disable-renderer-backgrounding");
   // 仅 dev：SPARO_DEBUG_PORT=9222 时开 CDP，给自动化自测用；安装包不带。
   if (!app.isPackaged && process.env.SPARO_DEBUG_PORT) {
     app.commandLine.appendSwitch("remote-debugging-port", process.env.SPARO_DEBUG_PORT);

@@ -126,6 +126,16 @@ $chat | Where-Object { $_.text -like "*$($want.Substring(0, [Math]::Min(12, $wan
 
 安装包复测至少 G1、G2、G3。记下 `git rev-parse --short HEAD` 和 `release\Sparo-Setup.exe` 的修改时间。开发窗绿了，不能代替安装包。
 
+### 2026-11-17 0.7.2 安装包级复测（壳层白屏：后台节流被重新打开）
+
+- 包：`release\Sparo-Setup-0.7.2.exe`（105,005,947 字节，2026-11-17 12:37:57，SHA-256 `301A4AEB9B2EEC8F1C083BA3282180F94B59125E3061BFF92A0F4797DED24CAC`），基于 HEAD `6ce4dfe`；测试跑在同一份 `release\win-unpacked\Sparo.exe`。
+- 环境隔离：`SPARO_CONFIG_DIR=%TEMP%\sparo-qa-072c`、`SPARO_MCP_PORT=3947`、CDP 9358；不动 `%APPDATA%\sparo-store` 与已装版本。
+- **用户机器底账**：`%APPDATA%\sparo-store\diag\crash.log` 2026-11-17 12:17 连续 14 拍 0 帧，`repaint ×3` 全部无效，直到 `restart` 才回来，白屏 13 秒；12:23–12:28 又反复 `reason=unresponsive` / `reason=silent`。代码里 `restore` 回调会重新下发 `setBackgroundThrottling(true)`，把窗口创建时的 `backgroundThrottling: false` 关回去——0.7.1 只压短了恢复时间，没动这条线。
+- **最小化/还原后壳层仍按 60fps 出帧（本轮关键项）**：CDP 在 `shell.html` 里数 1 秒 rAF——最小化前 **61** 帧；`ShowWindow(SW_MINIMIZE)` 4 秒再还原 2 秒后仍是 **61** 帧。旧版这条路径会把节流打开，窗口被判遮挡后即 0 帧发白。
+- **壳层卡死自愈仍有效**：CDP `Runtime.evaluate while(true){}` 卡死后逐行为 `restart win=main reason=silent streak=3 count=1` → `shell-render-gone reason=crashed` → `shell-reload forced=true` → `heartbeat online`，**6.7 秒**（0.7.1 首轮 9.8 秒、终版 6.7 秒；0.6.4 时期 19 秒）。
+- **G1–G3 未重测**：本轮只改壳层出帧与恢复链路，不碰开站/读页/发布，沿用 0.6.9 安装包结论。这是偏离，不冒充已复测。
+- **未验证**：`CalculateNativeWinOcclusion` 的真实遮挡场景（此前遮挡实验 `SetForegroundWindow` 不生效，结论不成立）。开关已写进启动参数，但无法从外部观察它是否生效；这一条仍要靠下次真复现的 `crash.log` 对账。
+
 ### 2026-11-16 0.7.0 安装包（G1–G3 未重测，只做发布链路自检）
 
 - 包：`release\Sparo-Setup-0.7.0.exe`（105,004,670 字节，2026-11-16 20:00:02，SHA-256 `905FAA4E58719DB8D8E8B538A72C6D34DD8DE5EA24BAAAE3FE0AE333179B20DD`），HEAD `807673a`。

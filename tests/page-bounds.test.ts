@@ -182,11 +182,11 @@ describe("壳层停帧", () => {
 const front = { minimized: false, visible: true, focused: true };
 
 describe("壳层静默看门狗", () => {
-  it("前台窗口超过 5 秒没心跳就判死", () => {
+  it("前台窗口超过 4 秒没心跳就判死", () => {
     const last = 10_000;
     expect(shellSilentTooLong(last, { ...front, now: last + SHELL_HEARTBEAT_GAP_MS })).toBe(false);
     expect(shellSilentTooLong(last, { ...front, now: last + SHELL_HEARTBEAT_GAP_MS + 1 })).toBe(true);
-    expect(SHELL_HEARTBEAT_GAP_MS).toBe(5_000);
+    expect(SHELL_HEARTBEAT_GAP_MS).toBe(4_000);
   });
 
   it("最小化 / 看不见 / 没聚焦 / 还没开始跳，都不判死", () => {
@@ -202,13 +202,14 @@ describe("壳层静默看门狗", () => {
 describe("壳层恢复阶梯", () => {
   const state = (repaints: number): ShellPaintState => ({ zeroStreak: 9, repaints, lastRepaintAt: 1_000 });
 
-  it("前两次只重绘", () => {
+  it("只给一次重绘机会，第二次停帧直接重启", () => {
     expect(shellRecoveryStep(state(0))).toBe("repaint");
-    expect(shellRecoveryStep(state(1))).toBe("repaint");
-    expect(shellRecoveryStep(state(2))).toBe("repaint");
+    expect(shellRecoveryStep(state(1))).toBe("reload");
+    expect(shellRecoveryStep(state(2))).toBe("reload");
   });
 
-  it("第三次起重启渲染进程", () => {
+  it("重启阈值就是一次重绘", () => {
+    expect(SHELL_PAINT_RELOAD_AFTER_REPAINTS).toBe(1);
     expect(shellRecoveryStep(state(SHELL_PAINT_RELOAD_AFTER_REPAINTS))).toBe("reload");
     expect(shellRecoveryStep(state(9))).toBe("reload");
   });
