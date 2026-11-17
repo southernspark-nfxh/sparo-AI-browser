@@ -126,13 +126,24 @@ $chat | Where-Object { $_.text -like "*$($want.Substring(0, [Math]::Min(12, $wan
 
 安装包复测至少 G1、G2、G3。记下 `git rev-parse --short HEAD` 和 `release\Sparo-Setup.exe` 的修改时间。开发窗绿了，不能代替安装包。
 
-### 2026-11-17 0.7.4 安装包（侧栏发稿链路，G1–G3 未重测）
+### 2026-11-17 0.7.4 安装包（侧栏发稿链路真机全过，G1/G2 复测过）
 
-- 包：`release\Sparo-Setup-0.7.4.exe`（105,008,446 字节，2026-11-17 14:43:18，SHA-256 `C4205C3D18BE2AA68F5EBCC25FD7CDD1419FB609145E337A3DDC94F8241A2C57`），HEAD `695f1c9`。
-- **G1–G3 本轮未重测**：本轮改主进程 7 文件 + 技能种子 + runner，但改动全部限于「侧栏对话 → run_skill 调用链」和发布 skill 参数透传，壳层/页面洞/白屏/开站逻辑未触。沿用 0.6.9 / 0.7.3 复测结论。
-- 产物核对：`resources/social-publish-scripts/adapters/weixin.mjs` 存在；`resources/platforms/weixin.json` 存在；`app.asar` 内 `social-media-publish.json` 与 `weixin-publish.json` 均在；文件版本 0.7.4。
-- 测试：`vitest run` 138 文件 / 1057 条全绿；typecheck 0 错误。
-- **未做**：真机侧栏点"帮我发稿子"的完整链路；真机 match_skill("微信公众号发布") 的 skill 种子加载验证；多平台一次发拆分。
+- 包：`release\Sparo-Setup-0.7.4.exe`（105,008,446 字节，2026-11-17 14:43:18，SHA-256 `C4205C3D18BE2AA68F5EBCC25FD7CDD1419FB609145E337A3DDC94F8241A2C57`），HEAD `695f1c9`（其上 905bb07/de33c30 均为纯 docs 提交）。
+- 环境隔离：`SPARO_CONFIG_DIR=%TEMP%\sparo-qa-074`、`SPARO_MCP_PORT=3925`，跑 `release\win-unpacked\Sparo.exe`；模型 Key 从用户配置复制（BYOK deepseek），用户 0.7.0 实例（`D:\Program Files\Sparo`，3921）全程未动。
+- 静态：typecheck 0 错误；`vitest run` 138 文件 / 1057 条全绿；78 个 .mjs 全过 `node --check`。
+- 产物核对：`resources/social-publish-scripts/` 25 文件 + `platforms/` 5 JSON（含 weixin）均在；`app.asar` 内 social-media-publish.json（v3）、weixin-publish.json（v1）均在，asar 解出的 `adapters/weixin.mjs` 第 42 行 `export const weixin` 完好；包内 `publish.mjs --self-check` = `SELF_CHECK_OK`。全新配置首开机播种 41 个技能，social-media-publish 为 v3（enum 含 weixin）、weixin-publish.json 在列。
+- **G9a 缺槽先问 过**：侧栏「帮我发稿子」→ 回复追问平台+目录两项（列五平台、注明公众号只存草稿、说明目录结构），`navigated:false`，未打开任何发布页。
+- **G9b 槽齐拼 params（微信）过**：「帮我发稿子，平台微信，稿件目录 D:\articles\wx-001」→ 直接调 weixin-publish 技能，目录参数透传，publish.mjs 真实执行至登录门（退出码 2），AI 如实报「公众号后台没有登录」并停手交人（扫码），明确「群发那一下仍需你自己点」；顺带验证 C5（runner spawn ELECTRON_RUN_AS_NODE 安装包内跑通并回传退出码）与 C8（profile.mjs 读 platforms/weixin.json 路径正确）。
+- **G9c 分站走 social-media-publish 过**：同句换「平台头条」→ 走「一稿多发」social-media-publish，`platform=toutiao`、`articleDir=D:\articles\wx-001` 透传（AI 原话引用），第 1 步 social_publish 至登录门（退出码 2）停手；头条登录页标签 owner=`agent:sidebar`。
+- **G9d match_skill 过**：`match_skill("微信公众号发布")` → best `weixin-publish`（93 分，reason: title, alias:公众号发布），JSON 种子安装包内加载正常（C7 过）。
+- **G1 开站归属复测（口径窄于黄金原句）**：MCP `navigate https://weibo.com`（不是侧栏原句「打开微博」）→ 落 passport 登录页（隔离无登录态，预期），标签 owner=`agent:05f1dd`、agentName=`qa-074`；`list_tabs` 的 activeId 仍是用户百度首页，不抢焦点。侧栏原句 + 已登录信息流这一档没跑。
+- **G2 读页写报告复测 过（降级：百度百科代替需登录的微博）**：侧栏「打开百度百科，搜索 人工智能，把词条内容整理成一份 Markdown 报告」→ 产出 `docs\2026-11-17T07-44-57-百度百科词条「人工智能」整理报告.md`（14,663 字节，SHA-256 `5318983590923B79…`），九节带来源标注；且明确「单次抓取上限约 8 万字，词条后半段没有逐段读到，没有凭印象补写」——「关单必有声、不假装完整」硬规则真机体现（B3/B4 真机证据）。
+- **G3 未复测**：需已登录微博的真实博主页 + 「继续」续跑，隔离配置无登录态；`tests/mission-journal.test.ts` 9 条（含续写不覆盖）全绿。
+- **G4 五站 probe 抽到（2/5）**：安装包级 `--probe` 微信 → formatPlan/ok（theme=editorial）、imagePlan/ok（docx 0/0）、openBlank 止 NO_TOKEN（结构化 JSON 报告，提示先扫码）；头条 → imagePlan/ok、openBlank 止 LOGIN（「登录态失效，只把这个平台交给用户」）。两站机制一致，登录门不硬闯；baijiahao/dayu/sohu 同 engine 未逐站跑，五站全 PROBE_OK 需登录态环境。
+- **G5/G6 未全链路跑**：微信存草稿与四站 dry-run 都要各站登录态。另一次 MCP `run_skill`（social-media-publish，platform=toutiao，dryRun=true）第 1 步退出码 2，diagnose 停在调用方自己的 `https://example.com/`（截图落 `%TEMP%\sparo-qa-074\diag\`），**不能**据此说 dry-run 已经走到头条登录门。头条登录门的证据是侧栏 G9c 和 CLI `--probe toutiao`。
+- **G7/G8 未重测**：0.7.4 核心提交 8b866be 未碰壳层任何文件（shell.html/shell-preload/page-bounds/chrome-hole 均无改动，browser.ts 仅 run_skill params 2 行），沿用 0.7.3 CDP 基线（打字 461 拍 lost=0、卡死 1.1 秒自愈）；未在真实低速输入法打满 60 秒（测试窗口期用户机器前台被占用，不抢）。
+- **多账号真机（A1/A2/A3）**：create_env「QA环境A」→ navigate(envId) 开 example.com（标签带 envId）→ 环境内写 `iso_probe=A`+localStorage，同站默认环境标签读出 cookie 为空、localStorage null，回环境标签探针仍在（A1/A2 过）。**A3 发现文档与实际不符**：delete_env 后 list_envs 为 0、但已打开的环境标签不关闭且仍挂已删 envId，`Partitions\env_5816e76e\Network\Cookies`（20,480 B）保留、标签内 cookie 仍可读——MULTI-ACCOUNT.md 写「留空壳，不含有效登录态」在标签存活时不成立（P1，建议 delete_env 关环境标签并清 partition，或文档改口径）。
+- **未做**：多平台一次发拆分；五站登录态下 PROBE_OK；微信真实存草稿（G5）；G7/G8 实机重测。
 
 ### 2026-11-17 0.7.3 安装包级复测（侧栏打字被抢焦点：自愈退避 + 打字时不摘挂）
 
