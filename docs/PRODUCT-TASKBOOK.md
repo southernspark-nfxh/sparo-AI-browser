@@ -17,7 +17,9 @@
 - N2 修复：`deleteEnvFully`（决策点 #63）——MCP `delete_env` 与设置页 `spark:delete-env` 共用；先关环境标签、删配置、清分区存储、尽力删分区目录。`tests/env-delete.test.ts` 3 条；隔离实例真机复测见下
 - N1 修复：`electron-builder.yml` 排除 `strategies/skills/**/ledger/**`
 - 文档：七份滞后文档按核对结果补齐；QA-MASTER-PLAN 增「核对修订」节（六条矛盾被证伪、C10/C11/C12 事实修订、N1–N3 新发现）
-- 验证：typecheck 0 错误；vitest 139 文件全绿（1057+3）
+- 验证：typecheck 0 错误；vitest 139 文件全绿（1057+3）；包内 `publish.mjs --self-check` = `SELF_CHECK_OK`
+- 安装包：`release\Sparo-Setup-0.7.5.exe`，105,006,100 字节，2026-11-17 16:25:41，SHA-256 `960B3F17DB235ED8F3EF3BCD139370AFA56B7F14D50BAE313556095C43535FFC`；HEAD `7a21ad8`
+- 真机（隔离 3926）：删除环境关标签、名册清空、停进程后 Cookies 库 cookie 行清零；目录留空壳（Windows 文件锁），见 [QA-GOLDEN-SCENARIOS.md](./QA-GOLDEN-SCENARIOS.md) 0.7.5 段
 - 遗留：N3 `sparo_info` 版本仍 0.1.0；登录态验收（G5/五站 probe/四站 dry-run/真实输入法 60 秒）待补
 
 ## 2026-11-17 已落代码（0.7.4：侧栏发稿链路接通）
