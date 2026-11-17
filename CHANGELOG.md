@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.7.4] — 2026-11-17 侧栏发稿链路：槽位追问、run_skill 参数透传、微信识别
+
+**侧栏说"发稿子"不再只打开发布页原地不动。** 以前 `run_skill` 的 params 字段在 `ChatAction` 类型里丢了，`slots.ts` 也没把发布意图从通用 form 分支里挑出来；结果是模型知道要发稿但缺平台和目录两个必填槽，侧栏不会追问、也不会真正调技能。现在这条链通了：
+
+- `slots.ts` 新增 `publishSlots()` 从原句认平台词（头条 / 百家 / 大鱼 / 搜狐 / 微信）与绝对路径；`classifyKind` 把发布意图踢出 `form` 分支，走专用槽位逻辑
+- `loop.ts` 发布分支：两槽齐才调技能；weixin → `weixin-publish`，其余四站 → `social-media-publish`，自动拼 params
+- `stub.ts` / `browser.ts`：`ChatAction.run_skill` 类型补 params 字段，`executeHand` 里透传给 `runSkillTool()`
+- `intent-router.ts`：五站统一加 `needsArticle: true`，缺槽时返回 null 交给模型问
+- `free-soul.ts` 系统提示词同步加"发稿前必须问齐"的规则
+
+**发布运行时识别微信、参数透传、草稿语义。** `skills/runner.ts`：platform 白名单加 weixin；透传 theme / images / noDocx / docxImport / env；公众号返回 `DRAFT_SAVED_ONLY` 时侧栏报"已存草稿（群发需人工点发表）"而非"发布完成"。
+
+**技能种子升版。** `social-media-publish.json` v2→v3（enum 加 weixin、params 补排版参数、agentPlaybook 补缺槽先问规则）；新增独立技能 `weixin-publish.json`（id `weixin-publish`，固定 `--platform weixin`，只收 `articleDir`）。技能种子进 `app.asar`，用户侧栏 `match_skill("微信公众号发布")` 现在能 match 到。
+
+**验证：** typecheck 0 错误；`vitest run` 138 文件 / 1057 条全绿（含新增 `tests/brain.test.ts` 两条：缺槽先问不跑技能、槽齐后 params 正确）。主进程改了 7 个文件、技能种子 2 个、测试 1 个，共 11 个文件，+290 / −30。
+
+**边界声明：** 多平台一次性发布尚未拆分；"微博"不在五站清单里；本轮只过单测、真机侧栏点"发稿子"尚未实跑。主进程改代码，重打包安装包后生效。
+
 ## [0.7.3] — 2026-11-17 侧栏打字不再被抢焦点：自愈退避、打字时不摘挂网页视图
 
 **人写在侧栏里的字，被浏览器的自愈动作抢走了焦点。** 用户机器 `crash.log` 里，2026-11-16 10:00–13:20 每分钟 80–138 条 `chrome-hole-heal` / `chrome-hole-action`，同一条标签每 2 秒重复一次「整窗 1400×900 → 洞 680×829」的修尺寸；另有约每 10 秒一次 `shell-paint-recover`（`hide()/show()`）。摘挂 `WebContentsView` 和隐藏/显示窗口都会把键盘焦点交给网页，输入框里的光标就断了。

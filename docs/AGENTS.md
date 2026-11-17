@@ -90,7 +90,7 @@ Do **not** loop `fill` on multi-field pages.
 **死规则：** 多种信息调研（1688 筛选、比价、选品、对比、研报）最终必须形成报告页并在窗口打开，不能只在侧栏堆文字。  
 10 个基础场景用技能包：`run_skill({ query: "比价" })` 等，见 [SKILL-FORMAT.md](./SKILL-FORMAT.md)。  
 左上角只剩半截导航：网页没铺满页面洞，见 [ARCHITECTURE.md](./ARCHITECTURE.md)。  
-现行任务与 QA：[PRODUCT-TASKBOOK.md](./PRODUCT-TASKBOOK.md) v0.7.0（含多账号环境与自媒体自动发布；0.6.9 修店小秘后台填表与百家号图文 / 视频编辑页类型隔离并补齐 `resources/platforms`，0.7.0 接入微信公众号图文存草稿、公众号排版与 docx 导入）。  
+现行任务与 QA：[PRODUCT-TASKBOOK.md](./PRODUCT-TASKBOOK.md) v0.7.4（含多账号环境与自媒体自动发布；0.7.0 接微信图文存草稿，0.7.4 侧栏发稿链路通了——缺槽先问、run_skill params 透传、微信公众号能 match_skill 到）。  
 云端模型：侧栏设置「自己的 Key / 云端模型」；登录送 10 点（约 7 天）；一句对话一个任务。已登录后点套餐在本窗口付款。见 [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) · [PRICING.md](./PRICING.md)。不要把云端 Key 写进客户端。
 
 ### Customer service · 客服半自动
