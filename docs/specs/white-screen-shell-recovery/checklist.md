@@ -21,5 +21,5 @@
 - [x] 0.6.5 汇总打包：`package.json` 0.6.5、`CHANGELOG.md` / `AGENTS.md` / `DECISION-POINTS.md` #54 同步，产出 `release\Sparo-Setup-0.6.5.exe`
 - [x] 0.7.1：恢复阶梯压到一次重绘；心跳断 4 秒直接重启；心跳在、0 帧先重挂窗口；壳层 `backgroundThrottling:false`；停帧日志带 `docVisible` / `long`
 - [x] 0.7.2：壳层永不后台节流（`syncShellKeepalive` 与 `restore` 只下发 `false`），关掉 `CalculateNativeWinOcclusion`，重绘不再走同步 zoom IPC
-- [x] 0.7.2 安装包级实测：最小化 4 秒再还原，壳层 rAF 仍 61 帧/秒（旧版此处会 0 帧发白）；卡死壳层 6.7 秒自动恢复
+- [x] 0.7.2 安装包级实测：卡死壳层 6.7 秒自动恢复；最小化/还原 A/B 未复现白屏（0.7.0 与 0.7.2 还原后都 61 帧/秒），遮挡触发场景仍未证实
 - [x] `package.json` 0.7.2；`CHANGELOG.md` 0.7.1 / 0.7.2 两节；`docs/DECISION-POINTS.md` #60；`AGENTS.md` 版本口径；`docs/QA-GOLDEN-SCENARIOS.md` 2026-11-17 小节

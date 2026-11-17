@@ -1,18 +1,18 @@
 # Changelog
 
-## [0.7.2] — 2026-11-17 壳层白屏：真正可疑的那根线——壳层被重新打开了后台节流
+## [0.7.2] — 2026-11-17 壳层白屏：永不开后台节流、关掉 Windows 原生遮挡判定（遮挡场景仍未复现）
 
-**0.7.1 只是把恢复从 13 秒压到 6.7 秒，白还是白。** 这次在用户机器 12:23–12:28 的 `crash.log` 里看到可疑链路：最小化回调与 `restore` 都会调用 `setBackgroundThrottling(true)`，把窗口创建时的 `backgroundThrottling: false` 又关回去。节流一旦打开就不会自己关；此后 Chromium 只要认为窗口被遮挡（被别的窗口盖一下、锁屏、休眠回来），壳层的 rAF 与计时器就整条停掉——网页视图照常画，顶栏和侧栏白成一张壳，人再最小化一次才恢复。这解释了为什么每次都在修、却总复发：0.7.1 只改了恢复阶梯，没动这条开关。
+**0.7.1 只是把恢复从 13 秒压到 6.7 秒，白还是白。** 这次在用户机器 12:23–12:28 的 `crash.log` 里看到一条可疑通路：最小化回调与 `restore` 都会调用 `setBackgroundThrottling(true)`，把窗口创建时的 `backgroundThrottling: false` 又关回去。节流一旦打开就不会自己关；只要 Chromium 真把窗口判成遮挡或隐藏，壳层的 rAF 与计时器就整条停掉——网页视图照常画，顶栏和侧栏白成一张壳。这条通路是真的，但今天用最小化/还原做 A/B 没有复现：已装 0.7.0 与新包在还原后都仍是 61 帧/秒。所以本版不把话说满。
 
-**壳层永不节流。** `syncShellKeepalive` 现在对每扇窗口只下发 `false`，`restore` 也只重申 `false`；旧策略「最小化且没活儿就省 CPU」整个去掉。省的那点 CPU，不值得再白一次。
+**壳层永不节流。** `syncShellKeepalive` 现在对每扇窗口只下发 `false`，`restore` 也只重申 `false`；旧策略「最小化且没活儿就省 CPU」整个去掉。省的那点 CPU，不值得在遮挡判定出错时再白一次。
 
-**关掉 Windows 原生遮挡判定。** 启动参数 `disable-features` 增加 `CalculateNativeWinOcclusion`。被别的窗口盖过、锁屏解锁、休眠回来之后，它会把这扇窗一直当成「被挡住」，浏览器进程不再给页面发 BeginFrame；`disable-backgrounding-occluded-windows` 只管渲染进程优先级，管不了这一层。
+**关掉 Windows 原生遮挡判定。** 启动参数 `disable-features` 增加 `CalculateNativeWinOcclusion`。被别的窗口盖过、锁屏解锁、休眠回来之后，它会把这扇窗一直当成「被挡住」，浏览器进程不再给页面发 BeginFrame；`disable-backgrounding-occluded-windows` 只管渲染进程优先级，管不了这一层。这一条是冲着白屏触发条件去的，但**遮挡场景仍未复现**，不能算已证实。
 
 **重绘不再用同步 IPC。** `invalidateShell` 去掉 `getZoomFactor / setZoomFactor` 的缩放轻推：渲染进程真卡住时这两个同步调用会把主进程一起拖住十秒，反而让 `unresponsive` 一次次重来。0.6.0–0.6.3 的账上四十次重绘从没救回来，这个轻推本来也没用。
 
 **诊断修两处。** 长任务上报以前按 `{ d }` 读，而壳层报的是 number，`long=` 永远是 `none`——现在能真的看到是谁占住主线程；壳层首屏还没读出 `settings` 时，`unresponsive` 诊断不再抛 `apiKey` 错误盖掉现场，且首屏 15 秒内一次心跳都没有的 `unresponsive` 不再触发重挂窗口（加载期误伤）。
 
-**验证：** `tsc --noEmit` 0 错误；`vitest run` 137 文件 / 1052 条全绿（节流用例改为「壳层永远不节流」）。
+**验证：** `tsc --noEmit` 0 错误；`vitest run` 137 文件 / 1052 条全绿（节流用例改为「壳层永远不节流」）；安装包级卡死壳层 6.7 秒恢复（`restart reason=silent` → `shell-reload forced=true` → `heartbeat online`）。最小化/还原 A/B：已装 0.7.0 与 0.7.2 还原后都是 61 帧/秒，未复现白屏，别把这条当已证实。
 
 ## [0.7.1] — 2026-11-17 壳层白屏：白屏时间从十几秒压到五秒，并开始记「是谁卡住了」
 

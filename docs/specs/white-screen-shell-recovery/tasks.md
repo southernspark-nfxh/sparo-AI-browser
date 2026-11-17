@@ -15,5 +15,5 @@
 - [x] T13 0.6.5 补丁：壳层心跳带 `document.visibilityState`，文档隐藏零帧不判停帧（新增用例）；与工作区媒体工作台/标签会话/发布适配器改动一起汇总打包 0.6.5
 - [x] T14 0.7.1：重绘只留一次（`SHELL_PAINT_RELOAD_AFTER_REPAINTS` 3→1、冷却 1.5 秒）；心跳断 4 秒判死直接重启；心跳在、0 帧先 `remountShell()`（hide/show，不重载、不抢焦点）；`backgroundThrottling:false` + `disable-backgrounding-occluded-windows` / `disable-renderer-backgrounding`；`PerformanceObserver` 长任务随心跳上报。安装包级卡死恢复 9.8 秒 → 6.7 秒
 - [x] T15 0.7.2：查出 `restore` 回调与最小化回调都会重新下发 `setBackgroundThrottling(true)`，把创建时的 `backgroundThrottling: false` 关回去——节流一开就不会自己关，窗口被判遮挡后 rAF 整条停掉。改为壳层永不节流；`disable-features` 增加 `CalculateNativeWinOcclusion`；`invalidateShell` 去掉 `getZoomFactor / setZoomFactor` 同步 IPC；长任务字段 `{d}`→number 修正；首屏 15 秒内无心跳的 `unresponsive` 不重挂窗口；`settings` 未加载时诊断不再抛 `apiKey`
-- [x] T16 0.7.2 验证：`tsc --noEmit` 0 错误；`vitest run` 137 文件 / 1052 条全绿（节流用例改为「壳层永远不节流」）；安装包级最小化/还原后 rAF 61 帧 → 61 帧；卡死恢复 6.7 秒；`release\Sparo-Setup-0.7.2.exe`（105,005,947 字节，2026-11-17 12:37:57）
+- [x] T16 0.7.2 验证：`tsc --noEmit` 0 错误；`vitest run` 137 文件 / 1052 条全绿（节流用例改为「壳层永远不节流」）；安装包级卡死恢复 6.7 秒；最小化/还原 A/B 未复现（已装 0.7.0 与新包还原后都 61 帧/秒，遮挡场景仍未知）；`release\Sparo-Setup-0.7.2.exe`（105,005,947 字节，2026-11-17 12:37:57）
 - [x] T17 0.7.1 / 0.7.2 文档与提交：`CHANGELOG.md`、`docs/QA-GOLDEN-SCENARIOS.md`、`docs/DECISION-POINTS.md` #60、`AGENTS.md` 版本口径
