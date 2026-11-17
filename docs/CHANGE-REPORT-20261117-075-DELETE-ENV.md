@@ -166,3 +166,23 @@ G1–G9 沿用 0.7.4 真机记录（0.7.5 未碰那些链路）；登录态项�
 | `bfbaaa8` | **代码** | 本报告主体 |
 | `7a21ad8` | 版本 | 0.7.5 版本号 + CHANGELOG + 版本行 |
 | `beb7333` | 文档 | 包体字节数/SHA/真机结果回写 |
+
+---
+
+## 7. Cursor 复核结论（2026-11-17 17:10）
+
+**通过，不回滚 `bfbaaa8`。** 上次 QA 的删除环境问题已经在 0.7.5 上改掉：环境标签被关掉，分区 Cookie 行被清掉。R2、R3 属实，按预案追加提交，不整体 revert。
+
+独立复核（不是沿用本报告的回执）：
+
+- `git show bfbaaa8` 与 §1.1 的 diff 一致。删除只有 `deleteEnvFully` 一条：MCP `delete_env` 和设置页 `spark:delete-env` 都进它。顺序是停代理、关该环境标签、删配置、`clearStorageData` + `clearCache`、再 `rmSync`。
+- `npm run typecheck` 0 错误。`npx vitest run` 139 文件 / 1060 条全绿。`tests/env-delete.test.ts` 3 条过。这三条覆盖的是关标签、清存储被调用、目录在没有文件锁时被删掉；覆盖不到 Windows 上 `rmSync` 失败，也覆盖不到 R2/R3。
+- 另起隔离实例 `SPARO_CONFIG_DIR=%TEMP%\sparo-qa-075-cursor`、MCP 3927，跑 `release\win-unpacked\Sparo.exe`。`create_env` → `538f865f`，打开 example.com（标签 `0c184991`），写入 `iso_del=A`。`delete_env` 回执 `env 538f865f deleted, closed 1 env tabs`。之后标签列表只剩默认百度页，名册为 0，再对旧标签 `execute` 得到 `Tab not found`。停进程后该分区目录仍在（Cookies 文件 20,480 字节），sqlite 读出 `iso_del=0`、`total=0`。
+- 安装包 SHA-256 与报告一致：`960B3F17DB235ED8F3EF3BCD139370AFA56B7F14D50BAE313556095C43535FFC`，105,006,100 字节。asar 里台账数据已不在，只剩 `scripts/ledger.mjs`。
+- 设置页按钮没有手点。确认框原文仍是「登录状态会一起清掉」，点击处理只 `catch` 后 `renderEnvs()`，和 `{ok, message}` 回执兼容。它和 MCP 走同一个 `deleteEnvFully`。
+
+R2 确认：两处 `catch` 都吞掉错误，配置删成功就报 deleted。这次真机没有踩中（Cookie 行是 0）。残留只可能发生在 `clearStorageData` 自己抛错的时候；那时目录多半也删不掉，Cookie 文件会留下，但环境已经不在名册里，界面上开不回这个号。
+
+R3 确认，而且是这次改动新带出来的：`closeTab` 会把被关环境标签写入 `lastClosed`（约 L2552）。`reopenLastTab`（约 L3489）先把 `lastClosed` 清空，再 `createEnvTab`。`createEnvTab` 在环境配置已删时直接 `throw new Error(`环境 ${envId} 不存在`)`（L2068），这里没有 try/catch。快捷键 Ctrl+Shift+T（`handleChromeShortcut` L3177）也不包。主进程有 `uncaughtException` 只写 crash.log、不退出。结果是快捷键失败、这次恢复被消费掉，进程还在。真机没有按这组键。建议下次提交：环境已不存在时改开普通标签或明确回复「环境已删除」，不要抛。
+
+文档还有一句旧口径没改掉：`docs/MULTI-ACCOUNT.md` 第 48 行仍写「删除环境只删配置目录」。文首第 16 行已经是 0.7.5 的新口径。`PRODUCT-TASKBOOK.md` 第 101 行的同类句子在「2026-11-12 / 0.6.0」那一节里，是当时的记录，不是当前承诺。这两处都不必为此回滚代码。
