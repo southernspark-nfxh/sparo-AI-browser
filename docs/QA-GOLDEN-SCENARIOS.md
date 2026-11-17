@@ -126,6 +126,14 @@ $chat | Where-Object { $_.text -like "*$($want.Substring(0, [Math]::Min(12, $wan
 
 安装包复测至少 G1、G2、G3。记下 `git rev-parse --short HEAD` 和 `release\Sparo-Setup.exe` 的修改时间。开发窗绿了，不能代替安装包。
 
+### 2026-11-17 0.7.4 安装包（侧栏发稿链路，G1–G3 未重测）
+
+- 包：`release\Sparo-Setup-0.7.4.exe`（105,008,446 字节，2026-11-17 14:43:18，SHA-256 `C4205C3D18BE2AA68F5EBCC25FD7CDD1419FB609145E337A3DDC94F8241A2C57`），HEAD `695f1c9`。
+- **G1–G3 本轮未重测**：本轮改主进程 7 文件 + 技能种子 + runner，但改动全部限于「侧栏对话 → run_skill 调用链」和发布 skill 参数透传，壳层/页面洞/白屏/开站逻辑未触。沿用 0.6.9 / 0.7.3 复测结论。
+- 产物核对：`resources/social-publish-scripts/adapters/weixin.mjs` 存在；`resources/platforms/weixin.json` 存在；`app.asar` 内 `social-media-publish.json` 与 `weixin-publish.json` 均在；文件版本 0.7.4。
+- 测试：`vitest run` 138 文件 / 1057 条全绿；typecheck 0 错误。
+- **未做**：真机侧栏点"帮我发稿子"的完整链路；真机 match_skill("微信公众号发布") 的 skill 种子加载验证；多平台一次发拆分。
+
 ### 2026-11-17 0.7.3 安装包级复测（侧栏打字被抢焦点：自愈退避 + 打字时不摘挂）
 
 - 包：`release\Sparo-Setup-0.7.3.exe`（105,008,480 字节，2026-11-17 13:03:42，SHA-256 `88AD3790A0E71D13D5167A5746D12445B308BB55FA232AD2E2C34E7A4C70029E`），基于 HEAD `e7a9401` + 本轮改动；测试跑在同一份 `release\win-unpacked\Sparo.exe`。

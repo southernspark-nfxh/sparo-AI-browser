@@ -10,6 +10,18 @@
 >
 > **大脑进度（0.1.19）：** 听整句、站点表换站、模型编 `handbook` / 写下一步已进代码。10-26 起任务循环硬规则：新任务出确认卡、关单必有声、跑完计划步才许收摊、挂起答复接得回。10-27 起同能力多段逐段对账，最小化不再把窗口拉回前台。`absorb`（页上价格对约束）未开工。9 月交接稿见 [archive/2026-09/TRAE-PROMPT-AGENT-BRAIN.md](./archive/2026-09/TRAE-PROMPT-AGENT-BRAIN.md)，以 changelog 和测试为准。
 
+## 2026-11-17 已落代码（0.7.4：侧栏发稿链路接通）
+
+对外变更见 [CHANGELOG.md](../CHANGELOG.md) 0.7.4；打包通知书见 [NOTICE-20261117-AGENT-PUBLISH-HOOK.md](./NOTICE-20261117-AGENT-PUBLISH-HOOK.md)。
+
+- 主进程 7 文件：`slots.ts` 新增 `publishSlots()` + `classifyKind` 踢发布意图出 form 分支；`loop.ts` 发布分支两槽齐才调技能、自动拼 params；`stub.ts` / `browser.ts` run_skill params 从类型到执行链补全；`intent-router.ts` 五站加 needsArticle；`free-soul.ts` 提示词同步
+- `skills/runner.ts` platform 白名单加 weixin，透传 theme/images/noDocx/docxImport/env，公众号草稿语义
+- 技能种子：`social-media-publish.json` v2→v3；新增 `weixin-publish.json` 独立条目
+- 测试：`vitest run` 138 文件 / 1057 条全绿（含 `tests/brain.test.ts` 两条新用例），typecheck 0 错误
+- 安装包：`release\Sparo-Setup-0.7.4.exe`，105,008,446 字节，2026-11-17 14:43:18，SHA-256 `C4205C3D18BE2AA68F5EBCC25FD7CDD1419FB609145E337A3DDC94F8241A2C57`；HEAD `695f1c9`
+- 产物核对：weixin.mjs / weixin.json 在 resources；两个 skill JSON 在 app.asar；文件版本 0.7.4
+- 边界：真机侧栏发稿未实跑；多平台一次发未拆；微博不在五站；G1–G3 未重测（主进程改了 7 文件，但只改侧栏对话链路，壳层/页面洞/白屏逻辑未触）
+
 ## 2026-11-16 已落代码（0.7.0：微信公众号图文存草稿、排版与 docx 导入）
 
 对外变更见 [CHANGELOG.md](../CHANGELOG.md) 0.7.0；打包与同步细节见 [NOTICE-20261116-WEIXIN-PACKAGING.md](./NOTICE-20261116-WEIXIN-PACKAGING.md)、[NOTICE-20261116-SKILL-WEIXIN-FORMAT-SYNC.md](./NOTICE-20261116-SKILL-WEIXIN-FORMAT-SYNC.md)、[QIE-PUBLISH-SYNC-REPORT.md](./QIE-PUBLISH-SYNC-REPORT.md)。
