@@ -1,28 +1,78 @@
 {
   "id": "social-media-publish",
-  "title": "一稿多发：头条 / 百家 / 大鱼 / 搜狐（四平台统一入口）",
-  "intent": "一稿多平台分发，后台完成填稿、插图、封面、铁律勾选、发布/定时、回执核验",
-  "aliases": ["发头条", "发百家号", "发大鱼号", "发搜狐号", "头条发布", "百家号发布", "大鱼号发布", "搜狐号发布", "social-media-publish"],
+  "title": "一稿多发：头条 / 百家 / 大鱼 / 搜狐 / 微信公众号",
+  "intent": "一稿多平台分发，后台完成填稿、插图、封面、铁律勾选、发布/存草稿、回执核验；微信公众号默认 Word 导入并统一排版",
+  "aliases": [
+    "发头条",
+    "发百家号",
+    "发大鱼号",
+    "发搜狐号",
+    "发微信",
+    "发公众号",
+    "发一篇",
+    "发稿",
+    "头条发布",
+    "百家号发布",
+    "大鱼号发布",
+    "搜狐号发布",
+    "微信公众号发布",
+    "social-media-publish"
+  ],
   "platform": "multi-site",
-  "version": 2,
-  "updatedAt": "2026-11-12T12:00:00.000Z",
+  "version": 3,
+  "updatedAt": "2026-11-17T10:00:00.000Z",
   "source": "seeded",
   "enabled": true,
   "productModel": {
-    "ai": ["只做 run_skill 调用", "参数校验", "match_skill 匹配"],
+    "ai": ["只做 run_skill 调用", "参数校验", "match_skill 匹配", "缺平台或稿件目录先问人"],
     "script": ["scripts/publish.mjs --platform <平台> --article <目录>"],
-    "forbid": ["loop fill", "逐字输入字段", "同时操作多个平台的标签"]
+    "forbid": ["loop fill", "逐字输入字段", "同时操作多个平台的标签", "把公众号存草稿说成已群发"]
   },
   "params": {
-    "platform": { "type": "string", "required": true, "enum": ["toutiao", "baijiahao", "dayu", "sohu"] },
-    "articleDir": { "type": "string", "required": true, "note": "目录内必须有 title.txt / body.md / cover.jpg / images/" },
+    "platform": {
+      "type": "string",
+      "required": true,
+      "enum": ["toutiao", "baijiahao", "dayu", "sohu", "weixin"],
+      "note": "weixin = 微信公众号，只存草稿，群发人工点"
+    },
+    "articleDir": {
+      "type": "string",
+      "required": true,
+      "note": "目录内必须有 title.txt / body.md，建议 cover.jpg / images/"
+    },
+    "theme": {
+      "type": "string",
+      "optional": true,
+      "default": "editorial",
+      "enum": ["editorial", "ink", "green"],
+      "note": "仅微信公众号排版生效"
+    },
+    "images": {
+      "type": "number",
+      "optional": true,
+      "note": "只带前 N 张插图；微信默认带全部并走 Word 导入"
+    },
+    "noDocx": {
+      "type": "boolean",
+      "optional": true,
+      "default": false,
+      "note": "微信默认走 docx；置 true 改回直填（无正文插图），不推荐"
+    },
+    "docxImport": {
+      "type": "boolean",
+      "optional": true,
+      "default": false,
+      "note": "非微信平台插图 ≥3 张时打开 Word 导入"
+    },
     "schedule": { "type": "string", "optional": true, "note": "格式 YYYY-MM-DD HH:mm" },
     "dryRun": { "type": "boolean", "optional": true, "default": false },
+    "env": { "type": "string", "optional": true, "note": "账号环境名；不传用默认登录态" },
     "aiImages": { "type": "boolean", "optional": true, "default": false, "note": "封面或正文含 AI 图时加大鱼信息来源选 AI生成" }
   },
   "pitfalls": [
     { "milestone": 0, "note": "网易号已剔除默认清单，不要用户发就硬做" },
     { "milestone": 0, "note": "验证码 / 滑块 / 登录失效必须停手交人，不自动续作" },
+    { "milestone": 0, "note": "微信公众号只存草稿（DRAFT_SAVED_ONLY），群发必须人点" },
     { "milestone": 3, "note": "头条必勾「投放广告赚收益」；百家绝不勾「AI 生成」" },
     { "milestone": 4, "note": "搜狐定时入口找不到就停手报告，不硬改点发布" }
   ],
@@ -33,18 +83,25 @@
       "args": {
         "platform": "{{platform}}",
         "article": "{{articleDir}}",
+        "theme": "{{theme}}",
+        "images": "{{images}}",
+        "noDocx": "{{noDocx}}",
+        "docxImport": "{{docxImport}}",
         "schedule": "{{schedule}}",
-        "dryRun": "{{dryRun}}"
+        "dryRun": "{{dryRun}}",
+        "env": "{{env}}"
       },
-      "note": "publish.mjs 内部 openBlank→fillTitle→fillBody→insertImages→setCover→setOptions→publish→verify。Electron 当 node 跑，不需系统 node。"
+      "note": "publish.mjs 内部 openBlank→(importDocx→formatBody)→fillTitle→insertImages→setCover→setOptions→publish/存草稿→verify。Electron 当 node 跑，不需系统 node。"
     }
   ],
   "agentPlaybook": [
-    "1. 用户说「发头条/发百家号/发大鱼号/发搜狐号」或提到 social-media-publish 时，先 match_skill 再 run_skill",
-    "2. platform 参数必须是 toutiao / baijiahao / dayu / sohu 之一，不支持网易号（已剔除）",
+    "1. 用户说「发头条/发百家号/发大鱼号/发搜狐号/发微信」或提到 social-media-publish 时，先 match_skill 再 run_skill",
+    "2. platform 参数必须是 toutiao / baijiahao / dayu / sohu / weixin 之一，不支持网易号（已剔除）",
     "3. articleDir 目录结构：title.txt（纯文本）、body.md（Markdown）、cover.jpg（封面图）、images/（插图）",
-    "4. 不要逐字 fill 标题/正文，让 publish.mjs 统一注入",
-    "5. 多平台顺序：先发头条、百家，再发大鱼、搜狐",
-    "6. 回执必须核验列表页状态 / 公开链接 / 图片数，不认点击成功"
+    "4. 缺 platform 或 articleDir 任一项，先问人，不要只打开发布页，也不要猜目录",
+    "5. 微信公众号默认走 Word 导入 + 统一排版，theme 可传 editorial / ink / green；返回 DRAFT_SAVED_ONLY 说明只存了草稿",
+    "6. 不要逐字 fill 标题/正文，让 publish.mjs 统一注入",
+    "7. 多平台顺序：先发头条、百家，再发大鱼、搜狐",
+    "8. 回执必须核验列表页状态 / 公开链接 / 图片数，不认点击成功"
   ]
 }

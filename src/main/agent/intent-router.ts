@@ -31,6 +31,8 @@ export type SiteCap = {
   writeUrl?: string;
   skillId?: string;
   skillQuery?: string;
+  /** 发布技能要先拿到稿件目录参数（title.txt/body.md），路由层给不了，交给模型问齐 */
+  needsArticle?: boolean;
 };
 
 export const SITE_CAPS: SiteCap[] = [
@@ -85,6 +87,7 @@ export const SITE_CAPS: SiteCap[] = [
     writeUrl: "https://mp.toutiao.com/profile_v4/graphic/publish",
     skillId: "social-media-publish",
     skillQuery: "今日头条发布",
+    needsArticle: true,
   },
   {
     id: "baijiahao",
@@ -94,6 +97,7 @@ export const SITE_CAPS: SiteCap[] = [
     writeUrl: "https://baijiahao.baidu.com/builder/rc/home",
     skillId: "social-media-publish",
     skillQuery: "百家号发布",
+    needsArticle: true,
   },
   {
     id: "dayu",
@@ -103,6 +107,7 @@ export const SITE_CAPS: SiteCap[] = [
     writeUrl: "https://mp.dayu.com",
     skillId: "social-media-publish",
     skillQuery: "大鱼号发布",
+    needsArticle: true,
   },
   {
     id: "sohu",
@@ -112,6 +117,16 @@ export const SITE_CAPS: SiteCap[] = [
     writeUrl: "https://mp.sohu.com",
     skillId: "social-media-publish",
     skillQuery: "搜狐号发布",
+    needsArticle: true,
+  },
+  {
+    id: "weixin",
+    label: "微信公众号",
+    re: /微信公众号?|公众号|weixin|mp\.weixin/i,
+    homeUrl: "https://mp.weixin.qq.com",
+    skillId: "weixin-publish",
+    skillQuery: "微信公众号发布",
+    needsArticle: true,
   },
   {
     id: "baidu",
@@ -191,13 +206,13 @@ export function detectSite(text: string): SiteCap | null {
 
 export function wantsPublish(text: string): boolean {
   return (
-    /发帖|发布|发文|发一篇|去发|帮我发(?!现)|post\s*(to|on)?|publish/i.test(text) ||
+    /发帖|发布|发文|发稿|发一篇|去发|帮我发(?!现)|post\s*(to|on)?|publish/i.test(text) ||
     /发\s*\d+\s*条/.test(text) ||
-    /发(小红书|知乎|微博|朋友圈|头条|百家号?|大鱼号?|搜狐号?)/.test(text) ||
-    /(发|写).{0,20}(微博|知乎|小红书|zhihu|weibo|头条|百家号?|大鱼号?|搜狐号?|toutiao|baijiahao)/i.test(text) ||
-    /(微博|知乎|头条|百家号?|大鱼号?|搜狐号?).{0,12}(博主|发帖|发文|写文章)/.test(text) ||
+    /发(小红书|知乎|微博|朋友圈|头条|百家号?|大鱼号?|搜狐号?|微信公众号?|公众号|企鹅号?)/.test(text) ||
+    /(发|写).{0,20}(微博|知乎|小红书|zhihu|weibo|头条|百家号?|大鱼号?|搜狐号?|微信公众号?|公众号|toutiao|baijiahao|weixin)/i.test(text) ||
+    /(微博|知乎|头条|百家号?|大鱼号?|搜狐号?|微信公众号?|公众号).{0,12}(博主|发帖|发文|发稿|写文章)/.test(text) ||
     /写(一篇|个)?(文章|回答|帖子|长文)/.test(text) ||
-    /在.{0,8}(知乎|微博|小红书|zhihu|weibo|头条|百家号?|大鱼号?|搜狐号?).{0,8}(发|写|贴)/i.test(text)
+    /在.{0,8}(知乎|微博|小红书|zhihu|weibo|头条|百家号?|大鱼号?|搜狐号?|微信公众号?|公众号).{0,8}(发|写|贴)/i.test(text)
   );
 }
 
@@ -446,6 +461,10 @@ export function routeUserGoal(input: string): RoutedAction | null {
   if (wantsSummarize(t)) return { type: "summarize" };
 
   if (site && wantsPublish(t)) {
+    if (site.skillId && site.needsArticle) {
+      // 发布技能要 platform + 稿件目录两个槽，路由层拿不到；交给模型先问齐再 run_skill（2026-11-17）
+      return null;
+    }
     if (site.skillId) {
       return { type: "run_skill", id: site.skillId, query: site.skillQuery || site.label };
     }
@@ -456,7 +475,8 @@ export function routeUserGoal(input: string): RoutedAction | null {
     };
   }
   if (wantsPublish(t) && !site) {
-    return { type: "act", text: t };
+    // 没说平台就没法挑技能，交还模型追问平台与稿件目录
+    return null;
   }
   if (site && /打开|前往|去|进入/.test(t)) {
     return {
@@ -488,6 +508,7 @@ export function agentCapabilityBrief(locale?: string): string {
       "寒暄时只作简短自我介绍：打开网页、读页面、填表、起草回复。不要点名任何网站或社交平台，不要主动提发布、发帖、发社媒。",
       "站点纪律：用户说去哪个站就去哪个站。未点名的站点不要主动推荐。",
       "用户用哪种语言问，就用哪种语言答。界面是英文、网页是英文，只要用户在说中文，就回中文。",
+      "发稿：用户说发稿/发文章/发一篇，先问齐两样再动手——① 发哪个平台（头条 / 百家号 / 大鱼号 / 搜狐号 / 微信公众号）；② 稿件目录在哪（目录里要有 title.txt、body.md，建议 cover.jpg 和 images/）。两样都有才 run_skill：头条/百家号/大鱼号/搜狐号用 id social-media-publish，params { platform, articleDir }；微信公众号用 id weixin-publish，params { articleDir }（可选 theme=editorial|ink|green、images=N）。公众号只存草稿，群发必须人点。缺一项就先问，不要只把发布页打开。",
       "发布：当句明确说自动发、直接发、帮我发出去，才点发送，并在理解结果里把 autoSend 设为 true。没说就只填草稿，autoSend 为 false，「发一下」也不算自动发。支付、登录、验证码永远不代点。做完用短句报进度，不要编造已发送。",
       "你越用越懂这个用户：参考「你对用户的了解」个性化回复，但别生硬复述、别泄露原始字段。",
     ].join("\n");
@@ -502,6 +523,7 @@ export function agentCapabilityBrief(locale?: string): string {
     "City/date widgets (Ctrip, maps): fill_suggest for destination, pick_calendar for dates. Do not loop-click popular-city grids or bare day numbers. After two failed overlay tries, stop and say so.",
     "On greetings, give a short intro only: open pages, read this page, fill forms, draft replies. Do not name any website or social network. Do not offer to publish or post.",
     "Site discipline: go where the user named. Do not recommend a site they did not mention.",
+    "Publishing: ask for two things before acting — which platform (Toutiao / Baijiahao / Dayu / Sohu / WeChat MP), and where the article folder is (title.txt, body.md, cover.jpg, images/). Only then call run_skill: social-media-publish with { platform, articleDir } for the four sites, weixin-publish with { articleDir } for WeChat MP (draft only; the human clicks send). If one is missing, ask first — do not just open the publish page.",
     "Payment, account deletion, and customer-service Send must wait for the user. Reply in the same language the user is using. Do not claim you already sent.",
   ].join("\n");
 }

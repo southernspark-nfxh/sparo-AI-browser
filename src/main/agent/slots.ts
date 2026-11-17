@@ -396,6 +396,36 @@ function attachFacts(snap: SlotSnapshot, facts: ExtractedFacts): SlotSnapshot {
   };
 }
 
+const PUBLISH_PLATFORMS: Array<[RegExp, string]> = [
+  [/微信公众号?|公众号|微信|weixin/i, "weixin"],
+  [/头条|toutiao/i, "toutiao"],
+  [/百家号?|baijiahao/i, "baijiahao"],
+  [/大鱼号?|dayu/i, "dayu"],
+  [/搜狐号?|sohu/i, "sohu"],
+];
+
+/** 发稿必须两个槽：平台 + 稿件目录。缺哪个都先问人，不能只把发布页打开。 */
+function publishSlots(text: string): SlotSnapshot {
+  const t = text.trim();
+  const platform = PUBLISH_PLATFORMS.find(([re]) => re.test(t))?.[1];
+  const dirMatch =
+    t.match(/["“]([A-Za-z]:[\\/][^"”]+|[\\/]{2}[^"”]+)["”]/) ||
+    t.match(/([A-Za-z]:[\\/][^\s，。；;、]+)/);
+  const articleDir = dirMatch ? dirMatch[1].replace(/[\\/]+$/, "") : undefined;
+  const unknown: SlotId[] = [];
+  if (!platform) unknown.push("platform");
+  if (!articleDir) unknown.push("articleDir");
+  return {
+    kind: "publish",
+    need: t.slice(0, 42) || "发稿",
+    known: { platform, articleDir },
+    unknown,
+    needsConfirm: false,
+    approach: "先问齐平台和稿件目录，再按技能整篇写入，不循环 fill。",
+    attach: "new",
+  };
+}
+
 function emptySlots(kind: BriefKind, need: string, approach: string): SlotSnapshot {
   return {
     kind,
@@ -422,7 +452,7 @@ export function analyzeSlots(
   else if (kind === "trip") snap = tripSlots(t, opts);
   else if (kind === "page") snap = emptySlots("page", "读当前页", "用当前页正文回答，不新开无关网站。");
   else if (kind === "form") snap = emptySlots("form", "填表", "先分析当前页字段，再一次写入。");
-  else if (kind === "publish") snap = emptySlots("publish", "发帖", "按发布技能整段写入，不循环 fill。");
+  else if (kind === "publish") snap = publishSlots(t);
   else if (kind === "control") snap = emptySlots("control", "暂停或恢复", "只改操控状态，不开新页。");
   else if (kind === "travel") {
     const q = parseTravelQuery(t, opts?.now);

@@ -943,7 +943,11 @@ async function runOneStep(
       // 用 Electron 当 node 跑内嵌的 publish.mjs（ELECTRON_RUN_AS_NODE=1）
       const platform = String(args.platform || args.target || "").trim();
       const article = String(args.article || args.dir || args.articleDir || "").trim();
-      if (!platform) return { ok: false, message: "缺少 platform 参数（baijiahao|toutiao|dayu|sohu）" };
+      const PLATFORM_IDS = ["toutiao", "baijiahao", "dayu", "sohu", "weixin"];
+      if (!platform) return { ok: false, message: "缺少 platform 参数（" + PLATFORM_IDS.join("|") + "）" };
+      if (!PLATFORM_IDS.includes(platform)) {
+        return { ok: false, message: "不支持的 platform: " + platform + "（只能是 " + PLATFORM_IDS.join(" / ") + "）" };
+      }
       if (!article || article.startsWith("{{")) return { ok: false, message: "缺少 article 参数（稿件目录）" };
       // 路径：开发时用仓库内 strategies/skills/... ，打包后用 resources/social-publish-scripts/
       const script = join(
@@ -960,6 +964,15 @@ async function runOneStep(
       if (schedule) extraArgs.push("--schedule", schedule);
       const dryRun = args.dryRun === true || args.dryRun === "true";
       if (dryRun) extraArgs.push("--dry-run");
+      // 微信排版与图片控制：weixin-publish / social-media-publish 都可能传
+      const theme = args.theme && !String(args.theme).startsWith("{{") ? String(args.theme).trim() : "";
+      if (theme) extraArgs.push("--theme", theme);
+      const images = Number(args.images);
+      if (Number.isFinite(images) && images >= 1) extraArgs.push("--images", String(Math.floor(images)));
+      if (args.noDocx === true || args.noDocx === "true") extraArgs.push("--no-docx");
+      if (args.docxImport === true || args.docxImport === "true") extraArgs.push("--docx-import");
+      const env = args.env && !String(args.env).startsWith("{{") ? String(args.env).trim() : "";
+      if (env) extraArgs.push("--env", env);
       return await new Promise((resolve) => {
         const child = spawn(
           process.execPath,
@@ -981,7 +994,13 @@ async function runOneStep(
           let parsed: any = null;
           try { if (lastJson) parsed = JSON.parse(lastJson); } catch {}
           if (parsed?.ok) {
-            resolve({ ok: true, message: "发布完成", data: parsed });
+            // 公众号只落草稿，别把「发布完成」报给用户
+            const draftOnly = String(parsed.detail || "") === "DRAFT_SAVED_ONLY";
+            resolve({
+              ok: true,
+              message: draftOnly ? "已存草稿（群发需人工点发表）" : "发布完成",
+              data: parsed,
+            });
           } else {
             // ToolResult 没有 stderr 字段，把尾部错误并进 data，排障时看得到
             const data = parsed && typeof parsed === "object" ? { ...parsed, stderr: err.slice(-500) } : { stderr: err.slice(-500) };

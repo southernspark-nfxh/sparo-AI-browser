@@ -1,0 +1,79 @@
+{
+  "id": "weixin-publish",
+  "title": "微信公众号发布：Word 导入 + 统一排版 + 封面 + 存草稿",
+  "intent": "把稿件目录导入公众号编辑器，统一排版，设封面，存草稿并核验；群发由人点",
+  "aliases": [
+    "发微信",
+    "发公众号",
+    "发微信公众号",
+    "微信发布",
+    "公众号发布",
+    "发一篇微信稿",
+    "weixin-publish"
+  ],
+  "platform": "mp.weixin.qq.com",
+  "version": 1,
+  "updatedAt": "2026-11-17T10:00:00.000Z",
+  "source": "seeded",
+  "enabled": true,
+  "productModel": {
+    "ai": ["只做 run_skill 调用", "缺稿件目录先问人", "结果如实说存草稿"],
+    "script": ["scripts/publish.mjs --platform weixin --article <目录>"],
+    "forbid": ["loop fill", "把存草稿说成已群发", "自己点群发"]
+  },
+  "params": {
+    "articleDir": {
+      "type": "string",
+      "required": true,
+      "note": "目录内必须有 title.txt / body.md，建议 cover.jpg / images/"
+    },
+    "theme": {
+      "type": "string",
+      "optional": true,
+      "default": "editorial",
+      "enum": ["editorial", "ink", "green"],
+      "note": "editorial 深蓝主色 / ink 纯墨色 / green 微信绿"
+    },
+    "images": {
+      "type": "number",
+      "optional": true,
+      "note": "只带前 N 张；不传带 images/ 全部"
+    },
+    "noDocx": {
+      "type": "boolean",
+      "optional": true,
+      "default": false,
+      "note": "默认走 Word 导入；置 true 改直填（无正文插图），不推荐"
+    },
+    "dryRun": { "type": "boolean", "optional": true, "default": false },
+    "env": { "type": "string", "optional": true, "note": "账号环境名；不传用默认登录态" }
+  },
+  "pitfalls": [
+    { "milestone": 0, "note": "只存草稿，群发必须人点；返回 DRAFT_SAVED_ONLY 就是还没发出去" },
+    { "milestone": 0, "note": "验证码 / 扫码登录 / 安全验证必须停手交人" },
+    { "milestone": 0, "note": "articleDir 缺 title.txt 或 body.md 直接说不做，不要临场编正文" }
+  ],
+  "steps": [
+    {
+      "id": "dispatch",
+      "tool": "social_publish",
+      "args": {
+        "platform": "weixin",
+        "article": "{{articleDir}}",
+        "theme": "{{theme}}",
+        "images": "{{images}}",
+        "noDocx": "{{noDocx}}",
+        "dryRun": "{{dryRun}}",
+        "env": "{{env}}"
+      },
+      "note": "publish.mjs --platform weixin：openBlank→importDocx→formatBody→fillTitle→setCover→存草稿→verify。"
+    }
+  ],
+  "agentPlaybook": [
+    "1. 用户说发微信 / 发公众号 / 微信公众号发布时，run_skill({ id: 'weixin-publish', params: { articleDir, theme?, images? } })",
+    "2. 没给稿件目录先问「稿子在哪个目录」，并说明目录要有 title.txt、body.md，建议 cover.jpg 和 images/",
+    "3. 不要逐字 fill 标题正文；Word 导入会覆盖全文，先导入再填标题",
+    "4. 正常结果是存草稿 + appmsgid；如实告诉用户「已存草稿，群发请到后台点发表」",
+    "5. 排版主题通过 theme 传，改样式去 scripts/format.mjs 的 THEMES"
+  ]
+}

@@ -214,6 +214,11 @@ function isChatty(text: string): boolean {
 function legalSlots(goal: AgentGoal, homeCity?: string): SlotId[] {
   const t = goal.raw;
   const out: SlotId[] = [];
+  if (goal.kind === "publish") {
+    if (!goal.known.platform) out.push("platform");
+    if (!goal.known.articleDir) out.push("articleDir");
+    return out;
+  }
   if (wantsOrigin(t) && !goal.known.origin) {
     out.push(homeCity ? "origin_confirm" : "origin");
   }
@@ -252,7 +257,9 @@ export function sealWorkOrder(goal: AgentGoal, opts?: { homeCity?: string; chatt
       ask:
         first === "origin_confirm" && goal.ask?.includes("按")
           ? goal.ask
-          : slotAsk(first, opts?.homeCity),
+          : slots.includes("platform") && slots.includes("articleDir")
+            ? "发哪个平台？头条 / 百家号 / 大鱼号 / 搜狐号 / 微信公众号。稿件目录在哪？目录里要有 title.txt、body.md，建议 cover.jpg 和 images/。"
+            : slotAsk(first, opts?.homeCity),
       needsConfirm: false,
     };
   }
@@ -309,7 +316,7 @@ export function analyzeGoalHeuristic(
   const ids = deliverables.map((d) => d.id);
   let kind = slots.kind;
   if (constraint && ctx?.last) kind = ctx.last.kind;
-  else {
+  else if (slots.kind !== "publish") {
     const derived = kindFromDeliverables(ids);
     if (derived !== "chat") kind = derived;
   }
@@ -331,6 +338,8 @@ export function analyzeGoalHeuristic(
     audience: facts.audience || slots.known.audience,
     cheaper: facts.cheaper || slots.known.cheaper,
     hotelAvoid: facts.hotelAvoid.length ? facts.hotelAvoid : slots.known.hotelAvoid,
+    platform: slots.known.platform,
+    articleDir: slots.known.articleDir,
   };
   const goal: AgentGoal = {
     raw: text,
@@ -983,6 +992,18 @@ function compileHeuristicHands(goal: AgentGoal, ids: DeliverableId[], seed: Agen
     return [step("read_page", "读当前页", ["page"])];
   }
   if (goal.kind === "form" || goal.kind === "publish" || ids.includes("form")) {
+    // 发布两个槽都齐了才走技能；平台决定技能 id 与参数
+    if (goal.kind === "publish" && goal.known.platform && goal.known.articleDir) {
+      const platform = goal.known.platform;
+      const id = platform === "weixin" ? "weixin-publish" : "social-media-publish";
+      const params: Record<string, unknown> = { articleDir: goal.known.articleDir };
+      if (platform !== "weixin") params.platform = platform;
+      return [
+        step("run_skill", `发布到 ${platform}`, ["form"], {
+          action: { type: "run_skill", id, query: id, params },
+        }),
+      ];
+    }
     const local = parseLocalIntent(goal.raw);
     if (local.type === "run_skill") {
       return [step("run_skill", local.query, ["form"], { action: local })];

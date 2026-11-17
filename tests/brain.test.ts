@@ -281,4 +281,27 @@ describe("大脑：听整句，不丢掉顺便", () => {
     const handbook = mergePlan(goal, plan);
     expect(handbook.length).toBe(8);
   });
+
+  it("发稿缺平台和目录：先问，不去打开发布页", () => {
+    const goal = analyzeGoalHeuristic("帮我发稿子", { now: NOW });
+    expect(goal.kind).toBe("publish");
+    expect(goal.decision).toBe("ask");
+    expect(goal.ask).toMatch(/平台/);
+    expect(goal.ask).toMatch(/目录/);
+    expect(compileHands(goal).some((s) => s.cap === "run_skill")).toBe(false);
+  });
+
+  it("发微信 + 稿件目录齐了：一步 run_skill，params 带 articleDir", () => {
+    const goal = analyzeGoalHeuristic("发微信公众号，稿子在 D:\\稿子\\20261117_测试", { now: NOW });
+    expect(goal.kind).toBe("publish");
+    expect(goal.decision).toBe("act");
+    const hands = compileHands(goal);
+    expect(hands.length).toBe(1);
+    expect(hands[0].cap).toBe("run_skill");
+    expect(hands[0].action).toMatchObject({
+      type: "run_skill",
+      id: "weixin-publish",
+      params: { articleDir: "D:\\稿子\\20261117_测试" },
+    });
+  });
 });

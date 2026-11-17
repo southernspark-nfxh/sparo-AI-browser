@@ -26,7 +26,7 @@ export type ChatAction =
   | { type: "set_title"; title: string }
   | { type: "translate_title"; lang: "zh" | "en" }
   | { type: "list_skills" }
-  | { type: "run_skill"; id?: string; query: string }
+  | { type: "run_skill"; id?: string; query: string; params?: Record<string, unknown> }
   | { type: "llm"; text: string }
   | { type: "one_click_reply" }
   | { type: "summarize" }

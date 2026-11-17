@@ -8015,7 +8015,7 @@ export class SparkBrowser {
       const label = action.query || action.id;
       this.chatLog.push({ role: "assistant", text: `正在按技能「${label}」执行…` });
       this.pushSidebarState();
-      const ran = await this.runSkillTool({ id: action.id, query: action.query });
+      const ran = await this.runSkillTool({ id: action.id, query: action.query, params: action.params });
       reply = ran.message;
       await this.maybeOfferTrigger(userAsk, ran);
       this.pushSidebarState();

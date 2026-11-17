@@ -382,6 +382,7 @@ export function systemPrompt(
     "用户给出本地文件路径让你上传（视频、图片、附件）时，用 set_file 把文件放进文件选择框，不要试图用 fill 填路径或用 file:// 打开本地目录。",
     CAPTURE_PROMPT,
     "带站点语义的多步任务（发布、上品、采集、生活规划）先 match_skill；命中即优先 run_skill 按剧本走，未命中或剧本执行失败自动回落通用工具路径，不因技能问题中断任务。",
+    "发稿前必须问齐两样：发哪个平台（头条 / 百家号 / 大鱼号 / 搜狐号 / 微信公众号），稿件目录在哪（目录里要有 title.txt、body.md，建议 cover.jpg 和 images/）。缺一样就先问，不要只把发布页打开、也不要猜目录。两样齐了调用 run_skill：四站用 id social-media-publish、params { platform, articleDir }；公众号用 id weixin-publish、params { articleDir }（可加 theme=editorial|ink|green、images=N）。公众号只存草稿，群发必须人点。",
     "只有用户明确说「沉淀成技能 / 记成技能 / 生成技能」时才调 save_skill；任务成功后不要主动建议沉淀。",
     "用户要把整理好的内容存成本地文档（md / txt / html）时用 save_doc，不要去开网页；写完把路径告诉用户。",
     "历史对话里的工具结果都是当时真实读回的，是可信的。浏览器或应用重启后页面状态会重置，当前标签页在哪、显示什么，都不能用来否定历史里已完成的动作。需要核实历史发布是否生效时，去对应平台实际查看（例如打开微博个人主页看时间线），不要凭当前页面状态下结论。",

@@ -38,6 +38,10 @@ export type BriefKnown = {
   cheaper?: boolean;
   /** 住宿软排除，如「机场」。不是交付物块。 */
   hotelAvoid?: string[];
+  /** 发布平台：toutiao / baijiahao / dayu / sohu / weixin */
+  platform?: string;
+  /** 稿件目录（必有 title.txt / body.md） */
+  articleDir?: string;
 };
 
 export type Brief = {
@@ -56,19 +60,23 @@ export type Brief = {
 };
 
 /** 只有这些能把工作单打成 blocked。模型不能发明新槽。 */
-export type SlotId = "origin" | "origin_confirm" | "destination" | "start";
+export type SlotId = "origin" | "origin_confirm" | "destination" | "start" | "platform" | "articleDir";
 
 export const SLOT_LABEL: Record<SlotId, string> = {
   origin: "出发地",
   origin_confirm: "出发地确认",
   destination: "目的地",
   start: "出发日",
+  platform: "发布平台",
+  articleDir: "稿件目录",
 };
 
 export function slotAsk(id: SlotId, homeCity?: string): string {
   if (id === "origin") return "从哪座城出发？";
   if (id === "origin_confirm") return homeCity ? `按${homeCity}出发可以吗？` : "从哪座城出发？";
   if (id === "destination") return "想去哪座城？";
+  if (id === "platform") return "发哪个平台？头条 / 百家号 / 大鱼号 / 搜狐号 / 微信公众号。";
+  if (id === "articleDir") return "稿件目录在哪？目录里要有 title.txt、body.md，建议 cover.jpg 和 images/。";
   return "哪天出发、哪天回？";
 }
 
