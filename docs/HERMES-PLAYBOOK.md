@@ -37,7 +37,7 @@
  └─ 读页摘要 / 情报分析     → page_text / snapshot → 你本地推理
 ```
 
-现行任务、QA、待办：[PRODUCT-TASKBOOK.md](./PRODUCT-TASKBOOK.md) v0.3.5。结构：[ARCHITECTURE.md](./ARCHITECTURE.md)。云订阅：[CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md)。网页必须铺满 `#pageHole`。飞书网页走 `feishu_work`，禁止循环 fill，禁止代点发送。云端模型只在商店版，不要按 HTTP 次数扣「任务」。
+现行任务、QA、待办：[PRODUCT-TASKBOOK.md](./PRODUCT-TASKBOOK.md) v0.7.6。结构：[ARCHITECTURE.md](./ARCHITECTURE.md)。云订阅：[CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md)。网页必须铺满 `#pageHole`。飞书网页走 `feishu_work`，禁止循环 fill，禁止代点发送。云端模型只在商店版，不要按 HTTP 次数扣「任务」。
 
 ## 通用填表（重点）
 

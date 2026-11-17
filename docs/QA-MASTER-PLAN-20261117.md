@@ -368,7 +368,7 @@ docs/
 
 **新发现（任务书原文未列）**
 - N1：`ledger/2026-11.jsonl` 运行台账被打进 app.asar。**0.7.5 已排除**（electron-builder.yml files 负向过滤；asar 仅保留写台账代码 `scripts/ledger.mjs`）。
-- N2：`delete_env` 只删配置，不关环境标签、不清 partition——已打开标签仍可读 Cookie，与 MULTI-ACCOUNT「留空壳、不含有效登录态」承诺相反。**0.7.5 已修**（用户拍板改代码兑现文档，决策点 #63）：关环境标签 + 清分区存储；真机复测见 QA-GOLDEN-SCENARIOS 0.7.5 段（cookie 行清零，目录留空壳）。
+- N2：`delete_env` 只删配置，不关环境标签、不清 partition——已打开标签仍可读 Cookie，与 MULTI-ACCOUNT「留空壳、不含有效登录态」承诺相反。**0.7.5 已修**（用户拍板改代码兑现文档，决策点 #63）：关环境标签 + 清分区存储；真机复测见 QA-GOLDEN-SCENARIOS 0.7.5 段（cookie 行清零，目录留空壳）。**0.7.6 复核追加 R2/R3 加固**：先清存储后删配置（清失败保留环境可重试）、恢复已删环境改开普通标签；真机见 QA-GOLDEN-SCENARIOS 0.7.6 段。
 - N3：MCP `sparo_info` 服务版本仍报 0.1.0，与 0.7.4 不符，查「连上的是哪一版」只能解包。
 
 **门禁现状**：Q1/Q5/Q8/Q10 是；Q2/Q3/Q4/Q6 需登录态或前台机器（G5 微信存草稿、五站 PROBE_OK、四站 dry-run、真实输入法 60 秒）；Q7/Q9 文档项本轮已修，剩排版/docx/企鹅号视觉与真机验收未做。

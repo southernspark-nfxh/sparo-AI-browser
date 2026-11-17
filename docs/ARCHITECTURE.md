@@ -76,7 +76,7 @@
 - **0.7.2**：壳层永不开后台节流，关掉 Windows 原生遮挡判定——最小化/还原不再把壳层判成「被盖住」而停帧。
 - **0.7.3**：侧栏打字不抢焦点。覆盖自愈加退避（重挂仍不收敛就停手）、打字时不摘挂网页视图、摘挂后把焦点还回输入框。真机 CDP 打字采样 lost=0；**真实低速输入法打满 60 秒至今未测**（QA 0.7.4 记录）。
 
-技能怎么进包：`strategies/skills/**` 打进 `app.asar`；首启按种子版本号播种到配置目录（v2 盖成 v3、补 `weixin-publish.json`，0.7.4 实测首启 41 个技能）。发布脚本另有 `resources/social-publish-scripts/` 与 `resources/platforms/` 两份可读副本，`profile.mjs` 从相邻 `platforms/` 读平台 JSON。已知待修：`ledger/` 运行台账目前也被打进 asar，下一轮打包应排除。
+技能怎么进包：`strategies/skills/**` 打进 `app.asar`；首启按种子版本号播种到配置目录（v2 盖成 v3、补 `weixin-publish.json`，0.7.4 实测首启 41 个技能）。发布脚本另有 `resources/social-publish-scripts/` 与 `resources/platforms/` 两份可读副本，`profile.mjs` 从相邻 `platforms/` 读平台 JSON。`ledger/` 运行台账数据目录**已排除**（0.7.5 起，electron-builder.yml 负向过滤；仅保留写台账代码 `scripts/ledger.mjs`），0.7.6 包内核验过。
 
 ## 核心模块
 
