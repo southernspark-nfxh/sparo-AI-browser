@@ -186,3 +186,11 @@ R2 确认：两处 `catch` 都吞掉错误，配置删成功就报 deleted。这
 R3 确认，而且是这次改动新带出来的：`closeTab` 会把被关环境标签写入 `lastClosed`（约 L2552）。`reopenLastTab`（约 L3489）先把 `lastClosed` 清空，再 `createEnvTab`。`createEnvTab` 在环境配置已删时直接 `throw new Error(`环境 ${envId} 不存在`)`（L2068），这里没有 try/catch。快捷键 Ctrl+Shift+T（`handleChromeShortcut` L3177）也不包。主进程有 `uncaughtException` 只写 crash.log、不退出。结果是快捷键失败、这次恢复被消费掉，进程还在。真机没有按这组键。建议下次提交：环境已不存在时改开普通标签或明确回复「环境已删除」，不要抛。
 
 文档还有一句旧口径没改掉：`docs/MULTI-ACCOUNT.md` 第 48 行仍写「删除环境只删配置目录」。文首第 16 行已经是 0.7.5 的新口径。`PRODUCT-TASKBOOK.md` 第 101 行的同类句子在「2026-11-12 / 0.6.0」那一节里，是当时的记录，不是当前承诺。这两处都不必为此回滚代码。
+
+### 处理记录（同日，Trae 按本节建议追加）
+
+- **R2**：`deleteEnvFully` 改为**先清存储、后删配置**。`clearStorageData` 抛错时保留环境配置并如实回执 `clear storage failed, env kept — retry delete`，不再出现「名册没了、Cookie 还在」；`rmSync` 失败仍留空壳（存储已清，符合 §3 文档口径），但改为 `console.warn` 记录不再全静默。
+- **R3**：`reopenLastTab` 在 `getEnv` 查不到环境时改开普通标签，回执「环境已删除，已改开普通标签（该号登录态已清）」，不再把异常抛给 Ctrl+Shift+T。
+- **文档**：`MULTI-ACCOUNT.md` 第 48 行旧口径已改写为新口径（含失败保留、空壳条件、恢复行为）。
+- **测试**：`tests/env-delete.test.ts` 新增 2 条（清存储失败保环境可重试；恢复指向已删环境改开普通标签），该文件现 5 条。`npm run typecheck` 0 错误；全量 139 文件 / 1062 条全绿。
+- **边界**：本次只改 `deleteEnvFully` / `reopenLastTab` 及对应单测与文档，未碰壳层、发布链路；未重新打包，改动随下一个版本进安装包。

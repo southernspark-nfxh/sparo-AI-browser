@@ -45,7 +45,7 @@ run_skill({ query: "发百家号", params: { envId } })   # 技能也支持
 | MCP | `mcp-server.ts` | `list_envs` / `create_env` / `delete_env`，`navigate` / `new_tab` 带 `envId` |
 | 侧栏 | `agent/free-soul.ts` + `agent/agent-guide.ts` | `list_envs` 工具、`navigate.envId`、系统提示里的账号规则 |
 
-磁盘上每个环境对应 `Partitions/env_<envId>/`。删除环境只删配置目录，这个 partition 目录会留下空壳（不含有效登录态，不影响隔离）。
+磁盘上每个环境对应 `Partitions/env_<envId>/`。删除环境（0.7.5 起，决策点 #63）：先清空该分区存储、再删配置目录；两步任何一步失败都会如实回执、保留环境可重试。只有存储已清、仅因 Windows 文件锁删不掉目录时，才会留下空壳（不含有效登录态，不影响隔离）。恢复刚关闭的标签若指向已删环境，会改开普通标签并说明登录态已清，不再报错。
 
 ## 2026-11-12 修掉的两个真 bug
 

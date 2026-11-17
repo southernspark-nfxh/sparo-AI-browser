@@ -3491,6 +3491,12 @@ export class SparkBrowser {
     if (!last) return { ok: false, message: "nothing to reopen" };
     this.lastClosed = null;
     if (last.envId) {
+      // 删除环境会顺带关掉该环境标签（决策点 #63），恢复记录可能指向已删的环境。
+      // 此时不再抛错（R3）：改开普通标签并如实说明——登录态已经清掉了。
+      if (!getEnv(this.configDir(), last.envId)) {
+        const opened = this.newTab(last.url);
+        return { ...opened, ok: true, message: "环境已删除，已改开普通标签（该号登录态已清）" };
+      }
       const id = this.createEnvTab(last.envId, last.url, { userAction: true });
       return { ok: true, message: `Reopened ${id}`, data: this.listTabs() };
     }
@@ -6086,19 +6092,23 @@ export class SparkBrowser {
     stopEnvProxy(envId);
     const envTabs = [...this.tabs.values()].filter((t) => t.envId === envId).map((t) => t.id);
     for (const id of envTabs) this.closeTab(id);
+    // 先清存储、后删配置（R2 加固）：清失败就不删配置并如实回执，
+    // 避免「名册里已经没了、分区 Cookie 还在」的残留——那时界面上开不回这个号。
+    try {
+      const ses = session.fromPartition(`persist:env_${envId}`);
+      await ses.clearStorageData();
+      await ses.clearCache();
+    } catch (error) {
+      console.error("[env] clear storage failed, env kept:", error);
+      return { ok: false, message: `env ${envId}: clear storage failed, env kept — retry delete` };
+    }
     const ok = deleteEnvConfig(this.configDir(), envId);
     if (ok) {
       try {
-        const ses = session.fromPartition(`persist:env_${envId}`);
-        await ses.clearStorageData();
-        await ses.clearCache();
-      } catch {
-        /* 清存储失败不挡删除；下面尽力删分区目录 */
-      }
-      try {
         rmSync(join(this.configDir(), "Partitions", `env_${envId}`), { recursive: true, force: true });
-      } catch {
-        /* Windows 网络进程可能锁文件；存储已清，留空壳可接受 */
+      } catch (error) {
+        // Windows 网络进程可能锁文件（EBUSY）；存储已清，留空壳可接受（见 MULTI-ACCOUNT 口径）。
+        console.warn("[env] partition dir left behind:", error);
       }
     }
     return {
