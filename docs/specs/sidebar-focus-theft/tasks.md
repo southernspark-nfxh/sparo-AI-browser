@@ -9,4 +9,4 @@
 - [x] T7 新增 `tests/shell-focus-typing.test.ts`
 - [x] T8 版本 0.7.3 + CHANGELOG + DECISION-POINTS + QA 底账 + AGENTS.md
 - [x] T9 typecheck + 单测 + 开发窗实机 60 秒输入 + 打包 + 安装包停帧复测
-- [ ] T10 提交并推送
+- [x] T10 提交并推送
