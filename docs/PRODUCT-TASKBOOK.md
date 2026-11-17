@@ -1,14 +1,26 @@
 # Sparo 现行产品任务书
 
 > 持续更新。与原版 **同一份正文**，便于两边对照。上一版见 [archive/2026-08/PRODUCT-TASKBOOK-20260811.md](./archive/2026-08/PRODUCT-TASKBOOK-20260811.md)。  
-> 版本：**v0.7.5 · 2026-11-17**（删除环境即失效：关环境标签、清分区存储；台账不进安装包）  
-> 上一包：**v0.7.4 · 2026-11-17**（侧栏发稿链路接通：槽位追问、run_skill params 透传、微信识别）  
-> 再上一包：**v0.7.0 · 2026-11-16**（微信公众号图文发布只到存草稿；公众号排版与 docx 导入；企鹅号技能入仓）  
+> 版本：**v0.7.6 · 2026-11-17**（删除环境 R2/R3 加固：先清存储后删配置；恢复已删环境改开普通标签）  
+> 上一包：**v0.7.5 · 2026-11-17**（删除环境即失效：关环境标签、清分区存储；台账不进安装包）  
+> 再上一包：**v0.7.4 · 2026-11-17**（侧栏发稿链路接通：槽位追问、run_skill params 透传、微信识别）  
+> 第三上一包：**v0.7.0 · 2026-11-16**（微信公众号图文发布只到存草稿；公众号排版与 docx 导入；企鹅号技能入仓）  
 > 状态：**进行中**（云订阅 M1 代码已落地并人测过登录/付款；上架未完；飞书网页已做；侧栏大脑已让模型编手；0.6.0 多账号环境 + social-media-publish v0.3.6 已随包发布）  
 > 产品文案仍以 [PRODUCT.md](./PRODUCT.md) 为准，不要把任务书当商店上架稿。  
-> 先读：[ARCHITECTURE.md](./ARCHITECTURE.md) · [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) · [CHANGELOG.md](../CHANGELOG.md) 0.7.5 · 根目录 [AGENTS.md](../AGENTS.md)
+> 先读：[ARCHITECTURE.md](./ARCHITECTURE.md) · [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) · [CHANGELOG.md](../CHANGELOG.md) 0.7.6 · 根目录 [AGENTS.md](../AGENTS.md)
 >
 > **大脑进度（0.1.19）：** 听整句、站点表换站、模型编 `handbook` / 写下一步已进代码。10-26 起任务循环硬规则：新任务出确认卡、关单必有声、跑完计划步才许收摊、挂起答复接得回。10-27 起同能力多段逐段对账，最小化不再把窗口拉回前台。`absorb`（页上价格对约束）未开工。9 月交接稿见 [archive/2026-09/TRAE-PROMPT-AGENT-BRAIN.md](./archive/2026-09/TRAE-PROMPT-AGENT-BRAIN.md)，以 changelog 和测试为准。
+
+## 2026-11-17 已落代码（0.7.6：删除环境 R2/R3 加固）
+
+Cursor 复核 0.7.5 通过（[CHANGE-REPORT §7](./CHANGE-REPORT-20261117-075-DELETE-ENV.md)），两条缺口按预案追加：
+
+- R2：`deleteEnvFully` 改**先清存储、后删配置**——清失败保留环境、回执 `clear storage failed, env kept — retry delete`，不再出现「名册没了 Cookie 还在」；目录删不掉留空壳但改 `console.warn` 记录
+- R3：`reopenLastTab` 对已删环境改开普通标签并回执「环境已删除，已改开普通标签」，Ctrl+Shift+T 不再抛未捕获异常
+- 文档：MULTI-ACCOUNT 第 48 行旧口径改写
+- 验证：typecheck 0 错误；vitest 139 文件 / 1062 条全绿（env-delete 5 条）
+- 安装包：`release\Sparo-Setup-0.7.6.exe`，见 [QA-GOLDEN-SCENARIOS.md](./QA-GOLDEN-SCENARIOS.md) 0.7.6 段
+- 遗留：N3 `sparo_info` 版本仍 0.1.0；登录态验收（G5/五站 probe/四站 dry-run/真实输入法 60 秒）待补
 
 ## 2026-11-17 已落代码（0.7.5：删除环境即失效 + 台账不进包）
 

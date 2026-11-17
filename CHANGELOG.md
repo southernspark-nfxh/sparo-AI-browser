@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.7.6] — 2026-11-17 删除环境 R2/R3 加固：先清存储后删配置；恢复已删环境不报错
+
+**R2——清存储失败不再静默删配置。** Cursor 复核 0.7.5 发现：`clearStorageData` 抛错时环境仍被删除且回执 deleted，可能出现「名册里没了、分区 Cookie 还在」的残留（界面上开不回这个号）。`deleteEnvFully` 改为先清存储、后删配置：清失败保留环境、如实回执 `clear storage failed, env kept — retry delete`，可重试；目录因 Windows 文件锁删不掉仍留空壳（存储已清），改为 `console.warn` 记录。
+
+**R3——恢复刚关闭的标签指向已删环境不再抛错。** 删环境会顺带关标签，Ctrl+Shift+T 恢复时 `createEnvTab` 会因环境不存在抛未捕获异常（只写 crash.log，恢复记录已被消费）。现在改开普通标签并回执「环境已删除，已改开普通标签（该号登录态已清）」。
+
+**文档对齐。** MULTI-ACCOUNT 第 48 行旧口径（「删除环境只删配置目录」）改写为新口径。改动报告含 Cursor 复核结论与处理记录：`docs/CHANGE-REPORT-20261117-075-DELETE-ENV.md`。
+
+**验证：** typecheck 0 错误；全量 vitest 139 文件 / 1062 条全绿（`tests/env-delete.test.ts` 增至 5 条：清存储失败保环境可重试、恢复指向已删环境改开普通标签）。
+
 ## [0.7.5] — 2026-11-17 删除环境即失效；台账不再进安装包
 
 **删除环境真正失效（决策点 #63）。** 0.7.4 全量 QA 发现：`delete_env` 只删配置，已打开的环境标签不关、分区 Cookie 仍可读，与 MULTI-ACCOUNT「不含有效登录态」承诺相反。现在 MCP `delete_env` 与设置页删除共用 `deleteEnvFully`：先关仍挂该环境的标签，再删配置，然后清空分区存储（`clearStorageData` / `clearCache`），最后尽力删 `Partitions/env_<id>/`（Windows 文件锁删不干净时留空壳，存储已清）。新增 `tests/env-delete.test.ts` 3 条。
