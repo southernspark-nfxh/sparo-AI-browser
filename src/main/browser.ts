@@ -14,7 +14,7 @@ import {
   type MenuItemConstructorOptions,
   type WebContents,
 } from "electron";
-import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync, unlinkSync, rmSync } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -5103,8 +5103,8 @@ export class SparkBrowser {
       return c ? { ok: true, id: c.id } : { ok: false, message: "源环境不存在" };
     });
     handle("spark:delete-env", async (_e, envId) => {
-      stopEnvProxy(String(envId || ""));
-      return { ok: deleteEnvConfig(this.configDir(), String(envId || "")) };
+      const r = await this.deleteEnvFully(String(envId || ""));
+      return { ok: r.ok, message: r.message };
     });
     handle("spark:open-env", async (_e, envId) => {
       try {
@@ -6078,16 +6078,37 @@ export class SparkBrowser {
     };
   }
 
-  deleteEnvTool(envId: string): ToolResult {
+  /** 删除环境即失效（决策点 #63）：关环境标签、清分区存储，兑现 MULTI-ACCOUNT「不含有效登录态」。 */
+  async deleteEnvFully(envId: string): Promise<ToolResult> {
     if (!envId) return { ok: false, message: "envId required" };
     const env = getEnv(this.configDir(), envId);
     if (!env) return { ok: false, message: `env ${envId} not found` };
     stopEnvProxy(envId);
+    const envTabs = [...this.tabs.values()].filter((t) => t.envId === envId).map((t) => t.id);
+    for (const id of envTabs) this.closeTab(id);
     const ok = deleteEnvConfig(this.configDir(), envId);
+    if (ok) {
+      try {
+        const ses = session.fromPartition(`persist:env_${envId}`);
+        await ses.clearStorageData();
+        await ses.clearCache();
+      } catch {
+        /* 清存储失败不挡删除；下面尽力删分区目录 */
+      }
+      try {
+        rmSync(join(this.configDir(), "Partitions", `env_${envId}`), { recursive: true, force: true });
+      } catch {
+        /* Windows 网络进程可能锁文件；存储已清，留空壳可接受 */
+      }
+    }
     return {
       ok,
-      message: ok ? `env ${envId} deleted` : `env ${envId} delete failed`,
+      message: ok ? `env ${envId} deleted, closed ${envTabs.length} env tabs` : `env ${envId} delete failed`,
     };
+  }
+
+  deleteEnvTool(envId: string): Promise<ToolResult> {
+    return this.deleteEnvFully(envId);
   }
 
   /**

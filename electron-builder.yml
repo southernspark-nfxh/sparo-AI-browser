@@ -12,6 +12,8 @@ files:
   - out/**/*
   - resources/**/*
   - strategies/skills/**/*
+  # 运行台账是机器本地数据，不进安装包（QA 0.7.4 N1）
+  - "!strategies/skills/**/ledger/**"
   - package.json
 extraResources:
   - from: resources/sparo-agent.cjs
