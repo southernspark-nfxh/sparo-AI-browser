@@ -32,7 +32,7 @@ import { buildPrecheckResult, listStudioEnvs, resolveStudioEnv, snapshotHash, un
 import { randomBytes } from "node:crypto";
 import { freemem, totalmem } from "node:os";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { boundsWithinOnePixel, CHROME_HEAL_COOLDOWN_MS, CHROME_HEAL_STALL_LIMIT, chromeCoverDelta, chromeCoverReason, clampPageView, pageViewCoversChrome, resetChromeCoverBudget, SHELL_HEARTBEAT_GAP_MS, SHELL_PAINT_DIAG_BEATS, SHELL_PAINT_REPAINT_COOLDOWN_MS, SHELL_PAINT_STALL_BEATS, shellPaintStalled, shellRecoveryStep, shellSilentTooLong, takeChromeCoverFix, type ChromeCoverBudget, type CoverReason, type PageRect, type ShellPaintState } from "./page-bounds.js";
+import { boundsWithinOnePixel, CHROME_HEAL_COOLDOWN_MS, CHROME_HEAL_STALL_LIMIT, chromeCoverDelta, chromeCoverReason, clampPageView, coverHealBackoff, pageViewCoversChrome, remountBlockedByTyping, resetChromeCoverBudget, SHELL_HEARTBEAT_GAP_MS, SHELL_PAINT_DIAG_BEATS, SHELL_PAINT_REPAINT_COOLDOWN_MS, SHELL_PAINT_STALL_BEATS, shellPaintStalled, shellRecoveryStep, shellSilentTooLong, takeChromeCoverFix, type ChromeCoverBudget, type CoverReason, type PageRect, type ShellPaintState } from "./page-bounds.js";
 import { pickTabsToClose } from "./close-tabs.js";
 import { migrateMemorySaverMode, pickTabsToDiscard, type DiscardCandidate } from "./memory-policy.js";
 import { formatPushMinute, formatShellCrashContext, formatShellMemLine } from "./diag-log.js";
@@ -3927,8 +3927,11 @@ export class SparkBrowser {
     const stalls = this.chromeHealStalls();
     const prev = stalls.get(tabId);
     const showActive = tabId === this.activeTabId && this.overlay === "none";
-    // 活动页正盖住壳层时不进 10 秒冷却。2 秒巡检已经限频，停手的那几秒侧栏会一直被网页盖住。
-    if (!showActive && prev && prev.count >= CHROME_HEAL_STALL_LIMIT && now < prev.retryAt) return;
+    // 活动页第一次盖住壳层时不进冷却，赶紧救。
+    // 但已经摘挂过一次还没收敛的，活动页也要退避：每 2 秒摘挂一次会把键盘焦点一直抢给网页，
+    // 人在侧栏里打的字全断（2026-11-16 的账上每分钟上百条 heal/retry）。
+    const bypassCooldown = showActive && !prev?.remounted;
+    if (!bypassCooldown && prev && prev.count >= CHROME_HEAL_STALL_LIMIT && now < prev.retryAt) return;
 
     const cooledRetry = Boolean(prev && prev.count >= CHROME_HEAL_STALL_LIMIT);
     const taken = takeChromeCoverFix(this.chromeCover, now);
@@ -3974,27 +3977,33 @@ export class SparkBrowser {
     let settled = after;
     if (!cooledRetry && showActive) this.requestHoleReport();
     if (!cooledRetry && showActive && !remounted) {
-      this.boundsGuard = true;
-      try {
-        this.remountCoveredActiveView(view);
-        remounted = true;
-      } catch {
-        /* 视图已销毁 */
-      } finally {
-        this.boundsGuard = false;
-      }
-      settled = this.readPageViewBounds(view, after);
-      this.logChromeHealAction("remount", tabId, reason, actual, settled, CHROME_HEAL_COOLDOWN_MS);
-      if (!boundsWithinOnePixel(actual, settled)) {
-        stalls.delete(tabId);
-        return;
+      // 人正在输入框里打字时绝不摘挂：removeChildView + addChildView 会把键盘焦点交给网页。
+      if (!remountBlockedByTyping(this.shellIsTyping(this.activeWinId))) {
+        this.boundsGuard = true;
+        try {
+          this.remountCoveredActiveView(view);
+          remounted = true;
+        } catch {
+          /* 视图已销毁 */
+        } finally {
+          this.boundsGuard = false;
+        }
       }
     }
 
+    settled = this.readPageViewBounds(view, after);
+    // 修好了就清账，下一拍重新按第一次处理；还盖着就退避，不许每 2 秒重来一次。
+    if (!pageViewCoversChrome(settled, hole)) {
+      if (remounted) this.logChromeHealAction("remount", tabId, reason, actual, settled, CHROME_HEAL_COOLDOWN_MS);
+      stalls.delete(tabId);
+      return;
+    }
+    const backoff = coverHealBackoff({ remounted, now });
+    if (remounted) this.logChromeHealAction("remount", tabId, reason, actual, settled, CHROME_HEAL_COOLDOWN_MS);
     stalls.set(tabId, {
       count: CHROME_HEAL_STALL_LIMIT,
       reason,
-      retryAt: now + CHROME_HEAL_COOLDOWN_MS,
+      retryAt: backoff.giveUp ? backoff.retryAt : now + CHROME_HEAL_COOLDOWN_MS,
       remounted,
     });
     this.logChromeHealAction("retry-deferred", tabId, reason, actual, settled, CHROME_HEAL_COOLDOWN_MS);
@@ -4005,6 +4014,8 @@ export class SparkBrowser {
     const bounds = this.pageBounds();
     if (!bounds || bounds.y < CHROME_H || bounds.width < 80 || bounds.height < 80) return;
     const parent = this.win.contentView;
+    // 摘挂会把键盘焦点交给网页，侧栏输入框随之失焦。先记下焦点归谁，挂完还回去。
+    const shellHadFocus = this.shellWebContentsFocused();
     try {
       if (parent?.children?.includes(view)) parent.removeChildView(view);
     } catch {
@@ -4021,6 +4032,28 @@ export class SparkBrowser {
       view.setBounds(bounds);
     } catch {
       /* 视图已销毁 */
+    }
+    if (shellHadFocus) this.restoreShellFocus();
+  }
+
+  /** 壳层渲染进程此刻是否持有键盘焦点。摘挂视图前记下，摘挂后还回去。 */
+  private shellWebContentsFocused(): boolean {
+    try {
+      if (this.win.isDestroyed() || this.win.webContents.isDestroyed()) return false;
+      return this.win.webContents.isFocused();
+    } catch {
+      return false;
+    }
+  }
+
+  /** 把键盘焦点还给壳层。DOM 没重建，caret 会回到原来那个输入框。 */
+  private restoreShellFocus(): void {
+    try {
+      if (this.win.isDestroyed() || this.win.webContents.isDestroyed()) return;
+      if (this.windowIsMinimized()) return;
+      this.win.webContents.focus();
+    } catch {
+      /* 窗口正在销毁 */
     }
   }
 
@@ -4192,6 +4225,8 @@ export class SparkBrowser {
   private sidebarTabShownForTurn = true;
   /** 每扇窗口最后一次收到壳层心跳的时间。渲染进程彻底卡死时，这是主进程唯一的凭据。 */
   private shellBeatAt = new Map<string, number>();
+  /** 每扇窗口最后一次「人在壳层输入框里打字」的时间。摘挂视图和 hide/show 都会抢焦点，先看这个。 */
+  private shellTypingAt = new Map<string, number>();
   /** 每扇窗口壳层的创建时间。首屏加载期间报 unresponsive 是常态，别拿它去重挂窗口。 */
   private shellBornAt = new Map<string, number>();
   /** 壳层报上来的长任务耗时（毫秒）。停帧时写进日志，用来分清是 JS 占住主线程还是合成停了。 */
@@ -4227,6 +4262,9 @@ export class SparkBrowser {
     }
     const frames = Math.max(0, Math.round(Number((raw as { frames?: unknown } | null)?.frames) || 0));
     const documentVisible = (raw as { documentVisible?: unknown } | null)?.documentVisible !== false;
+    if ((raw as { typing?: unknown } | null)?.typing === true) {
+      this.shellTypingAt.set(winId, Date.now());
+    }
     const reportedTasks = (raw as { longTasks?: unknown } | null)?.longTasks;
     if (Array.isArray(reportedTasks) && reportedTasks.length) {
       const kept = this.shellLongTask?.get(winId) || [];
@@ -4304,7 +4342,7 @@ export class SparkBrowser {
     const line = `[shell-paint] repaint win=${winId} reason=${reason} streak=${next.zeroStreak} count=${next.repaints} maximized=${this.safeMaximized(win)} long=${this.longTaskSummary(winId)}`;
     console.log(line);
     noteHang("shell-paint-recover", line);
-    this.remountShell(win);
+    this.remountShell(win, winId);
   }
 
   /**
@@ -4312,10 +4350,12 @@ export class SparkBrowser {
    * 先照这个动作做一次隐藏再显示：不重载页面、不丢侧栏状态，成不成 1 秒内就知道。
    * 不成再看门狗下一拍直接重启渲染进程。
    */
-  private remountShell(win: BrowserWindow): void {
+  private remountShell(win: BrowserWindow, winId: string): void {
     try {
       this.invalidateShell(win);
       if (win.isDestroyed() || win.isMinimized() || !win.isVisible()) return;
+      // 人正在输入框里打字：hide/show 会打断输入和中文候选，拖到下一拍再判。
+      if (this.shellIsTyping(winId)) return;
       const wasMaximized = win.isMaximized();
       const wasFocused = win.isFocused();
       win.hide();
@@ -4323,7 +4363,10 @@ export class SparkBrowser {
       if (wasFocused) win.show();
       else win.showInactive();
       if (wasMaximized) win.maximize();
-      if (wasFocused) win.focus();
+      if (wasFocused) {
+        win.focus();
+        this.restoreShellFocus();
+      }
     } catch {
       /* 窗口已销毁：交给下一拍重启 */
     }
@@ -4391,6 +4434,13 @@ export class SparkBrowser {
     this.shellLongTask.delete(winId);
     // 心跳未知 ≠ 心跳超时：没收到过心跳之前不判死，否则首屏加载慢一点就被白白重绘两次。
     this.shellBeatAt.delete(winId);
+    // 打字时间不清：重载后 1.5 秒内人可能还在原来的输入框里，摘挂仍会抢焦点。
+  }
+
+  /** 人是否正在这扇窗的壳层输入框里打字。心跳一秒一拍，留 1.5 秒余量。 */
+  private shellIsTyping(winId: string): boolean {
+    const at = this.shellTypingAt?.get(winId) || 0;
+    return at > 0 && Date.now() - at < 1_500;
   }
 
   /**

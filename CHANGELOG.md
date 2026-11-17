@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.3] — 2026-11-17 侧栏打字不再被抢焦点：自愈退避、打字时不摘挂网页视图
+
+**人写在侧栏里的字，被浏览器的自愈动作抢走了焦点。** 用户机器 `crash.log` 里，2026-11-16 10:00–13:20 每分钟 80–138 条 `chrome-hole-heal` / `chrome-hole-action`，同一条标签每 2 秒重复一次「整窗 1400×900 → 洞 680×829」的修尺寸；另有约每 10 秒一次 `shell-paint-recover`（`hide()/show()`）。摘挂 `WebContentsView` 和隐藏/显示窗口都会把键盘焦点交给网页，输入框里的光标就断了。
+
+**覆盖自愈不再永动。** 活动页以前完全绕过 10 秒冷却：重排后视图仍盖着壳层就清账重来，于是每 2 秒摘挂一次。现在只有「第一次盖住」才免冷却；摘挂过一次仍不收敛的，一律退到冷却，到点再试。
+
+**人打字时一律不摘挂。** 壳层心跳新增 `typing`（焦点在输入框 / 文本域 / contentEditable）。主进程在 1.5 秒窗口内把这类窗口当成「正在输入」：不做 `removeChildView + addChildView`，`remountShell` 也不 `hide()/show()`，只重绘，让 1 秒看门狗下一拍再判。
+
+**摘挂后把焦点还回去。** `remountCoveredActiveView` 与 `remountShell` 在操作前记下壳层是否持有焦点，若是则在完成后 `webContents.focus()`；DOM 未重建，caret 回到原输入框。
+
+**验证：** `tsc --noEmit` 0 错误；`vitest run` 138 文件 / 1057 条全绿（新增 `tests/shell-focus-typing.test.ts`，`chrome-hole` 用例改为「活动页重挂没收敛也退避」）。安装包实机与停帧恢复结果见 [docs/QA-GOLDEN-SCENARIOS.md](./docs/QA-GOLDEN-SCENARIOS.md)。
+
 ## [0.7.2] — 2026-11-17 壳层白屏：永不开后台节流、关掉 Windows 原生遮挡判定（遮挡场景仍未复现）
 
 **0.7.1 只是把恢复从 13 秒压到 6.7 秒，白还是白。** 这次在用户机器 12:23–12:28 的 `crash.log` 里看到一条可疑通路：最小化回调与 `restore` 都会调用 `setBackgroundThrottling(true)`，把窗口创建时的 `backgroundThrottling: false` 又关回去。节流一旦打开就不会自己关；只要 Chromium 真把窗口判成遮挡或隐藏，壳层的 rAF 与计时器就整条停掉——网页视图照常画，顶栏和侧栏白成一张壳。这条通路是真的，但今天用最小化/还原做 A/B 没有复现：已装 0.7.0 与新包在还原后都仍是 61 帧/秒。所以本版不把话说满。

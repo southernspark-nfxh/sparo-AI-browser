@@ -21,7 +21,7 @@ Tagline: *会动手的 AI 浏览器 — 发送前你确认。*
 | [docs/PRODUCT-TASKBOOK.md](./docs/PRODUCT-TASKBOOK.md) | 现行任务、QA、待办（v0.7.0） |
 | [docs/DECISION-POINTS.md](./docs/DECISION-POINTS.md) | 能提前结束任务的本地判断，先登记再合码 |
 | [docs/QA-GOLDEN-SCENARIOS.md](./docs/QA-GOLDEN-SCENARIOS.md) | 黄金场景，用底账核对，不看侧栏感觉 |
-| [CHANGELOG.md](./CHANGELOG.md) | 对外变更（现 0.7.2） |
+| [CHANGELOG.md](./CHANGELOG.md) | 对外变更（现 0.7.3） |
 | [docs/PRODUCT.md](./docs/PRODUCT.md) | 商店定位，不是任务书 |
 
 **此后主线就在本目录改。** 原版 `D:\download\Sparo`（3920 / `%APPDATA%\sparo`）只同步侧栏能力，不要把云订阅搬过去。
@@ -29,7 +29,7 @@ Tagline: *会动手的 AI 浏览器 — 发送前你确认。*
 **称呼：** 对人、对界面、对模型说「技能」。不要说「妙招」。工具名仍是 `match_skill` / `run_skill`。店小秘采集箱上品前编辑用技能 `dxm-crawl-prep`。
 
 数据在 `%APPDATA%\sparo-store`。MCP：`http://127.0.0.1:3921`。  
-当前安装包：`release\Sparo-Setup-0.7.2.exe`（2026-11-17，壳层白屏根因修复见 CHANGELOG）。包名、字节数、SHA-256、G1–G3 结果与遗留项见 [docs/PRODUCT-TASKBOOK.md](./docs/PRODUCT-TASKBOOK.md)。  
+当前安装包：`release\Sparo-Setup-0.7.3.exe`（2026-11-17，壳层白屏根因修复见 CHANGELOG；同日 0.7.3 修侧栏打字被抢焦点）。包名、字节数、SHA-256、G1–G3 结果与遗留项见 [docs/PRODUCT-TASKBOOK.md](./docs/PRODUCT-TASKBOOK.md)。  
 云端模型走独立代理服务（本仓库不含密钥）。**不要**把云端 Key 写进客户端。  
 不要改 `docs/listings/`（提审前另做一轮）。主进程不热更。安装包不会自动更新。
 

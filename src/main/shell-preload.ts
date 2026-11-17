@@ -12,8 +12,9 @@ contextBridge.exposeInMainWorld("sparkShell", {
   focusShell: () => ipcRenderer.send("spark:focus-shell"),
   // 壳层帧心跳：frames 是上一拍之后新画的帧数，0 说明顶栏/侧栏停帧了。
   // longTasks 是这一拍里超过 50ms 的主线程任务耗时，用来分清是 JS 卡住还是合成停了。
-  shellHeartbeat: (frames: number, documentVisible: boolean, longTasks?: number[]) =>
-    ipcRenderer.send("spark:shell-heartbeat", { frames, documentVisible, longTasks }),
+  // typing 表示人正把光标放在壳层的输入框里。人打字时不许摘挂网页视图（会抢焦点）。
+  shellHeartbeat: (frames: number, documentVisible: boolean, longTasks?: number[], typing?: boolean) =>
+    ipcRenderer.send("spark:shell-heartbeat", { frames, documentVisible, longTasks, typing }),
   navigate: (url: string) => ipcRenderer.invoke("spark:navigate", url),
   goBack: () => ipcRenderer.invoke("spark:go-back"),
   goForward: () => ipcRenderer.invoke("spark:go-forward"),

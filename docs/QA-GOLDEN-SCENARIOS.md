@@ -126,6 +126,16 @@ $chat | Where-Object { $_.text -like "*$($want.Substring(0, [Math]::Min(12, $wan
 
 安装包复测至少 G1、G2、G3。记下 `git rev-parse --short HEAD` 和 `release\Sparo-Setup.exe` 的修改时间。开发窗绿了，不能代替安装包。
 
+### 2026-11-17 0.7.3 安装包级复测（侧栏打字被抢焦点：自愈退避 + 打字时不摘挂）
+
+- 包：`release\Sparo-Setup-0.7.3.exe`（105,008,480 字节，2026-11-17 13:03:42，SHA-256 `88AD3790A0E71D13D5167A5746D12445B308BB55FA232AD2E2C34E7A4C70029E`），基于 HEAD `e7a9401` + 本轮改动；测试跑在同一份 `release\win-unpacked\Sparo.exe`。
+- 环境隔离：`SPARO_CONFIG_DIR=%TEMP%\sparo-qa-073`、`SPARO_MCP_PORT=3949`、CDP 9361、`--user-data-dir=%TEMP%\sparo-qa-073-userdata`（用户桌面上的 0.7.0 全程未动）。隔离实例的 `settings.json` 写 dummy `apiKey` 解锁输入框。
+- **用户机器底账（病根）**：`%APPDATA%\sparo-store\diag\crash.log` 2026-11-16 10:00–13:20 每分钟 80–138 条 `chrome-hole-heal` / `chrome-hole-action`，同一条标签每 2 秒重复「整窗 1400×900 → 洞 680×829」；同期 `shell-paint-recover` 约每 10 秒一次。摘挂 `WebContentsView` 与 `hide()/show()` 都会把键盘焦点交给网页。
+- **焦点采样（有网页视图）**：CDP 聚焦 `#chatInput` → `Input.insertText` 20 字 → 100 ms 采样 `document.activeElement`，期间 `SetWindowPos` 改窗 6 次（1180×820 → 1420×940 等）。第一次 533 拍 / `lost=0`，第二次开 `https://example.com` 后 461 拍 / `lost=0`；`chrome-hole` 日志 0 条，输入框文本保持 30 字。
+- **壳层卡死自愈仍有效**：CDP `while(true){}` 卡死后把窗口置前，逐行为 `restart win=main reason=silent streak=3 count=1` → `shell-render-gone reason=crashed` → `shell-reload forced=true` → `heartbeat online`，置前后 **1.1 秒**恢复（卡死期间窗口不在前台，看门狗按设计不救后台窗口）。
+- **未验证**：没有在真实低速输入法里逐字打满 60 秒；「摘挂一次仍不收敛 → 退避」只有单测覆盖（`tests/chrome-hole.test.ts`、`tests/shell-focus-typing.test.ts`），没在实机人为制造「重挂后仍盖住壳层」。
+- **G1–G3 未重测**：本轮只改壳层焦点与覆盖自愈节奏，不碰开站/读页/发布，沿用 0.6.9 结论。这是偏离，不冒充已复测。
+
 ### 2026-11-17 0.7.2 安装包级复测（壳层白屏：后台节流被重新打开）
 
 - 包：`release\Sparo-Setup-0.7.2.exe`（105,005,947 字节，2026-11-17 12:37:57，SHA-256 `301A4AEB9B2EEC8F1C083BA3282180F94B59125E3061BFF92A0F4797DED24CAC`），基于 HEAD `6ce4dfe`；测试跑在同一份 `release\win-unpacked\Sparo.exe`。

@@ -46,6 +46,26 @@ export function boundsWithinOnePixel(a: PageRect, b: PageRect): boolean {
 
 export type CoverReason = "y" | "x" | "width" | "right" | "height" | null;
 
+/**
+ * 摘挂 WebContentsView 会把键盘焦点交给网页，侧栏输入框随即失焦。
+ * 人正在壳层里打字时一律不摘挂，只许改尺寸（setBounds 不夺焦点）。
+ */
+export function remountBlockedByTyping(typing: boolean): boolean {
+  return typing;
+}
+
+/**
+ * 重排后视图仍不等于页面洞：活动页也不许每 2 秒重做一次摘挂。
+ * 已经摘挂过一次还没收敛，就退到冷却，到点再试。
+ */
+export function coverHealBackoff(input: {
+  remounted: boolean;
+  now: number;
+}): { giveUp: true; retryAt: number } | { giveUp: false } {
+  if (!input.remounted) return { giveUp: false };
+  return { giveUp: true, retryAt: input.now + CHROME_HEAL_COOLDOWN_MS };
+}
+
 /** 命中哪一条覆盖。顺序与旧布尔判断一致，先碰到哪条算哪条。 */
 export function chromeCoverReason(actual: PageRect, hole: PageRect): CoverReason {
   if (actual.x < -100) return null;
