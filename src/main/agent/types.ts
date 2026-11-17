@@ -76,7 +76,7 @@ export function slotAsk(id: SlotId, homeCity?: string): string {
   if (id === "origin_confirm") return homeCity ? `按${homeCity}出发可以吗？` : "从哪座城出发？";
   if (id === "destination") return "想去哪座城？";
   if (id === "platform") return "发哪个平台？头条 / 百家号 / 大鱼号 / 搜狐号 / 微信公众号。";
-  if (id === "articleDir") return "稿件目录在哪？目录里要有 title.txt、body.md，建议 cover.jpg 和 images/。";
+  if (id === "articleDir") return "稿件目录在哪？也可以直接把标题和正文贴给我，或先打开编辑器再贴。";
   return "哪天出发、哪天回？";
 }
 

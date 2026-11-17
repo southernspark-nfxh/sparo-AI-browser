@@ -30,6 +30,7 @@ Tagline: *会动手的 AI 浏览器 — 发送前你确认。*
 
 数据在 `%APPDATA%\sparo-store`。MCP：`http://127.0.0.1:3921`。  
 当前安装包：`release\Sparo-Setup-0.7.6.exe`。包名、字节数、SHA-256、G1–G3 结果与遗留项见 [docs/PRODUCT-TASKBOOK.md](./docs/PRODUCT-TASKBOOK.md)。  
+**待打包 0.7.7**：要打什么、核对哪 3 条、哪些文件不属于本轮，见 [docs/NOTICE-20261117-AGENT-PUBLISH-HOOK.md](./docs/NOTICE-20261117-AGENT-PUBLISH-HOOK.md)。
 云端模型走独立代理服务（本仓库不含密钥）。**不要**把云端 Key 写进客户端。  
 不要改 `docs/listings/`（提审前另做一轮）。主进程不热更。安装包不会自动更新。
 

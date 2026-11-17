@@ -6265,8 +6265,10 @@ export class SparkBrowser {
     tabId?: string,
   ): Promise<ToolResult> {
     if (!this.freeSoulRunning && this.helpAsk) {
-      // 多站任务不能因为上一站登录墙就冻死。记下「先不管」，问题仍留在侧栏给人改。
-      this.skipLearning();
+      // 任务自己在跑时，帮助问句留给主循环停下来问人（同一时刻只问一句），
+      // 这里不能自动替人答「先不管」——否则侧栏会出现「点了没反应 → 好，先继续」自问自答。
+      // 只有不在任务里执行的动作才静默记「先不管」，且不刷聊天。
+      if (this.activeMission?.state !== "running") this.skipLearning(true);
     }
     const before = pageFinger(this.getUrl(tabId), this.getTitle(tabId));
     const result = await run();
@@ -6341,7 +6343,7 @@ export class SparkBrowser {
     return false;
   }
 
-  answerLearning(raw: string): ToolResult {
+  answerLearning(raw: string, opts?: { silent?: boolean }): ToolResult {
     if (this.freeSoulRunning) {
       console.log(formatLearnSwallow("answerLearning"));
       return { ok: true, message: "" };
@@ -6355,7 +6357,7 @@ export class SparkBrowser {
     if (parsed.skip || !parsed.trigger || !parsed.advice) {
       this.setPaused(false);
       const text = zh ? "好，先继续。" : "Okay, continuing.";
-      this.chatLog.push({ role: "assistant", text });
+      if (!opts?.silent) this.chatLog.push({ role: "assistant", text });
       this.pushSidebarState();
       return { ok: true, message: text };
     }
@@ -6378,8 +6380,8 @@ export class SparkBrowser {
     return { ok: true, message: text };
   }
 
-  skipLearning(): ToolResult {
-    return this.answerLearning("先不管");
+  skipLearning(silent = false): ToolResult {
+    return this.answerLearning("先不管", { silent });
   }
 
   async requestApproval(input: {

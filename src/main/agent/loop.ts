@@ -258,7 +258,7 @@ export function sealWorkOrder(goal: AgentGoal, opts?: { homeCity?: string; chatt
         first === "origin_confirm" && goal.ask?.includes("按")
           ? goal.ask
           : slots.includes("platform") && slots.includes("articleDir")
-            ? "发哪个平台？头条 / 百家号 / 大鱼号 / 搜狐号 / 微信公众号。稿件目录在哪？目录里要有 title.txt、body.md，建议 cover.jpg 和 images/。"
+            ? "发哪个平台？头条 / 百家号 / 大鱼号 / 搜狐号 / 微信公众号。稿件目录在哪？也可以直接把标题和正文贴给我，或先打开编辑器再贴。"
             : slotAsk(first, opts?.homeCity),
       needsConfirm: false,
     };
