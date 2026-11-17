@@ -126,6 +126,15 @@ $chat | Where-Object { $_.text -like "*$($want.Substring(0, [Math]::Min(12, $wan
 
 安装包复测至少 G1、G2、G3。记下 `git rev-parse --short HEAD` 和 `release\Sparo-Setup.exe` 的修改时间。开发窗绿了，不能代替安装包。
 
+### 2026-11-17 0.7.5 安装包（删除环境即失效真机复测，决策点 #63）
+
+- 包：`release\Sparo-Setup-0.7.5.exe`（105,006,100 字节，2026-11-17 16:25:41，SHA-256 `960B3F17DB235ED8F3EF3BCD139370AFA56B7F14D50BAE313556095C43535FFC`），文件版本 0.7.5。真机跑同一轮产出的 `release\win-unpacked\Sparo.exe`。
+- 环境隔离：`SPARO_CONFIG_DIR=%TEMP%\sparo-qa-075`、`SPARO_MCP_PORT=3926`；用户 0.7.0（3921）全程未动。静态：typecheck 0 错误；vitest **139 文件 / 1060 条全绿**（含新增 `tests/env-delete.test.ts` 3 条）。
+- **N2 修复真机过**：`create_env`（QA删除验证）→ `navigate({url, envId})` 开环境标签 → `execute` 写 `iso_del=A` Cookie + localStorage 并读回 → `delete_env` 回执 `env … deleted, closed 1 env tabs` → `list_tabs` 环境标签已关（2→1，只剩默认标签）→ 名册不含该环境。
+- **分区存储清除核验**：运行中 Cookies 文件被网络进程独占锁（EBUSY），停掉隔离实例后用 sql.js 读 `Partitions/env_<id>/Network/Cookies`：`iso_del` 行 0、总行数 0。目录因 Windows 文件锁留空壳——与 MULTI-ACCOUNT 新口径「留空壳，不含有效登录态」一致。原 QA 脚本的「目录必须消失」判定改为「停进程后 cookie 行清零」，不伪称目录已删。
+- **N1 修复核验**：0.7.5 asar 内 `ledger/2026-11.jsonl` 已排除，仅保留写台账的代码 `scripts/ledger.mjs`。
+- **未重测**：G1–G9 沿用 0.7.4 记录（0.7.5 只改 deleteEnv 链路、打包过滤与文档）；登录态相关（G5/五站 probe/四站 dry-run/真实输入法 60 秒）仍待补。
+
 ### 2026-11-17 0.7.4 安装包（侧栏发稿链路真机全过，G1/G2 复测过）
 
 - 包：`release\Sparo-Setup-0.7.4.exe`（105,008,446 字节，2026-11-17 14:43:18，SHA-256 `C4205C3D18BE2AA68F5EBCC25FD7CDD1419FB609145E337A3DDC94F8241A2C57`），HEAD `695f1c9`（其上 905bb07/de33c30 均为纯 docs 提交）。

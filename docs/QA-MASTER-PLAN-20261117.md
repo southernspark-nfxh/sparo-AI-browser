@@ -367,8 +367,8 @@ docs/
 **本轮已修（2026-11-17）**：D2/D3/D4/D5/D9/D10/D11/D12/D14/D15 对应的 PUBLISHING、SKILL-FORMAT、ARCHITECTURE、MULTI-ACCOUNT 文首、MULTI-AGENT-FIX-TASKBOOK-3、PRODUCT-TASKBOOK、PRODUCT 七份文档。
 
 **新发现（任务书原文未列）**
-- N1：`ledger/2026-11.jsonl` 运行台账被打进 app.asar，下一轮打包应排除（electron-builder.yml files 过滤）。
-- N2：`delete_env` 只删配置，不关环境标签、不清 partition——已打开标签仍可读 Cookie，与 MULTI-ACCOUNT「留空壳、不含有效登录态」承诺相反。收口路径待用户拍板（改代码或改文档）。
+- N1：`ledger/2026-11.jsonl` 运行台账被打进 app.asar。**0.7.5 已排除**（electron-builder.yml files 负向过滤；asar 仅保留写台账代码 `scripts/ledger.mjs`）。
+- N2：`delete_env` 只删配置，不关环境标签、不清 partition——已打开标签仍可读 Cookie，与 MULTI-ACCOUNT「留空壳、不含有效登录态」承诺相反。**0.7.5 已修**（用户拍板改代码兑现文档，决策点 #63）：关环境标签 + 清分区存储；真机复测见 QA-GOLDEN-SCENARIOS 0.7.5 段（cookie 行清零，目录留空壳）。
 - N3：MCP `sparo_info` 服务版本仍报 0.1.0，与 0.7.4 不符，查「连上的是哪一版」只能解包。
 
 **门禁现状**：Q1/Q5/Q8/Q10 是；Q2/Q3/Q4/Q6 需登录态或前台机器（G5 微信存草稿、五站 PROBE_OK、四站 dry-run、真实输入法 60 秒）；Q7/Q9 文档项本轮已修，剩排版/docx/企鹅号视觉与真机验收未做。

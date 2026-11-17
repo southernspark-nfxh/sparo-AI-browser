@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.5] — 2026-11-17 删除环境即失效；台账不再进安装包
+
+**删除环境真正失效（决策点 #63）。** 0.7.4 全量 QA 发现：`delete_env` 只删配置，已打开的环境标签不关、分区 Cookie 仍可读，与 MULTI-ACCOUNT「不含有效登录态」承诺相反。现在 MCP `delete_env` 与设置页删除共用 `deleteEnvFully`：先关仍挂该环境的标签，再删配置，然后清空分区存储（`clearStorageData` / `clearCache`），最后尽力删 `Partitions/env_<id>/`（Windows 文件锁删不干净时留空壳，存储已清）。新增 `tests/env-delete.test.ts` 3 条。
+
+**运行台账不进安装包。** `electron-builder.yml` 排除 `strategies/skills/**/ledger/**`（QA N1：0.7.4 的 asar 里打进了本机运行台账）。
+
+**文档同步。** 按 0.7.4 QA 核对结果补齐 PUBLISHING（微信/企鹅号/probe/self-check）、SKILL-FORMAT（v3）、ARCHITECTURE（壳层自愈与技能播种）、MULTI-ACCOUNT、PRODUCT、大脑任务书 0.7.4 段；QA 任务书新增「核对修订」节，记录六条被证伪的矛盾与三条新发现。
+
+**验证：** typecheck 0 错误；全量 vitest 全绿（含新增 3 条）；隔离实例真机复测删除环境：环境标签被关、配置清空、分区存储清除。
+
+**边界：** 登录态相关验收（微信存草稿 G5、五站 PROBE_OK、四站 dry-run、真实输入法 60 秒）仍待补；`sparo_info` 服务版本号仍报 0.1.0（N3，待修）。
+
 ## [0.7.4] — 2026-11-17 侧栏发稿链路：槽位追问、run_skill 参数透传、微信识别
 
 **侧栏说"发稿子"不再只打开发布页原地不动。** 以前 `run_skill` 的 params 字段在 `ChatAction` 类型里丢了，`slots.ts` 也没把发布意图从通用 form 分支里挑出来；结果是模型知道要发稿但缺平台和目录两个必填槽，侧栏不会追问、也不会真正调技能。现在这条链通了：
