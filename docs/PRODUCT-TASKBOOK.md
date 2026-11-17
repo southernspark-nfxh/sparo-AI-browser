@@ -3,7 +3,7 @@
 > 持续更新。与原版 **同一份正文**，便于两边对照。上一版见 [archive/2026-08/PRODUCT-TASKBOOK-20260811.md](./archive/2026-08/PRODUCT-TASKBOOK-20260811.md)。  
 > 版本：**v0.7.4 · 2026-11-17**（侧栏发稿链路接通：槽位追问、run_skill params 透传、微信识别）  
 > 上一包：**v0.7.3 · 2026-11-17**（侧栏打字不再被抢焦点：覆盖自愈退避、打字时不摘挂网页视图、摘挂后还焦点）  
-> 上一包：**v0.7.0 · 2026-11-16**（微信公众号图文发布只到存草稿；公众号排版与 docx 导入；企鹅号技能入仓）  
+> 再上一包：**v0.7.0 · 2026-11-16**（微信公众号图文发布只到存草稿；公众号排版与 docx 导入；企鹅号技能入仓）  
 > 状态：**进行中**（云订阅 M1 代码已落地并人测过登录/付款；上架未完；飞书网页已做；侧栏大脑已让模型编手；0.6.0 多账号环境 + social-media-publish v0.3.6 已随包发布）  
 > 产品文案仍以 [PRODUCT.md](./PRODUCT.md) 为准，不要把任务书当商店上架稿。  
 > 先读：[ARCHITECTURE.md](./ARCHITECTURE.md) · [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) · [CHANGELOG.md](../CHANGELOG.md) 0.7.4 · 根目录 [AGENTS.md](../AGENTS.md)

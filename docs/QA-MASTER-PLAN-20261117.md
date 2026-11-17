@@ -188,7 +188,7 @@ v0.1.0（2026-09）到 v0.7.4（2026-11-17），Sparo 从"侧栏打字聊天、�
 
 | # | 偏离点 | 严重度 | 修复期 | 备注 |
 |---|---|---|---|---|
-| C10 | `src/main/browser.ts` 行数超 8000（L8015 是 runSkillTool 调用，旁边还有 publish-gate 等） | 高 | P1 | 建议拆成 publish-gate / publish-hook / publish-resume 三个文件 |
+| C10 | `src/main/browser.ts` 实测 **13,780 行**（原写 8000，核对修订） | 高 | P1 | 建议拆成 publish-gate / publish-hook / publish-resume 三个文件 |
 | C11 | 侧栏 agent 目录（30+ ts）之间的循环依赖 —— free-soul.ts 引 slots.ts，slots.ts 引 intent-router.ts，intent-router.ts 引 types.ts，types.ts 又可能引别的 | 中 | P1 | 建议画一张依赖图，明确 types.ts 只放接口、不引实现 |
 | C12 | 所有发布 skill 里 `spawn(process.execPath, ...)` 这一段是复制粘贴的（runner.ts 和 qie-publish/sparo.mjs 都有） | 低 | P2 | 建议封装成 util/spawn-as-node.ts |
 | C13 | 发布脚本 self-check 全部是 Node 20 语法（ESM、fetch、fs/promises），但 electron 用 Node 20 兼容 | 低 | P2 | 建议在 README 里明确 Node 要求；electron 35.7.5 内带的 Node 版本要对齐 |
@@ -344,6 +344,34 @@ docs/
 **如果以上 10 条有任何一条是 ❌，不能发 0.7.4，先修再重打。**
 
 ---
+
+## 10. 核对修订（2026-11-17 Cursor QA 后，Trae 复核）
+
+对照 [QA-REPORT-20261117-074.md](./QA-REPORT-20261117-074.md) 逐条复核，本任务书原文有以下错误，**以本节为准**：
+
+**§5.1 矛盾表：六条不成立，不要按原文改**
+- D1 不成立：PRODUCT-TASKBOOK 第 9/15 行已是 0.7.4。
+- D6 不成立：free-soul.ts 无 0.1.21 版本号，CHANGELOG 大脑仍 0.1.19，与任务书一致。
+- D7 不成立：SKILL-COMMUNITY-M2 没有「种子从 GitHub 拉」；种子随包播种。
+- D8 不成立：STORE-LISTING 没有该句；docs/listings/ 不动。
+- D13 不成立：MULTI-ACCOUNT 第 31–33 行已写视频账号硬门。
+- D16 不成立：archive/2026-08、2026-09 被引用文件都在。
+- D2 方向成立但引用错：SKILL-FORMAT 没有 v3 模板，文末是「格式 v1」。D3 部分成立（文首版本旧，硬门已写）。
+
+**§4.3 / §6 事实修订**
+- C10：browser.ts 13,780 行（已在上表改）。
+- C11：所述循环依赖不存在；madge 仅报 runtime→mission-journal，反向是 `import type`，运行时不成环。
+- C12：`spawn(process.execPath)` 两处 = runner.ts + batch_publish.mjs；企鹅号脚本没有。
+- §6：MCP-API（工具齐全）、PRICING（0 元 10 点 7 天）、CLOUD-SUBSCRIPTION（送点/窗口付款已写）、INSTALL（面向人、无 Node 版本）均**不滞后**；README.en.md **不存在**。真滞后只有 PRODUCT / ARCHITECTURE / PUBLISHING / SKILL-FORMAT（+ MULTI-ACCOUNT 文首）。
+
+**本轮已修（2026-11-17）**：D2/D3/D4/D5/D9/D10/D11/D12/D14/D15 对应的 PUBLISHING、SKILL-FORMAT、ARCHITECTURE、MULTI-ACCOUNT 文首、MULTI-AGENT-FIX-TASKBOOK-3、PRODUCT-TASKBOOK、PRODUCT 七份文档。
+
+**新发现（任务书原文未列）**
+- N1：`ledger/2026-11.jsonl` 运行台账被打进 app.asar，下一轮打包应排除（electron-builder.yml files 过滤）。
+- N2：`delete_env` 只删配置，不关环境标签、不清 partition——已打开标签仍可读 Cookie，与 MULTI-ACCOUNT「留空壳、不含有效登录态」承诺相反。收口路径待用户拍板（改代码或改文档）。
+- N3：MCP `sparo_info` 服务版本仍报 0.1.0，与 0.7.4 不符，查「连上的是哪一版」只能解包。
+
+**门禁现状**：Q1/Q5/Q8/Q10 是；Q2/Q3/Q4/Q6 需登录态或前台机器（G5 微信存草稿、五站 PROBE_OK、四站 dry-run、真实输入法 60 秒）；Q7/Q9 文档项本轮已修，剩排版/docx/企鹅号视觉与真机验收未做。
 
 ## 附录：仓库事实快照（2026-11-17 15:00 采集）
 

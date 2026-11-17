@@ -383,6 +383,7 @@ flush 路径（`browser.ts` 约 L3944，`getSidebarPayload(true)` 调用处）�
 ### T79（2026-11-07）
 
 - 改动：`src/main/window-visible.ts`、`src/main/browser.ts`。heal 护栏没动。`ensureWindowVisible` 仍只给原来三处用，而且仍会抢焦点；显示器事件不走它。
+
 - 取证：本机只有一块屏，工作区大约 `0,0,1646x1049`，缩放 1.75。改之前全仓没有 `display-metrics-changed`。当天 `crash.log` 里没有新的 `render-process-gone`（最近一条是 11-06）。Ctrl+\ 在壳层只是折叠侧栏，会重新排宽度，所以能把几何错位挤回来。
 - 临时实例打在 3922（`%TEMP%\sparo-t79`），没有动 3921。启动时自己来了一条：
   - `[display] display-metrics-changed displays=#0 bounds=0,0,1646x1098 work=0,0,1646x1050 scale=1.75 win=142,74,1362x902 minimized=0 hole=none`
@@ -580,3 +581,14 @@ T80 修完后标签各用各的，但同 client 两个并行任务的**对话历
 - 验收方备注：① 镜像轮不带 `seq` 无碍——sidebar-sync 构建 payload 时统一补号，不会触发全量风暴；② 验收期间处置了一个上轮漏网的丢 env 孤儿实例（PID 20832，14:05 起，误挂 `%APPDATA%\sparo-store`，token 探测确诊后已杀，期间无任务流量经过它）；③ 决策点 #49 与店小秘条目同在 `docs/DECISION-POINTS.md` 工作区，随那批一起提交。
 
 ---
+
+## 0.7.4 侧栏发稿链路（2026-11-17）
+
+提交 `8b866be`。把「侧栏说发稿子」从「只打开发布页原地不动」修成完整闭环：
+
+- `slots.ts` 新增 `publishSlots()`：从原句认平台词（头条/百家/大鱼/搜狐/微信）与绝对路径；`classifyKind` 把发布意图踢出通用 form 分支。
+- `loop.ts` 发布分支：平台 + 目录两槽齐才调技能；weixin → `weixin-publish`，其余四站 → `social-media-publish`，自动拼 params。缺槽先问，不开发布页。
+- `stub.ts` / `types.ts` / `browser.ts`：`ChatAction.run_skill` 补 params 字段并透传到 `runSkillTool()`（此前 params 在类型层就丢了）。
+- `intent-router.ts` 五站加 `needsArticle`；`free-soul.ts` 提示词同步「发稿前必须问齐」。
+- `skills/runner.ts`：platform 白名单加 weixin；透传 theme/images/noDocx/docxImport/env；公众号 `DRAFT_SAVED_ONLY` 报「已存草稿（群发需人工点发表）」。
+- 真机（0.7.4 隔离实例，QA-REPORT-20261117-074）：G9a 缺槽先问、G9b 微信走 weixin-publish 至登录门如实停手、G9c 头条走 social-media-publish、G9d `match_skill("微信公众号发布")` 命中 weixin-publish，四条全过。存草稿成功一档仍需登录态补测（G5）。

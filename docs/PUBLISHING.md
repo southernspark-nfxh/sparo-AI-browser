@@ -144,7 +144,28 @@ User: 「发小红书 / 发微博 / 发某某」
 
 ---
 
-## 4. Related docs
+## 4. 自媒体一稿多发 / 微信公众号 / 企鹅号（2026-11-17 补）
+
+技能随安装包分发（`app.asar` 内 `strategies/skills/**`，首启按版本号播种到配置目录）；发布脚本另有可读副本 `resources/social-publish-scripts/` 与 `resources/platforms/`。
+
+| 技能 | 平台 | 边界 |
+|---|---|---|
+| `social-media-publish`（种子 v3） | 头条 / 百家号 / 大鱼号 / 搜狐号图文 + 百家号视频 | 后台填稿 → 插图 → 封面 → 发布 → 回读核验；dry-run 不点提交；视频只发「图一乐研究所」环境，三次账号名硬门 |
+| `weixin-publish`（种子 v1） | 微信公众号 | **只存草稿**；群发发表由人点；定时发布、正文插图未接入。默认 docx 导入正文 + 统一排版（正文 15px/1.75、H2 主色竖条、引用浅灰底、图片整宽圆角） |
+| `qie-publish`（目录技能） | 企鹅号 om.qq.com | docx 导入 → 标题 → 分类 → 标签 ≥5 → 内容自主声明 → 存草稿 / 发布 → 双核验 |
+
+```text
+run_skill({ query: "一稿多发", params: { platform: "toutiao", articleDir: "D:\\articles\\x", envId? } })
+run_skill({ query: "微信公众号发布", params: { articleDir: "D:\\articles\\x", theme?, images?, noDocx?, docxImport?, env? } })
+```
+
+- `articleDir` 里要有 `title.txt`、`body.md`，建议 `cover.jpg` 与 `images/`。
+- 指定账号：`params.envId`（或 CLI `--env <envId>`）；不传 = 默认登录态。环境 / 账号名硬门见 [MULTI-ACCOUNT.md](./MULTI-ACCOUNT.md)。
+- **侧栏发稿链路（0.7.4）**：说「帮我发稿子」缺平台或目录时先追问，不开发布页；槽齐自动拼 params，微信走 `weixin-publish`、其余四站走 `social-media-publish`。
+- CLI 调试（Node ≥20，Sparo 开着）：`node publish.mjs --platform <id> --probe`（期望 `PROBE_OK`，未登录停在登录门并如实报告）、`node publish.mjs --self-check`、`node video.mjs --self-check`（均期望 `SELF_CHECK_OK`）。
+- 未登录时脚本停在登录门、侧栏说人话交人扫码，不假装发出去；公众号存草稿成功报「已存草稿」，不报「已群发」。
+
+## 5. Related docs
 
 - `AGENTS.md` — boot + anti-patterns  
 - `docs/MCP-API.md` — tool reference  

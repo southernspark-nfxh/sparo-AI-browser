@@ -74,4 +74,25 @@ run_skill({ query: "比价", params: { query: "索尼WH-1000XM5" } })
 见 [PRODUCT-TASKBOOK.md](./PRODUCT-TASKBOOK.md) §3.1 与 `strategies/skills/life-*.json`、`research-*.json`。  
 QA 原文：[D:\Hermes\sparo-10-scenarios-qa-report.md](file:///D:/Hermes/sparo-10-scenarios-qa-report.md)
 
-**版本**：格式 v1 · 2026-09-09
+## 发布类技能 v3（2026-11-17 补）
+
+`social-media-publish.json` 已升 v3，另新增独立技能 `weixin-publish.json`（v1）。与 v1 模板的差异：
+
+- `params.platform` 枚举五站：`["toutiao","baijiahao","dayu","sohu","weixin"]`；`params.articleDir` 必填（稿件目录，含 `title.txt` / `body.md`）。
+- 可选排版 / 导入参数：`theme`、`images`、`noDocx`、`docxImport`、`env`（账号环境）。
+- `human_gates` 必须含 `login` 与 `send`：**微信公众号只存草稿，群发那一下永远人点**；未登录停登录门，不硬闯。
+- `agentPlaybook` 写明「缺槽先问」：侧栏说「发稿子」但缺平台或目录时先追问，不开发布页；槽齐才 `run_skill` 拼 params。微信路由到 `weixin-publish`，其余四站到 `social-media-publish`。
+- 独立技能示例（固定平台、只收目录）：
+
+```json
+{
+  "id": "weixin-publish",
+  "version": 1,
+  "aliases": ["公众号发布", "发微信"],
+  "params": { "articleDir": { "type": "string", "required": true } },
+  "human_gates": ["login", "send"],
+  "knownGaps": ["群发发表未接入", "定时发布未接入", "正文插图未接入"]
+}
+```
+
+**版本**：格式 v1 · 2026-09-09；发布类 v3 补 · 2026-11-17
