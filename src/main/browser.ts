@@ -45,6 +45,16 @@ import {
   type Rect,
 } from "./window-visible.js";
 import { coPresenceMayRestore, mustNotStealFocus } from "./shell-focus.js";
+import {
+  clickDeferPlan,
+  fillCeRetryInner,
+  fillDomPlan,
+  fillExecFallbackInner,
+  focusActivePagePlan,
+  focusGuardDetail,
+  humanTypingRecentlyAt,
+  shouldStampHumanTyping,
+} from "./focus-guard.js";
 import { traceMainWindow } from "./focus-trace.js";
 import { laneForText, type TaskLane } from "./agent/task-class.js";
 import { formatFillFailure, formatLane, formatLearnSwallow } from "./agent/parallel-log.js";
@@ -3159,8 +3169,35 @@ export class SparkBrowser {
 
   private attachChromeShortcuts(wc: WebContents): void {
     wc.on("before-input-event", (event, input) => {
+      this.noteHumanKey(wc, input);
       if (this.handleChromeShortcut(input)) event.preventDefault();
     });
+  }
+
+  /** 真人 keyDown/char 记到这扇窗。Agent 的 sendInputEvent 在注入深度里，不记。 */
+  private noteHumanKey(wc: WebContents, input: Electron.Input): void {
+    const injecting = (this.agentKeyInjectDepth?.get(Number(wc?.id)) || 0) > 0;
+    if (!shouldStampHumanTyping({ type: input?.type, agentInjecting: injecting })) return;
+    const winId = this.winIdOfContents(wc);
+    this.mainHumanTypingAt.set(winId, Date.now());
+  }
+
+  /** 键盘注入期间抬高深度，before-input-event 同步回调时不会把 Agent 记成真人。 */
+  private sendAgentKey(wc: WebContents, event: Electron.KeyboardInputEvent): void {
+    const id = Number(wc?.id);
+    const depth = this.agentKeyInjectDepth;
+    if (!depth || !Number.isFinite(id)) {
+      wc.sendInputEvent(event);
+      return;
+    }
+    depth.set(id, (depth.get(id) || 0) + 1);
+    try {
+      wc.sendInputEvent(event);
+    } finally {
+      const left = (depth.get(id) || 1) - 1;
+      if (left <= 0) depth.delete(id);
+      else depth.set(id, left);
+    }
   }
 
   private handleChromeShortcut(input: Electron.Input): boolean {
@@ -4233,6 +4270,10 @@ export class SparkBrowser {
   private shellBeatAt = new Map<string, number>();
   /** 每扇窗口最后一次「人在壳层输入框里打字」的时间。摘挂视图和 hide/show 都会抢焦点，先看这个。 */
   private shellTypingAt = new Map<string, number>();
+  /** 每扇窗口最后一次真人 keyDown/char。网页输入框不走壳层心跳，靠这条补盲区。Agent 注入不计。 */
+  private mainHumanTypingAt = new Map<string, number>();
+  /** sendInputEvent 键盘注入的嵌套深度，按 webContents.id。大于 0 时不算真人打字。 */
+  private agentKeyInjectDepth = new Map<number, number>();
   /** 每扇窗口壳层的创建时间。首屏加载期间报 unresponsive 是常态，别拿它去重挂窗口。 */
   private shellBornAt = new Map<string, number>();
   /** 壳层报上来的长任务耗时（毫秒）。停帧时写进日志，用来分清是 JS 占住主线程还是合成停了。 */
@@ -4441,12 +4482,26 @@ export class SparkBrowser {
     // 心跳未知 ≠ 心跳超时：没收到过心跳之前不判死，否则首屏加载慢一点就被白白重绘两次。
     this.shellBeatAt.delete(winId);
     // 打字时间不清：重载后 1.5 秒内人可能还在原来的输入框里，摘挂仍会抢焦点。
+    // mainHumanTypingAt 同样保留：网页输入框的真人按键也要挡住抢焦点。
   }
 
   /** 人是否正在这扇窗的壳层输入框里打字。心跳一秒一拍，留 1.5 秒余量。 */
   private shellIsTyping(winId: string): boolean {
     const at = this.shellTypingAt?.get(winId) || 0;
     return at > 0 && Date.now() - at < 1_500;
+  }
+
+  /** 壳层心跳或网页里的真人按键，任一在 1.5 秒内。只给 Agent 抢焦点的门禁用，不改摘挂判断。 */
+  private humanTypingRecently(winId: string): boolean {
+    return humanTypingRecentlyAt({
+      shellAt: this.shellTypingAt?.get(winId) || 0,
+      mainAt: this.mainHumanTypingAt?.get(winId) || 0,
+      now: Date.now(),
+    });
+  }
+
+  private noteFocusGuard(kind: "click" | "fill" | "focus", winId: string): void {
+    noteHang("focus-guard", focusGuardDetail(kind, winId));
   }
 
   /**
@@ -4517,6 +4572,11 @@ export class SparkBrowser {
 
   private focusActivePage(): void {
     try {
+      const winId = this.activeWinId || "main";
+      if (focusActivePagePlan(this.humanTypingRecently(winId)) === "defer") {
+        this.noteFocusGuard("focus", winId);
+        return;
+      }
       if (this.win.isMinimized()) return;
       const tab = this.getActiveTab();
       if (!tab || !tab.view || tab.view.webContents.isDestroyed()) return;
@@ -4566,6 +4626,36 @@ export class SparkBrowser {
   /** @deprecated use attachShell */
   attachSidebar(): void {
     this.attachShell();
+  }
+
+  private winIdForTab(tabId?: string): string {
+    const id = String(tabId || this.activeTabId || "");
+    const tab = id ? this.tabs.get(id) : undefined;
+    return tab?.winId || this.activeWinId || "main";
+  }
+
+  /** 这个 webContents 属于哪扇窗：壳层按窗口对，网页按标签对。对不上就用当前窗。 */
+  private winIdOfContents(wc: WebContents): string {
+    const id = Number(wc?.id);
+    if (!Number.isFinite(id)) return this.activeWinId || "main";
+    for (const [winId, win] of this.wins) {
+      try {
+        if (!win.isDestroyed() && win.webContents.id === id) return winId;
+      } catch {
+        /* 已销毁 */
+      }
+    }
+    for (const tab of this.tabs.values()) {
+      try {
+        const view = tab.view;
+        if (view && !view.webContents.isDestroyed() && view.webContents.id === id) {
+          return tab.winId || this.activeWinId || "main";
+        }
+      } catch {
+        /* 已销毁 */
+      }
+    }
+    return this.activeWinId || "main";
   }
 
   /** 这条 IPC 是从哪扇窗口发来的。查不到就退回当前窗口。 */
@@ -9383,7 +9473,7 @@ export class SparkBrowser {
     if (count <= 1) {
       const prev = this.renderPrevTab.get(winId) || "";
       this.renderPrevTab.delete(winId);
-      if (prev && !this.userClaimedRenderWindow) this.switchTab(prev, { userAction: true });
+      if (prev && !this.userClaimedRenderWindow) this.switchTab(prev, { focus: false, userAction: true });
     }
     this.releaseBackgroundRender();
     return {
@@ -12122,6 +12212,22 @@ export class SparkBrowser {
     }
   }
 
+  /** 人还在打字就隔 1 秒再看，最多 5 次。仍在打字就抛明确错误，调用方把这句话交回去。 */
+  private async waitOutHumanTyping(winId: string): Promise<void> {
+    let deferrals = 0;
+    for (;;) {
+      const plan = clickDeferPlan({
+        typing: this.humanTypingRecently(winId),
+        deferrals,
+      });
+      if (plan.action === "click") return;
+      this.noteFocusGuard("click", winId);
+      if (plan.action === "error") throw new Error(plan.message);
+      deferrals = plan.deferrals;
+      await sleep(plan.waitMs);
+    }
+  }
+
   private async trustedClickAt(
     x: number,
     y: number,
@@ -12138,6 +12244,7 @@ export class SparkBrowser {
     if (!clickPointUsable(cx, cy)) {
       throw new Error(`拒绝点击无效坐标 ${cx},${cy}`);
     }
+    await this.waitOutHumanTyping(this.winIdForTab(opts?.tabId));
     const tabId = opts?.tabId;
     const wc = this.viewForTab(tabId || this.activeTabId).webContents;
     const win = this.win as {
@@ -12552,8 +12659,8 @@ export class SparkBrowser {
     }
     await sleep(120);
     if (input.dismiss === "escape") {
-      wc.sendInputEvent({ type: "keyDown", keyCode: "Escape" } as Electron.KeyboardInputEvent);
-      wc.sendInputEvent({ type: "keyUp", keyCode: "Escape" } as Electron.KeyboardInputEvent);
+      this.sendAgentKey(wc, { type: "keyDown", keyCode: "Escape" } as Electron.KeyboardInputEvent);
+      this.sendAgentKey(wc, { type: "keyUp", keyCode: "Escape" } as Electron.KeyboardInputEvent);
     } else if (state.outside) {
       await this.trustedClickAt(Math.round(state.outside.x), Math.round(state.outside.y), { tabId });
     }
@@ -13974,6 +14081,9 @@ export class SparkBrowser {
 
     try {
       const wc = this.viewForTab(tabId || this.activeTabId).webContents;
+      const fillWinId = this.winIdForTab(tabId);
+      const fillQuiet = !fillDomPlan(this.humanTypingRecently(fillWinId)).allowFocus;
+      if (fillQuiet) this.noteFocusGuard("fill", fillWinId);
 
       const cross = parseCrossFrameRef(target.ref);
       if (cross) {
@@ -13993,7 +14103,7 @@ export class SparkBrowser {
             cross.localRef,
             target.selector ?? null,
           ]);
-          if (local?.ok && local.x != null && local.y != null) {
+          if (!fillQuiet && local?.ok && local.x != null && local.y != null) {
             await this.trustedClickAt(
               local.x + frame.offsetX,
               local.y + frame.offsetY,
@@ -14010,6 +14120,7 @@ export class SparkBrowser {
             cross.localRef,
             target.selector ?? null,
             value,
+            fillQuiet,
           ]);
         });
         this.lastSnapshot = null;
@@ -14033,18 +14144,20 @@ export class SparkBrowser {
         };
       }
 
-      await wc
-        .executeJavaScript(
-          `(${FOCUS_SCRIPT})(${JSON.stringify(target.ref ?? null)}, ${JSON.stringify(target.selector ?? null)})`,
-          true,
-        )
-        .catch(() => undefined);
+      if (!fillQuiet) {
+        await wc
+          .executeJavaScript(
+            `(${FOCUS_SCRIPT})(${JSON.stringify(target.ref ?? null)}, ${JSON.stringify(target.selector ?? null)})`,
+            true,
+          )
+          .catch(() => undefined);
+      }
 
       // Value as base64→TextDecoder only (ASCII in the script source).
       let result = (await wc.executeJavaScript(
         `(() => {
           const __v = ${cdpUtf8Expr(value)};
-          return (${FILL_SCRIPT})(${JSON.stringify(target.ref ?? null)}, ${JSON.stringify(target.selector ?? null)}, __v);
+          return (${FILL_SCRIPT})(${JSON.stringify(target.ref ?? null)}, ${JSON.stringify(target.selector ?? null)}, __v, ${fillQuiet ? "true" : "false"});
         })()`,
         true,
       )) as {
@@ -14098,28 +14211,11 @@ export class SparkBrowser {
               if (!el) return { ok: false, actual: '', message: 'no visible target' };
               const nested = el.querySelector('[contenteditable="true"],[contenteditable=""]');
               if (nested) el = nested;
-              el.focus();
-              try {
-                const selApi = window.getSelection();
-                const range = document.createRange();
-                range.selectNodeContents(el);
-                selApi && selApi.removeAllRanges();
-                selApi && selApi.addRange(range);
-                document.execCommand('delete', false, undefined);
-              } catch (_) {}
-              const ok = document.execCommand('insertText', false, __v);
-              if (!ok && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
-                const win = window;
-                const proto = el.tagName === 'TEXTAREA' ? win.HTMLTextAreaElement.prototype : win.HTMLInputElement.prototype;
-                const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-                if (setter) setter.call(el, __v); else el.value = __v;
-                el.dispatchEvent(new Event('input', { bubbles: true }));
-                el.dispatchEvent(new Event('change', { bubbles: true }));
-              }
+              ${fillExecFallbackInner(fillQuiet)}
               const actualNow = (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')
                 ? String(el.value || '')
                 : String(el.innerText || el.textContent || '').trim();
-              return { ok: actualNow.length > 0, actual: actualNow, method: 'execCommand-insertText-fallback' };
+              return { ok: actualNow.length > 0, actual: actualNow, method: ${fillQuiet ? "'value-setter-no-focus'" : "'execCommand-insertText-fallback'"} };
             })()`,
             true,
           )) as { ok?: boolean; actual?: string; method?: string; message?: string };
@@ -14175,18 +14271,7 @@ export class SparkBrowser {
                 if (!el) return { actual: '', tag: '', contentEditable: false };
                 const nested = el.querySelector('[contenteditable="true"],[contenteditable=""]');
                 if (nested) el = nested;
-                el.focus();
-                try {
-                  const selApi = window.getSelection();
-                  const range = document.createRange();
-                  range.selectNodeContents(el);
-                  selApi && selApi.removeAllRanges();
-                  selApi && selApi.addRange(range);
-                  document.execCommand('selectAll', false, undefined);
-                  document.execCommand('delete', false, undefined);
-                } catch (_) {}
-                try { el.textContent = ''; } catch (_) {}
-                document.execCommand('insertText', false, __v);
+                ${fillCeRetryInner(fillQuiet)}
                 const actualNow = String(el.innerText || el.textContent || '').trim();
                 return { actual: actualNow, tag: String(el.tagName || ''), contentEditable: Boolean(el.isContentEditable) };
               })()`,
@@ -14254,9 +14339,9 @@ export class SparkBrowser {
       const wc = this.viewForTab(tabId || this.activeTabId).webContents;
       this.focusPageForInput(wc, false);
       const keyCode = key === "Enter" || key === "Return" ? "Return" : key === "Escape" ? "Escape" : key;
-      wc.sendInputEvent({ type: "keyDown", keyCode } as Electron.KeyboardInputEvent);
-      wc.sendInputEvent({ type: "char", keyCode: key === "Enter" ? "\r" : key } as Electron.KeyboardInputEvent);
-      wc.sendInputEvent({ type: "keyUp", keyCode } as Electron.KeyboardInputEvent);
+      this.sendAgentKey(wc, { type: "keyDown", keyCode } as Electron.KeyboardInputEvent);
+      this.sendAgentKey(wc, { type: "char", keyCode: key === "Enter" ? "\r" : key } as Electron.KeyboardInputEvent);
+      this.sendAgentKey(wc, { type: "keyUp", keyCode } as Electron.KeyboardInputEvent);
       await sleep(120);
       return { ok: true, message: `pressKey ${key}` };
     } catch (error) {
@@ -14278,23 +14363,23 @@ export class SparkBrowser {
     const wc = this.viewForTab(tabId || this.activeTabId).webContents;
     this.focusPageForInput(wc, false);
 
-    wc.sendInputEvent({
+    this.sendAgentKey(wc, {
       type: "keyDown",
       keyCode: "A",
       modifiers: ["control"],
     } as Electron.KeyboardInputEvent);
-    wc.sendInputEvent({
+    this.sendAgentKey(wc, {
       type: "keyUp",
       keyCode: "A",
       modifiers: ["control"],
     } as Electron.KeyboardInputEvent);
     await sleep(30);
-    wc.sendInputEvent({ type: "keyDown", keyCode: "Backspace" } as Electron.KeyboardInputEvent);
-    wc.sendInputEvent({ type: "keyUp", keyCode: "Backspace" } as Electron.KeyboardInputEvent);
+    this.sendAgentKey(wc, { type: "keyDown", keyCode: "Backspace" } as Electron.KeyboardInputEvent);
+    this.sendAgentKey(wc, { type: "keyUp", keyCode: "Backspace" } as Electron.KeyboardInputEvent);
     await sleep(30);
 
     for (const ch of value) {
-      wc.sendInputEvent({ type: "char", keyCode: ch } as Electron.KeyboardInputEvent);
+      this.sendAgentKey(wc, { type: "char", keyCode: ch } as Electron.KeyboardInputEvent);
       await sleep(8);
     }
   }

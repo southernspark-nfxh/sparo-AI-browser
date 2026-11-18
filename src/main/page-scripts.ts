@@ -579,7 +579,7 @@ export const CLICK_SCRIPT = `(ref, selector) => {
  * - Fallback: per-character insertText
  * - Never claim success on textContent-only DOM mutation when React owns the field
  */
-export const FILL_SCRIPT = `(ref, selector, value) => {
+export const FILL_SCRIPT = `(ref, selector, value, quiet) => {
   ${RESOLVE_HELPER}
   function sparkResolveVisible(r, sel) {
     const hit0 = sparkResolve(r, sel);
@@ -623,7 +623,7 @@ export const FILL_SCRIPT = `(ref, selector, value) => {
   if (nested) el = nested;
 
   el.scrollIntoView({ block: 'center', inline: 'center' });
-  el.focus({ preventScroll: true });
+  if (!quiet) el.focus({ preventScroll: true });
 
   const readActual = (node) => {
     if (node.tagName === 'INPUT' || node.tagName === 'TEXTAREA') return String(node.value ?? '');
@@ -739,7 +739,7 @@ export const FILL_SCRIPT = `(ref, selector, value) => {
   } else {
     kind = 'unknown';
     el.setAttribute('contenteditable', 'true');
-    el.focus();
+    if (!quiet) el.focus();
     selectAll(el);
     (el.ownerDocument || document).execCommand('delete', false, undefined);
     insertText(value);

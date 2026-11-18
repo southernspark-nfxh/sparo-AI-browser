@@ -481,7 +481,7 @@ export const FRAME_HIT_SCRIPT = `(ref, selector) => {
   };
 }`;
 
-export const FRAME_FILL_SCRIPT = `(ref, selector, value) => {
+export const FRAME_FILL_SCRIPT = `(ref, selector, value, quiet) => {
   let el = null;
   if (ref) {
     try { el = document.querySelector('[data-spark-ref="' + CSS.escape(ref) + '"]'); } catch (_) {}
@@ -492,7 +492,7 @@ export const FRAME_FILL_SCRIPT = `(ref, selector, value) => {
   if (!el) return { ok: false, message: 'not found in frame' };
   const nested = el.querySelector('[contenteditable="true"],[contenteditable=""],textarea,input');
   if (nested) el = nested;
-  try { el.focus(); } catch (_) {}
+  if (!quiet) { try { el.focus(); } catch (_) {} }
   const isCe = el.isContentEditable || el.getAttribute('contenteditable') === 'true';
   if (isCe) {
     el.innerHTML = '';

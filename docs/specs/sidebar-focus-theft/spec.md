@@ -71,3 +71,27 @@ export function coverHealBackoff(input: { remounted: boolean; count: number; now
 2. 开发窗实机：侧栏连续输入 60 秒，期间拖侧栏宽度、切标签，字符不丢；`[chrome-hole-*]` 每分钟条数从几十降到个位数。
 3. 安装包 0.7.3：停帧恢复仍在 10 秒内；G1 复测。
 4. 版本 0.7.3 + `CHANGELOG.md` + `docs/DECISION-POINTS.md`（新条目：人打字时不许摘挂视图 / 自愈必须退避）+ `docs/QA-GOLDEN-SCENARIOS.md` 记录 + `AGENTS.md` 安装包行。
+
+## 7. 2026-11-18 补丁：Agent 操作门禁
+
+0.7.3 只挡住了摘挂和壳层 hide/show。Agent 的点击、填表、切标签仍会把键盘焦点从活人手里拿走；网页输入框里的按键也不进壳层心跳。这一节只加门禁，不改第 4 节的摘挂、退避和焦点归还。
+
+人在打字 = 这扇窗的壳层心跳 `shellTypingAt`，或真人 `keyDown` / `char` 记到的 `mainHumanTypingAt`，任一距现在不到 1.5 秒。两条管道：
+
+- 壳层心跳照旧，只认侧栏 / 地址栏。
+- `attachChromeShortcuts` 的 `before-input-event` 同时挂在壳层和网页上。`keyDown` / `char` 写入 `mainHumanTypingAt`，补上「人在网页输入框里打字」的盲区。
+
+Agent 打字走 CDP `Input.insertText` 和 `execCommand`，不进 `before-input-event`。`pressKey`、`typeWithKeyboard`、日历 Escape 走 `sendInputEvent`，注入期间对该 webContents 加深度标记，这段按键不记成真人，避免 Agent 把自己锁死。
+
+四条路径：
+
+| 路径 | 人在打字时 |
+|---|---|
+| `focusActivePage` | 函数开头直接 return，不看有没有 actor，不调用 `wc.focus()` |
+| `releaseRender` 恢复标签 | `switchTab(prev, { focus: false, userAction: true })`，本来就不该抢 |
+| `fill` | 不跑 `FOCUS_SCRIPT`，主脚本和两处兜底都不 `el.focus()`；输入框改走已有的 value setter + `input` / `change`。跨帧填表同样不先点击、不 `el.focus()` |
+| `trustedClickAt` | 先不注入鼠标。隔 1 秒再看，最多 5 次。仍在打字就抛出「活人正在打字」，调用方把这句话交回去。不静默丢掉这次点击 |
+
+每次让开写一条 `crash.log`：`[focus-guard] defer kind=click|fill|focus win=...`。
+
+门禁只推迟或明确失败这一下，不结束工作单，不改任务走向。超时必须把「活人正在打字」交回去，不许吞掉。
