@@ -45,7 +45,8 @@ describe("内核技能工具", () => {
     expect(step).toContain(SKILL_LINE);
     expect(auto).toContain(SKILL_LINE);
     expect(step).toContain("全量授权");
-    expect(auto).toContain("直接执行");
+    expect(auto).toContain("任务指令授权的是执行过程，发布、发送、保存也一并授权");
+    expect(auto).not.toContain("本身就是授权");
     expect(tools).toContain("match_skill");
     expect(tools).toContain("run_skill");
     expect(SPARO_AGENT_GUIDE).toContain("submit_task 的 text 用自然指令即可，命中技能会自动走剧本");

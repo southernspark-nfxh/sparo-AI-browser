@@ -12,7 +12,27 @@ export const DXM_SMT_WORKFLOW_IDS = [
 
 export type DxmSmtWorkflowId = (typeof DXM_SMT_WORKFLOW_IDS)[number];
 
-export const PREVIEW_CLOSED_MESSAGE = "该能力尚未开放";
+export const PREVIEW_CLOSED_MESSAGE =
+  "店小秘专用工作流未开放，可改用通用页面工具继续；保存、认领、发布、付费仍需确认";
+
+export const PREVIEW_CLOSED_DATA = {
+  closed: true as const,
+  fallback: "generic_page_tools" as const,
+  code: "preview_closed" as const,
+};
+
+/** 五个白名单工作流和主技能关闭时共用这一份返回。 */
+export function previewClosedToolResult(extra: Record<string, unknown> = {}): {
+  ok: false;
+  message: string;
+  data: typeof PREVIEW_CLOSED_DATA & Record<string, unknown>;
+} {
+  return {
+    ok: false,
+    message: PREVIEW_CLOSED_MESSAGE,
+    data: { ...PREVIEW_CLOSED_DATA, ...extra },
+  };
+}
 
 export function dxmSmtPreviewEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.SPARO_DXM_SMT_PREVIEW === "1";

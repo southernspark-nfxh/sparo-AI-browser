@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { FreeSoul } from "../src/main/agent/free-soul.js";
-import { gateClickText } from "../src/main/agent/publish-gate.js";
+import { gateClickText, PAY_HOLD, resetClickConfirm } from "../src/main/agent/publish-gate.js";
 import { inspectUploadPath } from "../src/main/agent/set-file.js";
 
 const dirs: string[] = [];
@@ -103,14 +103,14 @@ describe("模型请求超时", () => {
   });
 });
 
-describe("click_text 对新核心放行发送", () => {
-  it("运行中放行发送，支付仍拦，旧路径仍拦发送", () => {
-    expect(gateClickText(true, "发送", false)).toEqual({ ok: true });
-    expect(gateClickText(true, "支付", false).ok).toBe(false);
-    expect(gateClickText(true, "登录", false).ok).toBe(false);
-    const blocked = gateClickText(false, "发送", false);
-    expect(blocked.ok).toBe(false);
-    expect(blocked.message).toContain("草稿已填好");
+describe("click_text 按模式放行", () => {
+  it("逐步确认拦发布，自动执行放行发布，支付两种模式都拦", () => {
+    resetClickConfirm();
+    expect(gateClickText(true, "发布", "step").ok).toBe(false);
+    expect(gateClickText(true, "发布", "auto").ok).toBe(true);
+    expect(gateClickText(true, "支付", "auto")).toEqual({ ok: false, message: PAY_HOLD });
+    expect(gateClickText(true, "登录", "step").ok).toBe(true);
+    expect(gateClickText(false, "发送").ok).toBe(true);
   });
 });
 

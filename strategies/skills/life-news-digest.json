@@ -11,7 +11,7 @@
   "updatedAt": "2026-09-09T00:00:00.000Z",
   "intent": "按主题搜新闻/评测。先读检索页，再开少量正文。日期以文内时间为准，检索页摘要不算「最近一周」。",
   "declared_domains": ["www.baidu.com"],
-  "declared_actions": ["navigate", "wait_for", "page_text"],
+  "declared_actions": ["navigate", "page_text"],
   "human_gates": ["login", "captcha"],
   "params": {
     "topic": { "type": "string", "required": true, "example": "AI浏览器 评测" },

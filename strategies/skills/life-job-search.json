@@ -11,7 +11,7 @@
   "updatedAt": "2026-09-09T00:00:00.000Z",
   "intent": "打开已登录的 Boss 职位结果页，读公司、要求、当前页 URL。不代点立即沟通。",
   "declared_domains": ["www.zhipin.com"],
-  "declared_actions": ["navigate", "wait_for", "page_text"],
+  "declared_actions": ["navigate", "page_text"],
   "human_gates": ["login"],
   "params": {
     "role": { "type": "string", "required": true, "example": "AI产品经理" },

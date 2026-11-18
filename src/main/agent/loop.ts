@@ -8,7 +8,7 @@ import { parseLocalIntent, type ChatAction } from "./stub.js";
 import type { TripPlan } from "./trip-plan.js";
 import type { Brief, BriefKind, SlotId } from "./types.js";
 import { SLOT_LABEL, slotAsk } from "./types.js";
-import { analyzeSlots, extractOrigin, wantsOrigin } from "./slots.js";
+import { analyzeSlots, extractOrigin, hasInlineArticle, wantsOrigin } from "./slots.js";
 import { recallExperience } from "./experience.js";
 import { extractFacts, isConstraintTurn, type ExtractedFacts } from "./extract.js";
 import type { KnownBlock } from "./types.js";
@@ -216,7 +216,7 @@ function legalSlots(goal: AgentGoal, homeCity?: string): SlotId[] {
   const out: SlotId[] = [];
   if (goal.kind === "publish") {
     if (!goal.known.platform) out.push("platform");
-    if (!goal.known.articleDir) out.push("articleDir");
+    if (!goal.known.articleDir && !hasInlineArticle(t)) out.push("articleDir");
     return out;
   }
   if (wantsOrigin(t) && !goal.known.origin) {

@@ -9,7 +9,7 @@ export const SPARO_AGENT_GUIDE = `你是大脑，Sparo 是浏览器。多步任�
 
 任务状态：running 进行中，queued 在排队（带 clientId 时后台池满也是 queued，不再返回 pool_full，空出来自动开跑；无 clientId 时排在当前侧栏任务后面），done 已结束，interrupted 被打断，failed 失败。done 的 result.closeReason 只用底账里的 done、blocked、interrupted。
 
-护栏：支付、删除、客服发送仍由真人点，你不要代点确认。跑到 32 轮只在侧栏提醒并继续，每 8 轮再提醒，100 轮才停。素材只存本机：单张 10MB，单任务 20 张，库容 500MB，满了如实说，不自动删。
+护栏：支付必须用户亲自完成，不要代点。删除真人数据：允许执行，执行后通知用户。客服发送仍只填草稿，不要代点。跑到 32 轮只在侧栏提醒并继续，每 8 轮再提醒，100 轮才停。素材只存本机：单张 10MB，单任务 20 张，库容 500MB，满了如实说，不自动删。
 
 标签：带 clientId 时，不带 tabId 的操作落在你自己的标签上，不要抢用户当前页。调研要出报告页，不要把对照表堆进聊天。
 
@@ -19,7 +19,7 @@ export function agentInstructions(clientId: string, docsDir?: string): string {
   const at = docsDir
     ? `完整说明在 ${docsDir}\\AGENTS.md（怎么连、怎么用技能）与 ${docsDir}\\MCP-API.md（全部工具）。安装目录里、和 Sparo.exe 同一层，也有一份 AGENTS.md。`
     : "";
-  return `clientId=${clientId}。${at}第一次连接先调 sparo_info，一次拿到能力边界、全部技能 id 与最快路径。有技能走 list_skills → get_skill → run_skill，没有技能再用原语。多步任务（发布、采集、调研）用 submit_task 一次交完整目标和素材，再 get_task 轮询；navigate、click、fill 只用来读状态与轻量校验。支付、删除、客服发送由真人点。不带 tabId 的操作落在自己的标签上，不抢用户当前页。同一个站点要登录多个号时，先 list_envs 拿 envId，再传给 navigate / new_tab（技能放 params.envId），每个环境一套独立 Cookie。后台池满不再返回 pool_full，改为 queued，空出来自动开跑。详细用法读 prompt sparo_agent_guide。`;
+  return `clientId=${clientId}。${at}第一次连接先调 sparo_info，一次拿到能力边界、全部技能 id 与最快路径。有技能走 list_skills → get_skill → run_skill，没有技能再用原语。多步任务（发布、采集、调研）用 submit_task 一次交完整目标和素材，再 get_task 轮询；navigate、click、fill 只用来读状态与轻量校验。支付必须用户亲自完成。删除允许执行，执行后通知用户。客服发送由真人点。不带 tabId 的操作落在自己的标签上，不抢用户当前页。同一个站点要登录多个号时，先 list_envs 拿 envId，再传给 navigate / new_tab（技能放 params.envId），每个环境一套独立 Cookie。后台池满不再返回 pool_full，改为 queued，空出来自动开跑。详细用法读 prompt sparo_agent_guide。`;
 }
 
 type PromptHost = {

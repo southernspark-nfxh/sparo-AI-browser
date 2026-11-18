@@ -226,8 +226,10 @@ import {
   recoveryLine,
   replayMissions,
   sidebarOffersRecovery,
+  freshConfirmReply,
   type RestoredMission,
 } from "./agent/mission-journal.js";
+import { readTaskSummaries, upsertTaskSummary, writeTaskSummaries, type TaskSummary } from "./agent/task-summary.js";
 import {
   composeQuotedPrompt,
   fillNoteQuote,
@@ -395,7 +397,7 @@ import {
 } from "./workflows/dianxiaomi.js";
 import { createLiveDxmSmtPort } from "./workflows/dxm-smt-live.js";
 import { runDxmSmtWorkflow } from "./workflows/dxm-smt-listing.js";
-import { dxmSmtPreviewEnabled, gateFreeSoulWorkflow } from "./workflows/dxm-smt-preview.js";
+import { dxmSmtPreviewEnabled, gateFreeSoulWorkflow, PREVIEW_CLOSED_MESSAGE, previewClosedToolResult } from "./workflows/dxm-smt-preview.js";
 import {
   QA_PROBE_SCRIPT,
   buildSmtQaReport,
@@ -1239,6 +1241,8 @@ export class SparkBrowser {
   private chatRunningFlag = false;
   private pendingChat: { text: string; images?: string[]; quotes?: unknown } | null = null;
   private activePiAbort: AbortController | null = null;
+  private savedTaskSummaries: TaskSummary[] = [];
+  private evictedTaskIds = new Set<string>();
   private mcpTasks: Array<{
     taskId: string;
     status: "running" | "queued" | "done" | "interrupted" | "failed" | "pool_full";
@@ -1487,6 +1491,11 @@ export class SparkBrowser {
       .then(() => this.refreshCloudPlans())
       .then(() => this.pushSidebarState());
     this.chatLog = loadChatMemory(this.configDir());
+    try {
+      this.savedTaskSummaries = readTaskSummaries(this.configDir());
+    } catch {
+      this.savedTaskSummaries = [];
+    }
     this.offerMissionRecovery();
     this.win.on("resize", () => {
       this.rememberUserWindowBounds();
@@ -7358,6 +7367,20 @@ export class SparkBrowser {
       const inEnv = await this.navigateInEnv(args);
       if (inEnv) return inEnv;
     }
+    if (name === "new_tab") {
+      const url = String(args.url || "").trim();
+      if (!/^https?:\/\//i.test(url)) return { ok: false, message: "new_tab 需要完整 URL" };
+      const before = this.activeTabId;
+      const id = this.createTab(url, false, { agentOwned: true });
+      if (before && this.activeTabId !== before && typeof this.switchTab === "function") {
+        this.switchTab(before, { userAction: true });
+      }
+      return {
+        ok: true,
+        message: `已新开标签 ${id}，没有切走当前页`,
+        data: { id, url, focused: this.activeTabId === before },
+      };
+    }
     const tabId = this.resolveToolTab(sidebarToolNeedsPage(name));
     if (name === "scroll") {
       const direction = args.direction === "up" ? -1 : 1;
@@ -7428,6 +7451,7 @@ export class SparkBrowser {
     if (name === "run_workflow") {
       const id = String(args.id || "");
       const gate = gateFreeSoulWorkflow(id);
+      if (gate.action === "closed") return previewClosedToolResult();
       if (gate.action !== "run") return { ok: false, message: gate.message };
       const params =
         args.params && typeof args.params === "object" ? (args.params as Record<string, unknown>) : {};
@@ -7637,7 +7661,7 @@ export class SparkBrowser {
         skills: this.skillsCache.map((skill) => {
           const summary = skillSummary(skill);
           if (skill.id === "dxm-smt-listing" && !dxmSmtPreviewEnabled()) {
-            return { ...summary, availability: "尚未开放" };
+            return { ...summary, availability: PREVIEW_CLOSED_MESSAGE };
           }
           return summary;
         }),
@@ -9115,6 +9139,15 @@ export class SparkBrowser {
       return { ok: true, message: reply };
     }
     const mission = item.mission;
+    const nextStep = (mission.brainPlan?.steps || []).find(
+      (step) => step.status === "running" || step.status === "pending",
+    );
+    const held = freshConfirmReply(nextStep);
+    if (held) {
+      this.chatLog.push({ role: "assistant", text: held });
+      this.pushSidebarState();
+      return { ok: true, message: held, data: { needsFreshConfirm: true } };
+    }
     this.activeMission = mission;
     const resumeWork =
       !missionWaitsOnLogin(mission) && siteAskYieldsToPlan(mission.brainPlan);
@@ -9287,8 +9320,28 @@ export class SparkBrowser {
     };
   } {
     const task = this.mcpTaskList().find((item) => item.taskId === taskId);
-    if (!task || (task.clientId && clientId && task.clientId !== clientId)) {
+    if (task && task.clientId && clientId && task.clientId !== clientId) {
       return { status: "unknown", rounds: 0, lastAssistant: "", elapsedMs: 0, window: this.mainWindowMode() };
+    }
+    if (!task) {
+      if (!this.evictedTaskIds) this.evictedTaskIds = new Set();
+      if (this.evictedTaskIds.has(taskId)) {
+        return { status: "unknown", rounds: 0, lastAssistant: "", elapsedMs: 0, window: this.mainWindowMode() };
+      }
+      const saved = (this.savedTaskSummaries || []).find((item) => item.taskId === taskId);
+      if (!saved || (saved.clientId && clientId && saved.clientId !== clientId)) {
+        return { status: "unknown", rounds: 0, lastAssistant: "", elapsedMs: 0, window: this.mainWindowMode() };
+      }
+      const status = saved.status === "done" || saved.status === "failed" || saved.status === "interrupted" || saved.status === "pool_full"
+        ? saved.status
+        : "interrupted";
+      return {
+        status,
+        rounds: 0,
+        lastAssistant: saved.lastStep,
+        elapsedMs: Math.max(0, Date.now() - saved.at),
+        window: this.mainWindowMode(),
+      };
     }
     const view = {
       status: task.status,
@@ -9637,7 +9690,30 @@ export class SparkBrowser {
   private rememberMcpTask(task: (typeof this.mcpTasks)[number]): void {
     const list = this.mcpTaskList();
     list.push(task);
-    while (list.length > 10) list.shift();
+    if (!this.evictedTaskIds) this.evictedTaskIds = new Set();
+    while (list.length > 10) {
+      const dropped = list.shift();
+      if (dropped) this.evictedTaskIds.add(dropped.taskId);
+    }
+    this.persistTaskSummary(task);
+  }
+
+  private persistTaskSummary(task: (typeof this.mcpTasks)[number]): void {
+    const summary: TaskSummary = {
+      taskId: task.taskId,
+      goal: task.text,
+      status: task.status,
+      lastStep: task.lastAssistant || "",
+      at: task.startedAt,
+      ...(task.clientId ? { clientId: task.clientId } : {}),
+    };
+    if (!this.savedTaskSummaries) this.savedTaskSummaries = [];
+    this.savedTaskSummaries = upsertTaskSummary(this.savedTaskSummaries, summary);
+    try {
+      writeTaskSummaries(this.configDir(), this.savedTaskSummaries);
+    } catch {
+      /* 摘要写失败不挡任务 */
+    }
   }
 
   private agentJobs() {
@@ -9935,10 +10011,12 @@ export class SparkBrowser {
     const reason = ledgerCloseReason(result);
     if (result.interrupted) {
       task.status = "interrupted";
+      this.persistTaskSummary(task);
       return;
     }
     if (!result.ok || !reason) {
       task.status = "failed";
+      this.persistTaskSummary(task);
       return;
     }
     task.status = "done";
@@ -9951,6 +10029,7 @@ export class SparkBrowser {
       task.finalUrl = task.finalUrl || "";
       task.captures = task.captures || [];
     }
+    this.persistTaskSummary(task);
   }
 
   /** 下一句对不上「继续」时，收掉被扔下的前台等待。后台登录墙留着。 */
@@ -12323,6 +12402,20 @@ export class SparkBrowser {
     });
   }
 
+  /** 保存、发送、发布、删除做完后的侧栏提示。失败的点击不进这里。 */
+  private surfaceClickNotice(notice: string): void {
+    const text = String(notice || "").trim();
+    if (!text) return;
+    try {
+      if (Array.isArray(this.chatLog)) this.chatLog.push({ role: "assistant", text });
+      this.pushSidebarState?.();
+      this.noteMcpAssistant?.(text);
+      console.log(`[notice] ${text}`);
+    } catch {
+      /* 通知失败不挡已经点下去的动作 */
+    }
+  }
+
   /** Click by visible text — trusted mouse. Use withinPortal for menu items. */
   async clickText(
     text: string,
@@ -12331,7 +12424,11 @@ export class SparkBrowser {
     const tabId = opts?.tabId;
     const blocked = this.assertNotPaused();
     if (blocked) return blocked;
-    const gate = gateClickText(this.freeSoulRunning, text, this.activeMission?.goal?.autoSend === true);
+    const gate = gateClickText(
+      this.freeSoulRunning,
+      text,
+      this.freeSoulRunning ? this.execModeForActiveTask() : undefined,
+    );
     if (!gate.ok) return { ok: false, message: gate.message || "没有代点" };
     try {
       await this.ensureOperableViewport();
@@ -12440,10 +12537,13 @@ export class SparkBrowser {
       await sleep(350);
       const portals = await wc.executeJavaScript(LIST_PORTALS_SCRIPT, true);
       this.lastSnapshot = null;
+      if (gate.notify) this.surfaceClickNotice(gate.notify);
       return {
         ok: true,
-        message: `click_text 「${hit.text || text}」 @ ${x},${y}`,
-        data: { ...hit, clickPoint: { x, y }, portals },
+        message: gate.notify
+          ? `click_text 「${hit.text || text}」 @ ${x},${y}。${gate.notify}`
+          : `click_text 「${hit.text || text}」 @ ${x},${y}`,
+        data: { ...hit, clickPoint: { x, y }, portals, ...(gate.notify ? { notify: gate.notify } : {}) },
       };
     } catch (error) {
       return {

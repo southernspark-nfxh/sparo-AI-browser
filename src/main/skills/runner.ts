@@ -16,7 +16,7 @@ import {
 } from "./store.js";
 import { writeExperience } from "../agent/experience.js";
 import { skillConflictsWithQuery } from "../agent/intent-router.js";
-import { gateDxmSmtSkill } from "../workflows/dxm-smt-preview.js";
+import { gateDxmSmtSkill, previewClosedToolResult } from "../workflows/dxm-smt-preview.js";
 import { normalizeUtterance } from "../triggers/gate.js";
 import { loadTriggers } from "../triggers/store.js";
 
@@ -1254,6 +1254,22 @@ function bumpSkillStat(configDir: string, skill: Skill, field: "success" | "fail
   }
 }
 
+export type RunnerFailureCode =
+  | "preview_closed"
+  | "transient_tool_failure"
+  | "validation_failed"
+  | "waiting_human"
+  | "hard_gate";
+
+/** 失败码告诉模型：前三类换策略，后两类才停等。 */
+export function runnerFailureCode(message: string): RunnerFailureCode {
+  const text = String(message || "");
+  if (/登录|验证码|支付|人机/.test(text)) return "hard_gate";
+  if (/需确认|等你确认|已暂停/.test(text)) return "waiting_human";
+  if (/缺少|不支持|invalid|needs |未找到技能|没有可执行|JSON/i.test(text)) return "validation_failed";
+  return "transient_tool_failure";
+}
+
 export async function runSkill(
   browser: SkillBrowser,
   configDir: string,
@@ -1266,7 +1282,7 @@ export async function runSkill(
 ): Promise<ToolResult> {
   const key = String(input.id || input.query || "").trim();
   if (!key) {
-    return { ok: false, message: "run_skill needs id or query" };
+    return { ok: false, message: "run_skill needs id or query", data: { code: "validation_failed" } };
   }
   const skill = resolveSkillStrict(configDir, key);
   if (!skill) {
@@ -1274,12 +1290,12 @@ export async function runSkill(
     return {
       ok: false,
       message: `未找到技能「${key}」`,
-      data: { suggestions },
+      data: { suggestions, code: "validation_failed" },
     };
   }
   const closedPreview = gateDxmSmtSkill(skill.id);
   if (closedPreview) {
-    return { ok: false, message: closedPreview.message, data: { skillId: skill.id, closed: true } };
+    return previewClosedToolResult({ skillId: skill.id });
   }
   if (skill.distilled) {
     return {
@@ -1298,7 +1314,11 @@ export async function runSkill(
   }
   const steps = (skill.steps || []) as AnyStep[];
   if (!steps.length) {
-    return { ok: false, message: `技能「${skill.title}」没有可执行步骤` };
+    return {
+      ok: false,
+      message: `技能「${skill.title}」没有可执行步骤`,
+      data: { code: "validation_failed", skillId: skill.id },
+    };
   }
   const vars = buildVars(skill, input.params || {}, currentActiveUrl(browser));
   if (input.dryRun) {
@@ -1380,6 +1400,7 @@ export async function runSkill(
           log,
           diagnose: diag?.data,
           vars: { titleRef: vars.titleRef, bodyRef: vars.bodyRef },
+          code: runnerFailureCode(result.message),
         },
       };
     }

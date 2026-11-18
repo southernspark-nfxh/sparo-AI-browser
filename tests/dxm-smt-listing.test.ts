@@ -700,10 +700,10 @@ describe("T9 接线与预览开关", () => {
   it("Free Soul 通道只放行四个新 ID，关闭预览时不执行", () => {
     expect(gateFreeSoulWorkflow("dxm_full_listing", {}).action).toBe("reject");
     expect(gateFreeSoulWorkflow("dxm_smt_probe", {}).action).toBe("closed");
-    expect(gateFreeSoulWorkflow("dxm_smt_probe", {}).message).toBe("该能力尚未开放");
+    expect(gateFreeSoulWorkflow("dxm_smt_probe", {}).message).toContain("店小秘专用工作流未开放");
     expect(gateFreeSoulWorkflow("dxm_smt_publish", { SPARO_DXM_SMT_PREVIEW: "1" }).action).toBe("run");
     expect(gateDxmSmtSkill("dxm-crawl-prep", {})).toBeNull();
-    expect(gateDxmSmtSkill("dxm-smt-listing", {})?.message).toBe("该能力尚未开放");
+    expect(gateDxmSmtSkill("dxm-smt-listing", {})?.message).toContain("店小秘专用工作流未开放");
     expect(gateDxmSmtSkill("dxm-smt-listing", { SPARO_DXM_SMT_PREVIEW: "1" })).toBeNull();
   });
 
@@ -732,7 +732,8 @@ describe("T9 接线与预览开关", () => {
     delete process.env.SPARO_DXM_SMT_PREVIEW;
     try {
       const result = await runSkill({} as SkillBrowser, dir, { id: "dxm-smt-listing" });
-      expect(result.message).toBe("该能力尚未开放");
+      expect(result.message).toContain("店小秘专用工作流未开放");
+      expect(result.data).toMatchObject({ closed: true, fallback: "generic_page_tools", code: "preview_closed" });
       expect(JSON.stringify(result)).not.toContain("SECRET_ROUTE_SHOULD_NOT_LEAK");
     } finally {
       if (previous === undefined) delete process.env.SPARO_DXM_SMT_PREVIEW;

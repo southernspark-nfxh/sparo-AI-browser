@@ -11,7 +11,7 @@
   "updatedAt": "2026-09-09T00:00:00.000Z",
   "intent": "市场规模用检索摘要并标明来源冲突；品牌用京东「智能喂食器」列表，不编前十名。",
   "declared_domains": ["www.baidu.com", "search.jd.com"],
-  "declared_actions": ["navigate", "wait_for", "page_text"],
+  "declared_actions": ["navigate", "page_text"],
   "human_gates": ["login"],
   "params": {
     "marketQuery": {

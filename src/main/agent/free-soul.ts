@@ -9,6 +9,7 @@ import { CAPTURE_PROMPT, CAPTURE_RUN_LIMIT, RUN_CAPTURE_FULL } from "../captures
 import { pageTextGrowthNote } from "./deepseek.js";
 import { traceArgs, type SoulRunTrace, type SoulTraceStep } from "./distill.js";
 import { chatCompletionsUrl } from "../settings/llm-url.js";
+import { noteConfirmRequest, noteUserReply } from "./publish-gate.js";
 
 export type FreeSoulToolName =
   | "navigate"
@@ -38,7 +39,8 @@ export type FreeSoulToolName =
   | "list_tabs"
   | "switch_tab"
   | "close_tab"
-  | "close_tabs";
+  | "close_tabs"
+  | "new_tab";
 
 export type FreeSoulToolRunner = (
   name: FreeSoulToolName,
@@ -176,7 +178,7 @@ const TOOLS = [
   tool("go_back", "返回当前标签的上一个页面。"),
   tool(
     "request_confirm",
-    "发布、发送、支付、删除之前必须先调用。调用后本次任务会停下，等用户下一条消息明确同意。不要用于普通点击、翻页或搜索。客服回复不要用它去点发送。",
+    "逐步确认时，发送、发布、保存并认领、保存并发布之前先调用。自动执行时，保存、发送、发布直接做完并通知；保存并认领和保存并发布仍要先调用。支付不要用它代点。删除做完通知即可，不必先问。调用后本次任务会停下，等用户下一条消息明确同意。不要用于普通点击、翻页或搜索。客服回复不要用它去点发送。",
     {
       action: { type: "string", description: "准备做的不可逆动作" },
       detail: { type: "string", description: "让用户确认的具体内容" },
@@ -252,7 +254,7 @@ const TOOLS = [
   ),
   tool(
     "run_workflow",
-    "执行店小秘到速卖通上架白名单。id 只能是 dxm_smt_probe、dxm_smt_prepare、dxm_smt_status、dxm_smt_publish、dxm_smt_shops。用户说刷新店铺基线时用 dxm_smt_shops，它没有参数，每次调用都重新抓取店铺列表。dxm_smt_prepare 指定目标店铺用参数 shopName。用户明确说「认领」或「保存并认领」后，才把用户原话放进 claimConsent 再跑 prepare；用户没说就不带。claimConsent 不是店铺名，不能自己编。dxm_smt 工作流返回停等（ok:false 或 waiting_human）时就是停等。禁止绕过工作流用 click_text、execute_primitives 或任何页面工具去手动点『保存并认领』『保存』『认领』『发布』类按钮；停等后只向用户说明原因并等待指示，不得替用户完成写操作。收费图片和逐步确认模式下的发布，必须先 request_confirm。不要把 tabId 放进参数。其他 id 会拒绝。",
+    "执行店小秘到速卖通上架白名单。id 只能是 dxm_smt_probe、dxm_smt_prepare、dxm_smt_status、dxm_smt_publish、dxm_smt_shops。用户说刷新店铺基线时用 dxm_smt_shops，它没有参数，每次调用都重新抓取店铺列表。dxm_smt_prepare 指定目标店铺用参数 shopName。用户明确说「认领」或「保存并认领」后，才把用户原话放进 claimConsent 再跑 prepare；用户没说就不带。claimConsent 不是店铺名，不能自己编。返回 code 为 waiting_human 或 hard_gate 时才停等。preview_closed、transient_tool_failure、validation_failed 要换变体、换通用页面工具或换策略，不要停死。禁止绕过保存、认领、发布、付费。禁止绕过工作流用 click_text、execute_primitives 或任何页面工具去手动点『保存并认领』『保存』『认领』『发布』类按钮。收费图片和逐步确认模式下的发布，必须先 request_confirm。不要把 tabId 放进参数。其他 id 会拒绝。",
     {
       id: { type: "string" },
       params: { type: "object" },
@@ -307,6 +309,12 @@ const TOOLS = [
       keepActive: { type: "boolean", description: "仅当用户要留着当前页时传 true" },
     },
   ),
+  tool(
+    "new_tab",
+    "新开一个标签并打开 url，认领给当前调用方，不抢用户正在看的页面焦点。用来同时留下两个目标页。不限制站点。",
+    { url: { type: "string", description: "要打开的完整 URL" } },
+    ["url"],
+  ),
 ];
 
 const STUCK_HINT =
@@ -316,6 +324,11 @@ const PAGE_SAME_HINT =
   "page_text 连续 3 次读到同样内容，页面已无新信息。基于已读内容立即汇报，或明确说明障碍，不要继续滚动或重复读取。";
 
 const TOOL_NAMES = new Set<string>(TOOLS.map((item) => item.function.name));
+
+/** 蒸馏技能 declared_actions 必须落在这份名单里。 */
+export function freeSoulToolNames(): readonly string[] {
+  return TOOLS.map((item) => item.function.name);
+}
 
 /** 当前页已经在某个账号环境里时，告诉模型不要漏传 envId 退回默认登录态。 */
 export function currentPageEnvLine(envId?: string, envName?: string): string {
@@ -372,9 +385,10 @@ export function systemPrompt(
     "同一元素或同一路径连续两次没有引起页面变化就换策略：换入口、直接构造结果 URL、换交互方式；禁止对同一目标连点超过两次。",
     "页面点按全部失效、疑似弹窗残留遮罩时，用 reload 整页重载一次再重试，不要把遮罩当成这条路没反应。",
     "页面需要登录或出现验证码时，如实告知用户并停在该处等用户处理，不要反复尝试绕过。",
+    "提问分三档：可逆可推断的（标题草案、已有属性的语言转换、模板选择）先做，并在汇报里写明假设；页面事实（重量、尺寸、库存）页面上有可靠值就提取换算，读不到不编造，可以问；用户或法律事实（品牌授权、HS 编码、责任人、资质）无法推断才问。保存、认领、发布、付费不在字段自决范围内。",
     "无法完成时如实汇报卡在哪一步，不要空转。",
-    "发布、发送、支付、删除等不可逆动作：先用 request_confirm 向用户确认，得到用户明确同意后才执行。用户此前下过的命令不算同意，必须经过一次确认往返。客服回复只把草稿填进输入框，发送仍由用户在页面上点。",
-    "用户说「直接」「以后」「全部」「别让我看了」等全量授权措辞时，同类批量操作（归档、清理、翻页处理）自主连续执行到做完或真卡住，不中途问「要不要继续」；跨到新的操作类型（改账号设置、订阅、付费、删除不可恢复内容）仍必须先确认。",
+    "当前是逐步确认：保存直接做，做完通知已保存到哪里。发送、发布、保存并认领、保存并发布先 request_confirm 一次，确认后执行，再通知结果。登录和验证码自己处理；真过不去就告诉用户需要人手动过一下。支付必须用户亲自完成，不要代点。删除允许执行，做完通知可在 7 天内恢复。客服回复只把草稿填进输入框，发送仍由用户在页面上点。",
+    "用户说「直接」「以后」「全部」「别让我看了」等全量授权措辞时，同类批量操作（归档、清理、翻页处理）自主连续执行到做完或真卡住，不中途问「要不要继续」；跨到改账号设置、订阅时仍停下来。付费必须用户亲自完成。删除做完通知即可。",
     "批量清理长列表时：优先找「选择所有/全部匹配…会话」类横幅链接一次全选；snapshot 里没有但按理该出现的动态元素（如全选后新出现的横幅），用 click_text 按可见文字再试一次，别急着下「取不到」的结论；Gmail 键盘全选是连按 * 和 a；批与批之间沿用同一搜索结果页，不要每批重新构造搜索。",
     "用户要求关闭、整理或切换标签页时：先 list_tabs 看清有哪些页。关掉某一类网页用 close_tabs，match 传站点或标题关键字（「关掉所有今日头条的网页」= toutiao），命中的页全部关掉，包括当前正在看的。用户说「关掉所有网页/标签」时传 all=true。只有用户明确说留着当前页时才传 keepActive=true。不传 match 且不传 all 不会关页面，不要回答做不到，也不要一个一个点开页面去关。关掉当前这一个用 close_tab。切换用 switch_tab。",
     "查询火车、机票、酒店时优先用 search_site 拿结果页 URL 再 navigate，不要硬刚这些站点的首页。",
@@ -401,12 +415,12 @@ export function systemPrompt(
     `当前页面 URL：${url || "about:blank"}`,
   ];
   if (execMode === "auto") {
-    const at = lines.findIndex((line) => line.startsWith("发布、发送、支付、删除等不可逆动作"));
+    const at = lines.findIndex((line) => line.startsWith("当前是逐步确认"));
     if (at >= 0) {
       lines.splice(
         at,
         1,
-        "当前是自动执行模式：发布、发送类动作直接执行，不调用 request_confirm——用户下达的任务指令本身就是授权（用户说『发小红书』就是授权发到发出为止）。支付、删除仍必须先用 request_confirm 向用户确认，得到明确同意后才执行。客服回复只把草稿填进输入框，发送仍由用户在页面上点。",
+        "当前是自动执行模式：任务指令授权的是执行过程，发布、发送、保存也一并授权；做完通知就行。保存并认领、保存并发布仍要先 request_confirm。支付硬拦。删除走软边界：允许执行，做完通知可在 7 天内恢复。客服回复只把草稿填进输入框，发送仍由用户在页面上点。",
         "自动模式下不中途询问『要不要继续』『要不要打开』，一口气执行到任务完成、真阻塞（需要登录、出现验证码、页面持续无响应）或缺了无法自决的关键信息才停。停下时如实说明卡在哪。",
         "缺可自决的细节（先看哪个入口、默认当前城市、先展示第一页结果）就自决并在最终汇报里注明假设；缺影响结果的硬信息（出发地、日期、金额、平台账号选择）且无法从对话和历史推断时，才停下来问。",
       );
@@ -664,6 +678,8 @@ export class FreeSoul {
       return result;
     };
     console.log(`[free-soul] run start input=${input.input.slice(0, 80)}`);
+    if (input.signal?.aborted) return end(interruptedResult());
+    noteUserReply(input.input);
     for (let round = 1; round <= safetyCap; round += 1) {
       if (input.signal?.aborted) return end(interruptedResult());
       input.onRound?.(round);
@@ -714,6 +730,7 @@ export class FreeSoul {
           parseError = "工具参数不是合法 JSON，请修正后重试。";
         }
         if (name === "request_confirm") {
+          noteConfirmRequest(String(args.action || ""), String(args.detail || ""));
           const confirmId = registerPaidConfirmFromArgs(args);
           return end({
             ok: true,

@@ -119,10 +119,24 @@ async function confirmImageModal(ctx) {
   if (before.stop) return before.stop;
   const beforeN = before.value?.n || 0;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const raw = await click(".cheetah-ui-pro-image-modal .cheetah-modal-footer button.cheetah-btn-primary", ctx.tabId);
-    if (!/"ok"\s*:\s*true/.test(String(raw))) {
-      console.error("[baijiahao] confirm click:", String(raw).slice(0, 300));
-    }
+    const fired = await page(
+      ctx,
+      "(() => {" +
+        "const mod = Array.from(document.querySelectorAll('.cheetah-ui-pro-image-modal')).find((el) => el.getBoundingClientRect().height > 0);" +
+        "const btn = Array.from(mod?.querySelectorAll('.cheetah-modal-footer button') || []).find((el) => (el.innerText || '').trim() === '确认' && !el.disabled);" +
+        "if (!btn) return JSON.stringify({ ok: false });" +
+        "const r = btn.getBoundingClientRect();" +
+        "const o = { bubbles: true, cancelable: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0 };" +
+        "btn.dispatchEvent(new PointerEvent('pointerdown', o));" +
+        "btn.dispatchEvent(new MouseEvent('mousedown', o));" +
+        "btn.dispatchEvent(new PointerEvent('pointerup', o));" +
+        "btn.dispatchEvent(new MouseEvent('mouseup', o));" +
+        "btn.click();" +
+        "return JSON.stringify({ ok: true });" +
+        "})()",
+    );
+    if (fired.stop) return fired.stop;
+    if (!fired.value?.ok) return fail("IMAGE_CONFIRM_MISSING", fired.value, "插图弹窗里没找到可用的确认按钮");
     const deadline = Date.now() + 8000;
     while (Date.now() <= deadline) {
       const closed = await page(ctx, stateScript);
@@ -348,28 +362,58 @@ export const baijiahao = {
         if (!entry) await sleep(400);
       }
       if (!entry) return fail("IMAGE_ENTRY_MISSING", file, "工具栏一直没渲染出插图入口");
-      // 真实点击：JS 模拟点击会落到相邻的视频入口，jpg 被当视频拒收
-      // click 回执偶发空串，不代表没点上：先看图片弹窗出来没有，没出来才补点一次
-      let opened = await click(".edui-for-insertimage", ctx.tabId);
-      if (!/"ok"\s*:\s*true/.test(String(opened))) {
-        console.error("[baijiahao] image entry click:", String(opened).slice(0, 200));
-        await sleep(1200);
-        const popped = await page(
+      // 续跑时弹窗可能已经开着，不能再点工具栏把它关掉。
+      const probeImageModal = async () =>
+        page(
           ctx,
           "(() => {" +
             "const el = document.querySelector('.cheetah-ui-pro-image-modal');" +
             "const r = el ? el.getBoundingClientRect() : null;" +
-            "return JSON.stringify({ open: !!r && r.width > 0 && r.height > 0 });" +
+            "const open = !!r && r.width > 0 && r.height > 0;" +
+            "const hasImage = !!(el && el.querySelector('input[type=file][accept*=image]'));" +
+            "return JSON.stringify({ open, hasImage });" +
             "})()",
         );
-        if (popped.value?.open !== true) {
-          opened = await click(".edui-for-insertimage", ctx.tabId);
-          if (!/"ok"\s*:\s*true/.test(String(opened))) {
-            return fail("IMAGE_ENTRY_MISSING", file, "没有点到百家号插图按钮：" + String(opened).slice(0, 160));
-          }
+      let popped = await probeImageModal();
+      if (popped.stop) return popped.stop;
+      if (!popped.value?.open) {
+        // 后台标签里 UEditor 保有焦点时，弹窗会被遮罩立刻关掉；先失焦再真实点击。
+        await page(ctx, "(() => { const ed = window.UE_V2?.instants?.ueditorInstant0; if (ed?.body) ed.body.blur(); return JSON.stringify({ ok: true }); })()");
+        const opened = await click(".edui-for-insertimage .edui-icon", ctx.tabId);
+        if (!/"ok"\s*:\s*true/.test(String(opened))) {
+          console.error("[baijiahao] image entry click:", String(opened).slice(0, 200));
+        }
+        for (let wait = 0; wait < 10 && !popped.value?.open; wait++) {
+          await sleep(500);
+          popped = await probeImageModal();
+          if (popped.stop) return popped.stop;
         }
       }
-      await sleep(1600);
+      if (!popped.value?.open) {
+        // 实测兜底：隐藏标签的真实点击偶发不触发回调，按平台事件序列补一次。
+        const fired = await page(
+          ctx,
+          "(() => {" +
+            "const ed = window.UE_V2?.instants?.ueditorInstant0;" +
+            "const icon = document.querySelector('.edui-for-insertimage .edui-icon');" +
+            "if (!icon) return JSON.stringify({ ok: false });" +
+            "if (ed?.body) ed.body.blur();" +
+            "const r = icon.getBoundingClientRect();" +
+            "const o = { bubbles: true, cancelable: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0 };" +
+            "icon.dispatchEvent(new MouseEvent('mousedown', o));" +
+            "icon.dispatchEvent(new MouseEvent('mouseup', o));" +
+            "icon.dispatchEvent(new MouseEvent('click', o));" +
+            "return JSON.stringify({ ok: true });" +
+            "})()",
+        );
+        if (fired.stop) return fired.stop;
+        for (let wait = 0; wait < 10 && !popped.value?.open; wait++) {
+          await sleep(500);
+          popped = await probeImageModal();
+          if (popped.stop) return popped.stop;
+        }
+      }
+      if (!popped.value?.open) return fail("IMAGE_MODAL_MISSING", popped.value, "百家号插图弹窗没有打开");
       const blocked = await guard(ctx);
       if (blocked) return blocked;
       // 只认图片模态框里的 image input，避免抓到视频上传框

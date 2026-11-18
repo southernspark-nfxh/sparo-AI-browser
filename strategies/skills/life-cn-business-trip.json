@@ -15,7 +15,7 @@
     "hotels.ctrip.com",
     "www.dianping.com"
   ],
-  "declared_actions": ["navigate", "wait_for", "page_text"],
+  "declared_actions": ["navigate", "page_text"],
   "human_gates": ["login", "pay", "captcha"],
   "params": {
     "from": { "type": "string", "default": "北京" },

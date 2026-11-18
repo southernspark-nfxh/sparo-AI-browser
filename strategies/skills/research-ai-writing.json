@@ -11,7 +11,7 @@
   "updatedAt": "2026-09-09T00:00:00.000Z",
   "intent": "列出写作助手竞品和评测里出现的功能/价。定位建议标成判断。不编官网价表。",
   "declared_domains": ["www.baidu.com"],
-  "declared_actions": ["navigate", "wait_for", "page_text"],
+  "declared_actions": ["navigate", "page_text"],
   "human_gates": ["login"],
   "params": {
     "query": {

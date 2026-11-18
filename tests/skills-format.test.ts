@@ -28,12 +28,16 @@ describe("官方技能包：本机能跑的最低字段", () => {
     }
   });
 
-  it("店小秘表单 job 在后台标签也能让出事件队列", () => {
+  it("店小秘编辑技能只用页面工具，保存走 click_text", () => {
     const skill = JSON.parse(readFileSync(join(dir, "dxm-smt-editor-ops.json"), "utf8")) as {
+      declared_actions?: string[];
       agentPlaybook?: string[];
     };
-    const fill = skill.agentPlaybook?.find((line) => line.startsWith("P4 填写。")) || "";
-    expect(fill).toContain("setTimeout(r,0)");
-    expect(fill).not.toContain("requestAnimationFrame");
+    expect(skill.declared_actions).not.toContain("execute");
+    const text = (skill.agentPlaybook || []).join("\n");
+    expect(text).toContain("click_text");
+    expect(text).toContain("保存");
+    expect(text).not.toContain("window.__jobRes");
+    expect(text).not.toContain("requestAnimationFrame");
   });
 });

@@ -499,22 +499,39 @@ async function readPgcCount(ctx) {
 }
 
 async function closeAiAssistant(ctx) {
-  const marked = await page(
+  // 先尝试 JS 暴力关闭：dispatch click + remove（绕过 React 合成事件问题）
+  const jsClose = await page(
     ctx,
     "(() => {" +
       "const drawer = document.querySelector('.ai-assistant-drawer');" +
       "const rect = drawer && drawer.getBoundingClientRect();" +
-      "if (!drawer || !rect || rect.width <= 2 || rect.height <= 2) return JSON.stringify({ ok: true, closed: true });" +
+      "if (!drawer || !rect || rect.width <= 2 || rect.height <= 2) return JSON.stringify({ ok: true, closed: true, method: 'none' });" +
       "const btn = drawer.querySelector('.close-btn');" +
-      "if (!btn) return JSON.stringify({ ok: false, code: 'ASSISTANT_CLOSE_MISSING' });" +
-      "btn.setAttribute('data-sparo-assistant-close', '1');" +
-      "return JSON.stringify({ ok: true, closed: false });" +
+      "const svg = drawer.querySelector('.close-btn svg, .close-btn path');" +
+      "let dispatched = false;" +
+      "if (btn) {" +
+      "  try { btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); dispatched = true; } catch(e) {}" +
+      "  try { btn.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); btn.dispatchEvent(new PointerEvent('pointerup', { bubbles: true })); } catch(e) {}" +
+      "}" +
+      "if (svg) { try { svg.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); dispatched = true; } catch(e) {} }" +
+      "btn && btn.setAttribute && btn.setAttribute('data-sparo-assistant-close', '1');" +
+      // 等一帧让 React 有机会响应
+      "return JSON.stringify({ ok: true, closed: false, dispatched, method: 'js-dispatch' });" +
       "})()",
   );
-  if (marked.stop) return marked.stop;
-  if (!marked.value?.ok) return fail(marked.value?.code || "ASSISTANT_CLOSE_MISSING", marked.value, "创作助手遮罩找不到关闭按钮");
-  if (marked.value.closed) return pass({ closed: true });
-  // 点击回包偶发空串，不代表没点上。先看抽屉还在不在，还在才再点一次。
+  if (jsClose.stop) return jsClose.stop;
+  if (jsClose.value?.closed) return pass({ closed: true, method: "none" });
+  await sleep(300);
+
+  // 检查 JS dispatch 后抽屉是否已消失
+  const afterJs = await page(
+    ctx,
+    "(() => { const d = document.querySelector('.ai-assistant-drawer'); const r = d && d.getBoundingClientRect(); return JSON.stringify({ visible: !!(r && r.width > 2 && r.height > 2) }); })()",
+  );
+  if (afterJs.stop) return afterJs.stop;
+  if (!afterJs.value?.visible) return pass({ closed: true, method: "js-dispatch" });
+
+  // Sparo 真实鼠标再点一次
   let raw = "";
   for (let attempt = 0; attempt < 2; attempt++) {
     raw = await click("[data-sparo-assistant-close]", ctx.tabId, ctx.host);
@@ -527,18 +544,26 @@ async function closeAiAssistant(ctx) {
       "(() => { const d = document.querySelector('.ai-assistant-drawer'); const r = d && d.getBoundingClientRect(); return JSON.stringify({ visible: !!(r && r.width > 2 && r.height > 2) }); })()",
     );
     if (early.stop) return early.stop;
-    if (!early.value?.visible) return pass({ closed: true, retried: true });
-    if (attempt === 1) return fail("ASSISTANT_CLOSE_FAILED", raw, "创作助手关闭点击没有成功（两次空包，抽屉仍可见）");
+    if (!early.value?.visible) return pass({ closed: true, retried: true, method: "sparo-click" });
     await sleep(500);
   }
   await sleep(500);
   const state = await page(
     ctx,
-    "(() => { const d = document.querySelector('.ai-assistant-drawer'); const r = d && d.getBoundingClientRect(); return JSON.stringify({ visible: !!(r && r.width > 2 && r.height > 2) }); })()",
+    "(() => { const d = document.querySelector('.ai-assistant-drawer'); const r = d && d.getBoundingClientRect(); if (d && r && r.width > 2 && r.height > 2) { d.remove(); return JSON.stringify({ visible: true, forceRemoved: true }); } return JSON.stringify({ visible: false }); })()",
   );
   if (state.stop) return state.stop;
-  if (state.value?.visible) return fail("ASSISTANT_STILL_OPEN", state.value, "创作助手遮罩仍未关闭");
-  return pass({ closed: true });
+  if (state.value?.visible) {
+    // 最后检查一次 remove 是否生效
+    await sleep(200);
+    const finalCheck = await page(
+      ctx,
+      "(() => { const d = document.querySelector('.ai-assistant-drawer'); const r = d && d.getBoundingClientRect(); return JSON.stringify({ visible: !!(r && r.width > 2 && r.height > 2) }); })()",
+    );
+    if (finalCheck.stop) return finalCheck.stop;
+    if (finalCheck.value?.visible) return fail("ASSISTANT_CLOSE_FAILED", { code: "ASSISTANT_STILL_OPEN", state: finalCheck.value }, "创作助手遮罩 JS 移除后仍然可见");
+  }
+  return pass({ closed: true, method: "force-remove" });
 }
 
 /** 锚点段只用于定位，插完图后删掉 @@IMGn@@，避免标记出现在正文里。 */
@@ -597,23 +622,42 @@ async function openImageDrawerAt(ctx, index, total) {
   if (!marked.value?.ok) return fail(marked.value?.code || "NO_PARAGRAPH", marked.value, "正文里找不到插图段落");
   let caret = "";
   let selection = null;
+  const readCaret = async () => page(
+    ctx,
+    "(() => {" +
+      "const sel = window.getSelection(); const node = sel && sel.rangeCount ? sel.getRangeAt(0).startContainer : null;" +
+      "const el = node ? (node.nodeType === 1 ? node : node.parentElement) : null;" +
+      "return JSON.stringify({ inMarked: !!(el && el.closest('[data-sparo-caret]')), paragraph: (el && el.closest('p')?.innerText || '').slice(0, 100), parent: el ? el.outerHTML.slice(0, 200) : '' });" +
+      "})()",
+  );
   for (let attempt = 0; attempt < 2; attempt++) {
     caret = await click({ selector: "[data-sparo-caret]", caret: true }, ctx.tabId, ctx.host);
     const caretStopped = blockedCall(caret);
     if (caretStopped) return caretStopped;
     await sleep(300);
-    selection = await page(
-      ctx,
-      "(() => {" +
-        "const sel = window.getSelection(); const node = sel && sel.rangeCount ? sel.getRangeAt(0).startContainer : null;" +
-        "const el = node ? (node.nodeType === 1 ? node : node.parentElement) : null;" +
-        "return JSON.stringify({ inMarked: !!(el && el.closest('[data-sparo-caret]')), paragraph: (el && el.closest('p')?.innerText || '').slice(0, 100), parent: el ? el.outerHTML.slice(0, 200) : '' });" +
-        "})()",
-    );
+    selection = await readCaret();
     if (selection.stop) return selection.stop;
     if (selection.value?.inMarked) break;
   }
-  if (!selection?.value?.inMarked) return fail("IMAGE_CARET_UNPROVEN", { caret, selection: selection?.value }, "真实点击后光标不在目标段落，停止插图");
+  // 部分头条草稿的真实点击坐标落在目标段内，但 ProseMirror 仍把 selection 留在首段。
+  // 用段末 DOM Range 兜底，并且同样回读确认；确认不了就停，不带错位置去开插图抽屉。
+  if (!selection?.value?.inMarked) {
+    const ranged = await page(
+      ctx,
+      "(() => {" +
+        "const pm = document.querySelector('.ProseMirror'); const target = document.querySelector('[data-sparo-caret]');" +
+        "if (!pm || !target) return JSON.stringify({ ok: false, code: 'NO_EDITOR' });" +
+        "pm.focus(); const range = document.createRange(); range.setStart(target, target.childNodes.length); range.collapse(true);" +
+        "const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);" +
+        "return JSON.stringify({ ok: true });" +
+        "})()",
+    );
+    if (ranged.stop) return ranged.stop;
+    await sleep(300);
+    selection = await readCaret();
+    if (selection.stop) return selection.stop;
+  }
+  if (!selection?.value?.inMarked) return fail("IMAGE_CARET_UNPROVEN", { caret, selection: selection?.value }, "真实点击和段末 Range 后光标仍不在目标段落，停止插图");
   const opened = await click(".syl-toolbar-tool.image .syl-toolbar-button", ctx.tabId, ctx.host);
   const openStopped = blockedCall(opened);
   if (openStopped) return openStopped;

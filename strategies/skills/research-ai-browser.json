@@ -15,7 +15,7 @@
     "chatgpt.com",
     "www.perplexity.ai"
   ],
-  "declared_actions": ["navigate", "wait_for", "page_text"],
+  "declared_actions": ["navigate", "page_text"],
   "human_gates": ["login", "captcha"],
   "params": {
     "query": {

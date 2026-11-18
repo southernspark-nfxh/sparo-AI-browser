@@ -11,7 +11,7 @@
   "updatedAt": "2026-09-09T00:00:00.000Z",
   "intent": "同一商品在京东、淘宝、拼多多比价。只打开搜索结果页，不直开商城首页，不代买。",
   "declared_domains": ["search.jd.com", "s.taobao.com", "mobile.yangkeduo.com"],
-  "declared_actions": ["navigate", "wait_for", "page_text"],
+  "declared_actions": ["navigate", "page_text"],
   "human_gates": ["login", "pay", "captcha"],
   "params": {
     "query": {

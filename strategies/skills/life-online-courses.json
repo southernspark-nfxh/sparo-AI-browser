@@ -18,7 +18,6 @@
   ],
   "declared_actions": [
     "navigate",
-    "wait_for",
     "page_text"
   ],
   "human_gates": [

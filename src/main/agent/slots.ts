@@ -404,7 +404,16 @@ const PUBLISH_PLATFORMS: Array<[RegExp, string]> = [
   [/搜狐号?|sohu/i, "sohu"],
 ];
 
-/** 发稿必须两个槽：平台 + 稿件目录。缺哪个都先问人，不能只把发布页打开。 */
+/** 对话里已经同时给了标题和正文。目录、粘贴、历史稿件与它并列，不再强制目录。 */
+export function hasInlineArticle(text: string): boolean {
+  const t = String(text || "");
+  const title = /(?:^|[\n\r])\s*(?:标题|title)\s*[:：]\s*\S+/i.test(t);
+  const body = /(?:^|[\n\r])\s*(?:正文|body)\s*[:：]\s*\S+/i.test(t);
+  if (title && body) return true;
+  return /标题[:：]?\s*\S{1,80}[\s\S]{0,40}正文[:：]\s*\S{4,}/i.test(t);
+}
+
+/** 发稿先要平台。目录只是来源之一；内联标题和正文在场就不再问目录。 */
 function publishSlots(text: string): SlotSnapshot {
   const t = text.trim();
   const platform = PUBLISH_PLATFORMS.find(([re]) => re.test(t))?.[1];
@@ -412,16 +421,19 @@ function publishSlots(text: string): SlotSnapshot {
     t.match(/["“]([A-Za-z]:[\\/][^"”]+|[\\/]{2}[^"”]+)["”]/) ||
     t.match(/([A-Za-z]:[\\/][^\s，。；;、]+)/);
   const articleDir = dirMatch ? dirMatch[1].replace(/[\\/]+$/, "") : undefined;
+  const inline = hasInlineArticle(t);
   const unknown: SlotId[] = [];
   if (!platform) unknown.push("platform");
-  if (!articleDir) unknown.push("articleDir");
+  if (!articleDir && !inline) unknown.push("articleDir");
   return {
     kind: "publish",
     need: t.slice(0, 42) || "发稿",
     known: { platform, articleDir },
     unknown,
     needsConfirm: false,
-    approach: "先问齐平台和稿件目录，再按技能整篇写入，不循环 fill。",
+    approach: inline
+      ? "已有内联标题和正文，走通用填稿，不再要目录。"
+      : "目录、内联稿件、粘贴和历史稿件都是来源。缺平台或目录且没有内联稿件时先问一次。",
     attach: "new",
   };
 }

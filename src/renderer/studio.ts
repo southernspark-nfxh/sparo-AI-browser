@@ -46,7 +46,7 @@ function emptyPage(title: string, reason: string): PageMount<{ title: string; re
 }
 
 const mountAccounts = emptyPage("账号", "账号核验尚未接入。新建和删除环境仍在设置里的账号页，这里不会切换登录态。");
-const mountTasks = emptyPage("发布记录", "发布记录页面尚未接入。这里不会创建发布批次，也不会代为发布。");
+const mountTasks = emptyPage("发布记录", "发布记录页面尚未接入。这里不会创建发布批次，也不会代为发布。续跑未接入，页面上不提供续跑按钮。");
 
 function mountHome(container: HTMLElement, model: ReadyLoad): { destroy: () => void } {
   clear(container);
@@ -409,7 +409,7 @@ function mountCurrent(): void {
     view === "metrics" ? mountMetrics(page, data, actions) :
     view === "comments" ? mountComments(page, data, actions) :
     view === "accounts" ? mountAccounts(page, { title: "账号", reason: "账号核验尚未接入。新建和删除环境仍在设置里的账号页，这里不会切换登录态。" }, actions) :
-    mountTasks(page, { title: "发布记录", reason: "发布记录页面尚未接入。这里不会创建发布批次，也不会代为发布。" }, actions);
+    mountTasks(page, { title: "发布记录", reason: "发布记录页面尚未接入。这里不会创建发布批次，也不会代为发布。续跑未接入，页面上不提供续跑按钮。" }, actions);
   current = {
     destroy() {
       stopTasks();

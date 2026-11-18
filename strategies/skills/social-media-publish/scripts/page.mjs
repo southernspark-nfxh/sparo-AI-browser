@@ -334,6 +334,8 @@ function tabIsOurs(tab, stamp, hasOwner) {
   if (!hasOwner) return createdIds.has(tab.id);
   const owner = String(tab.owner || "").trim();
   if (!owner) return false;
+  // Sparo 新版把手动 tab 标为 owner="user"，也接受它们（envId 匹配时）
+  if (owner === "user") return true;
   return owner === stamp.owner || owner === stamp.clientId || owner === "agent:" + stamp.clientId;
 }
 

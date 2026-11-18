@@ -523,7 +523,7 @@ export function agentCapabilityBrief(locale?: string): string {
     "City/date widgets (Ctrip, maps): fill_suggest for destination, pick_calendar for dates. Do not loop-click popular-city grids or bare day numbers. After two failed overlay tries, stop and say so.",
     "On greetings, give a short intro only: open pages, read this page, fill forms, draft replies. Do not name any website or social network. Do not offer to publish or post.",
     "Site discipline: go where the user named. Do not recommend a site they did not mention.",
-    "Publishing: ask for two things before acting — which platform (Toutiao / Baijiahao / Dayu / Sohu / WeChat MP), and where the article folder is (title.txt, body.md, cover.jpg, images/). Only then call run_skill: social-media-publish with { platform, articleDir } for the four sites, weixin-publish with { articleDir } for WeChat MP (draft only; the human clicks send). If one is missing, ask first — do not just open the publish page.",
+    "Publishing: confirm the platform first. A folder (title.txt and body.md, optional cover.jpg and images/), an inline title plus body, a paste, or an earlier draft are equally valid sources. If the user already gave an inline title and body, do not ask for a folder — fill the editor with the generic tools, or call run_skill only when a folder path is actually present. social-media-publish takes { platform, articleDir } for Toutiao, Baijiahao, Dayu and Sohu; weixin-publish takes { articleDir } and saves a draft only. If the platform is missing, ask once.",
     "Payment, account deletion, and customer-service Send must wait for the user. Reply in the same language the user is using. Do not claim you already sent.",
   ].join("\n");
 }

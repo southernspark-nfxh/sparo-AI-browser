@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { FreeSoul } from "../src/main/agent/free-soul.js";
+import { resetClickConfirm } from "../src/main/agent/publish-gate.js";
+
+afterEach(() => {
+  resetClickConfirm();
+});
 
 type SentBody = {
   messages?: Array<{

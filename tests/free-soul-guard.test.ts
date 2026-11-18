@@ -180,8 +180,8 @@ describe("运行中的新消息打断当前执行", () => {
   });
 });
 
-describe("旧工作单不再向侧栏开口", () => {
-  it("重启回放时不追加继续问句，已有问句和日志原样留着", () => {
+describe("未关任务的只读恢复预览", () => {
+  it("重启回放时展示目标、步骤和页面，不改日志文件", () => {
     const root = tmp();
     const mission: ActiveMission = {
       id: "old-1",
@@ -219,15 +219,20 @@ describe("旧工作单不再向侧栏开口", () => {
     expect(restored).toHaveLength(1);
     const oldLine = recoveryLine(restored[0]);
     expect(oldLine).toContain("继续？");
-    expect(sidebarOffersRecovery()).toBe(false);
+    expect(oldLine).toContain("未关任务");
+    expect(oldLine).toContain("临汾到北京");
+    expect(oldLine).toContain("查车票");
+    expect(oldLine).toContain("https://kyfw.12306.cn");
+    expect(sidebarOffersRecovery()).toBe(true);
 
     const browser = harness();
     browser.configDir = () => root;
-    browser.chatLog = [{ role: "assistant", text: oldLine }];
+    browser.chatLog = [];
     const beforeFile = readFileSync(join(root, "missions.jsonl"), "utf8");
     (browser as unknown as { offerMissionRecovery(): void }).offerMissionRecovery();
-    expect(browser.chatLog).toEqual([{ role: "assistant", text: oldLine }]);
-    expect(browser.pendingRecovery).toBeNull();
+    expect(browser.chatLog.length).toBe(1);
+    expect(String(browser.chatLog[0]?.text || "")).toContain("未关任务");
+    expect(browser.pendingRecovery).toBeTruthy();
     expect(readFileSync(join(root, "missions.jsonl"), "utf8")).toBe(beforeFile);
   });
 });

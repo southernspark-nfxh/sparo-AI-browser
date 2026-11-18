@@ -14,7 +14,7 @@ import {
 } from "../src/main/captures.js";
 
 const STEP_CONFIRM =
-  "发布、发送、支付、删除等不可逆动作：先用 request_confirm 向用户确认，得到用户明确同意后才执行。用户此前下过的命令不算同意，必须经过一次确认往返。客服回复只把草稿填进输入框，发送仍由用户在页面上点。";
+  "当前是逐步确认：保存直接做，做完通知已保存到哪里。发送、发布、保存并认领、保存并发布先 request_confirm 一次，确认后执行，再通知结果。登录和验证码自己处理；真过不去就告诉用户需要人手动过一下。支付必须用户亲自完成，不要代点。删除允许执行，做完通知可在 7 天内恢复。客服回复只把草稿填进输入框，发送仍由用户在页面上点。";
 
 const dirs: string[] = [];
 
@@ -245,7 +245,8 @@ describe("素材库", () => {
     expect(auto).toContain(CAPTURE_PROMPT);
     expect(step).toContain(STEP_CONFIRM);
     expect(auto).not.toContain(STEP_CONFIRM);
-    expect(auto).toContain("直接执行");
+    expect(auto).toContain("任务指令授权的是执行过程，发布、发送、保存也一并授权");
+    expect(auto).not.toContain("本身就是授权");
     expect(step).toContain("全量授权");
     expect(auto).toContain("全量授权");
   });

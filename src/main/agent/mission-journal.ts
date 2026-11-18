@@ -334,21 +334,39 @@ export function journalTurn(before: ActiveMission | null | undefined, after: Act
   }
 }
 
-/** 新核心侧栏不再追问旧工作单。问句函数和日志都保留。 */
+/** 重启后侧栏展示未关任务的只读预览。支付、认领、删除不自动重做。 */
 export function sidebarOffersRecovery(): boolean {
-  return false;
+  return true;
+}
+
+export function stepNeedsFreshConfirm(step?: { label?: string; cap?: string }): boolean {
+  return /支付|付款|认领|删除/.test(`${step?.label || ""} ${step?.cap || ""}`);
+}
+
+export function freshConfirmReply(step?: { label?: string; cap?: string }): string | null {
+  if (!stepNeedsFreshConfirm(step)) return null;
+  return `这步是「${step?.label || "危险动作"}」。支付、认领或删除要重新确认，我没有自动重做。`;
 }
 
 export function recoveryLine(item: RestoredMission, now = Date.now()): string {
   const mission = item.mission;
-  const title = (mission.goal?.intent || mission.raw || "上次的任务").replace(/\s+/g, " ").slice(0, 42);
+  const title = (mission.goal?.intent || mission.raw || "上次的任务").replace(/\s+/g, " ").slice(0, 80);
   const steps = mission.brainPlan?.steps || [];
-  const idx = steps.findIndex((s) => s.status === "running" || s.status === "pending");
+  const done = [...steps].reverse().find((step) => step.status === "done");
+  const idx = steps.findIndex((step) => step.status === "running" || step.status === "pending");
   const step = idx >= 0 ? steps[idx] : undefined;
+  const page = [...(mission.findings || [])].reverse().find((finding) => finding.url)?.url || "未知";
+  const pending = mission.ask || (mission.state === "waiting_human" ? "等你确认" : "无");
   const where = step ? `跑到第 ${idx + 1} 步「${step.label}」` : `停在${stateLabel(mission.state)}`;
   const old = now - item.openedAt >= WEEK_MS;
   const when = old ? `（${formatDay(item.openedAt)}的单）` : "";
-  return `上次${when}「${title}」${where}，继续？`;
+  return [
+    `未关任务${when}：${title}`,
+    `最后完成：${done ? done.label : "还没有完成的步骤"}`,
+    `当前页面：${page}`,
+    `待确认：${pending}`,
+    `${where}，继续？`,
+  ].join("\n");
 }
 
 function stateLabel(state: MissionState): string {

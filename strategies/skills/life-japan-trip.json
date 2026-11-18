@@ -11,7 +11,7 @@
   "updatedAt": "2026-09-09T00:00:00.000Z",
   "intent": "国际机票不要先开携程航班列表（经常空壳）。先 Kayak 结果页，酒店用携程城市列表 URL。每日行程不是这一条技能能跑完的。",
   "declared_domains": ["www.kayak.com", "hotels.ctrip.com", "flights.ctrip.com"],
-  "declared_actions": ["navigate", "wait_for", "page_text"],
+  "declared_actions": ["navigate", "page_text"],
   "human_gates": ["login", "pay", "captcha"],
   "params": {
     "fromKayak": { "type": "string", "default": "PEK" },

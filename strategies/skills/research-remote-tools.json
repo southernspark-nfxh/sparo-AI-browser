@@ -11,7 +11,7 @@
   "updatedAt": "2026-09-09T00:00:00.000Z",
   "intent": "收集远程协作工具名单和公开价。丢掉爱采购广告。统计和案例必须点进正文才写数字。",
   "declared_domains": ["www.baidu.com"],
-  "declared_actions": ["navigate", "wait_for", "page_text"],
+  "declared_actions": ["navigate", "page_text"],
   "human_gates": ["login"],
   "params": {
     "query": {

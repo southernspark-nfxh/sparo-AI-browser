@@ -17,7 +17,7 @@
   "source": "seeded",
   "enabled": true,
   "productModel": {
-    "ai": ["只做 run_skill 调用", "缺稿件目录先问人", "结果如实说存草稿"],
+    "ai": ["优先 run_skill", "无目录但有内联稿件时直接带参数调用或走通用填稿", "结果如实说存草稿"],
     "script": ["scripts/publish.mjs --platform weixin --article <目录>"],
     "forbid": ["loop fill", "把存草稿说成已群发", "自己点群发"]
   },
@@ -71,7 +71,7 @@
   ],
   "agentPlaybook": [
     "1. 用户说发微信 / 发公众号 / 微信公众号发布时，run_skill({ id: 'weixin-publish', params: { articleDir, theme?, images? } })",
-    "2. 没给稿件目录先问「稿子在哪个目录」，并说明目录要有 title.txt、body.md，建议 cover.jpg 和 images/",
+    "2. 优先 run_skill。无目录但有内联标题和正文时不要再问目录，走通用填稿。有目录才问路径，目录要有 title.txt、body.md，建议 cover.jpg 和 images/",
     "3. 不要逐字 fill 标题正文；Word 导入会覆盖全文，先导入再填标题",
     "4. 正常结果是存草稿 + appmsgid；如实告诉用户「已存草稿，群发请到后台点发表」",
     "5. 排版主题通过 theme 传，改样式去 scripts/format.mjs 的 THEMES"

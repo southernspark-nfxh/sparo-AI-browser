@@ -24,7 +24,7 @@
   "source": "seeded",
   "enabled": true,
   "productModel": {
-    "ai": ["只做 run_skill 调用", "参数校验", "match_skill 匹配", "缺平台或稿件目录先问人"],
+    "ai": ["优先 run_skill", "无目录但有内联稿件时直接带参数调用或走通用填稿", "参数校验", "match_skill 匹配"],
     "script": ["scripts/publish.mjs --platform <平台> --article <目录>"],
     "forbid": ["loop fill", "逐字输入字段", "同时操作多个平台的标签", "把公众号存草稿说成已群发"]
   },
@@ -98,7 +98,7 @@
     "1. 用户说「发头条/发百家号/发大鱼号/发搜狐号/发微信」或提到 social-media-publish 时，先 match_skill 再 run_skill",
     "2. platform 参数必须是 toutiao / baijiahao / dayu / sohu / weixin 之一，不支持网易号（已剔除）",
     "3. articleDir 目录结构：title.txt（纯文本）、body.md（Markdown）、cover.jpg（封面图）、images/（插图）",
-    "4. 缺 platform 或 articleDir 任一项，先问人，不要只打开发布页，也不要猜目录",
+    "4. 优先 run_skill。无目录但有内联标题和正文时，不要再问目录，走通用填稿。有目录才带 articleDir 调用。不要猜目录",
     "5. 微信公众号默认走 Word 导入 + 统一排版，theme 可传 editorial / ink / green；返回 DRAFT_SAVED_ONLY 说明只存了草稿",
     "6. 不要逐字 fill 标题/正文，让 publish.mjs 统一注入",
     "7. 多平台顺序：先发头条、百家，再发大鱼、搜狐",

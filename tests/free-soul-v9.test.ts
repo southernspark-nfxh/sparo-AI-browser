@@ -7,7 +7,7 @@ import { loadSettings, saveSettings, settingsPublicView } from "../src/main/sett
 import { tx } from "../src/shared/i18n.js";
 
 const STEP_CONFIRM =
-  "发布、发送、支付、删除等不可逆动作：先用 request_confirm 向用户确认，得到用户明确同意后才执行。用户此前下过的命令不算同意，必须经过一次确认往返。客服回复只把草稿填进输入框，发送仍由用户在页面上点。";
+  "当前是逐步确认：保存直接做，做完通知已保存到哪里。发送、发布、保存并认领、保存并发布先 request_confirm 一次，确认后执行，再通知结果。登录和验证码自己处理；真过不去就告诉用户需要人手动过一下。支付必须用户亲自完成，不要代点。删除允许执行，做完通知可在 7 天内恢复。客服回复只把草稿填进输入框，发送仍由用户在页面上点。";
 
 const dirs: string[] = [];
 
@@ -105,10 +105,13 @@ describe("执行模式", () => {
     expect(step).not.toContain("直接执行");
   });
 
-  it("auto 系统提示改发布发送为直接执行，支付删除仍必须确认", async () => {
+  it("auto 系统提示只授权执行过程，发布和保存仍要确认", async () => {
     const auto = await systemOf("auto");
-    expect(auto).toContain("直接执行");
-    expect(auto).toContain("支付、删除仍必须");
+    expect(auto).toContain("任务指令授权的是执行过程，发布、发送、保存也一并授权");
+    expect(auto).toContain("保存并认领、保存并发布仍要先 request_confirm");
+    expect(auto).toContain("支付硬拦");
+    expect(auto).toContain("删除走软边界");
+    expect(auto).not.toContain("本身就是授权");
     expect(auto).toContain("一口气执行到任务完成");
     expect(auto).toContain("先展示第一页结果");
     expect(auto).toContain("出发地");

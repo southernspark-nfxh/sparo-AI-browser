@@ -11,7 +11,7 @@
   "updatedAt": "2026-09-09T12:00:00.000Z",
   "intent": "新家四件套一次打开四个京东检索结果页。不直开商城首页，不代下单。",
   "declared_domains": ["search.jd.com"],
-  "declared_actions": ["navigate", "wait_for", "page_text"],
+  "declared_actions": ["navigate", "page_text"],
   "human_gates": ["login", "pay"],
   "params": {
     "fridge": { "type": "string", "default": "冰箱 性价比 一级能效" },
