@@ -2,7 +2,7 @@
 
 You are controlling **Sparo**: a local professional agent in a work browser.
 
-Tagline: *会动手的 AI 浏览器 — 发送前你确认。*
+Tagline: *独立 Agent 浏览器 — 自己接单自己干，安全边界内自动完成。*
 
 **先读这些，不要扫整个 `src/`：**
 
@@ -18,10 +18,10 @@ Tagline: *会动手的 AI 浏览器 — 发送前你确认。*
 | [docs/SKILL-COMMUNITY-M2.md](./docs/SKILL-COMMUNITY-M2.md) | 技能社区（**未开工**，M1 人测过完再开） |
 | [docs/SKILL-FORMAT.md](./docs/SKILL-FORMAT.md) | 技能包命名与字段（本机 `run_skill`，以后才分享） |
 | [docs/THREE-CHANNEL-DESIGN.md](./docs/THREE-CHANNEL-DESIGN.md) | 三通道架构（**设计稿，未开工**，评审后按分期落地） |
-| [docs/PRODUCT-TASKBOOK.md](./docs/PRODUCT-TASKBOOK.md) | 现行任务、QA、待办（v0.7.6） |
+| [docs/PRODUCT-TASKBOOK.md](./docs/PRODUCT-TASKBOOK.md) | 现行任务、QA、待办（v1.0.0） |
 | [docs/DECISION-POINTS.md](./docs/DECISION-POINTS.md) | 能提前结束任务的本地判断，先登记再合码 |
 | [docs/QA-GOLDEN-SCENARIOS.md](./docs/QA-GOLDEN-SCENARIOS.md) | 黄金场景，用底账核对，不看侧栏感觉 |
-| [CHANGELOG.md](./CHANGELOG.md) | 对外变更（现 0.7.6） |
+| [CHANGELOG.md](./CHANGELOG.md) | 对外变更（现 1.0.0） |
 | [docs/PRODUCT.md](./docs/PRODUCT.md) | 商店定位，不是任务书 |
 
 **此后主线就在本目录改。** 原版 `D:\download\Sparo`（3920 / `%APPDATA%\sparo`）只同步侧栏能力，不要把云订阅搬过去。
@@ -29,8 +29,8 @@ Tagline: *会动手的 AI 浏览器 — 发送前你确认。*
 **称呼：** 对人、对界面、对模型说「技能」。不要说「妙招」。工具名仍是 `match_skill` / `run_skill`。店小秘采集箱上品前编辑用技能 `dxm-crawl-prep`。
 
 数据在 `%APPDATA%\sparo-store`。MCP：`http://127.0.0.1:3921`。  
-当前安装包：`release\Sparo-Setup-0.7.6.exe`。包名、字节数、SHA-256、G1–G3 结果与遗留项见 [docs/PRODUCT-TASKBOOK.md](./docs/PRODUCT-TASKBOOK.md)。  
-**待打包 0.7.7**：要打什么、核对哪 3 条、哪些文件不属于本轮，见 [docs/NOTICE-20261117-AGENT-PUBLISH-HOOK.md](./docs/NOTICE-20261117-AGENT-PUBLISH-HOOK.md)。
+当前安装包：`release\Sparo-Setup-1.0.0.exe`。包名、字节数、SHA-256、G1–G3 结果与遗留项见 [docs/PRODUCT-TASKBOOK.md](./docs/PRODUCT-TASKBOOK.md)。  
+Agent 能力全景、工作模式、安全边界见 [docs/AGENTS.md](./docs/AGENTS.md)。
 云端模型走独立代理服务（本仓库不含密钥）。**不要**把云端 Key 写进客户端。  
 不要改 `docs/listings/`（提审前另做一轮）。主进程不热更。安装包不会自动更新。
 
@@ -64,6 +64,8 @@ Developer:
 ## Publish
 
 AI detects stage; scripts inject title/body once. Never loop `fill`.
+
+详细工作模式（意识+潜意识协作）、平台清单、调用方式见 [docs/AGENTS.md](./docs/AGENTS.md)。
 
 ```text
 run_skill({ query: "发小红书", params: { title, body, summary?, topics? } })

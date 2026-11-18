@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.0] — 2026-11-18 Agent 说明书重写并随包分发；里程碑版本号
+
+> 状态：安装包已构建——`release\Sparo-Setup-1.0.0.exe`，105,012,181 字节，2026-11-18 19:27:11，SHA-256 `5894EFD7C2066CDC0EEF2FADDC64B83357896F67BB9B02EB9B549815814EAA06`。本包为**文档-only 变更**，主进程代码与 0.7.7 一致；G1–G3 安装版复测待做。
+
+**双定位写进 Agent 说明书。** [docs/AGENTS.md](docs/AGENTS.md) 全文重写：Sparo = ①能独立完成任务的 Agent（接单→规划→动手→验收→关单，人不用围观，可最小化后台跑）+ ②为 Agent 设计的浏览器（Cursor / Trae / Codex / Hermes 等经 MCP 操纵）。
+
+**意识+潜意识协作模式成文。** AI 做意识（判断、认阶段、点下一步/发布、卡住换策略、发布前暂停），脚本做潜意识（一次性注入预烘焙内容）；脚本跑不动时意识介入；禁止循环 fill / 逐字打；未知表单走 `analyze_page → execute_primitives`。
+
+**两大核心能力写全。** ①自媒体发稿运营：7 个成型平台（头条/百家/大鱼/搜狐图文、百家号视频、微信公众号存草稿、企鹅号、小红书）+ 未成型渠道两种扩展方式（模板技能 / 现场 analyze_page）；②电商页面编辑：dxm-crawl-prep 自动完成项与交付标准（对接 `ECOMMERCE-LISTING-NORTH-STAR.md`，此前是零引用的孤岛文档）。
+
+**随包说明书不再分叉。** 打包引用的是 `packaging/AGENTS.md`，此前仍是旧版 63 行；现已重写为完整版（双定位、意识+潜意识、两大核心能力、通用能力、安全边界），与 `docs/AGENTS.md` 同步。外部 Agent 打开安装目录即可读到。
+
+**配套文档口径统一。** 根 [AGENTS.md](AGENTS.md)、[docs/PRODUCT.md](docs/PRODUCT.md)、[docs/PUBLISHING.md](docs/PUBLISHING.md)、[docs/MCP-API.md](docs/MCP-API.md)、`strategies/skills/README.md` 均指向新版说明书。
+
 ## [0.7.7] — 2026-11-18 侧栏不再复读要目录；卡住时不再自问自答；后台操作不打断打字
 
 > 状态：安装包已构建并安装复测——`release\Sparo-Setup-0.7.7.exe`，105,009,393 字节，2026-11-18 16:25:33，SHA-256 `9F0DECC16F86A81ADCDA63A964E4E9BBFE209493D0D493B56A8440CFCFE9E257`。已静默安装覆盖并复测 **G1–G3 全过**（见 [docs/QA-GOLDEN-SCENARIOS.md](docs/QA-GOLDEN-SCENARIOS.md) 0.7.7 段）；发稿追问三走法等侧栏座位核对待人工。

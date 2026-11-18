@@ -147,6 +147,7 @@ Still registered on the MCP surface; most useful when DXM pages / flag are in pl
 - `feishu_work({ kind?, to?, title?, body? })` → 打开 + 找人 + 注入草稿 + pause，不点发送  
 
 **Product rule:** AI detects stage and clicks; scripts deliver pre-baked content. Do not loop `fill` on title/body.  
+详细工作模式（意识+潜意识协作）见 [AGENTS.md](./AGENTS.md)。  
 `run_skill({ query: "发小红书", params: { title, body, summary, topics } })` is the preferred path.  
 Feishu: `run_skill({ query: "飞书", params: { to, body } })` or `feishu_work`. Never click 发送.
 

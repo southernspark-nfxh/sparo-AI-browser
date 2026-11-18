@@ -5,6 +5,8 @@
 Product rule: **AI detects stage and clicks; scripts deliver pre-baked content.**  
 Do **not** type title/body into fields character-by-character. Do **not** loop `fill`.
 
+详细工作模式（意识+潜意识协作）、平台清单、调用方式见 [AGENTS.md](./AGENTS.md)。
+
 ## 发布权限（2026-10-27）
 
 当句是否自动点发送，由模型在理解结果的 `autoSend` 里判定。本地不扫原话抢答。

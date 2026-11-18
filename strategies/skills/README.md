@@ -6,6 +6,7 @@ Hermes: [`docs/HERMES-PLAYBOOK.md`](../../docs/HERMES-PLAYBOOK.md).
 ## Rule
 
 **AI = stage + clicks. Script = inject pre-baked content once.**  
+详细工作模式（意识+潜意识协作）见 [docs/AGENTS.md](../../docs/AGENTS.md)。  
 **Unknown forms = analyze_page → execute_primitives (skill `universal-form-fill`).**  
 **发布：当句说了自动发才点发送，否则只填草稿。** 见 [`docs/PUBLISHING.md`](../../docs/PUBLISHING.md)。
 
