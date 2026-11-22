@@ -32,7 +32,7 @@ vi.mock("electron", () => ({
 
 import { SparkBrowser } from "../src/main/browser.js";
 import { createEnv } from "../src/main/envs/store.js";
-import { currentPageEnvLine, LIST_ENVS_DESCRIPTION, systemPrompt } from "../src/main/agent/free-soul.js";
+import { currentPageEnvLine, LIST_ENVS_DESCRIPTION, namedEnvId, systemPrompt } from "../src/main/agent/free-soul.js";
 
 describe("当前页账号环境", () => {
   it("系统提示写明沿用当前环境，禁止退回默认登录态", () => {
@@ -102,14 +102,14 @@ describe("当前页账号环境", () => {
 
     const inherited = await browser.runCoreTool("navigate", { url: "https://baijiahao.baidu.com" });
     expect(inherited.ok).toBe(true);
-    expect(opened).toEqual(["env-yi"]);
+    expect(opened).toEqual([]);
 
     const named = await browser.runCoreTool("navigate", {
       url: "https://baijiahao.baidu.com",
       envId: "env-jia",
     });
     expect(named.ok).toBe(true);
-    expect(opened).toEqual(["env-yi", "env-jia"]);
+    expect(opened).toEqual(["env-jia"]);
 
     browser.tabs = new Map([["plain", { id: "plain" }]]);
     browser.activeTabId = "plain";
@@ -117,6 +117,29 @@ describe("当前页账号环境", () => {
     const plain = await browser.runCoreTool("navigate", { url: "https://baijiahao.baidu.com" });
     expect(plain.message).toBe("default-login");
     expect(opened).toEqual([]);
+
+    (browser as unknown as { keepOnVisiblePage: boolean; turnNamedEnvId: string }).keepOnVisiblePage = true;
+    (browser as unknown as { turnNamedEnvId: string }).turnNamedEnvId = "env-xin";
+    opened.length = 0;
+    const forced = await browser.runCoreTool("navigate", { url: "https://weibo.com/u/1497714867" });
+    expect(forced.ok).toBe(true);
+    expect(opened).toEqual(["env-xin"]);
+  });
+
+  it("原句点名账号时，唯一对上的名字补成 envId", () => {
+    const roster = [
+      { id: "xin", name: "新环境" },
+      { id: "jia", name: "新环境甲" },
+      { id: "b2", name: "百家号二" },
+      { id: "wb", name: "微博" },
+    ];
+    expect(namedEnvId("用「新环境」这个账号打开汪海林的微博", roster, "")).toBe("xin");
+    expect(namedEnvId("用新环境甲打开", roster, "")).toBe("jia");
+    expect(namedEnvId("用百家号2打开", roster, "")).toBe("b2");
+    expect(namedEnvId("去汪海林的微博评论", roster, "")).toBe("");
+    expect(namedEnvId("用微博这个账号打开", roster, "")).toBe("wb");
+    expect(namedEnvId("用另一个账号打开", [{ id: "a", name: "甲" }, { id: "b", name: "乙" }], "a")).toBe("b");
+    expect(namedEnvId("用另一个账号打开", roster, "")).toBe("");
   });
 
   it("有侧栏工位时，先读眼前这一页的环境，不先切到旧工位", async () => {
@@ -157,7 +180,7 @@ describe("当前页账号环境", () => {
     const result = await browser.runCoreTool("navigate", { url: "https://baijiahao.baidu.com" });
     expect(result.ok).toBe(true);
     expect(shown).toBe(0);
-    expect(opened).toEqual(["env-yi"]);
+    expect(opened).toEqual([]);
     expect(browser.activeTabId).toBe("user-page");
   });
 });
@@ -222,39 +245,34 @@ describe("环境页切到眼前", () => {
       const opened = await browser.runCoreTool("navigate", { url: "https://baijiahao.baidu.com", envId: env.id });
       expect(opened.ok).toBe(true);
       expect(workShows).toBe(0);
-      expect(switches).toBe(1);
-      expect(userActions).toEqual([true]);
-      expect(browser.activeTabId).not.toBe("old");
-      expect(browser.tabs.get(browser.activeTabId)?.envId).toBe(env.id);
+      expect(userActions).toEqual([]);
+      expect([...browser.tabs.values()].filter((tab) => tab.envId === env.id)).toHaveLength(1);
       expect(browser.sidebarTabShownForTurn).toBe(true);
 
-      const foreground = String(browser.activeTabId);
       lane = "background";
       browser.activeTabId = "old";
       switches = 0;
       userActions.length = 0;
       const background = await browser.runCoreTool("navigate", {
-        url: "https://baijiahao.baidu.com",
+        url: "https://baijiahao.baidu.com/builder/rc/home",
         envId: env.id,
       });
       expect(background.ok).toBe(true);
       expect(workShows).toBe(0);
-      expect(switches).toBe(1);
-      expect(userActions).toEqual([undefined]);
-      expect(browser.activeTabId).toBe("old");
-      expect(browser.activeTabId).not.toBe(foreground);
+      expect(userActions).toEqual([]);
+      expect([...browser.tabs.values()].filter((tab) => tab.envId === env.id)).toHaveLength(1);
 
       lane = "";
       minimized = true;
-      switches = 0;
       userActions.length = 0;
       const hidden = await browser.runCoreTool("navigate", {
-        url: "https://baijiahao.baidu.com",
+        url: "https://passport.baidu.com/v2/?login",
         envId: env.id,
       });
       expect(hidden.ok).toBe(true);
-      expect(userActions).toEqual([undefined]);
-      expect(browser.activeTabId).toBe("old");
+      expect(userActions).toEqual([]);
+      expect([...browser.tabs.values()].filter((tab) => tab.envId === env.id)).toHaveLength(1);
+      void switches;
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -21,13 +21,49 @@ export function sidebarStaysOnUserTab(text: string, quotes?: Array<Pick<SparoQuo
  * 人已经停在一张网页上。这句话没有要求打开别处、另开窗口或给出网址，
  * 就在眼前这一页回答，不要为此弹出百度首页。
  */
+/** 人明确要离开眼前这一页。新开标签和另开一扇都算。 */
+export function asksToLeavePage(text: string): boolean {
+  return /新窗口|另开一扇|再开一扇|新开(?:一个)?标签|另开(?:一个)?标签|再开(?:一个)?标签/.test(String(text || ""));
+}
+
 export function visiblePageKeepsTurn(text: string): boolean {
   const raw = String(text || "").trim();
   if (!raw) return false;
-  if (/新窗口|另开一扇|再开一扇/.test(raw)) return false;
+  if (asksToLeavePage(raw)) return false;
   if (/https?:\/\//i.test(raw)) return false;
   if (/打开|前往|去看|跳到/.test(raw)) return false;
   return true;
+}
+
+const SITE_HOSTS: Array<{ re: RegExp; host: string }> = [
+  { re: /微博|weibo/i, host: "weibo.com" },
+  { re: /知乎|zhihu/i, host: "zhihu.com" },
+  { re: /头条|toutiao/i, host: "toutiao.com" },
+  { re: /百家号|baijiahao/i, host: "baijiahao.baidu.com" },
+  { re: /京东|(?:^|[^a-z])jd(?:\.com)?/i, host: "jd.com" },
+  { re: /淘宝|taobao/i, host: "taobao.com" },
+  { re: /小红书|xiaohongshu|xhslink/i, host: "xiaohongshu.com" },
+];
+
+function hostMatches(pageHost: string, siteHost: string): boolean {
+  if (pageHost === siteHost || pageHost.endsWith(`.${siteHost}`)) return true;
+  return siteHost.includes("weibo") && pageHost.includes("weibo");
+}
+
+/** 人已经在这个站上。去站内的某个人、某条内容，仍用眼前这一页，不另开。 */
+export function sameSiteWork(text: string, pageUrl: string): boolean {
+  const raw = String(text || "");
+  if (asksToLeavePage(raw)) return false;
+  let host = "";
+  try {
+    host = new URL(pageUrl).hostname.replace(/^www\./, "").replace(/^m\./, "").toLowerCase();
+  } catch {
+    return false;
+  }
+  if (!host) return false;
+  const named = SITE_HOSTS.filter((site) => site.re.test(raw));
+  if (!named.length) return false;
+  return named.every((site) => hostMatches(host, site.host));
 }
 
 const PAGE_TOOL_RE =

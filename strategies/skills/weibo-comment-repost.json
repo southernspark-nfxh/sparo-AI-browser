@@ -1,0 +1,51 @@
+{
+  "id": "weibo-comment-repost",
+  "title": "微博当前页：评论和转发",
+  "kind": "site",
+  "version": 1,
+  "shareable": false,
+  "source": "seeded",
+  "platform": "weibo",
+  "aliases": [
+    "微博评论",
+    "微博转发",
+    "评论这条微博",
+    "转发这条微博",
+    "写评论并转发",
+    "在微博下面评论"
+  ],
+  "createdAt": "2026-11-22T14:00:00.000Z",
+  "updatedAt": "2026-11-22T14:00:00.000Z",
+  "intent": "人已经在微博页上。评论、转发，或两件都做。不新开标签。",
+  "declared_domains": ["weibo.com", "weibo.cn", "m.weibo.cn"],
+  "declared_actions": ["weibo_act"],
+  "human_gates": ["login", "captcha"],
+  "productModel": {
+    "ai": ["决定评哪一条", "决定文字", "决定只评论、只转发还是两件都做", "脚本失败后再换办法"],
+    "script": ["在当前页打开评论或转发框", "一次写入", "点发送", "读回页面上有没有这段字"],
+    "forbid": ["循环点击发送", "逐字填入", "新开标签", "离开微博"]
+  },
+  "params": {
+    "text": { "type": "string", "required": true, "note": "要写进评论或转发框的话，由模型决定" },
+    "mode": { "type": "string", "required": false, "note": "comment、repost 或 both，默认 comment" },
+    "anchor": { "type": "string", "required": false, "note": "要作用的那条微博里的一段原文。不传则用当前屏第一条" }
+  },
+  "steps": [
+    { "id": "act", "tool": "weibo_act" }
+  ],
+  "fallbacks": [
+    "脚本报不是微博页或要登录时，停在这一页告诉用户",
+    "脚本没找到评论或转发时，意识再判断，不要从零连续点同一个按钮"
+  ],
+  "knownGaps": [
+    "微博改版后评论框认不出时会失败，不会假装已经发出",
+    "不传 anchor 时作用在当前屏第一条能看见的评论或转发入口",
+    "点了发送但页面上还读不到原文时，只报告已点发送，不说已经发出"
+  ],
+  "agentPlaybook": [
+    "人在微博页上说评论或转发：match_skill('微博评论')，命中后 run_skill({ query: '微博评论', params: { text, mode, anchor } })",
+    "mode：只评论 comment，只转发 repost，两件都要 both",
+    "不要自己循环点发送。脚本失败再决定下一步",
+    "不要 new_tab，不要离开当前微博页"
+  ]
+}

@@ -13,8 +13,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+function authDir() {
+  if (process.env.SPARO_CONFIG_DIR) return process.env.SPARO_CONFIG_DIR;
+  return path.join(process.env.APPDATA || "", "sparo-store");
+}
+
 function readAuthFile() {
-  const file = path.join(process.env.APPDATA || "", "sparo-store", "mcp-auth.json");
+  const file = path.join(authDir(), "mcp-auth.json");
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
@@ -232,10 +237,8 @@ export async function useTab(id, expect) {
 
 export async function exec(script, tabId, expect) {
   const gated = await gateTool("execute", tabId, expect);
-  if (typeof gated === "string") { console.error(`[DEBUG exec] gated blocked: ${gated}`); return gated; }
-  const result = await call("execute", { script, tabId: gated.tabId });
-  console.error(`[DEBUG exec] tabId=${gated.tabId} result=`, JSON.stringify(result)?.slice(0, 300));
-  return result;
+  if (typeof gated === "string") return gated;
+  return call("execute", { script, tabId: gated.tabId });
 }
 
 export async function click(selector, tabId, expect) {

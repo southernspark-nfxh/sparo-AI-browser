@@ -24,6 +24,7 @@ export type CommandAction =
   | { type: "focus"; tabId?: string; title?: string; taskId?: string }
   | { type: "dispatch"; text: string; tabId?: string; title?: string }
   | { type: "dispatch-many"; title: string; items: Array<{ title: string; text: string; url?: string }> }
+  | { type: "open-many"; title: string; items: Array<{ title: string; url: string }> }
   | { type: "stop"; taskId?: string; title?: string }
   | { type: "resume"; taskId?: string; title?: string }
   | { type: "close"; taskId?: string; title?: string; confirmed?: boolean }
@@ -96,8 +97,8 @@ function resolveOne(
 
 /** 执行一条已经结构化的指挥命令。含糊目标只返回候选，不猜测当前页。 */
 export function runCommand(action: CommandAction, pages: CommandPage[], ports: CommandPorts): CommandResult {
-  if (action.type === "dispatch-many") {
-    return { ok: false, code: "blocked", message: "跨页分派要由指挥室拆开并建组" };
+  if (action.type === "dispatch-many" || action.type === "open-many") {
+    return { ok: false, code: "blocked", message: "跨页打开要由指挥室逐张处理" };
   }
   if (action.type === "open") {
     const opened = ports.openTab(action.url);
@@ -218,6 +219,9 @@ const BATCH_SITES: BatchSite[] = [
   { name: "闲鱼", home: "https://www.goofish.com/" },
   { name: "微博", home: "https://weibo.com/" },
   { name: "知乎", home: "https://www.zhihu.com/" },
+  { name: "今日头条", home: "https://www.toutiao.com/" },
+  { name: "头条", home: "https://www.toutiao.com/" },
+  { name: "百家号", home: "https://baijiahao.baidu.com/" },
   { name: "美团", home: "https://www.meituan.com/" },
   { name: "百度", home: "https://www.baidu.com/" },
   { name: "抖音", home: "https://www.douyin.com/" },
@@ -272,15 +276,18 @@ function hasBatchCue(raw: string): boolean {
 function sharedTaskText(raw: string, sites: string[]): string {
   let text = raw.replace(/^同时/, "").replace(/^(?:多平台|多站点)/, "");
   for (const site of sites) text = text.split(site).join(" ");
-  text = text.replace(/[、，,和与及]/g, " ").replace(/\s+/g, " ").trim();
+  text = text.replace(/[、，,]/g, " ").replace(/\s+/g, " ").trim();
   return text || raw;
 }
 
-/** 从共同任务句里取出搜索词。比价 iPhone 17 → iPhone 17。只剩动作词就为空。 */
+/**
+ * 从共同任务句里取出搜索词。比价 iPhone 17 → iPhone 17。只剩动作词就为空。
+ * 「和 / 与 / 及」只在单独成词时去掉，不从「和田玉」「与辉同行」「和平精英」里删。
+ */
 export function batchQuery(taskText: string): string {
   return String(taskText || "")
-    .replace(/查一下|比价|查询|对比|搜索|看看|打开|都|各|分别|一下/g, " ")
-    .replace(/查|看|搜/g, " ")
+    .replace(/查一下|比价|查询|对比|搜索|看看|打开|分别|一下/g, " ")
+    .replace(/(^|\s)(?:都|各|查|看|搜|在|和|与|及)(?=\s|$)/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -292,6 +299,10 @@ export function openUrlForSite(name: string, taskText: string): string | undefin
   const query = batchQuery(taskText);
   if (site.search && query) return site.search.replaceAll("{q}", encodeURIComponent(query));
   return site.home;
+}
+
+function taskForSite(site: string, raw: string): string {
+  return `这一页是「${site}」。用户原话：${raw}。只在这一页完成这件事，不要打开其他网站，不要说用户的原话被截断。`;
 }
 
 function dispatchMany(
@@ -427,7 +438,23 @@ function parseListedBatch(raw: string): CommandAction | null {
   if (mentionsManySites(raw) && sites.length < 2) sites = [...DEFAULT_BATCH_SITES];
   if (sites.length < 2) return null;
   const text = sharedTaskText(raw, sites);
-  return dispatchMany(raw, sites.map((title) => ({ title, text })));
+  const seenUrl = new Set<string>();
+  const items: Array<{ title: string; text: string; url: string }> = [];
+  for (const title of sites) {
+    const url = openUrlForSite(title, text);
+    if (!url || seenUrl.has(url)) continue;
+    seenUrl.add(url);
+    items.push({ title, text: taskForSite(title, raw), url });
+  }
+  if (items.length < 2) return null;
+  if (!batchQuery(text)) {
+    return {
+      type: "open-many",
+      title: raw.slice(0, 40),
+      items: items.map((item) => ({ title: item.title, url: item.url })),
+    };
+  }
+  return dispatchMany(raw, items);
 }
 
 function parseSimultaneous(raw: string): CommandAction | null {

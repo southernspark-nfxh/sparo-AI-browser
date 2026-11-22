@@ -31,7 +31,7 @@ import { SparkBrowser } from "../src/main/browser.js";
 import { ownerForTab, registerClientName, resetMcpSessions } from "../src/main/agent/mcp-sessions.js";
 import { pageSessionKey } from "../src/main/agent/session-key.js";
 import { agentShouldOpenOwnSurface } from "../src/main/agent/intent-router.js";
-import { sidebarStaysOnUserTab, visiblePageKeepsTurn } from "../src/main/agent/sidebar-tab.js";
+import { asksToLeavePage, sidebarStaysOnUserTab, sameSiteWork, visiblePageKeepsTurn } from "../src/main/agent/sidebar-tab.js";
 
 type Tab = {
   id: string;
@@ -180,6 +180,25 @@ describe("T78 侧栏开站不征用当前标签", () => {
     expect(browser.activeTabId).toBe("tab-a");
   });
 
+  it("在微博页去汪海林的微博，不另开标签", async () => {
+    const browser = harness();
+    const page = browser.tabs.get("tab-a");
+    if (page) {
+      page.url = "https://weibo.com/";
+      page.title = "微博";
+    }
+    browser.freeSoul = {
+      run: async () => {
+        await browser.runCoreTool("new_tab", { url: "https://weibo.com/u/wanghailin" });
+        return { ok: true, text: "评论写好了" };
+      },
+    };
+    await browser.handleChat("去汪海林的微博里找一条最有想法的意见，然后评论并转发");
+    expect(browser.created()).toBe(0);
+    expect(browser.navTabs).toEqual(["tab-a"]);
+    expect(browser.tabs.get("tab-a")?.url).toContain("weibo.com/u/wanghailin");
+  });
+
   it("在微博页问社会新闻关注度，不另开百度", async () => {
     const browser = harness();
     const page = browser.tabs.get("tab-a");
@@ -284,7 +303,7 @@ describe("T78 侧栏开站不征用当前标签", () => {
       },
     };
 
-    await browser.handleChat("打开头条和百家号");
+    await browser.handleChat("读一下这两个页面");
 
     expect(browser.created()).toBe(0);
     expect(browser.pageTabs).toEqual(["toutiao", "bjh"]);
@@ -356,5 +375,15 @@ describe("T78 侧栏开站不征用当前标签", () => {
     expect(agentShouldOpenOwnSurface("打开维基百科唐朝条目", "user")).toBe(true);
     expect(visiblePageKeepsTurn("哪些社会新闻的关注度最高呢")).toBe(true);
     expect(visiblePageKeepsTurn("打开微博")).toBe(false);
+    expect(sameSiteWork("去汪海林的微博里找一条意见，评论并转发", "https://weibo.com/u/1")).toBe(true);
+    expect(sameSiteWork("打开京东", "https://weibo.com/")).toBe(false);
+    expect(sameSiteWork("去汪海林的微博，新窗口打开", "https://weibo.com/")).toBe(false);
+    expect(sameSiteWork("去汪海林的微博评论并转发", "https://m.weibo.cn/detail/1")).toBe(true);
+    expect(sameSiteWork("去汪海林的微博评论并转发", "https://s.weibo.com/")).toBe(true);
+    expect(sameSiteWork("打开百家号", "https://www.baidu.com/s?wd=天气")).toBe(false);
+    expect(sameSiteWork("打开头条", "https://mp.toutiao.com/profile_v4/index")).toBe(true);
+    expect(sameSiteWork("打开微博，新开一个标签", "https://weibo.com/")).toBe(false);
+    expect(asksToLeavePage("新开一个标签")).toBe(true);
+    expect(visiblePageKeepsTurn("新开一个标签")).toBe(false);
   });
 });

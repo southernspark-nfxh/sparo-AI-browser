@@ -333,9 +333,7 @@ const createdIds = new Set();
 function tabIsOurs(tab, stamp, hasOwner) {
   if (!hasOwner) return createdIds.has(tab.id);
   const owner = String(tab.owner || "").trim();
-  if (!owner) return false;
-  // Sparo 新版把手动 tab 标为 owner="user"，也接受它们（envId 匹配时）
-  if (owner === "user") return true;
+  if (!owner || owner === "user") return false;
   return owner === stamp.owner || owner === stamp.clientId || owner === "agent:" + stamp.clientId;
 }
 
@@ -414,14 +412,19 @@ export function chooseEditorTab({ before, after, stamp, writeMark, envId = "" })
 }
 
 /**
- * 开页动作：显式环境一定带 envId；默认登录态优先用当前空白环境标签，
- * 没有就新建标签，避免不带 tabId 的 navigate 落到固定 client 上次认领的账号标签。
+ * 开页动作：显式环境一定带 envId。
+ * 默认登录态只在当前页已经属于这个 client 时才在这一页打开。
+ * 人正在看的页、别人的页，都新开一张，避免改写眼前的草稿。
  */
-export function openPayloadFor(url, envId, rows, activeId) {
+export function openPayloadFor(url, envId, rows, activeId, stamp) {
   const want = String(envId || "").trim();
   if (want) return { tool: "navigate", payload: withEnv(url, want) };
-  const target = (rows || []).find((tab) => tab.id === activeId && !String(tab.envId || "").trim());
-  if (target) return { tool: "navigate", payload: withEnv(url, "", target.id) };
+  const list = rows || [];
+  const hasOwner = list.some((tab) => Object.prototype.hasOwnProperty.call(tab, "owner"));
+  const target = list.find((tab) => tab.id === activeId && !String(tab.envId || "").trim());
+  if (target && stamp && tabIsOurs(target, stamp, hasOwner)) {
+    return { tool: "navigate", payload: withEnv(url, "", target.id) };
+  }
   return { tool: "new_tab", payload: { url } };
 }
 
@@ -458,7 +461,7 @@ export async function openWriteTab(ctx, io) {
   });
   const before = snapshot(beforeRows, activeIdOf(beforeListed));
   const wantEnv = String(ctx.envId || "").trim();
-  const opener = openPayloadFor(ctx.writeUrl, wantEnv, beforeRows, before.activeId);
+  const opener = openPayloadFor(ctx.writeUrl, wantEnv, beforeRows, before.activeId, stamp);
   await deps.call(opener.tool, opener.payload);
   const deadline = Date.now() + 15000;
   let last = before;
@@ -675,6 +678,16 @@ export function assertEnvEditorFixtures() {
   const defaults = editorCandidates(rows, { host: "baijiahao.baidu.com", writeMark: "/builder/rc/edit", editExisting: null, stamp, envId: "" });
   if (defaults.accepted.some((tab) => tab.envId)) throw new Error("默认登录态复用了环境标签");
   if (!defaults.accepted.some((tab) => tab.id === "plain")) throw new Error("默认登录态没有留下空环境标签");
+  const userEditor = { id: "human", url: base, owner: "user", envId: "" };
+  const userPick = editorCandidates([userEditor, rows[2]], {
+    host: "baijiahao.baidu.com",
+    writeMark: "/builder/rc/edit",
+    editExisting: null,
+    stamp,
+    envId: "",
+  });
+  if (userPick.accepted.some((tab) => tab.id === "human")) throw new Error("人正在看的编辑页被当成自己的");
+  if (!userPick.excluded.some((item) => item.id === "human" && item.reason === "owner")) throw new Error("人的编辑页没有按 owner 排除");
   const wrongChoice = chooseEditorTab({
     before: { tabs: [], activeId: "" },
     after: { tabs: [rows[1]], activeId: "wrong" },

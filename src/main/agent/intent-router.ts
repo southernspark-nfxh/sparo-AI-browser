@@ -2,7 +2,7 @@
  * Sparo browser agent: understand the user's goal, then pick a capability.
  * User chat is not a raw dump into the model — local routing decides site/tool first.
  */
-import { sidebarStaysOnUserTab } from "./sidebar-tab.js";
+import { asksToLeavePage, sidebarStaysOnUserTab } from "./sidebar-tab.js";
 import { parseTravelQuery, type TravelQuery } from "./travel.js";
 import { parseTripPlan, type TripPlan } from "./trip-plan.js";
 import { parseMission, type Mission } from "./mission.js";
@@ -233,7 +233,7 @@ export function agentShouldOpenOwnSurface(
 ): boolean {
   if (quotes && quotes.length > 0) return false;
   const raw = String(text || "");
-  if (/新窗口|另开一扇|再开一扇/.test(raw)) return true;
+  if (asksToLeavePage(raw)) return true;
   if (sidebarStaysOnUserTab(raw)) return false;
   return true;
 }
@@ -253,18 +253,19 @@ export function summaryOfferLine(title: string): string {
   return `已经打开了《${name}》。需要我帮你总结吗？`;
 }
 
-/** 已经写成总结，或已经问过，就不再补这一句。 */
+/** 已经写成总结、已经问过，或已经把数字写出来，就不再补这一句。 */
 export function finishViewDataReply(userText: string, reply: string, title: string): string {
   const text = String(reply || "").trim();
   if (!viewDataNeedsAsk(userText)) return text;
   if (/需要我帮你总结吗|要不要总结|要我总结/.test(text)) return text;
   if (/总结/.test(text) && text.length > 20) return text;
+  if (/\d/.test(text) && text.length > 12) return text;
   const line = summaryOfferLine(title);
   return text ? `${text}\n\n${line}` : line;
 }
 
 export function viewDataPauseHint(title: string): string {
-  return `这一页已经打开。用户只说了查看，没有要求总结。不要再点筛选、翻页或换数据页。下一句只问：${summaryOfferLine(title)}`;
+  return `这一页已经打开。用户只说了查看，没有要求总结。如果已经读到粉丝、阅读、收益这些数字，直接写出来，不要再问要不要总结。还没读到内容时，下一句只问：${summaryOfferLine(title)}`;
 }
 
 export function wantsSummarize(text: string): boolean {

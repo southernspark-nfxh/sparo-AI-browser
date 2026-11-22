@@ -105,6 +105,8 @@ export type PageStatusInput = {
   markedDone?: boolean;
   /** 这张页是被停下的，不是做完的。优先于已完成。 */
   markedStopped?: boolean;
+  /** 侧栏停在确认，池里还没有卡。这一页要显示在等人。 */
+  awaitingHuman?: boolean;
 };
 
 export type PageStatusSnapshot = {
@@ -168,7 +170,8 @@ export function projectPageSnapshot(input: PageStatusInput): PageStatusSnapshot 
   const lease = input.lease && input.lease.releasedAt == null ? input.lease : null;
   const owned = Boolean(picked?.clientId || picked?.agentName || input.ownerClientId || lease?.clientId);
   let state: PageProjectionState = picked?.state || "idle";
-  if (!picked && input.foregroundOnThisTab && owned) state = "running";
+  if (!picked && input.awaitingHuman) state = "waiting_human";
+  else if (!picked && input.foregroundOnThisTab && owned) state = "running";
   else if (!picked && input.markedStopped && owned) state = "stopped";
   else if (!picked && input.markedDone && owned) state = "done";
   const projected = projectStatus(state);

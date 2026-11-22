@@ -271,5 +271,7 @@ describe("查看数据但没说总结", () => {
     );
     const written = "近 30 日阅读 1.2 万，互动主要来自回答。以上是这一页的总结。";
     expect(finishViewDataReply("查看一下知乎的最新数据", written, title)).toBe(written);
+    const numbers = "粉丝 133，累计阅读 7.78 万，投稿 76。";
+    expect(finishViewDataReply("查看一下知乎的最新数据", numbers, title)).toBe(numbers);
   });
 });

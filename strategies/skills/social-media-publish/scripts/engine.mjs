@@ -295,6 +295,15 @@ export async function runPublish(args, article) {
         });
       }
     }
+    if (!ctx.cover && (step === "setCover" || step === "publishOrSchedule" || step === "verify")) {
+      const hint = step === "publishOrSchedule"
+        ? "没有封面，没有点发布。标题和正文已经写入，请人补封面后再发。"
+        : "没有封面。标题和正文照常写入，封面留给人补。";
+      log.push({ step, ok: true, skipped: "no-cover", hint });
+      console.log(line(ctx, step, { ok: true, hint }));
+      ctx.missingCover = true;
+      continue;
+    }
     if (args.dryRun && (step === "publishOrSchedule" || step === "verify")) {
       const skipped = { ok: true, skipped: "dry-run", clicks: 0 };
       log.push({ step, ...skipped });
@@ -332,7 +341,18 @@ export async function runPublish(args, article) {
       }
     }
   }
-  const report = expose(ctx, { ok: true, platform: ctx.platform, dryRun: args.dryRun, probe: args.probe, tabId: ctx.tabId, innerHeight: ctx.innerHeight || 0, previousActiveId, log });
+  const report = expose(ctx, {
+    ok: true,
+    platform: ctx.platform,
+    dryRun: args.dryRun,
+    probe: args.probe,
+    tabId: ctx.tabId,
+    innerHeight: ctx.innerHeight || 0,
+    previousActiveId,
+    missingCover: Boolean(ctx.missingCover || !ctx.cover),
+    hint: ctx.missingCover || !ctx.cover ? "没有封面。标题和正文已写入，封面请人补上后再发。" : "",
+    log,
+  });
   if (!args.dryRun && !args.probe) writeLedger(ctx, report);
   console.log(JSON.stringify(report));
   return report;

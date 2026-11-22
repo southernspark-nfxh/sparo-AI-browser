@@ -139,7 +139,7 @@ export function createToolHandlers(browser: SparkBrowser) {
     title?: string;
     body?: string;
   }) => browser.feishuWork(input),
-  new_tab: (url?: string, envId?: string) => browser.newTab(url, envId),
+  new_tab: (url?: string, envId?: string, opts?: { activate?: boolean }) => browser.newTab(url, envId, opts),
   create_agent_tab: (url?: string) => browser.createAgentTab(url),
   tab_ids: () => browser.listTabs().tabs.map((tab) => tab.id),
   background_running: () => {

@@ -361,9 +361,68 @@ export function envRosterLine(
   return `本机账号环境：${list}。${here}`;
 }
 
-/** 名册在场时才交给模型的挑选规则。本地没有对应的匹配器。 */
+/** 名册在场时才交给模型的挑选规则。缺了 envId 时，唯一对上的名字由 namedEnvId 补上。 */
 export const ENV_PICK_RULES =
   "对账号时只用上面这份名册里的 id，不要另猜，也不要新建环境。名字对得上才用那个 id；阿拉伯数字和汉字数字视为同一个，例如「3」和「三」、「2」和「二」。完全对不上（名册里没有用户说的那个名字）就如实说没有这个环境，禁止硬挑最接近的，禁止新建环境。用户说「另一个」或「第二个账号」时：除当前页环境外只剩一个，就用那一个，并且不要回默认登录态；还剩两个或更多，列出名字问用户，不要自己挑。";
+
+const CN_DIGIT: Record<string, string> = {
+  零: "0",
+  一: "1",
+  二: "2",
+  两: "2",
+  三: "3",
+  四: "4",
+  五: "5",
+  六: "6",
+  七: "7",
+  八: "8",
+  九: "9",
+};
+
+/** 比较账号名时去掉引号和空白，汉字数字看成阿拉伯数字。 */
+export function foldEnvName(value: string): string {
+  return String(value || "")
+    .replace(/[「」"'“”‘’]/g, "")
+    .replace(/\s+/g, "")
+    .replace(/[零一二两三四五六七八九]/g, (ch) => CN_DIGIT[ch] || ch)
+    .toLowerCase();
+}
+
+const SITE_ENV_NAMES = new Set(["微博", "知乎", "头条", "今日头条", "百家号", "京东", "淘宝", "百度"]);
+
+/**
+ * 用户原句里点名的账号。名字能唯一对上名册才返回 id。
+ * 对不上、对上多个、或只是站名（「打开微博」对上名叫「微博」的环境）都不猜。
+ * 「另一个账号」只有除当前页外只剩一个环境时才用它。
+ */
+export function namedEnvId(
+  text: string,
+  envs: Array<{ id: string; name: string }>,
+  currentEnvId = "",
+): string {
+  const raw = String(text || "");
+  const folded = foldEnvName(raw);
+  const roster = (envs || [])
+    .map((env) => ({ id: String(env?.id || "").trim(), name: String(env?.name || "").trim() }))
+    .filter((env) => env.id && env.name);
+  const hits = roster.filter((env) => {
+    if (SITE_ENV_NAMES.has(env.name) && !/账号|环境/.test(raw)) return false;
+    const name = foldEnvName(env.name);
+    return name.length >= 2 && folded.includes(name);
+  });
+  hits.sort((a, b) => foldEnvName(b.name).length - foldEnvName(a.name).length);
+  const best = hits[0];
+  if (best) {
+    const bestLen = foldEnvName(best.name).length;
+    const tied = hits.some((env) => env.id !== best.id && foldEnvName(env.name).length === bestLen);
+    return tied ? "" : best.id;
+  }
+  if (/另一个账号|另一个环境|别的账号|别的环境|第二个账号/.test(raw)) {
+    const others = roster.filter((env) => env.id !== String(currentEnvId || "").trim());
+    if (others.length === 1 && others[0]) return others[0].id;
+  }
+  return "";
+}
 
 export function systemPrompt(
   url: string,
@@ -390,6 +449,9 @@ export function systemPrompt(
     "同一元素或同一路径连续两次没有引起页面变化就换策略：换入口、直接构造结果 URL、换交互方式；禁止对同一目标连点超过两次。",
     "页面点按全部失效、疑似弹窗残留遮罩时，用 reload 整页重载一次再重试，不要把遮罩当成这条路没反应。",
     "页面需要登录或出现验证码时，如实告知用户并停在该处等用户处理，不要反复尝试绕过。",
+    "人已经在微博、知乎、头条或百家号页面上，要去同站的某个人或某条内容时：在当前标签里搜索或打开，不要 new_tab。只有人在指挥室，或明确说新窗口、另开，才新开标签。",
+    "当前页写评论或转发：先 match_skill「微博评论」。命中就 run_skill，params 里 text 是要写的话，mode 为 comment、repost 或 both，anchor 是那条微博里的一段原文。不要自己循环点发送。脚本失败再判断下一步。",
+    "不要说用户的消息被截断，也不要自己编一个用户没发过的问题再回答。指挥室派到某一页的任务只做这一页，结果交给指挥室。",
     "提问分三档：可逆可推断的（标题草案、已有属性的语言转换、模板选择）先做，并在汇报里写明假设；页面事实（重量、尺寸、库存）页面上有可靠值就提取换算，读不到不编造，可以问；用户或法律事实（品牌授权、HS 编码、责任人、资质）无法推断才问。保存、认领、发布、付费不在字段自决范围内。",
     "无法完成时如实汇报卡在哪一步，不要空转。",
     "当前是逐步确认：保存直接做，做完通知已保存到哪里。发送、发布、保存并认领、保存并发布先 request_confirm 一次，确认后执行，再通知结果。登录和验证码自己处理；真过不去就告诉用户需要人手动过一下。支付必须用户亲自完成，不要代点。删除允许执行，做完通知可在 7 天内恢复。客服回复只把草稿填进输入框，发送仍由用户在页面上点。",
@@ -408,10 +470,10 @@ export function systemPrompt(
     "使用用户最新一条消息的语言回复。",
     "多窗口协作：你只操作自己绑定的那一扇窗口和它名下的标签。别的窗口有人在看，或有别的 agent 在干活时，不要把那扇窗口还原到前台，也不要抢它的焦点。",
     roster
-      ? "账号隔离：本机可以存多个「账号环境」，每个环境是一套独立的 Cookie 和本地存储，同一个网站能同时登录多个号、互不干扰。名册已经写在下面，点名某个账号时用名册里的 id 传给 navigate 的 envId（run_skill 则放在 params.envId）。没点名别的账号时沿用当前页的环境，不要回默认登录态，也不要自己挑一个。环境里还没登录过时，页面会要求登录，如实告诉用户「这个环境还没登录，需要手动登一次」，不要反复重试。"
+      ? "账号隔离：本机可以存多个「账号环境」，每个环境是一套独立的 Cookie 和本地存储，同一个网站能同时登录多个号、互不干扰。名册已经写在下面，点名某个账号时用名册里的 id 传给 navigate 的 envId（run_skill 则放在 params.envId）。没点名别的账号时沿用当前页的环境，不要回默认登录态，也不要自己挑一个。环境里还没登录过时，页面会要求登录，如实告诉用户「这个环境还没登录，需要手动登一次」，不要反复重试。一个账号打开一个站只留一张页，跳到登录或首页时停在这张页，不要再开标签。"
       : envLine
-        ? "账号隔离：本机可以存多个「账号环境」，每个环境是一套独立的 Cookie 和本地存储，同一个网站能同时登录多个号、互不干扰。用户点名别的账号时，先调用 list_envs 拿到那个 id，再传给 navigate 的 envId（run_skill 则放在 params.envId）。没点名别的账号时沿用当前页的环境，不要回默认登录态。环境里还没登录过时，页面会要求登录，如实告诉用户「这个环境还没登录，需要手动登一次」，不要反复重试。"
-        : "账号隔离：本机可以存多个「账号环境」，每个环境是一套独立的 Cookie 和本地存储，同一个网站能同时登录多个号、互不干扰。用户点名「用 A 号」「发到第二个账号」「另一个百家号」时，先调用 list_envs 拿到 id，再把 id 传给 navigate 的 envId（run_skill 则放在 params.envId）。不点名就保持默认登录态，不要自己挑环境。环境里还没登录过时，页面会要求登录，如实告诉用户「这个环境还没登录，需要手动登一次」，不要反复重试。",
+        ? "账号隔离：本机可以存多个「账号环境」，每个环境是一套独立的 Cookie 和本地存储，同一个网站能同时登录多个号、互不干扰。用户点名别的账号时，先调用 list_envs 拿到那个 id，再传给 navigate 的 envId（run_skill 则放在 params.envId）。没点名别的账号时沿用当前页的环境，不要回默认登录态。环境里还没登录过时，页面会要求登录，如实告诉用户「这个环境还没登录，需要手动登一次」，不要反复重试。一个账号打开一个站只留一张页，跳到登录或首页时停在这张页，不要再开标签。"
+        : "账号隔离：本机可以存多个「账号环境」，每个环境是一套独立的 Cookie 和本地存储，同一个网站能同时登录多个号、互不干扰。用户点名「用 A 号」「发到第二个账号」「另一个百家号」时，先调用 list_envs 拿到 id，再把 id 传给 navigate 的 envId（run_skill 则放在 params.envId）。不点名就保持默认登录态，不要自己挑环境。环境里还没登录过时，页面会要求登录，如实告诉用户「这个环境还没登录，需要手动登一次」，不要反复重试。一个账号打开一个站只留一张页，跳到登录或首页时停在这张页，不要再开标签。",
     envLine,
     roster,
     roster ? ENV_PICK_RULES : "",

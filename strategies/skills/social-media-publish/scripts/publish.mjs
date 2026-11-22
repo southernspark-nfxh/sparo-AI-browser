@@ -429,8 +429,16 @@ async function selfCheck() {
   if (explicitOpen.tool !== "navigate" || explicitOpen.payload.envId !== "ad0fe9db") throw new Error("显式环境开页没有带 envId");
   const defaultOpen = openPayloadFor("https://baijiahao.baidu.com/x", "", [{ id: "env", envId: "ad0fe9db" }], "env");
   if (defaultOpen.tool !== "new_tab" || defaultOpen.payload.envId) throw new Error("默认任务会导航进非默认账号标签");
-  const plainOpen = openPayloadFor("https://baijiahao.baidu.com/x", "", [{ id: "plain", envId: "" }], "plain");
-  if (plainOpen.tool !== "navigate" || plainOpen.payload.tabId !== "plain" || plainOpen.payload.envId) throw new Error("默认任务没有复用空白环境当前标签");
+  const plainOpen = openPayloadFor("https://baijiahao.baidu.com/x", "", [{ id: "plain", envId: "", owner: "user" }], "plain", stamp);
+  if (plainOpen.tool !== "new_tab" || plainOpen.payload.envId) throw new Error("默认任务改写了人正在看的页");
+  const ownOpen = openPayloadFor(
+    "https://baijiahao.baidu.com/x",
+    "",
+    [{ id: "mine", envId: "", owner: stamp.owner }],
+    "mine",
+    stamp,
+  );
+  if (ownOpen.tool !== "navigate" || ownOpen.payload.tabId !== "mine" || ownOpen.payload.envId) throw new Error("默认任务没有复用自己的空白页");
   if (!pageSrc.includes('envId: choice.tab.envId || ""')) throw new Error("新建编辑页回执丢了 envId");
   const accountGate = between(pageSrc, "export async function enforceAccountGate", "export function assertEnvEditorFixtures");
   const envCheckAt = accountGate.indexOf('"ENV_MISMATCH"');

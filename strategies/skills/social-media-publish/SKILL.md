@@ -31,7 +31,7 @@ node publish.mjs --platform weixin --article <目录> --no-docx
 node publish.mjs --platform weixin --article <目录> --theme green
 ```
 
-平台只认 `toutiao`、`baijiahao`、`dayu`、`sohu`、`weixin`。文章目录固定是 `title.txt`、`body.md`、`cover.jpg`、`images/`。微信公众号只存草稿，群发由人点（细节见 `weixin-publish` 技能）。
+平台只认 `toutiao`、`baijiahao`、`dayu`、`sohu`、`weixin`。文章目录要有 `title.txt`、`body.md`。`cover.jpg` 和 `images/` 可以没有：没有封面时标题和正文照写，不点发布，结果里写明缺封面。微信公众号只存草稿，群发由人点（细节见 `weixin-publish` 技能）。
 
 步骤固定为：`openBlank → fillTitle → fillBody → insertImages → setCover → setOptions → publishOrSchedule → verify`。任一步失败就停，输出平台、步骤、原因、tabId、页面提示。`--dry-run` 填到选项回读为止，不点发布。定时必须写成 `--schedule "YYYY-MM-DD HH:mm"`，不带时间不会开跑。
 
@@ -64,7 +64,7 @@ node video.mjs --platform baijiahao --video <mp4> --title "标题" --env ad0fe9d
 
 ## 1. 连接
 
-MCP 地址与 token 读 `%APPDATA%\sparo-store\mcp-auth.json`。需要临时换 token 时设环境变量 `SPARO_TOKEN`，不要写进文件。先确认活着：
+MCP 地址与 token 先读当前数据目录（`SPARO_CONFIG_DIR`，没有就用 `%APPDATA%\sparo-store`）里的 `mcp-auth.json`。`SPARO_TOKEN` 和 `SPARO_MCP` 可以临时盖过这份文件，不要把令牌写进仓库。先确认活着：
 
 ```powershell
 Get-NetTCPConnection -State Listen | Where-Object LocalPort -eq 3921

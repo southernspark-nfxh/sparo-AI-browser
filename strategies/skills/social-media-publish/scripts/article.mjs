@@ -258,10 +258,10 @@ export function loadArticle(dir) {
   const root = path.resolve(dir);
   const titleFile = path.join(root, "title.txt");
   const bodyFile = path.join(root, "body.md");
-  const cover = path.join(root, "cover.jpg");
+  const coverFile = path.join(root, "cover.jpg");
+  const cover = fs.existsSync(coverFile) ? coverFile : "";
   if (!fs.existsSync(titleFile)) throw new Error("文章目录缺少 title.txt");
   if (!fs.existsSync(bodyFile)) throw new Error("文章目录缺少 body.md");
-  if (!fs.existsSync(cover)) throw new Error("文章目录缺少 cover.jpg");
   const title = fs.readFileSync(titleFile, "utf8").replace(/^\uFEFF/, "").trim();
   const body = fs.readFileSync(bodyFile, "utf8").replace(/^\uFEFF/, "").trim();
   if (!title) throw new Error("title.txt 是空的");
@@ -284,6 +284,7 @@ export function loadArticle(dir) {
     blocks,
     textLen: plainTextLength(blocks),
     cover,
+    missingCover: !cover,
     images,
     droppedDuplicates: listed.length - images.length,
   };

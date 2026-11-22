@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PageSnapshot, SnapshotElement, ToolResult } from "../../shared/types.js";
+import { weiboActScript } from "./weibo-act.js";
 import {
   getSkill,
   listSkills,
@@ -19,6 +20,7 @@ import { skillConflictsWithQuery } from "../agent/intent-router.js";
 import { gateDxmSmtSkill, previewClosedToolResult } from "../workflows/dxm-smt-preview.js";
 import { normalizeUtterance } from "../triggers/gate.js";
 import { loadTriggers } from "../triggers/store.js";
+import { storeConfigDir } from "../paths.js";
 
 export type SkillBrowser = {
   getUrl(): string;
@@ -50,7 +52,7 @@ export type SkillBrowser = {
   }): Promise<ToolResult>;
   pageText(): Promise<ToolResult & { data?: { text?: string } }>;
   setPaused(paused: boolean): void;
-  execute?(script: string, opts?: { frame?: number | string }): Promise<ToolResult>;
+  execute?(script: string, opts?: { frame?: number | string; awaitPromise?: boolean; timeoutMs?: number }): Promise<ToolResult>;
   reload?(): Promise<ToolResult>;
   analyzePage?(): Promise<ToolResult>;
   executePrimitives?(input: {
@@ -216,9 +218,73 @@ const BUILTIN_ALIASES: Record<string, string[]> = {
   "research-tech-stack": ["技术选型"],
   "research-media-ops": ["自媒体运营"],
   "research-pet-economy": ["宠物经济", "行业研报"],
+  "social-media-publish": ["发稿子", "发稿", "一稿多发"],
 };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+const PUBLISH_REL = join(
+  "strategies",
+  "skills",
+  "social-media-publish",
+  "scripts",
+  "publish.mjs",
+);
+
+/**
+ * 安装包用 resources 里的脚本。
+ * 开发态从当前文件或工作目录往上找仓库里的 publish.mjs。
+ * 不能按固定三级目录跳：打包后的 out/main/index.js 会跳到仓库外面。
+ */
+export function resolvePublishScript(
+  starts: string[],
+  resourcesPath: string,
+  exists: (file: string) => boolean = existsSync,
+): string {
+  const resources = resourcesPath || "";
+  const packaged = Boolean(resources) && !/node_modules|electron\.exe/i.test(resources);
+  const packed = resources ? join(resources, "social-publish-scripts", "publish.mjs") : "";
+  if (packaged && packed && exists(packed)) return packed;
+  for (const start of starts) {
+    let dir = start;
+    for (let i = 0; i < 8; i += 1) {
+      const candidate = join(dir, PUBLISH_REL);
+      if (exists(candidate)) return candidate;
+      const parent = dirname(dir);
+      if (!parent || parent === dir) break;
+      dir = parent;
+    }
+  }
+  return packed || join(starts[0] || "", PUBLISH_REL);
+}
+
+function publishScriptPath(): string {
+  return resolvePublishScript(
+    [dirname(fileURLToPath(import.meta.url)), process.cwd()],
+    process.resourcesPath || "",
+  );
+}
+
+/** 子进程连当前这扇窗口，不回落到日常的 3921。 */
+function publishChildEnv(): NodeJS.ProcessEnv {
+  const dir = process.env.SPARO_CONFIG_DIR || storeConfigDir();
+  let token = process.env.SPARO_TOKEN || process.env.SPARO_MCP_TOKEN || "";
+  let endpoint = process.env.SPARO_MCP || "";
+  try {
+    const auth = JSON.parse(readFileSync(join(dir, "mcp-auth.json"), "utf8")) as { token?: string; endpoint?: string };
+    if (!token && auth.token) token = auth.token;
+    if (!endpoint && auth.endpoint) endpoint = auth.endpoint;
+  } catch {
+    /* 没有令牌文件时，沿用进程里已经有的环境变量 */
+  }
+  return {
+    ...process.env,
+    ELECTRON_RUN_AS_NODE: "1",
+    SPARO_CONFIG_DIR: dir,
+    ...(token ? { SPARO_TOKEN: token, SPARO_MCP_TOKEN: token } : {}),
+    ...(endpoint ? { SPARO_MCP: endpoint } : {}),
+  };
+}
 
 function asRecord(v: unknown): Record<string, unknown> {
   return v && typeof v === "object" && !Array.isArray(v)
@@ -396,8 +462,19 @@ export function resolveSkillStrict(configDir: string, key: string): Skill | null
   const hit = loadTriggers(configDir).find(
     (row) => row.enabled !== false && normalizeUtterance(row.text) === want,
   );
-  if (!hit) return null;
-  return getSkill(configDir, hit.skillId);
+  if (hit) return getSkill(configDir, hit.skillId);
+  const retired = retiredClickTexts(listSkills(configDir));
+  for (const skill of selectableSkills(configDir)) {
+    if (skill.enabled === false) continue;
+    const aliases = [
+      ...(BUILTIN_ALIASES[skill.id] || []),
+      ...(((skill as { aliases?: string[] }).aliases) || []),
+    ];
+    if (!aliases.some((alias) => normalizeUtterance(alias) === want)) continue;
+    if (skillUsesRetiredText(skill, retired)) return null;
+    return skill;
+  }
+  return null;
 }
 
 export function skillCatalogLines(configDir: string, limit = 8): string {
@@ -949,12 +1026,7 @@ async function runOneStep(
         return { ok: false, message: "不支持的 platform: " + platform + "（只能是 " + PLATFORM_IDS.join(" / ") + "）" };
       }
       if (!article || article.startsWith("{{")) return { ok: false, message: "缺少 article 参数（稿件目录）" };
-      // 路径：开发时用仓库内 strategies/skills/... ，打包后用 resources/social-publish-scripts/
-      const script = join(
-        process.resourcesPath || dirname(fileURLToPath(import.meta.url)),
-        process.resourcesPath ? "social-publish-scripts" : join("..", "..", "..", "strategies", "skills", "social-media-publish", "scripts"),
-        "publish.mjs",
-      );
+      const script = publishScriptPath();
       if (!existsSync(script)) {
         return { ok: false, message: "publish.mjs 不存在: " + script };
       }
@@ -978,7 +1050,7 @@ async function runOneStep(
           process.execPath,
           [script, "--platform", platform, "--article", article, ...extraArgs],
           {
-            env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+            env: publishChildEnv(),
             stdio: ["ignore", "pipe", "pipe"],
             timeout: 600_000,
           },
@@ -1016,8 +1088,25 @@ async function runOneStep(
     }
     case "execute":
     case "evaluate":
+    case "weibo_act": {
       if (!browser.execute) return { ok: false, message: "execute not available" };
-      return wrap(browser.execute(String(args.script || args.code || "")));
+      const script =
+        tool === "weibo_act"
+          ? weiboActScript(vars.text || vars.body || "", vars.mode || "comment", vars.anchor || "")
+          : String(args.script || args.code || "");
+      const executed = await wrap(
+        browser.execute(script, {
+          awaitPromise: tool === "weibo_act" || args.awaitPromise === true || args.awaitPromise === "true",
+          timeoutMs: Number(args.timeoutMs) || (tool === "weibo_act" ? 20000 : undefined),
+        }),
+      );
+      const detail = (executed.data as { result?: unknown } | undefined)?.result;
+      if (executed.ok && detail != null) {
+        const shown = typeof detail === "string" ? detail : JSON.stringify(detail);
+        return { ...executed, message: shown.slice(0, 1800) };
+      }
+      return executed;
+    }
     case "reload":
       if (!browser.reload) return { ok: false, message: "reload not available" };
       return wrap(browser.reload());

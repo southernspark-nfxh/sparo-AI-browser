@@ -31,7 +31,7 @@ export const sohu = {
         tabs: rows.map((tab) => ({ id: tab.id, url: tab.url || "", owner: tab.owner || "", envId: tab.envId || "" })),
       });
       const before = snapshot(list, listed.activeId || "");
-      const opener = openPayloadFor(LIST_URL, ctx.envId || "", list, listed.activeId || "");
+      const opener = openPayloadFor(LIST_URL, ctx.envId || "", list, listed.activeId || "", stamp);
       await deps.call(opener.tool, opener.payload);
       await deps.sleep(1000);
       const afterListed = await deps.tabs();

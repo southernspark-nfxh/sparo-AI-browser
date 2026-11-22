@@ -86,7 +86,7 @@ import {
   registerClientName,
   seatForTab,
 } from "./agent/mcp-sessions.js";
-import { SIDEBAR_CLIENT_ID, sidebarToolNeedsPage, visiblePageKeepsTurn } from "./agent/sidebar-tab.js";
+import { SIDEBAR_CLIENT_ID, asksToLeavePage, sameSiteWork, sidebarToolNeedsPage, visiblePageKeepsTurn } from "./agent/sidebar-tab.js";
 import { decideWrite, mayActivateTab, setWaitingWriteLookup, settleCreateActivate } from "./agent/tab-guard.js";
 import { capturesSince, ledgerCloseReason, reportSince, type LedgerClose } from "./agent/task-result.js";
 import type {
@@ -354,7 +354,7 @@ import {
   DeepSeekAgentProvider,
   type AgentToolName,
 } from "./agent/deepseek.js";
-import { FreeSoul, type FreeSoulToolName } from "./agent/free-soul.js";
+import { FreeSoul, namedEnvId, type FreeSoulToolName } from "./agent/free-soul.js";
 import {
   createSkillFromTrace,
   deleteSkill,
@@ -955,7 +955,14 @@ export class SparkBrowser {
   private taskScope = new AsyncLocalStorage<TaskScope>();
   private fallbackAgentTabId = "";
   /** 这次侧栏任务要自己的标签。读当前页和划词时为假。 */
+  /** 人已经在看网页。这一轮不要为了同站任务再开标签。 */
+  private keepOnVisiblePage = false;
+  /** 这一轮侧栏要自己的工位。和 sidebarBoundTab（标签 id）不是同一个字段。 */
   private sidebarOwnTab = false;
+  /** 侧栏停在确认时，这一页要显示在等人。 */
+  private sidebarAwaitingTabId = "";
+  /** 这一轮原句点名的另一个账号。模型没传 envId 时补上，不猜对不上的名字。 */
+  private turnNamedEnvId = "";
   /** 这一轮侧栏任务已经占用的页。下一句新任务清空，避免工具调用重复开页。 */
   private sidebarBoundTab = "";
   /**
@@ -1443,6 +1450,7 @@ export class SparkBrowser {
         foregroundOnThisTab,
         markedDone: tab?.agentStatus === "done",
         markedStopped: tab?.agentStatus === "stopped",
+        awaitingHuman: this.sidebarAwaitingTabId === id,
       });
       const pooled = Boolean(snap.taskId && this.taskPool?.tasks?.some((item) => item.id === snap.taskId));
       if (snap.taskId && !pooled && snap.state === "done" && !this.taskAttention.has(`${id}\n${snap.taskId}`)) {
@@ -1911,7 +1919,9 @@ export class SparkBrowser {
       }
       const openUrl = details.url;
       if (openUrl && openUrl !== "about:blank") {
-        if (this.windowIsMinimized()) {
+        if (tab.envId && (this.chatRunning || this.freeSoulRunning)) {
+          void this.navigate(openUrl, { asHuman: true, tabId: id });
+        } else if (this.windowIsMinimized()) {
           this.createTab(openUrl, false, { agentOwned: tab.agentOwned === true, openerTabId: id });
         } else if (tab.envId) this.createEnvTab(tab.envId, openUrl, { userAction: true });
         else this.createTab(openUrl, true, { openerTabId: id, userAction: true });
@@ -2671,12 +2681,27 @@ export class SparkBrowser {
     return { ok: true, message: "已打开媒体工作台", data: { id, ...this.listTabs() } };
   }
 
-  newTab(url?: string, envId?: string): ToolResult {
-    const id = envId
-      ? this.createEnvTab(envId, url || DEFAULT_URL, { userAction: true })
-      : this.createTab(url || DEFAULT_URL, true, { userAction: true });
-    const suffix = envId ? ` in env ${envId}` : "";
-    return { ok: true, message: `Opened tab ${id}${suffix}`, data: { id, ...this.listTabs() } };
+  newTab(url?: string, envId?: string, opts?: { activate?: boolean }): ToolResult {
+    const activate = opts?.activate !== false;
+    const target = (url || "").trim() || DEFAULT_URL;
+    const before = this.activeTabId;
+    if (envId) {
+      const existing = this.reusableEnvTab(envId);
+      if (existing) {
+        void this.navigate(target, { asHuman: true, tabId: existing });
+        if (activate && existing !== this.activeTabId) this.switchTab(existing, { userAction: true });
+        return {
+          ok: true,
+          message: "已在这个账号的现有页面打开，没有再开一页",
+          data: { id: existing, ...this.listTabs() },
+        };
+      }
+      const id = this.createEnvTab(envId, target, { userAction: activate });
+      if (!activate && before && this.activeTabId !== before) this.switchTab(before, { userAction: true });
+      return { ok: true, message: `Opened tab ${id} in env ${envId}`, data: { id, ...this.listTabs() } };
+    }
+    const id = this.createTab(target, activate, { userAction: activate });
+    return { ok: true, message: `Opened tab ${id}`, data: { id, ...this.listTabs() } };
   }
 
   /**
@@ -7606,13 +7631,19 @@ export class SparkBrowser {
     const envId = this.navigateEnvId(args.envId, this.tabs?.get(prior)?.envId);
     if (!envId) return null;
     const show = this.envOpenShowsPage();
-    let envTabId = "";
-    try {
-      envTabId = show
-        ? this.createEnvTab(envId, "about:blank", { userAction: true })
-        : this.createEnvTab(envId, "about:blank");
-    } catch (error) {
-      return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    let envTabId = this.reusableEnvTab(envId);
+    if (!envTabId) {
+      try {
+        envTabId = show
+          ? this.createEnvTab(envId, requested || DEFAULT_URL, { userAction: true })
+          : this.createEnvTab(envId, requested || DEFAULT_URL);
+      } catch (error) {
+        return { ok: false, message: error instanceof Error ? error.message : String(error) };
+      }
+      const created = this.tabs?.get(envTabId);
+      if (created) created.agentOwned = true;
+    } else if (show && envTabId !== this.activeTabId && typeof this.switchTab === "function") {
+      this.switchTab(envTabId, { userAction: true });
     }
     const scope = this.taskStore();
     if (scope) scope.tabId = envTabId;
@@ -7630,6 +7661,19 @@ export class SparkBrowser {
     );
     if (result.ok) await this.repair12306QueryOnce(requested);
     return result;
+  }
+
+  /** 这个账号环境已经打开的页。再导航就用它，不再另开。 */
+  private reusableEnvTab(envId: string): string {
+    const id = String(envId || "").trim();
+    if (!id || !this.tabs) return "";
+    const hits = [...this.tabs.values()].filter((tab) => tab.kind !== "command" && tab.envId === id);
+    if (!hits.length) return "";
+    const current = String(this.pinnedToolTabId || this.agentTabId || "");
+    const pinned = hits.find((tab) => tab.id === current);
+    if (pinned) return pinned.id;
+    hits.sort((a, b) => (a.lastActiveAt || 0) - (b.lastActiveAt || 0));
+    return hits[hits.length - 1]?.id || "";
   }
 
   /** 当前标签所属账号环境。没有 envId 就不带名字，避免提示词里出现空环境。 */
@@ -7698,6 +7742,26 @@ export class SparkBrowser {
     return decideSameHostOpen(intent, url, this.agentOwnedTabs());
   }
 
+  /**
+   * 只拦住这一轮侧栏自己的同站打开。
+   * 点了别的账号、后台任务、别的 client，都不折回眼前这一页。
+   */
+  /** 这一轮点名了别的账号，而这次调用没写 envId，就补上。模型自己写了的不覆盖。 */
+  private withTurnEnv(args: Record<string, unknown>): Record<string, unknown> {
+    if (String(args.envId || "").trim() || !this.turnNamedEnvId) return args;
+    return { ...args, envId: this.turnNamedEnvId };
+  }
+
+  private stayOnVisiblePage(args: Record<string, unknown>): boolean {
+    if (!this.keepOnVisiblePage) return false;
+    if (this.turnNamedEnvId) return false;
+    if (String(args.envId || "").trim()) return false;
+    const scope = this.taskStore();
+    if (scope?.lane === "background") return false;
+    if (scope?.clientId && scope.clientId !== SIDEBAR_CLIENT_ID) return false;
+    return true;
+  }
+
   /** 新核心只暴露通用浏览原语；路线和下一步全由模型决定。 */
   private async runCoreTool(
     name: FreeSoulToolName,
@@ -7706,18 +7770,60 @@ export class SparkBrowser {
     const held = this.agentActionBlocked(name, this.resolveToolTab(false));
     if (held) return held;
     if (name === "navigate") {
+      args = this.withTurnEnv(args);
+      if (this.stayOnVisiblePage(args)) {
+        const tabId = this.resolveToolTab(true) || this.activeTabId;
+        this.pinToolTab(tabId);
+        return this.navigate(String(args.url || ""), { asHuman: true, tabId });
+      }
+      const inEnv = await this.navigateInEnv(args);
+      if (inEnv) return inEnv;
       const reuse = this.sameHostOpenDecision("navigate", String(args.url || ""));
       if (reuse.action === "switch") {
         this.pinToolTab(reuse.tabId);
         if (!this.viewingCommandRoom() && typeof this.switchTab === "function") this.switchTab(reuse.tabId);
         return this.navigate(String(args.url || ""), { tabId: reuse.tabId });
       }
-      const inEnv = await this.navigateInEnv(args);
-      if (inEnv) return inEnv;
     }
     if (name === "new_tab") {
+      args = this.withTurnEnv(args);
       const url = String(args.url || "").trim();
       if (!/^https?:\/\//i.test(url)) return { ok: false, message: "new_tab 需要完整 URL" };
+      if (this.stayOnVisiblePage(args)) {
+        const tabId = this.resolveToolTab(true) || this.activeTabId;
+        this.pinToolTab(tabId);
+        const opened = await this.navigate(url, { asHuman: true, tabId });
+        return opened.ok
+          ? { ...opened, message: "人正在看这一页，没有另开。已在当前页打开。" }
+          : opened;
+      }
+      const prior = this.tabBeforeWorkTab();
+      const envId = this.navigateEnvId(args.envId, this.tabs?.get(prior)?.envId);
+      if (envId) {
+        const existing = this.reusableEnvTab(envId);
+        if (existing) {
+          this.pinToolTab(existing);
+          if (this.envOpenShowsPage() && existing !== this.activeTabId && typeof this.switchTab === "function") {
+            this.switchTab(existing, { userAction: true });
+          }
+          const opened = await this.navigate(url, { asHuman: true, tabId: existing });
+          return opened.ok
+            ? { ...opened, message: "已在这个账号的现有页面打开，没有再开一页" }
+            : opened;
+        }
+        try {
+          const show = this.envOpenShowsPage();
+          const id = show
+            ? this.createEnvTab(envId, url, { userAction: true })
+            : this.createEnvTab(envId, url);
+          const created = this.tabs?.get(id);
+          if (created) created.agentOwned = true;
+          this.pinToolTab(id);
+          return { ok: true, message: `已在账号环境打开 ${url}`, data: { id, url, envId } };
+        } catch (error) {
+          return { ok: false, message: error instanceof Error ? error.message : String(error) };
+        }
+      }
       const gate = this.sameHostOpenDecision("new_tab", url);
       if (gate.action === "refuse") return { ok: false, message: gate.message };
       const before = this.activeTabId;
@@ -7983,20 +8089,20 @@ export class SparkBrowser {
           args.params && typeof args.params === "object"
             ? (args.params as Record<string, unknown>)
             : undefined;
-        const envId = skillParams?.envId ? String(skillParams.envId) : "";
+        const mergedParams = { ...(skillParams || {}) };
+        if (!String(mergedParams.envId || "").trim() && this.turnNamedEnvId) {
+          mergedParams.envId = this.turnNamedEnvId;
+        }
+        const envId = String(mergedParams.envId || "").trim();
         if (envId) {
-          try {
-            const envTabId = this.createEnvTab(envId, "about:blank");
-            const scope = this.taskStore();
-            if (scope) scope.tabId = envTabId;
-          } catch (error) {
-            return { ok: false, message: error instanceof Error ? error.message : String(error) };
-          }
+          const existing = this.reusableEnvTab(envId);
+          const scope = this.taskStore();
+          if (existing && scope) scope.tabId = existing;
         }
         return this.runSkillTool({
           id: args.id ? String(args.id) : undefined,
           query: args.query ? String(args.query) : undefined,
-          params: skillParams,
+          params: Object.keys(mergedParams).length ? mergedParams : skillParams,
           dryRun: Boolean(args.dryRun),
         });
       }
@@ -9704,9 +9810,9 @@ export class SparkBrowser {
   ): Promise<ToolResult> {
     const clean = text.trim();
     if (!clean) return { ok: false, message: "请输入任务" };
-    if (this.commandSurface()) {
-      const action = parseCommandUtterance(clean);
-      if (action) return this.runCommandUtterance(clean, action, opts?.alreadyLogged === true);
+    const listed = parseCommandUtterance(clean);
+    if (listed?.type === "open-many" || (this.commandSurface() && listed)) {
+      return this.runCommandUtterance(clean, listed, opts?.alreadyLogged === true);
     }
     console.log(
       formatLane({
@@ -9730,10 +9836,16 @@ export class SparkBrowser {
     }
 
     const onVisibleWeb = !this.viewingCommandRoom();
+    const pageUrl = this.getUrl(this.activeTabId || "");
     const stayOnUser =
       opts?.continueHere === true ||
       !agentShouldOpenOwnSurface(clean, ownerForTab(this.activeTabId || ""), cleanQuotes) ||
-      (onVisibleWeb && visiblePageKeepsTurn(clean) && !wantsPublish(clean));
+      (onVisibleWeb && visiblePageKeepsTurn(clean) && !wantsPublish(clean)) ||
+      (onVisibleWeb && sameSiteWork(clean, pageUrl));
+    const currentEnv = this.pageEnv(this.activeTabId || "").envId || "";
+    const named = namedEnvId(clean, this.envRoster(), currentEnv);
+    this.turnNamedEnvId = named && named !== currentEnv ? named : "";
+    this.keepOnVisiblePage = onVisibleWeb && stayOnUser && !asksToLeavePage(clean) && !this.turnNamedEnvId;
     const previousAgentTab = this.agentTabId;
     this.pinnedToolTabId = "";
     this.sidebarOwnTab = !stayOnUser;
@@ -9772,6 +9884,7 @@ export class SparkBrowser {
         .slice(0, -1)
         .slice(-12)
         .map((turn) => ({ role: turn.role, text: turn.text.slice(0, 4000) }));
+      this.sidebarAwaitingTabId = "";
       this.freeSoulRunning = true;
       this.activePiAbort = new AbortController();
       const abortSignal = this.activePiAbort.signal;
@@ -9804,6 +9917,9 @@ export class SparkBrowser {
         openedTabOutcome = "stopped";
         return { ok: false, message: "已手动停止" };
       }
+      if (result.awaitingConfirm) {
+        this.sidebarAwaitingTabId = this.agentTabId || this.activeTabId || "";
+      }
       if (result.interrupted) openedTabOutcome = "stopped";
       this.chatLog.push({ role: "assistant", text: result.text });
       this.finishMcpTask(result);
@@ -9824,6 +9940,8 @@ export class SparkBrowser {
     } finally {
       const ownTab = this.sidebarOwnTab ? this.fallbackAgentTabId || "" : "";
       this.sidebarOwnTab = false;
+      this.keepOnVisiblePage = false;
+      this.turnNamedEnvId = "";
       this.freeSoulRunning = (this.agentAborts?.size ?? 0) > 0;
       this.activePiAbort = null;
       if (this.cloudTaskId) void this.finishCloudTask();
@@ -10245,9 +10363,18 @@ export class SparkBrowser {
     }
   }
 
+  /** 查看、读页这种只读任务没有发布回执。发稿、填表、发送、编辑仍要回执。 */
+  private readOnlyViewTask(task: { id: string; title?: string; origin?: { input?: string } }): boolean {
+    const mcp = this.mcpTaskList().find((item) => item.taskId === task.id);
+    const text = `${task.title || ""}\n${task.origin?.input || ""}\n${mcp?.text || ""}`;
+    if (/发布|发送|填表|投稿|上架|保存|评论|转发|编辑/.test(text)) return false;
+    return /查看|看看|只查看|读一下|读这|总结/.test(text);
+  }
+
   /**
    * 只有真实完成才出结果卡和双位置提醒。
-   * 未核验的完成口径改成红色，不报全部完成。这里不切页面、不拉窗口。
+   * 发稿、填表、发送没有核验回执就改成红色。只读的查看任务留下大脑写回的正文。
+   * 这里不切页面、不拉窗口。
    */
   private sealTaskOutcome(taskId: string, outcome: "done" | "failed" | "stopped"): "done" | "failed" | "stopped" {
     const task = this.taskPool?.tasks?.find((item) => item.id === taskId);
@@ -10258,7 +10385,8 @@ export class SparkBrowser {
     if (outcome !== "done") return outcome;
     const receipt = task.verification;
     const verified = Boolean(receipt?.ok && receipt.items.length > 0 && receipt.items.every((item) => item.ok));
-    if (!verified) {
+    const readOnly = this.readOnlyViewTask(task);
+    if (!verified && !readOnly) {
       const missed = (receipt?.items || []).filter((item) => !item.ok).map((item) => item.name);
       this.noteTaskFailure(taskId, {
         message: receipt ? "核验没有通过" : "没有核验回执",
@@ -10282,7 +10410,7 @@ export class SparkBrowser {
       needsAccept: true,
       finishedAt: Date.now(),
     };
-    task.result = summary;
+    task.result = readOnly ? text.slice(0, 4000) : summary;
     if (task.tabId) {
       this.taskAttention.set(`${task.tabId}\n${task.id}`, { tabId: task.tabId, taskId: task.id, acked: false });
     }
@@ -10939,6 +11067,8 @@ export class SparkBrowser {
       ? `\n${result.choices.map((item) => `${item.title} · ${item.tabId}`).join("\n")}`
       : "";
     this.appendChat(COMMAND_SESSION_KEY, `${result.message}${choices}`);
+    const here = typeof this.sessionKey === "function" ? this.sessionKey() : "";
+    if (here && here !== COMMAND_SESSION_KEY) this.appendChat(here, `${result.message}${choices}`);
     if (typeof this.pushSidebarState === "function") this.pushSidebarState();
     return { ok: result.ok, message: result.message, data: result };
   }
@@ -10961,7 +11091,11 @@ export class SparkBrowser {
       const task = this.taskPool?.tasks?.find((item) => item.id === id);
       const tab = task?.tabId ? this.tabs?.get(task.tabId) : undefined;
       const state = task?.state || "idle";
-      const body = String(task?.result || task?.lastLine || task?.step || "").trim() || "这一页没有留下可读结果。";
+      const assistant = String(this.mcpTaskList().find((item) => item.taskId === id)?.lastAssistant || "").trim();
+      const stored = String(task?.result || "").trim();
+      const body = (assistant.length > stored.length ? assistant : stored)
+        || String(task?.lastLine || task?.step || "").trim()
+        || "这一页没有留下可读结果。";
       return {
         title: task?.title || tab?.title || id,
         state,
@@ -11115,8 +11249,64 @@ export class SparkBrowser {
       });
   }
 
+  /** 同一首页已经开着，并且没有进行中的任务，再开就用原来那张。 */
+  private findIdleSamePage(url: string): string {
+    let host = "";
+    let path = "/";
+    try {
+      const parsed = new URL(url);
+      host = parsed.hostname.replace(/^www\./, "").toLowerCase();
+      path = parsed.pathname.replace(/\/$/, "") || "/";
+    } catch {
+      return "";
+    }
+    for (const tab of this.tabs?.values?.() || []) {
+      if (tab.kind === "command" || !tab.url) continue;
+      let tabHost = "";
+      let tabPath = "/";
+      try {
+        const parsed = new URL(tab.url);
+        tabHost = parsed.hostname.replace(/^www\./, "").toLowerCase();
+        tabPath = parsed.pathname.replace(/\/$/, "") || "/";
+      } catch {
+        continue;
+      }
+      if (tabHost !== host || tabPath !== path) continue;
+      const live = (this.taskPool?.tasks || []).some(
+        (task) =>
+          task.tabId === tab.id &&
+          (task.state === "running" || task.state === "queued" || task.state === "waiting_human"),
+      );
+      if (!live) return tab.id;
+    }
+    return "";
+  }
+
   /** 总指挥的一条结构化命令。含糊时只返回候选。 */
   commandAct(action: CommandAction): ReturnType<typeof runCommand> {
+    if (action.type === "open-many") {
+      const names: string[] = [];
+      for (const item of action.items) {
+        const reused = item.url ? this.findIdleSamePage(item.url) : "";
+        if (reused) {
+          names.push(item.title);
+          continue;
+        }
+        if (typeof this.createAgentTab !== "function" || !item.url) {
+          return { ok: false, code: "blocked", message: "开不了新页面" };
+        }
+        const tabId = this.createAgentTab(item.url, false);
+        if (!tabId) return { ok: false, code: "blocked", message: "开不了新页面" };
+        const tab = this.tabs?.get(tabId);
+        if (tab) {
+          tab.title = item.title;
+          tab.url = item.url;
+          if (!activeLeaseForTab(tabId)) delete tab.agentOwned;
+        }
+        names.push(item.title);
+      }
+      return { ok: true, message: `已打开 ${names.join("、")}，各一张` };
+    }
     if (action.type === "dispatch-many") return this.dispatchTaskGroup(action);
     const pages = this.commandPages();
     return runCommand(action, pages, {
@@ -11292,6 +11482,10 @@ export class SparkBrowser {
             } else {
               this.chatLog.push({ role: "assistant", text: result.text });
               this.pushSidebarState();
+              if (clientId === "command" && result.text) {
+                const pageName = this.tabs?.get(tabId)?.title || pooled?.title || "这一页";
+                this.appendChat(COMMAND_SESSION_KEY, `${pageName}\n${result.text}`);
+              }
               this.settleMcpTask(task, result, tabId);
             }
           } catch (error) {
@@ -15077,22 +15271,22 @@ export class SparkBrowser {
     let tabId = opts?.tabId;
     const targetTab = this.tabs?.get(tabId || this.activeTabId);
     if (targetTab?.kind === "command") return { ok: false, message: "指挥室不能打开网页" };
-    if (opts?.envId) {
-      // 传了别的标签（普通页或另一个环境）也必须在目标环境里另开一张：
-      // 否则 envId 被忽略，导航落在共用标签上，账号就串了。
-      const current = tabId ? this.tabs.get(tabId) : undefined;
-      if (!current || current.envId !== opts.envId) {
-        tabId = this.createEnvTab(opts.envId, "about:blank");
-      }
-    }
     if (!opts?.asHuman) {
       const blocked = this.assertNotPaused();
       if (blocked) return blocked;
     }
 
     const target = normalizeUrl(url);
-    if (!target || target === DEFAULT_URL && !url.trim()) {
+    if (!target || (target === DEFAULT_URL && !url.trim())) {
       return { ok: false, message: "navigate requires url" };
+    }
+    if (opts?.envId) {
+      // 传了别的标签（普通页或另一个环境）也必须在目标环境里另开一张：
+      // 否则 envId 被忽略，导航落在共用标签上，账号就串了。
+      const current = tabId ? this.tabs.get(tabId) : undefined;
+      if (!current || current.envId !== opts.envId) {
+        tabId = this.reusableEnvTab(opts.envId) || this.createEnvTab(opts.envId, target);
+      }
     }
 
     const started = Date.now();

@@ -684,9 +684,9 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
       envId: z.string().optional().describe("Optional envId for isolated account session"),
     },
     async ({ url, envId }) => {
-      const r = await handlers.new_tab(url, envId);
-      // 环境标签开出来后认领给该 client，后续 click/fill/execute 才停在这个账号里。
-      if (envId && scope?.clientId) {
+      const r = await handlers.new_tab(url, envId, { activate: false });
+      // 这个 client 新开的页归它自己。人已经打开的页不在这里认领。
+      if (scope?.clientId) {
         const made = (r as { data?: { id?: string } }).data?.id;
         claimFresh(made);
       }
