@@ -9,6 +9,7 @@ import { CAPTURE_PROMPT, CAPTURE_RUN_LIMIT, RUN_CAPTURE_FULL } from "../captures
 import { pageTextGrowthNote } from "./deepseek.js";
 import { traceArgs, type SoulRunTrace, type SoulTraceStep } from "./distill.js";
 import { chatCompletionsUrl } from "../settings/llm-url.js";
+import { finishViewDataReply, viewDataNeedsAsk, viewDataPauseHint } from "./intent-router.js";
 import { noteConfirmRequest, noteUserReply } from "./publish-gate.js";
 
 export type FreeSoulToolName =
@@ -292,7 +293,7 @@ const TOOLS = [
   ),
   tool(
     "switch_tab",
-    "切换到指定标签页。参数 id 来自 list_tabs；也可以给 match，匹配地址或标题里的一段文字。",
+    "切换到指定标签页。参数 id 来自 list_tabs；也可以给 match，匹配地址或标题里的一段文字。切换之后，这一轮的 page_text、get_url、点击和填写都落在这一页。",
     { id: { type: "string" }, match: { type: "string" } },
   ),
   tool(
@@ -374,12 +375,16 @@ export function systemPrompt(
   const envLine = currentPageEnvLine(pageEnv?.envId, pageEnv?.envName);
   const roster = envRosterLine(envs, pageEnv);
   const lines = [
-    "你是 Sparo 有头浏览器里的 Pi Agent。用户通过浏览器侧栏把任务交给你，你直接操作当前真实浏览器，而不是只给操作建议。",
-    "你负责理解目标、自主安排和修改步骤。每轮都根据完整对话、此前的工具调用和真实工具结果决定下一步；不要机械重复固定流程。",
+    "你是 Sparo。用户通过浏览器侧栏把任务交给你，你直接操作当前这扇真实浏览器，而不是只给操作建议。对用户只称自己为 Sparo。不要说 Pi、Pi Agent，也不要提内部实现名称。",
+    "用户已经停在某张网页上发问，又没有说打开别的网站、另开窗口或给出网址时，就读眼前这一页，并在这一页的侧栏回答。不要为此打开百度首页，也不要把答复写到另一张标签上。",
     "需要搜索时，打开搜索引擎结果页或用户指定网站，再读取真实结果。需要多步操作时持续调用工具，直到任务完成或确实需要用户处理。",
     "page_text 用来读事实，snapshot 用来找交互元素。点击、填写后根据实际页面继续判断，不要假定操作已经成功。",
     "滚动翻页采集时注意 page_text 消息里的「较上次 +N 字」：+0 表示这一屏没有新内容，立即基于已读内容汇报或换浏览方式，不要继续滚动。",
     "回答所需信息已经读到时立即汇总汇报，宁可注明局限（如「截至第 N 条」），不要为追求完整耗尽轮次。",
+    "写诗、写故事、写文案这类纯创作，先用两三句说出思路，并问要不要按这个写。用户确认之前，不要把完整作品贴出来当成已经做完。",
+    "用户要逐条再复制、另存一份时，用 save_doc 写成新文件。不要改上一份文档，不要只把全文贴在对话里。",
+    "店小秘采集箱编辑：标题按直译改完能改的文字字段。没有弹出图片翻译费用，就继续改文字，不要停下来让用户选方向。保存和保存并认领仍要先确认。看到费用就停，不要授权扣费。",
+    "用户说查看、看看某站的数据、最近或最新，但没有说总结、整理、列出来、读出来或汇报时：先打开对应页面，然后立刻停下来问「已经打开了《页面标题》。需要我帮你总结吗？」。问之前不要继续点筛选、翻页或换数据页。用户回答要、好、总结、帮我看之后，再读页并总结。用户明确说了总结或整理时，直接读完再汇报，不用先问。",
     "最终回复必须基于已经看到的页面和工具结果，给出用户需要的答案及关键来源 URL。没有读到的事实不要编造，没有完成的步骤不要宣称完成。",
     "只在任务完成、无法继续或必须向用户提问时输出最终文字；执行过程中优先调用工具，不要播报空泛计划。",
     "同一元素或同一路径连续两次没有引起页面变化就换策略：换入口、直接构造结果 URL、换交互方式；禁止对同一目标连点超过两次。",
@@ -422,6 +427,7 @@ export function systemPrompt(
         1,
         "当前是自动执行模式：任务指令授权的是执行过程，发布、发送、保存也一并授权；做完通知就行。保存并认领、保存并发布仍要先 request_confirm。支付硬拦。删除走软边界：允许执行，做完通知可在 7 天内恢复。客服回复只把草稿填进输入框，发送仍由用户在页面上点。",
         "自动模式下不中途询问『要不要继续』『要不要打开』，一口气执行到任务完成、真阻塞（需要登录、出现验证码、页面持续无响应）或缺了无法自决的关键信息才停。停下时如实说明卡在哪。",
+        "「查看数据但没说总结」仍要先问要不要总结。这不是「要不要继续」。",
         "缺可自决的细节（先看哪个入口、默认当前城市、先展示第一页结果）就自决并在最终汇报里注明假设；缺影响结果的硬信息（出发地、日期、金额、平台账号选择）且无法从对话和历史推断时，才停下来问。",
       );
     }
@@ -670,18 +676,28 @@ export class FreeSoul {
     let budgetSent = false;
     let savedCaptures = 0;
     const trace: SoulTraceStep[] = [];
+    let openedViewPage = false;
+    let viewAskHinted = false;
     const end = (result: { ok: boolean; text: string; awaitingConfirm?: boolean; interrupted?: boolean; data?: Record<string, unknown> }) => {
       closeConfirmRun();
-      if (result.ok && !result.awaitingConfirm && !result.interrupted) {
+      const finished =
+        result.ok && !result.awaitingConfirm && !result.interrupted
+          ? { ...result, text: finishViewDataReply(input.input, result.text, pageTitle) }
+          : result;
+      if (finished.ok && !finished.awaitingConfirm && !finished.interrupted) {
         input.onTrace?.({ input: input.input, trace: trace.slice() });
       }
-      return result;
+      return finished;
     };
     console.log(`[free-soul] run start input=${input.input.slice(0, 80)}`);
     if (input.signal?.aborted) return end(interruptedResult());
     noteUserReply(input.input);
     for (let round = 1; round <= safetyCap; round += 1) {
       if (input.signal?.aborted) return end(interruptedResult());
+      if (viewDataNeedsAsk(input.input) && openedViewPage && !viewAskHinted) {
+        viewAskHinted = true;
+        messages.push({ role: "user", content: viewDataPauseHint(pageTitle) });
+      }
       input.onRound?.(round);
       if (!budgetSent && round >= budgetAt) {
         budgetSent = true;
@@ -804,6 +820,12 @@ export class FreeSoul {
         const noted = noteStuck(name, args, result, pageUrl, pageTitle);
         pageUrl = noted.pageUrl;
         pageTitle = noted.pageTitle;
+        if (result.ok && (name === "navigate" || name === "switch_tab" || name === "new_tab")) {
+          const titled = String(result.message || "").match(/页面标题：(.+)$/)
+            || String(result.message || "").match(/已切换到：(.+)$/);
+          if (titled?.[1]) pageTitle = titled[1].replace(/\s+/g, " ").trim();
+          if (viewDataNeedsAsk(input.input)) openedViewPage = true;
+        }
         if (!noted.unchanged) {
           streak = 0;
           lastFinger = "";
@@ -826,7 +848,7 @@ export class FreeSoul {
       }
       if (round === softAt || (round > softAt && (round - softAt) % 8 === 0)) {
         const note = input.locale?.startsWith("zh")
-          ? `已执行 ${round} 轮，任务继续中；可随时停止或发新指令调整`
+          ? `已执行 ${round} 轮，任务继续中；要换一件事先点停止`
           : `Executed ${round} rounds; the task continues. You can stop or send a new instruction.`;
         input.onSidebar?.(note);
       }

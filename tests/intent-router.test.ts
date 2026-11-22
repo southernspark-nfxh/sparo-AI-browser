@@ -9,6 +9,9 @@ import {
   leftoverAfterOpen,
   extractFirstHttpUrl,
   isShortAffirmative,
+  viewDataNeedsAsk,
+  finishViewDataReply,
+  summaryOfferLine,
 } from "../src/main/agent/intent-router.js";
 import { mutationsToSteps, shouldSkipRemember } from "../src/main/agent/remember.js";
 
@@ -248,5 +251,25 @@ describe("agentCapabilityBrief", () => {
     const en = agentCapabilityBrief("en");
     expect(en).toMatch(/already split on this PC/i);
     expect(en.split("You are Sparo").length - 1).toBe(1);
+  });
+});
+
+describe("查看数据但没说总结", () => {
+  it("查看最近数据要问，总结或只是打开则不问", () => {
+    expect(viewDataNeedsAsk("查看一下知乎的最新数据")).toBe(true);
+    expect(viewDataNeedsAsk("查看最近知乎数据")).toBe(true);
+    expect(viewDataNeedsAsk("总结这一页")).toBe(false);
+    expect(viewDataNeedsAsk("把最近的数据整理成文档")).toBe(false);
+    expect(viewDataNeedsAsk("打开微博")).toBe(false);
+  });
+
+  it("只切了页面就补上要不要总结，已经写了总结就不再问", () => {
+    const title = "账号概览 - 创作中心 - 知乎";
+    expect(summaryOfferLine(title)).toBe(`已经打开了《${title}》。需要我帮你总结吗？`);
+    expect(finishViewDataReply("查看一下知乎的最新数据", "已打开知乎数据页。", title)).toContain(
+      "需要我帮你总结吗？",
+    );
+    const written = "近 30 日阅读 1.2 万，互动主要来自回答。以上是这一页的总结。";
+    expect(finishViewDataReply("查看一下知乎的最新数据", written, title)).toBe(written);
   });
 });

@@ -58,9 +58,15 @@ Page tools take an optional `tabId`: `navigate`, `snapshot`, `click`, `fill`, `p
 
 界面上的人手入口：**设置 → 账号**，可新建 / 打开 / 删除环境。
 
-## 多 Agent 并行
+## 多 Agent 与页面独占（1.00）
 
-`initialize` 的响应里带 `clientId`（也在响应头 `x-sparo-client`）。之后每次请求带上这个头。同一个 client 不传 `tabId` 的页面操作落在它自己最近使用的标签上；还没有就新建后台标签，**不会改用户正在看的那一页**。显式 `tabId` 照传（休眠的标签会先唤醒）。每个 client 的后台任务算进全局池上限 3，满了返回 `pool_full`。登录墙仍然 `waiting_human`。
+`initialize` 的响应里带 `clientId`（也在响应头 `x-sparo-client`）。之后每次请求带上这个头。
+
+- 一个网页同一时刻只有一个任务、一个 client。新任务不传 `tabId` 时另开后台标签，不拿用户正在看的页，也不拿这个 client 最近那张还占着的页。
+- 显式 `tabId` 指向已有租约、未结束任务或未解除绑定的页时，提交失败，`error` 为 `tab_busy`。不改绑，也不偷偷换成另一页。
+- 只有无 Agent、无未关闭任务、无有效 lease 的空闲页，才允许被显式复用。休眠的标签被允许操作时先唤醒原 `tabId`。
+- 后台同时运行的上限是 3。超出的任务状态是 `queued`，不再把池满报成提交失败。登录、验证码、付款和确认发布是 `waiting_human`；这时 `click` / `fill` / `execute` / `upload` 会被挡住，读页面可以。
+- 完成、异常和等人只更新状态与提醒，不把窗口 `focus` 或 `show` 到前台。`get_task` 只能查到自己 `clientId` 的任务。
 
 ## 限流
 

@@ -31,6 +31,7 @@ vi.mock("electron", () => ({
 }));
 
 import { SparkBrowser } from "../src/main/browser.js";
+import { taskSessionKey } from "../src/main/agent/session-key.js";
 import { TaskPool } from "../src/main/agent/task-pool.js";
 import { resetMcpSessions } from "../src/main/agent/mcp-sessions.js";
 import { loadChatMemory } from "../src/main/profile/chat-memory.js";
@@ -157,19 +158,19 @@ describe("T48 对话按会话隔离", () => {
     };
     browser.chatLog.push({ role: "user", text: "用户的话" });
     browser.freeSoul = { run: async () => ({ ok: true, text: "做完了" }) };
-    browser.submitTask("甲的话", { clientId: "jia" });
-    browser.submitTask("乙的话", { clientId: "yi" });
+    const jiaTask = browser.submitTask("甲的话", { clientId: "jia" });
+    const yiTask = browser.submitTask("乙的话", { clientId: "yi" });
     await new Promise((resolve) => setTimeout(resolve, 40));
 
     expect(browser.chatLog.map((turn) => turn.text)).toEqual(["用户的话"]);
-    browser.selectSession("agent:jia");
+    browser.activeTabId = "tab-jia";
     const jia = browser.getSidebarPayload() as { selectedSession: string; chat: Array<{ text: string }> };
-    expect(jia.selectedSession).toBe("agent:jia");
+    expect(jia.selectedSession).toBe(taskSessionKey("tab-jia", jiaTask.taskId));
     expect(jia.chat.map((turn) => turn.text).join("\n")).toContain("甲的话");
     expect(jia.chat.map((turn) => turn.text).join("\n")).not.toContain("乙的话");
     expect(jia.chat.map((turn) => turn.text).join("\n")).not.toContain("用户的话");
 
-    browser.selectSession("agent:yi");
+    browser.activeTabId = "tab-yi";
     const yi = browser.getSidebarPayload() as { chat: Array<{ text: string }> };
     expect(yi.chat.map((turn) => turn.text).join("\n")).toContain("乙的话");
     expect(yi.chat.map((turn) => turn.text).join("\n")).not.toContain("甲的话");

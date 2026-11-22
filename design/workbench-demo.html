@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sparo 工作台</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #fbfbfd;
+      --paper: #ffffff;
+      --side: #f4f5f8;
+      --line: #e2e5ec;
+      --line-strong: #cfd4df;
+      --text: #12141a;
+      --muted: #6b7280;
+      --accent: #2563eb;
+      --accent-ink: #ffffff;
+      --accent-soft: #e7eefe;
+      --green: #15a34a;
+      --green-soft: #e8f6ee;
+      --yellow: #b7791f;
+      --red: #dc2626;
+      --gray: #6b7280;
+      --gray-soft: #f3f4f6;
+      --shadow: 0 8px 24px rgba(16, 24, 40, .08);
+      --side-w: 420px;
+      --font: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 13px;
+      line-height: 1.45;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    button, textarea { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    .top {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      height: 60px;
+      padding: 0 20px;
+      border-bottom: 1px solid var(--line);
+      background: var(--paper);
+      flex: none;
+    }
+    .brand { font-weight: 700; font-size: 16px; }
+    .stats { display: flex; gap: 8px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 28px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--bg);
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 99px; background: var(--gray); display: inline-block; }
+    .dot.run { background: var(--green); }
+    .dot.wait { background: var(--yellow); }
+    .dot.fail { background: var(--red); }
+    .spacer { flex: 1; }
+    .ghost, .primary, .quiet {
+      height: 32px;
+      padding: 0 12px;
+      border-radius: 8px;
+      border: 1px solid var(--line-strong);
+      background: var(--paper);
+      white-space: nowrap;
+    }
+    .primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+    .quiet { color: var(--muted); background: transparent; }
+
+    .layout {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) var(--side-w);
+    }
+    .board { overflow: auto; padding: 20px 24px 28px; }
+    .group-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 12px;
+      font-size: 13px;
+      font-weight: 650;
+    }
+    .swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 99px;
+      background: var(--accent);
+      box-shadow: 0 0 0 4px var(--accent-soft);
+    }
+    .group-head button { margin-left: auto; height: 28px; padding: 0 10px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 16px;
+      align-items: stretch;
+    }
+    .node[hidden] { display: none; }
+    .x {
+      position: absolute;
+      top: 36px;
+      right: 10px;
+      z-index: 2;
+      width: 22px;
+      height: 22px;
+      border-radius: 99px;
+      border: 1px solid var(--line);
+      background: var(--paper);
+      color: var(--muted);
+      padding: 0;
+      line-height: 1;
+    }
+    .card.plain .x { top: 10px; }
+    .x:hover { color: var(--text); border-color: var(--line-strong); }
+    .card {
+      height: 100%;
+      min-height: 228px;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+      position: relative;
+      overflow: hidden;
+    }
+    .cap {
+      height: 28px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 14px;
+      background: #dbe7ff;
+      color: #1d4ed8;
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .cap i {
+      width: 8px;
+      height: 8px;
+      border-radius: 99px;
+      background: var(--accent);
+      flex: none;
+    }
+    .card.plain .cap { display: none; }
+    .stripe { position: absolute; left: 0; top: 28px; bottom: 0; width: 4px; background: var(--gray); }
+    .card.plain .stripe { top: 0; }
+    .card.run .stripe { background: var(--green); }
+    .card.wait .stripe { background: var(--yellow); }
+    .card.fail .stripe { background: var(--red); }
+    .inner {
+      display: grid;
+      grid-template-rows: 28px 26px 20px 20px minmax(64px, auto);
+      padding: 12px 36px 14px 18px;
+    }
+    .head, .task, .step, .who {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      margin: 0;
+    }
+    .head { gap: 8px; }
+    .mark {
+      width: 22px; height: 22px; border-radius: 99px;
+      display: grid; place-items: center;
+      background: var(--gray-soft); font-size: 11px; font-weight: 700; flex: none;
+    }
+    .title, .task, .step, .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .title { font-size: 13px; font-weight: 650; }
+    .badge { margin-left: auto; font-size: 12px; color: var(--muted); flex: none; }
+    .task { font-size: 15px; font-weight: 650; }
+    .step, .who { font-size: 12px; color: var(--muted); }
+    .slot { display: flex; flex-direction: column; justify-content: flex-end; gap: 8px; padding-top: 8px; }
+    .flow { height: 4px; border-radius: 99px; background: var(--green-soft); overflow: hidden; }
+    .flow > i {
+      display: block; height: 100%; width: 40%;
+      background: linear-gradient(90deg, transparent, var(--green), transparent);
+      animation: flow 1.8s linear infinite;
+    }
+    .reason { margin: 0; font-size: 13px; }
+    .actions { display: flex; gap: 8px; margin-top: auto; }
+    .card.wait { animation: breathe 3.2s ease-in-out infinite; }
+    .loose { margin-top: 28px; }
+    .loose p { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
+    .loose .card { max-width: 280px; }
+    .gone { margin: 24px 0; color: var(--muted); }
+    .gone[hidden] { display: none; }
+    .gone strong { display: block; color: var(--text); font-size: 16px; margin-bottom: 8px; }
+
+    .side {
+      min-height: 0;
+      border-left: 1px solid var(--line);
+      background: var(--side);
+      padding: 12px;
+      display: flex;
+    }
+    .chat {
+      flex: 1;
+      min-height: 0;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      display: flex;
+      flex-direction: column;
+    }
+    .chat-head {
+      flex: none;
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+    .chat-head strong { font-size: 14px; }
+    .chat-head span { color: var(--muted); font-size: 12px; }
+    .thread {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .bubble { border-radius: 12px; padding: 10px 12px; background: var(--bg); }
+    .bubble.user { background: var(--accent-soft); }
+    .bubble .name { display: block; font-size: 12px; font-weight: 650; margin-bottom: 4px; }
+    .bubble p { margin: 0; }
+    .bubble p + p { margin-top: 8px; }
+    .plan { margin: 8px 0 0; padding: 0; list-style: none; }
+    .plan li { padding: 4px 0 4px 12px; border-left: 3px solid var(--green); margin-top: 6px; }
+    .plan li.wait { border-left-color: var(--yellow); }
+    .plan li.fail { border-left-color: var(--red); }
+    .chat-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .chat-actions button { height: 30px; padding: 0 10px; }
+    .composer {
+      flex: none;
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+      padding: 12px;
+      border-top: 1px solid var(--line);
+    }
+    textarea {
+      flex: 1;
+      resize: none;
+      min-height: 72px;
+      border: 1px solid var(--line-strong);
+      border-radius: 10px;
+      padding: 8px 10px;
+      background: var(--bg);
+    }
+    @keyframes flow { from { transform: translateX(-120%); } to { transform: translateX(280%); } }
+    @keyframes breathe { 50% { box-shadow: 0 0 0 3px rgba(183, 121, 31, .28); } }
+    @media (prefers-reduced-motion: reduce) {
+      .flow > i, .card.wait { animation: none; }
+    }
+    @media (max-width: 1080px) {
+      body { overflow: auto; height: auto; }
+      .layout { grid-template-columns: 1fr; }
+      .side { border-left: 0; border-top: 1px solid var(--line); min-height: 70vh; }
+    }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">Sparo</div>
+    <div class="stats" aria-label="状态统计">
+      <span class="pill"><i class="dot run"></i>2 进行中</span>
+      <span class="pill"><i class="dot wait"></i>1 等人工</span>
+      <span class="pill"><i class="dot fail"></i>1 失败</span>
+    </div>
+    <div class="spacer"></div>
+    <button class="ghost" type="button">账号环境 · 主号</button>
+    <button class="ghost" type="button">设置</button>
+  </header>
+
+  <div class="layout">
+    <section class="board">
+      <div id="group">
+        <div class="group-head">
+          <i class="swatch" aria-hidden="true"></i>
+          <span>同一组 · 查询多平台手机价格</span>
+          <button class="ghost" type="button" data-close="group">关闭这一组</button>
+        </div>
+        <div class="grid">
+          <article class="node" data-node="jd">
+            <div class="card run">
+              <div class="cap"><i></i>查询多平台手机价格</div>
+              <i class="stripe"></i>
+              <button class="x" type="button" data-close="jd" aria-label="关闭京东">×</button>
+              <div class="inner">
+                <div class="head"><span class="mark">京</span><span class="title">京东 · 商品页</span><span class="badge">进行中</span></div>
+                <p class="task">查 iPhone 17 到手价</p>
+                <p class="step">对照优惠券</p>
+                <p class="who">Agent 甲</p>
+                <div class="slot"><div class="flow" aria-hidden="true"><i></i></div></div>
+              </div>
+            </div>
+          </article>
+          <article class="node" data-node="tb">
+            <div class="card run">
+              <div class="cap"><i></i>查询多平台手机价格</div>
+              <i class="stripe"></i>
+              <button class="x" type="button" data-close="tb" aria-label="关闭淘宝">×</button>
+              <div class="inner">
+                <div class="head"><span class="mark">淘</span><span class="title">淘宝 · 商品页</span><span class="badge">进行中</span></div>
+                <p class="task">查 iPhone 17 到手价</p>
+                <p class="step">看店铺券</p>
+                <p class="who">Agent 甲</p>
+                <div class="slot"><div class="flow" aria-hidden="true"><i></i></div></div>
+              </div>
+            </div>
+          </article>
+          <article class="node" data-node="pdd">
+            <div class="card wait">
+              <div class="cap"><i></i>查询多平台手机价格</div>
+              <i class="stripe"></i>
+              <button class="x" type="button" data-close="pdd" aria-label="关闭拼多多">×</button>
+              <div class="inner">
+                <div class="head"><span class="mark">拼</span><span class="title">拼多多 · 商品页</span><span class="badge">等人工</span></div>
+                <p class="task">查 iPhone 17 到手价</p>
+                <p class="step">停在确认优惠</p>
+                <p class="who">Agent 乙</p>
+                <div class="slot">
+                  <p class="reason">需要你确认要不要用这张券</p>
+                  <div class="actions"><span class="primary">我处理完了</span></div>
+                </div>
+              </div>
+            </div>
+          </article>
+          <article class="node" data-node="xhs">
+            <div class="card fail">
+              <div class="cap"><i></i>查询多平台手机价格</div>
+              <i class="stripe"></i>
+              <button class="x" type="button" data-close="xhs" aria-label="关闭小红书">×</button>
+              <div class="inner">
+                <div class="head"><span class="mark">红</span><span class="title">小红书 · 测评</span><span class="badge">失败</span></div>
+                <p class="task">找三篇真实测评</p>
+                <p class="step">卡在登录</p>
+                <p class="who">Agent 丙</p>
+                <div class="slot">
+                  <p class="reason">登录之后点重试</p>
+                  <div class="actions"><span class="primary">重试</span><span class="ghost">停止</span></div>
+                </div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+
+      <div class="gone" id="group-gone" hidden>
+        <strong>这一组已经关掉</strong>
+        <p>查询多平台手机价格的四个网页都收起来了。</p>
+        <button class="primary" type="button" id="reopen">让总指挥重新打开</button>
+      </div>
+
+      <section class="loose" data-node="weibo">
+        <p>没有编进这一组</p>
+        <div class="card plain idle">
+          <i class="stripe"></i>
+          <button class="x" type="button" data-close="weibo" aria-label="关闭微博">×</button>
+          <div class="inner">
+            <div class="head"><span class="mark">微</span><span class="title">微博 · 首页</span><span class="badge">静止</span></div>
+            <p class="task">页面空闲</p>
+            <p class="step">没有进行中的步骤</p>
+            <p class="who">没有人在用</p>
+            <div class="slot"><div class="actions"><span class="quiet">给这个页面派任务</span></div></div>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <aside class="side">
+      <section class="chat" aria-label="总指挥对话">
+        <div class="chat-head">
+          <strong>总指挥</strong>
+          <span>可以开关任何一页，也可以整组关掉</span>
+        </div>
+        <div class="thread">
+          <div class="bubble user">
+            <span class="name">你</span>
+            <p>帮我查一下 iPhone 17 现在各平台的到手价。京东、淘宝、拼多多各开一页，小红书再找三篇真实测评。优惠券如果要我确认，就停下来等我。不要挤在同一个网页里。</p>
+          </div>
+          <div class="bubble">
+            <span class="name">总指挥</span>
+            <p>这句话要四个网页一起做。它们排在一起，顶上同一条蓝色，表示都属于「查询多平台手机价格」。</p>
+            <ul class="plan">
+              <li>京东 · 查到手价 · Agent 甲 · 正在对照优惠券</li>
+              <li>淘宝 · 查到手价 · Agent 甲 · 正在看店铺券</li>
+              <li class="wait">拼多多 · 查到手价 · Agent 乙 · 停下来等你确认券</li>
+              <li class="fail">小红书 · 找三篇测评 · Agent 丙 · 卡在登录</li>
+            </ul>
+            <p>微博还空着，没有这条蓝标。知乎上一单已经写完，只在这里告诉你，不占工作区。</p>
+          </div>
+          <div class="bubble">
+            <span class="name">总指挥</span>
+            <p>知乎草稿已经写好，正文 860 字，等你验收。要看的话我再打开那一页。</p>
+            <div class="chat-actions">
+              <button class="quiet" type="button" data-open="weibo">打开微博</button>
+              <button class="ghost" type="button" data-close="pdd">关掉拼多多</button>
+              <button class="ghost" type="button" data-close="group">关掉整组</button>
+            </div>
+          </div>
+        </div>
+        <form class="composer" action="#">
+          <textarea aria-label="跟总指挥说" rows="3" placeholder="跟总指挥说你要办的事。可以很长。总指挥会决定开几个网页，同一件事的页面会标成一组。"></textarea>
+          <button class="primary" type="button">发送</button>
+        </form>
+      </section>
+    </aside>
+  </div>
+  <script>
+    const group = document.getElementById("group");
+    const gone = document.getElementById("group-gone");
+    function hideNode(id) {
+      const node = document.querySelector(`[data-node="${id}"]`);
+      if (node) node.hidden = true;
+    }
+    function showNode(id) {
+      const node = document.querySelector(`[data-node="${id}"]`);
+      if (node) node.hidden = false;
+    }
+    function closeGroup() {
+      group.hidden = true;
+      gone.hidden = false;
+    }
+    function openGroup() {
+      group.hidden = false;
+      gone.hidden = true;
+      ["jd", "tb", "pdd", "xhs", "weibo"].forEach(showNode);
+    }
+    document.body.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-close], [data-open]");
+      if (!button) return;
+      if (button.dataset.open) {
+        if (group.hidden) openGroup();
+        showNode(button.dataset.open);
+        return;
+      }
+      if (button.dataset.close === "group") closeGroup();
+      else hideNode(button.dataset.close);
+    });
+    document.getElementById("reopen").addEventListener("click", openGroup);
+  </script>
+</body>
+</html>

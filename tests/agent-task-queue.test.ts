@@ -86,7 +86,7 @@ describe("T50 agent 任务排队与归属", () => {
     browser.freeSoul = {
       run: () =>
         new Promise((resolve) => {
-          gates.push(() => resolve({ ok: true, text: "做完了" }));
+          gates.push(() => resolve({ ok: true, text: "做完了", verification: { items: [{ name: "做完", ok: true }] } }));
         }),
     };
     const submitted = ["c1", "c2", "c3", "c4"].map((id, index) =>

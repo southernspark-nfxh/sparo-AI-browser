@@ -138,6 +138,39 @@ input, textarea, select, .chat-log, .chat-log .bubble {
   position: relative;
   min-width: 0;
 }
+.page-status {
+  flex: none;
+  margin: 0;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  border-left: 4px solid #8a8478;
+  background: var(--side);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.page-status[data-tone="green"] { border-left-color: #1f8a4c; }
+.page-status[data-tone="red"] { border-left-color: #c0392b; }
+.page-status[data-tone="yellow"] { border-left-color: #c9a227; }
+.page-status[data-tone="gray"] { border-left-color: #8a8478; }
+.page-status-line { display: flex; gap: 8px; align-items: baseline; }
+.page-status-agent { font-weight: 650; color: var(--text); }
+.page-status-label,
+.page-status-meta { color: var(--muted); }
+.page-status-step { margin-top: 2px; }
+.page-status-meta { margin-top: 2px; }
+.tab.tab-attention,
+button.command-attn {
+  box-shadow: inset 0 0 0 2px #c9a227;
+  animation: spark-attn 1.2s ease-in-out infinite;
+}
+@keyframes spark-attn {
+  50% { box-shadow: inset 0 0 0 2px transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tab.tab-attention,
+  button.command-attn { animation: none; }
+}
 .agent-banner {
   position: absolute;
   left: 0;
@@ -1852,6 +1885,23 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></symbol>
 </svg>
 
+    <div hidden id="retiredAgentBanner">
+      <div class="agent-banner" id="agentBanner" hidden>
+        <svg class="agent-bot" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+          <circle cx="8" cy="1.2" r="0.9" fill="var(--agent-color)"/>
+          <rect x="7.4" y="1.8" width="1.2" height="2" rx="0.6" fill="var(--agent-color)"/>
+          <rect x="1.3" y="6" width="1.6" height="3.2" rx="0.7" fill="var(--agent-color)"/>
+          <rect x="13.1" y="6" width="1.6" height="3.2" rx="0.7" fill="var(--agent-color)"/>
+          <rect x="3" y="3.6" width="10" height="8.2" rx="2.2" fill="var(--agent-color)"/>
+          <circle cx="6.1" cy="7.2" r="1.05" fill="var(--paper)"/>
+          <circle cx="9.9" cy="7.2" r="1.05" fill="var(--paper)"/>
+        </svg>
+        <span class="agent-name"></span>
+        <span class="agent-state"></span>
+        <span class="agent-line"></span>
+        <span class="agent-quiet" hidden>勿扰</span>
+      </div>
+    </div>
     <div class="app">
       <div class="tabs-row">
         <div class="tabs" id="tabs"></div>
@@ -1881,21 +1931,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         </div>
       </div>
       <div class="page-hole" id="pageHole">
-        <div class="agent-banner" id="agentBanner" hidden>
-          <svg class="agent-bot" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-            <circle cx="8" cy="1.2" r="0.9" fill="var(--agent-color)"/>
-            <rect x="7.4" y="1.8" width="1.2" height="2" rx="0.6" fill="var(--agent-color)"/>
-            <rect x="1.3" y="6" width="1.6" height="3.2" rx="0.7" fill="var(--agent-color)"/>
-            <rect x="13.1" y="6" width="1.6" height="3.2" rx="0.7" fill="var(--agent-color)"/>
-            <rect x="3" y="3.6" width="10" height="8.2" rx="2.2" fill="var(--agent-color)"/>
-            <circle cx="6.1" cy="7.2" r="1.05" fill="var(--paper)"/>
-            <circle cx="9.9" cy="7.2" r="1.05" fill="var(--paper)"/>
-          </svg>
-          <span class="agent-name"></span>
-          <span class="agent-state"></span>
-          <span class="agent-line"></span>
-          <span class="agent-quiet" hidden>勿扰</span>
-        </div>
+        <div id="commandRoom" hidden style="position:absolute;inset:0;overflow:hidden;background:var(--bg);color:var(--text);z-index:2"></div>
         <div class="history-panel" id="historyPanel">
           <div class="history-head">
             <h2 data-i18n="history.title">历史记录</h2>
@@ -1949,6 +1985,14 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         </div>
         <div class="coach hide" id="setupCoach" data-i18n="setup.coach">请选择一种开始方式，或先浏览网页。</div>
 
+        <div class="page-status" id="pageStatus" data-tone="gray">
+          <div class="page-status-line">
+            <span class="page-status-agent">无</span>
+            <span class="page-status-label">静止／无 Agent</span>
+          </div>
+          <div class="page-status-step">静止／无 Agent</div>
+          <div class="page-status-meta"></div>
+        </div>
         <div class="thread-tools">
           <button type="button" id="btnNotes" title="我的笔记"><svg class="ic"><use href="#i-book"/></svg></button>
           <button type="button" id="btnCopyChat" data-i18n-title="chat.copyAll" title="复制全部"><svg class="ic"><use href="#i-doc"/></svg></button>
@@ -2488,8 +2532,8 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
 
       let draggingTabId = "";
       function holeRectWithBanner(rect, bannerH) {
-        const h = Math.max(0, Math.min(bannerH || 0, rect.height - 80));
-        return { x: rect.left, y: rect.top + h, width: rect.width, height: rect.height - h };
+        void bannerH;
+        return { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
       }
       function agentBotMarkup() {
         return '<svg class="agent-bot" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">'
@@ -2519,32 +2563,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
       let reportHole = function () {};
       function renderAgentBanner() {
         const banner = document.getElementById("agentBanner");
-        if (!banner) return;
-        const tab = (chromeState.tabs || []).find((item) => item.id === chromeState.activeId);
-        const show = Boolean(
-          tab && typeof tab.owner === "string" && tab.owner.indexOf("agent:") === 0 && tab.agentState && tab.agentState !== "idle",
-        );
-        const wasHidden = banner.hidden;
-        if (!show) {
-          banner.hidden = true;
-        } else {
-          banner.hidden = false;
-          banner.style.setProperty("--agent-color", tab.agentColor || "#2f6feb");
-          const text = agentBannerText(tab);
-          const parts = text.split(" · ");
-          const nameEl = banner.querySelector(".agent-name");
-          const stateEl = banner.querySelector(".agent-state");
-          const lineEl = banner.querySelector(".agent-line");
-          const quietEl = banner.querySelector(".agent-quiet");
-          if (nameEl) nameEl.textContent = parts[0] || "";
-          if (stateEl) stateEl.textContent = parts[1] || "";
-          if (lineEl) lineEl.textContent = parts.slice(2).join(" · ");
-          if (quietEl) quietEl.hidden = !agentBannerShowsQuiet(tab);
-        }
-        if (wasHidden !== banner.hidden) {
-          console.log("[banner]", show, tab && tab.agentName, tab && tab.agentState);
-          reportHole();
-        }
+        if (banner) banner.hidden = true;
       }
       function agentStateLabel(state) {
         if (state === "running") return "操作中";
@@ -2553,28 +2572,316 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         if (state === "done") return "已完成";
         return "空闲";
       }
+      function statusToneColor(tone) {
+        if (tone === "green") return "#1f8a4c";
+        if (tone === "red") return "#c0392b";
+        if (tone === "yellow") return "#c9a227";
+        return "#8a8478";
+      }
+      function formatStatusTime(ts) {
+        const n = Number(ts);
+        if (!n) return "";
+        try {
+          const d = new Date(n);
+          if (Number.isNaN(d.getTime())) return "";
+          const p = (v) => String(v).padStart(2, "0");
+          return p(d.getHours()) + ":" + p(d.getMinutes());
+        } catch (error) {
+          return "";
+        }
+      }
+      function renderPageStatus(status) {
+        const root = document.getElementById("pageStatus");
+        if (!root) return;
+        const snap = status || {};
+        const tone = snap.tone || "gray";
+        root.hidden = false;
+        root.dataset.tone = tone;
+        const agent = root.querySelector(".page-status-agent");
+        const label = root.querySelector(".page-status-label");
+        const step = root.querySelector(".page-status-step");
+        const meta = root.querySelector(".page-status-meta");
+        if (agent) agent.textContent = snap.agentName ? String(snap.agentName) : "无";
+        if (label) label.textContent = snap.label || "静止／无 Agent";
+        if (step) step.textContent = snap.step || "静止／无 Agent";
+        if (meta) {
+          const bits = [];
+          if (snap.title) bits.push(String(snap.title));
+          const clock = formatStatusTime(snap.updatedAt);
+          if (clock) bits.push(clock);
+          if (snap.summary) bits.push(String(snap.summary));
+          if (snap.advice) bits.push(String(snap.advice));
+          meta.textContent = bits.join(" · ");
+        }
+        let go = root.querySelector(".page-status-resume");
+        if (!go) {
+          go = document.createElement("button");
+          go.type = "button";
+          go.className = "page-status-resume";
+          root.appendChild(go);
+        }
+        const canResume = snap.state === "waiting_human" || snap.state === "failed" || snap.state === "stopped";
+        go.hidden = !canResume || !snap.taskId;
+        go.textContent = snap.state === "waiting_human" ? "我处理完了" : "继续";
+        go.onclick = () => {
+          if (snap.taskId && window.sparkShell && window.sparkShell.resumeTask) window.sparkShell.resumeTask(snap.taskId);
+        };
+        if (snap.resultCard && snap.resultCard.needsAccept && snap.taskId) {
+          let accept = root.querySelector(".page-status-accept");
+          if (!accept) {
+            accept = document.createElement("button");
+            accept.type = "button";
+            accept.className = "page-status-accept";
+            accept.textContent = "验收并保留页面";
+            root.appendChild(accept);
+          }
+          accept.hidden = false;
+          accept.onclick = () => {
+            if (window.sparkShell && window.sparkShell.acceptTask) window.sparkShell.acceptTask(snap.taskId, "keep");
+          };
+        }
+        if (snap.attention && snap.taskId && document.visibilityState === "visible") {
+          const card = root.querySelector(".page-status-meta");
+          const shown = card && card.getClientRects && card.getClientRects().length > 0;
+          if (shown && window.sparkShell && window.sparkShell.taskViewed) window.sparkShell.taskViewed(snap.taskId, true);
+        }
+      }
+      let workbenchChat = [];
+      let workbenchSeenTurns = 0;
+      function workbenchTone(row) {
+        const tone = String((row && row.tone) || "gray");
+        if (tone === "green") return "run";
+        if (tone === "yellow") return "wait";
+        if (tone === "red") return "fail";
+        if (row && row.state === "done") return "done";
+        return "idle";
+      }
+      function workbenchGroupOf(row, groups) {
+        for (let i = 0; i < groups.length; i++) {
+          const children = groups[i] && groups[i].children ? groups[i].children : [];
+          const hit = children.some((child) => {
+            if (!child) return false;
+            if (child.tabId && row.tabId && child.tabId === row.tabId) return true;
+            return Boolean(child.taskId && row.taskId && child.taskId === row.taskId);
+          });
+          if (hit) return groups[i];
+        }
+        return null;
+      }
+      function ensureWorkbenchStyle() {
+        const head = document.head;
+        if (!head || document.getElementById("workbenchStyle")) return;
+        const style = document.createElement("style");
+        style.id = "workbenchStyle";
+        style.textContent = [
+          ".wb{height:100%;display:grid;grid-template-columns:minmax(0,1fr);min-height:0}",
+          ".wb-board{overflow:auto;padding:16px}",
+          ".wb-head{display:flex;align-items:center;gap:8px;margin:0 0 12px;font-size:13px;font-weight:650;min-width:0}",
+          ".wb-head .wb-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+          ".wb-progress{flex:none;color:var(--muted);font-size:12px;font-weight:650}",
+          ".wb-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px;align-items:stretch}",
+          ".wb-card{position:relative;height:100%;min-height:196px;background:var(--paper);border:1px solid var(--line);border-radius:12px;overflow:hidden}",
+          ".wb-cap{height:28px;display:flex;align-items:center;gap:8px;padding:0 12px;background:var(--accent-soft);color:var(--accent);font-size:12px;font-weight:650}",
+          ".wb-open{display:grid;grid-template-rows:28px 26px 20px 20px minmax(28px,auto);align-content:start;width:100%;height:100%;min-height:196px;text-align:left;border:0;border-left:4px solid var(--muted);background:transparent;color:inherit;padding:12px 36px 12px 14px;font:inherit}",
+          ".wb-open.run{border-left-color:var(--ok)}",
+          ".wb-open.wait{border-left-color:var(--warn)}",
+          ".wb-open.fail{border-left-color:var(--bad)}",
+          ".wb-open.done,.wb-open.idle{border-left-color:var(--muted)}",
+          ".wb-line{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+          ".wb-task{font-size:15px;font-weight:650}",
+          ".wb-muted{color:var(--muted);font-size:12px}",
+          ".wb-x{position:absolute;top:36px;right:8px;width:22px;height:22px;border-radius:99px;border:1px solid var(--line);background:var(--paper);color:var(--muted)}",
+          ".wb-ack{position:absolute;top:8px;right:8px;width:8px;height:8px;border-radius:99px;border:0;background:var(--bad);padding:0}",
+          ".wb-chat{min-height:0;display:flex;flex-direction:column;border-left:1px solid var(--line);background:var(--side)}",
+          ".wb-thread{flex:1;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:10px}",
+          ".wb-bubble{border-radius:12px;padding:8px 10px;background:var(--paper)}",
+          ".wb-bubble.user{background:var(--accent-soft)}",
+          ".wb-note{text-align:left;border:1px solid var(--line);border-radius:10px;background:var(--paper);padding:8px 10px}",
+          ".wb-compose{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line)}",
+          ".wb-compose textarea{flex:1;min-height:72px;resize:none;border:1px solid var(--line);border-radius:10px;background:var(--paper);color:inherit;font:inherit;padding:8px}",
+          "@media (max-width:1080px){.wb{grid-template-columns:1fr}.wb-chat{border-left:0;border-top:1px solid var(--line);min-height:420px}}",
+        ].join("");
+        head.appendChild(style);
+      }
+      async function closeWorkbenchGroup(group) {
+        const title = String((group && group.title) || "这一组");
+        const ask = typeof askConfirm === "function" ? askConfirm : null;
+        if (ask) {
+          const ok = await ask("关闭「" + title + "」会结束组里每一页的任务。确认关闭？");
+          if (!ok) return;
+        }
+        const shell = window.sparkShell;
+        if (!shell) return;
+        const children = (group && group.children) || [];
+        for (const child of children) {
+          const taskId = String((child && child.taskId) || "");
+          if (!taskId) continue;
+          const live = child.state === "running" || child.state === "queued" || child.state === "waiting_human";
+          if (live && shell.stopTask) await shell.stopTask(taskId);
+          if (shell.closeTask) await shell.closeTask(taskId, "close");
+        }
+      }
+      function renderCommandRoom() {
+        const room = document.getElementById("commandRoom");
+        if (!room) return;
+        const active = (chromeState.tabs || []).find((tab) => tab.id === chromeState.activeId);
+        const show = active && active.kind === "command";
+        room.hidden = !show;
+        while (room.firstChild) room.removeChild(room.firstChild);
+        if (!show) return;
+        ensureWorkbenchStyle();
+        const rows = Array.isArray(chromeState.overview) ? chromeState.overview : [];
+        const groups = Array.isArray(chromeState.groups) ? chromeState.groups : [];
+        const layout = document.createElement("div");
+        layout.className = "wb";
+        const board = document.createElement("div");
+        board.className = "wb-board";
+        rows.forEach((row) => {
+          if (!row || !row.attention || !row.taskId) return;
+          const note = document.createElement("button");
+          note.type = "button";
+          note.className = "wb-note";
+          note.dataset.ack = String(row.taskId);
+          note.textContent = String(row.title || "页面") + " · " + String(row.taskTitle || row.step || "有结果");
+          note.addEventListener("click", () => {
+            const shell = window.sparkShell;
+            if (!shell) return;
+            if (shell.ackTask) shell.ackTask(String(row.taskId));
+            if (shell.focusTask) shell.focusTask(String(row.taskId));
+          });
+          board.appendChild(note);
+        });
+        const placed = {};
+        groups.forEach((group) => {
+          const mine = rows.filter((row) => workbenchGroupOf(row, [group]));
+          if (!mine.length) return;
+          const head = document.createElement("div");
+          head.className = "wb-head";
+          const name = document.createElement("span");
+          name.className = "wb-name";
+          name.textContent = String(group.title || "跨页任务");
+          const kids = (group && group.children) || [];
+          const doneCount = kids.filter((child) => child && (child.state === "done" || child.state === "closed")).length;
+          const abnormal = kids.filter((child) => child && (child.state === "failed" || child.state === "stopped")).length;
+          const progress = document.createElement("span");
+          progress.className = "wb-progress";
+          progress.textContent = doneCount + "/" + kids.length + (abnormal ? " · " + abnormal + " 异常" : "");
+          const close = document.createElement("button");
+          close.type = "button";
+          close.className = "ghost";
+          close.textContent = "关闭这一组";
+          close.addEventListener("click", () => { void closeWorkbenchGroup(group); });
+          head.appendChild(name);
+          head.appendChild(progress);
+          if (group && group.reportPath) {
+            const see = document.createElement("button");
+            see.type = "button";
+            see.className = "ghost";
+            see.textContent = "看结果";
+            see.addEventListener("click", () => {
+              const shell = window.sparkShell;
+              if (shell && shell.openReport) shell.openReport(String(group.reportPath));
+            });
+            head.appendChild(see);
+          }
+          head.appendChild(close);
+          board.appendChild(head);
+          const grid = document.createElement("div");
+          grid.className = "wb-grid";
+          mine.forEach((row) => {
+            placed[String(row.tabId || "") + "\n" + String(row.taskId || "")] = true;
+            grid.appendChild(workbenchCard(row, group.title));
+          });
+          board.appendChild(grid);
+        });
+        const rest = rows.filter((row) => !placed[String(row.tabId || "") + "\n" + String(row.taskId || "")]);
+        if (rest.length) {
+          const grid = document.createElement("div");
+          grid.className = "wb-grid";
+          rest.forEach((row) => grid.appendChild(workbenchCard(row, "")));
+          board.appendChild(grid);
+        }
+        layout.appendChild(board);
+        room.appendChild(layout);
+      }
+      function workbenchCard(row, groupTitle) {
+        const tone = String((row && row.tone) || "gray");
+        const kind = workbenchTone(row);
+        const wrap = document.createElement("article");
+        wrap.className = "wb-card";
+        if (groupTitle) {
+          const cap = document.createElement("div");
+          cap.className = "wb-cap";
+          cap.textContent = String(groupTitle);
+          wrap.appendChild(cap);
+        }
+        const open = document.createElement("button");
+        open.type = "button";
+        open.className = "wb-open " + kind;
+        open.dataset.tab = String((row && row.tabId) || "");
+        open.dataset.tone = tone;
+        const page = document.createElement("span");
+        page.className = "wb-line";
+        page.textContent = String((row && row.title) || "未命名页面");
+        const task = document.createElement("span");
+        task.className = "wb-line wb-task";
+        task.textContent = String((row && (row.taskTitle || row.label)) || "页面空闲");
+        const step = document.createElement("span");
+        step.className = "wb-line wb-muted";
+        step.textContent = String((row && row.step) || "");
+        const who = document.createElement("span");
+        who.className = "wb-line wb-muted";
+        who.textContent = row && row.agentName ? String(row.agentName) : "无 Agent 使用";
+        open.appendChild(page);
+        open.appendChild(task);
+        open.appendChild(step);
+        open.appendChild(who);
+        open.addEventListener("click", () => {
+          const id = open.dataset.tab;
+          if (id && window.sparkShell && window.sparkShell.switchTab) window.sparkShell.switchTab(id);
+        });
+        wrap.appendChild(open);
+        if (row && row.attention && row.taskId) {
+          const dot = document.createElement("button");
+          dot.type = "button";
+          dot.className = "wb-ack";
+          dot.dataset.ack = String(row.taskId);
+          if (dot.setAttribute) dot.setAttribute("aria-label", "知悉");
+          dot.addEventListener("click", (event) => {
+            if (event && event.stopPropagation) event.stopPropagation();
+            if (window.sparkShell && window.sparkShell.ackTask) window.sparkShell.ackTask(String(row.taskId));
+          });
+          wrap.appendChild(dot);
+        }
+        return wrap;
+      }
+
       function renderChrome() {
         tabsEl.innerHTML = "";
         for (const tab of chromeState.tabs) {
           const el = document.createElement("div");
+          const tone = (tab.pageStatus && tab.pageStatus.tone) || tab.statusTone || "gray";
+          const pageState = tab.pageStatus && tab.pageStatus.state;
+          const showDoneBadge = tab.agentStatus === "done" && pageState !== "failed" && pageState !== "stopped";
           el.className =
             "tab" +
             (tab.id === chromeState.activeId ? " active" : "") +
             (tab.discarded ? " sleeping" : "") +
-            (tab.agentStatus === "done" ? " done" : "");
-          el.draggable = true;
+            (showDoneBadge ? " done" : "") +
+            " tone-" + tone +
+            (tab.pageStatus && tab.pageStatus.attention ? " tab-attention" : "");
+          el.draggable = tab.kind !== "command";
           el.dataset.id = tab.id;
+          el.dataset.tone = tone;
+          el.style.boxShadow = "inset 0 -2px 0 " + statusToneColor(tone);
           const agentOwned = typeof tab.owner === "string" && tab.owner.indexOf("agent:") === 0;
           el.title =
             (agentOwned
               ? (tab.agentName || "Agent") + " · " + agentStateLabel(tab.agentState) + "\n"
               : "") +
-            (tab.agentStatus === "done" ? t("mem.done") + "\n" : "") +
+            (showDoneBadge ? t("mem.done") + "\n" : "") +
             (tab.discarded ? t("mem.tabSleeping") + "\n" : "") +
             (tab.url || "");
-          if (agentOwned) {
-            el.style.boxShadow = "inset 0 -1px 0 " + (tab.agentColor || "#2f6feb");
-          }
           let ico;
           if (tab.favIcon) {
             ico = document.createElement("img");
@@ -2588,16 +2895,23 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           }
           const title = document.createElement("span");
           title.className = "title";
-          title.textContent = tab.title || tab.url || t("tab.new");
+          title.textContent = tab.kind === "command" ? "指挥室" : tab.title || tab.url || t("tab.new");
           const x = document.createElement("button");
           x.className = "x";
           x.innerHTML = '<svg class="ic"><use href="#i-close"/></svg>';
           x.draggable = false;
+          if (tab.kind === "command") x.hidden = true;
           x.onclick = (e) => {
             e.stopPropagation();
             window.sparkShell.closeTab(tab.id);
           };
-          el.onclick = () => window.sparkShell.switchTab(tab.id);
+          el.onclick = () => {
+            const taskId = tab.pageStatus && tab.pageStatus.taskId;
+            if (tab.pageStatus && tab.pageStatus.attention && taskId && window.sparkShell.ackTask) {
+              window.sparkShell.ackTask(taskId);
+            }
+            window.sparkShell.switchTab(tab.id);
+          };
           el.addEventListener("auxclick", (e) => {
             if (e.button !== 1) return;
             e.preventDefault();
@@ -2619,18 +2933,19 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
             e.preventDefault();
             el.classList.remove("drag-over");
             const from = e.dataTransfer.getData("text/plain") || draggingTabId;
+            if (tab.kind === "command") return;
             if (from && from !== tab.id) window.sparkShell.reorderTabs(from, tab.id);
           });
           if (agentOwned) {
             const dot = document.createElement("span");
             dot.className = "tab-agent-dot";
             dot.style.cssText =
-              "width:6px;height:6px;border-radius:50%;flex:none;background:" + (tab.agentColor || "#2f6feb");
+              "width:6px;height:6px;border-radius:50%;flex:none;background:" + statusToneColor(tone);
             el.appendChild(dot);
           }
           el.appendChild(ico);
           el.appendChild(title);
-          if (tab.agentStatus === "done") {
+          if (showDoneBadge) {
             const badge = document.createElement("span");
             badge.className = "tab-done";
             badge.textContent = t("mem.done");
@@ -2662,7 +2977,14 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           memBtn.textContent = board || t("mem.optimize");
           memBtn.title = board ? t("mem.moonTitle") + "\n" + board : t("mem.moonTitle");
         }
+        const activeStatus = (chromeState.tabs || []).find((tab) => tab.id === chromeState.activeId);
+        renderPageStatus(activeStatus && activeStatus.pageStatus);
         renderAgentBanner();
+        renderCommandRoom();
+        const commandTab = (chromeState.tabs || []).find((tab) => tab.id === chromeState.activeId);
+        if (commandTab && commandTab.kind === "command" && document.activeElement !== urlEl) {
+          urlEl.value = "指挥室";
+        }
       }
 
       function navigateFromBar() {
@@ -2990,8 +3312,6 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         agents.forEach(function (session) {
           var btn = document.createElement("button");
           btn.type = "button";
-          btn.style.setProperty("--agent-color", session.color || "#2f6feb");
-          if (session.color) btn.style.color = session.color;
           btn.innerHTML = agentBotMarkup() + "<span></span>";
           var nameEl = btn.querySelector("span");
           if (nameEl) nameEl.textContent = session.label || session.key;
@@ -3009,82 +3329,8 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
       function renderTaskStrip(tasks) {
         var root = document.getElementById("taskStrip");
         if (!root) return;
-        if (!document.getElementById("taskStripStyle")) {
-          var style = document.createElement("style");
-          style.id = "taskStripStyle";
-          style.textContent = [
-            "#taskStrip.hide{display:none}",
-            "#taskStrip{position:sticky;top:0;z-index:3;margin:0 0 8px;display:flex;flex-direction:column;gap:6px}",
-            "#taskStrip .task-card{display:flex;gap:8px;align-items:flex-start;width:100%;text-align:left;padding:8px 10px;border:1px solid var(--line);border-radius:12px;background:var(--paper);color:var(--text);font:inherit;cursor:pointer}",
-            "#taskStrip .task-card.is-running{background:var(--accent-soft)}",
-            "#taskStrip .task-mark{width:1.2em;flex:none;color:var(--muted)}",
-            "#taskStrip .task-card.is-running .task-mark{color:var(--accent)}",
-            "#taskStrip .task-card.is-done .task-mark{color:var(--ok)}",
-            "#taskStrip .task-card.is-waiting_human .task-mark{color:var(--warn)}",
-            "#taskStrip .task-card.is-waiting_human{border-color:var(--warn)}",
-            "#taskStrip .task-lane{flex:none;font-size:var(--fs-12);color:var(--muted)}",
-            "#taskStrip .task-body{min-width:0;flex:1}",
-            "#taskStrip .task-title{display:block;font-size:var(--fs-13)}",
-            "#taskStrip .task-step{display:block;color:var(--muted);font-size:var(--fs-12)}",
-            "#taskStrip .task-stop{flex:none;border:1px solid var(--line);background:var(--paper);color:var(--text);border-radius:999px;padding:2px 8px;font:inherit;font-size:var(--fs-12);cursor:pointer}",
-          ].join("");
-          document.head.appendChild(style);
-        }
         root.innerHTML = "";
-        var list = Array.isArray(tasks) ? tasks : [];
-        if (!list.length) {
-          root.classList.add("hide");
-          return;
-        }
-        root.classList.remove("hide");
-        list.sort(function (a, b) {
-          if (a.state === "waiting_human" && b.state !== "waiting_human") return -1;
-          if (b.state === "waiting_human" && a.state !== "waiting_human") return 1;
-          return 0;
-        });
-        list.forEach(function (task) {
-          var btn = document.createElement("div");
-          btn.className = "task-card is-" + (task.state || "running");
-          if (task.lane === "background" && task.color) btn.style.borderLeft = "3px solid " + task.color;
-          btn.onclick = function () {
-            if (window.sparkShell && window.sparkShell.focusTask) window.sparkShell.focusTask(task.id);
-            else if (task.tabId && window.sparkShell && window.sparkShell.switchTab) window.sparkShell.switchTab(task.tabId);
-          };
-          var mark = document.createElement("span");
-          mark.className = "task-mark";
-          mark.textContent =
-            task.state === "done" ? "✓" : task.state === "failed" ? "!" : task.state === "waiting_human" ? "!" : "·";
-          var body = document.createElement("span");
-          body.className = "task-body";
-          var title = document.createElement("span");
-          title.className = "task-title";
-          title.textContent = task.agentName ? task.agentName + " · " + (task.title || "任务") : (task.title || "任务");
-          var step = document.createElement("span");
-          step.className = "task-step";
-          step.textContent = task.step || "";
-          body.appendChild(title);
-          body.appendChild(step);
-          btn.appendChild(mark);
-          if (task.lane === "background") {
-            var lane = document.createElement("span");
-            lane.className = "task-lane";
-            lane.textContent = "后台";
-            btn.appendChild(lane);
-          }
-          btn.appendChild(body);
-          if (task.state === "running" || task.state === "waiting_human") {
-            var stop = document.createElement("button");
-            stop.type = "button";
-            stop.className = "task-stop";
-            stop.textContent = "停止";
-            stop.onclick = function (event) {
-              event.stopPropagation();
-              if (window.sparkShell && window.sparkShell.stopTask) window.sparkShell.stopTask(task.id);
-            };
-            btn.appendChild(stop);
-          }
-          root.appendChild(btn);
-        });
+        root.classList.add("hide");
       }
 
       function renderPlanStrip(plan) {
@@ -3635,9 +3881,11 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
           shellChat = framed.state.texts;
           shellChatSeq = framed.state.seq;
           shellChatKey = framed.state.key;
+          if (shellChatKey === "command") workbenchChat = shellChat.slice();
           renderChat(shellChat, from);
+          renderCommandRoom();
         }
-        renderAgentRoster(payload.sessions, payload.tasks);
+        renderPageStatus(payload.pageStatus);
         renderTaskStrip(payload.tasks);
         renderPlanStrip(payload.plan);
         if (shellChat.length) scrollDockIntoView();
@@ -4149,9 +4397,7 @@ button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
         reportHole = () => {
           if (!hole || !window.sparkShell.pageHoleBounds) return;
           const r = hole.getBoundingClientRect();
-          const banner = document.getElementById("agentBanner");
-          const bannerH = banner ? banner.offsetHeight : 0;
-          window.sparkShell.pageHoleBounds(holeRectWithBanner(r, bannerH));
+          window.sparkShell.pageHoleBounds(holeRectWithBanner(r, 0));
         };
         reportHole();
         if (typeof ResizeObserver === "function") {

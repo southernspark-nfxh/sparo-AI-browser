@@ -63,3 +63,34 @@ export function bindForWrite(tool: string, resolved?: string): string {
     `${tool} 需要 clientId 或 tabId：请重新 initialize 获取 x-sparo-client 请求头，或显式传 tabId。不会默认操作用户当前标签。`,
   );
 }
+
+/** 这些只读，黄色等待时仍然允许。 */
+const WRITE_SAFE = new Set(["snapshot", "page_text", "get_url", "get_title", "list_tabs", "screenshot"]);
+
+export type WaitingWrite = { waiting: boolean; reason?: string };
+
+let waitingWriteLookup: (tabId: string) => WaitingWrite = () => ({ waiting: false });
+
+/** 浏览器把「这一页是不是在等人工」注册进来。MCP 写工具在进 handler 之前问它。 */
+export function setWaitingWriteLookup(lookup: (tabId: string) => WaitingWrite): void {
+  waitingWriteLookup = lookup;
+}
+
+export function waitingWriteFor(tabId: string): WaitingWrite {
+  return waitingWriteLookup(String(tabId || ""));
+}
+
+/** 黄色时拒绝写页面。读页面放行。不看文案，只看这一页是不是 waiting。 */
+export function decideWrite(
+  tool: string,
+  waiting: boolean,
+  reason?: string,
+): { ok: true } | { ok: false; message: string } {
+  if (!waiting || WRITE_SAFE.has(tool)) return { ok: true };
+  return { ok: false, message: `等你处理：${reason || "需要人工"}` };
+}
+
+export function refuseWaitingWrite(tool: string, tabId: string): { ok: true } | { ok: false; message: string } {
+  const state = waitingWriteFor(tabId);
+  return decideWrite(tool, state.waiting, state.reason);
+}

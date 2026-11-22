@@ -285,12 +285,14 @@ async function selfCheck() {
   for (const piece of ["MARKERS_LEFT", "IMAGE_COUNT_MISMATCH", "COVER_REQUIRED", "OPTIONS_MISMATCH", "@@IMG", "采用AI生成内容"]) {
     if (!baijiaReady.includes(piece)) throw new Error("百家号质量门缺了 " + piece);
   }
+  if (!baijiaReady.includes("ctx.imageCount = state.images")) throw new Error("百家号续跑发布没有把真实图片数交给核验");
   const baijiaInsert = between(baijia, "async insertImages(ctx)", "async setCover(ctx)");
-  const loopAt = baijiaInsert.indexOf("for (let index");
+  const uploadAt = baijiaInsert.indexOf("uploadPicked");
   const writeAt = baijiaInsert.indexOf("setUeContent");
   const countAt = baijiaInsert.lastIndexOf("ctx.imageCount");
-  if (loopAt < 0 || writeAt < loopAt || writeAt > countAt) throw new Error("百家号没有在单张成功后立刻写回正文");
-  if ((baijiaInsert.match(/setUeContent/g) || []).length !== 1) throw new Error("百家号插图写回不该在循环结束后再来一次");
+  if (uploadAt < 0 || writeAt < uploadAt || writeAt > countAt) throw new Error("百家号批量插图确认后没有写回正文");
+  if (!baijiaInsert.includes("pendingItems.map")) throw new Error("百家号没有在一次弹窗里上传全部待补图片");
+  if ((baijiaInsert.match(/setUeContent/g) || []).length !== 1) throw new Error("百家号插图写回不该重复执行");
   if (!baijiaInsert.includes("@@IMG") || !baijiaInsert.includes("if (!pending.has(mark)) continue")) {
     throw new Error("百家号续跑没有按正文里是否还有 @@IMG 跳过");
   }
@@ -302,7 +304,7 @@ async function selfCheck() {
   }
   if (baijia.includes(".slice(0, 12000)")) throw new Error("百家号核验还在整页搜状态");
   if (!baijia.includes("预计") || !baijia.includes("idx + 7")) throw new Error("百家号核验没有限定在标题所在行附近");
-  if (!baijia.includes("count >= 1") || !baijia.includes("UPLOAD_FAILED")) throw new Error("百家号插图把 0 张上传成功当成完成");
+  if (!baijia.includes("count >= expected") || !baijia.includes("expected = 1") || !baijia.includes("UPLOAD_FAILED")) throw new Error("百家号插图没有按实际上传张数验收");
   if (!sparoSrc.includes("SPARO_CLIENT") || sparoSrc.includes("social-media-publish#")) {
     throw new Error("clientId 还在随进程变化");
   }

@@ -1,16 +1,29 @@
 # Sparo 现行产品任务书
 
 > 持续更新。与原版 **同一份正文**，便于两边对照。上一版见 [archive/2026-08/PRODUCT-TASKBOOK-20260811.md](./archive/2026-08/PRODUCT-TASKBOOK-20260811.md)。  
-> 版本：**v1.0.0 · 2026-11-18**（Agent 说明书重写并随包分发；里程碑版本号；文档-only，主进程与 0.7.7 一致）  
+> 版本：**v1.1.1122 · 2026-11-22**（安装包 `release\Sparo-Setup-1.1.1122.exe`，105,037,125 字节，2026-11-22 16:41:49，SHA-256 `E375F10C8352A3C8BFF0155BAD077B96815307D6144C4B4380F622724225F570`）；上一包 **v1.0.0 · 2026-11-18**
 > 上一包：**v0.7.7 · 2026-11-18**（发稿追问只问一次；Agent 不抢打字焦点；智能体完整性边界回撤）  
 > 再上一包：**v0.7.6 · 2026-11-17**（删除环境 R2/R3 加固：先清存储后删配置；恢复已删环境改开普通标签）  
 > 第三上一包：**v0.7.5 · 2026-11-17**（删除环境即失效：关环境标签、清分区存储；台账不进安装包）  
 > 第四上一包：**v0.7.4 · 2026-11-17**（侧栏发稿链路接通：槽位追问、run_skill params 透传、微信识别）  
 > 状态：**进行中**（云订阅 M1 代码已落地并人测过登录/付款；上架未完；飞书网页已做；侧栏大脑已让模型编手；0.6.0 多账号环境 + social-media-publish v0.3.6 已随包发布）  
 > 产品文案仍以 [PRODUCT.md](./PRODUCT.md) 为准，不要把任务书当商店上架稿。  
-> 先读：[ARCHITECTURE.md](./ARCHITECTURE.md) · [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) · [CHANGELOG.md](../CHANGELOG.md) 0.7.6 · 根目录 [AGENTS.md](../AGENTS.md)
+> 先读：[ARCHITECTURE.md](./ARCHITECTURE.md) · [CLOUD-SUBSCRIPTION.md](./CLOUD-SUBSCRIPTION.md) · [CHANGELOG.md](../CHANGELOG.md) 1.1.1122 段 · 根目录 [AGENTS.md](../AGENTS.md)
 >
 > **大脑进度（0.1.19）：** 听整句、站点表换站、模型编 `handbook` / 写下一步已进代码。10-26 起任务循环硬规则：新任务出确认卡、关单必有声、跑完计划步才许收摊、挂起答复接得回。10-27 起同能力多段逐段对账，最小化不再把窗口拉回前台。`absorb`（页上价格对约束）未开工。9 月交接稿见 [archive/2026-09/TRAE-PROMPT-AGENT-BRAIN.md](./archive/2026-09/TRAE-PROMPT-AGENT-BRAIN.md)，以 changelog 和测试为准。
+
+## 2026-11-22 已打包（1.1.1122：指挥室 QA）
+
+- 安装包：`release\Sparo-Setup-1.1.1122.exe`，105,037,125 字节，2026-11-22 16:41:49，SHA-256 `E375F10C8352A3C8BFF0155BAD077B96815307D6144C4B4380F622724225F570`。
+- 新安装包还没有覆盖到 `D:\Program Files\Sparo`，G1–G3 没有在安装后的日常目录里再跑。测试窗复测见 [qa-runs/window-qa-20261122.md](./qa-runs/window-qa-20261122.md)。
+
+- 侧栏 `#taskStrip` 不再渲染。任务卡只在指挥室总览。
+- `pinCommandTab`：指挥室标签固定最左；拖到指挥室上不会把它挤走。
+- 一组任务全部终态后 `writeGroupReport` 写 HTML。组标题有「看结果」。决策点 #78。测试数据目录是 `%APPDATA%\sparo-store-test\reports`。
+- 失败或已停止的页，标签头不再标「已完成」。
+- 指挥室卡片按钮铺满整张卡片。
+- 系统提示补了写诗先问、逐条另存、店小秘继续改文字。这三句还没在窗口复测。
+- 记录：[qa-runs/window-qa-20261122.md](./qa-runs/window-qa-20261122.md)、[WORKLOG-2026-11-22-COMMAND-ROOM-QA.md](./WORKLOG-2026-11-22-COMMAND-ROOM-QA.md)。
 
 ## 2026-11-18 已落代码（1.0.0：Agent 说明书重写并随包分发；里程碑版本号）
 

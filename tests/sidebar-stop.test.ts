@@ -31,6 +31,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SparkBrowser } from "../src/main/browser.js";
 import { TaskPool } from "../src/main/agent/task-pool.js";
+import { pageSessionKey } from "../src/main/agent/session-key.js";
 
 const INTERRUPTED = "（任务被用户打断，未完成的步骤不做宣称。已做的操作以工具记录为准。）";
 
@@ -93,10 +94,10 @@ describe("T76 侧栏任务能停", () => {
 
     expect(stopped.ok).toBe(true);
     expect(stopped.stopped).toEqual([first.taskId]);
-    expect(browser.mcpTasks[0]?.status).toBe("failed");
+    expect(browser.mcpTasks[0]?.status).toBe("stopped");
     expect(browser.mcpTasks[0]?.lastAssistant).toBe("已手动停止");
     expect(browser.pendingChat).toBeNull();
-    const texts = () => (browser.chatSessions.get("user") || []).map((turn) => turn.text);
+    const texts = () => (browser.chatSessions.get(pageSessionKey("tab-user")) || []).map((turn) => turn.text);
     expect(texts()).toContain("已手动停止");
     expect(texts()).toContain("排队的消息也一并取消了");
     expect(logs.some((line) => line === `[task] stop ${first.taskId} state=running`)).toBe(true);

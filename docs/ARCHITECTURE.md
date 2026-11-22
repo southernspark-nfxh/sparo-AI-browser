@@ -62,7 +62,17 @@
 
 上一句没写完手册，下一句进 `chatQueue`，避免把手册写脏。
 
-任务和标签绑在一起：后台任务用 `createAgentTab` 自己的标签，工具调用带 `tabId`，不再跟用户正看着的那一页。`TaskPool` 同时最多跑 3 个后台任务，前台任务独占一条。最小化时壳层不节流。填表、发帖、采集、出报告和网页弹窗都不把窗口拉回前台，完成只 `flashFrame`，出报告只 `switchTab`。
+任务和标签绑在一起：后台任务用 `createAgentTab` 自己的标签，工具调用带 `tabId`，不再跟用户正看着的那一页。`TaskPool` 同时最多跑 3 个后台任务，前台任务独占一条。满了的后台任务进入 `queued`，不把池满当成提交失败。最小化时壳层不节流。填表、发帖、采集、出报告和网页弹窗都不把窗口拉回前台，完成只 `flashFrame`，出报告只 `switchTab`。
+
+## 指挥室、租约和四色（1.00）
+
+指挥室是 `kind: "command"` 的壳层标签。它没有 `WebContentsView`，不进网页休眠，也不能被任务占用。每扇窗口一个入口；总览、父任务组和总指挥聊天是同一份，侧栏会话按这扇窗口自己的活动页路由。
+
+页面 lease（`src/main/agent/page-lease.ts`）按 `tabId + taskId + clientId` 占用，账号环境记 `envId`。分配入口是 `allocateClientTab`。新任务不指定页就另开标签。指定的页已有租约、未结束任务或未解除的归属时返回 `tab_busy`。状态投影在 `src/main/agent/task-state.ts`：排队和进行中为绿，等待人工为黄，失败为红，完成、停止和无任务为灰。灰不表示可以复用。
+
+会话 key：总指挥 `command`，空闲页 `page:<tabId>`，任务 `tabId + taskId`。完成保留结果卡和双位置提醒；点提醒走 `focusTask`，不新建页面。知悉只消提醒。验收或明确结束才释放租约。壳层状态推送只发 `spark:chrome-state`，不 `focus`、不 `show`。
+
+重启读 `agent-task-summaries.json` 里 `schema: 1` 的行。排队和进行中恢复成失败并写明应用中断，不自动接着跑。没有 schema 的旧摘要留在文件里，不当成新任务。
 
 2026-10-31 起，`click`、`click_text`、`menu_click`、`snapshot` 若发现窗口已最小化或客户区过小，会先把窗口放到屏幕外并保持正常宽高（`agent-viewport.ts`），不 `focus`。坐标为负就拒绝点击。`fill` 和页面内赋值不走这条路径。对人说「技能」，不要说「妙招」。
 

@@ -207,7 +207,7 @@ describe("后台点击与截图", () => {
     browser.freeSoul = {
       run: async () => {
         during = browser.getTask("pending").window;
-        return { ok: true, text: "发完了" };
+        return { ok: true, text: "发完了", verification: { items: [{ name: "发出", ok: true }] } };
       },
     };
     const submitted = browser.submitTask("发一条微博", { clientId: "bg1" });

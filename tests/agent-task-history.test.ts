@@ -155,18 +155,27 @@ describe("T82 同 client 并行任务不共享进行中的对话", () => {
     expect(suiHist).not.toContain("清朝");
     expect(qingHist).not.toContain("隋朝");
 
-    browser.selectSession("agent:ding");
-    const side = browser.getSidebarPayload() as { chat: Array<{ text: string }> };
-    const shown = side.chat.map((turn) => turn.text).join("\n");
-    expect(shown).toContain("写一段隋朝导言");
-    expect(shown).toContain("写一段清朝导言");
-    expect(book(browser).has(`agent:ding/${sui.taskId}`)).toBe(true);
-    expect(book(browser).has(`agent:ding/${qing.taskId}`)).toBe(true);
+    const suiKey = `page:agent-tab-1/task:${sui.taskId}`;
+    const qingKey = `page:agent-tab-2/task:${qing.taskId}`;
+    browser.switchTab("agent-tab-1");
+    const suiSide = browser.getSidebarPayload() as { chat: Array<{ text: string }> };
+    const suiShown = suiSide.chat.map((turn) => turn.text).join("\n");
+    expect(suiShown).toContain("写一段隋朝导言");
+    expect(suiShown).not.toContain("清朝");
+    browser.switchTab("agent-tab-2");
+    const qingSide = browser.getSidebarPayload() as { chat: Array<{ text: string }> };
+    const qingShown = qingSide.chat.map((turn) => turn.text).join("\n");
+    expect(qingShown).toContain("写一段清朝导言");
+    expect(qingShown).not.toContain("隋朝");
+    expect(book(browser).has("agent:ding")).toBe(false);
+    expect(book(browser).has(suiKey)).toBe(true);
+    expect(book(browser).has(qingKey)).toBe(true);
 
     releaseSui();
     releaseQing();
     await waitIdle(browser);
-    expect(book(browser).has(`agent:ding/${sui.taskId}`)).toBe(false);
+    expect(book(browser).has(suiKey)).toBe(true);
+    expect(book(browser).has(qingKey)).toBe(true);
     expect(book(browser).has(`agent:ding/${qing.taskId}`)).toBe(false);
   });
 
@@ -184,9 +193,10 @@ describe("T82 同 client 并行任务不共享进行中的对话", () => {
     browser.submitTask("写一段清朝导言", { clientId: "ding" });
     await waitIdle(browser);
     const second = histories[1].map((turn) => turn.text).join("\n");
-    expect(second).toContain("写一段隋朝导言");
-    expect(second).toContain("隋朝导言写好了");
+    expect(second).not.toContain("写一段隋朝导言");
+    expect(second).not.toContain("隋朝导言写好了");
     expect(histories[0].map((turn) => turn.text).join("\n")).not.toContain("清朝");
+    expect(book(browser).has("agent:ding")).toBe(false);
   });
 
   it("两边都结束后，第三句看得到两份问答，跑的时候没有互吸", async () => {
@@ -241,10 +251,11 @@ describe("T82 同 client 并行任务不共享进行中的对话", () => {
     browser.submitTask("接着写明朝", { clientId: "ding" });
     await waitIdle(browser);
     const text = third.map((turn) => turn.text).join("\n");
-    expect(text).toContain("写一段隋朝导言");
-    expect(text).toContain("隋朝导言写好了");
-    expect(text).toContain("写一段清朝导言");
-    expect(text).toContain("清朝导言写好了");
+    expect(text).not.toContain("写一段隋朝导言");
+    expect(text).not.toContain("隋朝导言写好了");
+    expect(text).not.toContain("写一段清朝导言");
+    expect(text).not.toContain("清朝导言写好了");
+    expect(text).toContain("接着写明朝");
   });
 
   it("client 卷里活任务标过的轮不进新任务的种子，拷贝不共享引用", async () => {
@@ -275,21 +286,20 @@ describe("T82 同 client 并行任务不共享进行中的对话", () => {
         return { ok: true, text: "清朝导言写好了" };
       },
     };
-    const sui = browser.submitTask("写一段隋朝导言", { clientId: "ding" });
+    browser.submitTask("写一段隋朝导言", { clientId: "ding" });
     await suiIn;
     const clientTurns = book(browser).get("agent:ding") || [];
-    const seeded = book(browser).get(`agent:ding/${sui.taskId}`) || [];
-    expect(seeded[0]).not.toBe(clientTurns[0]);
-    expect(seeded[0]?.task).toBeUndefined();
-    clientTurns.push({ role: "assistant", text: "隋朝中间轮", task: sui.taskId });
+    expect(clientTurns.map((turn) => turn.text)).toEqual(["前朝问答"]);
+    clientTurns.push({ role: "assistant", text: "隋朝中间轮" });
     browser.submitTask("写一段清朝导言", { clientId: "ding" });
     await qingIn;
     releaseSui();
     await waitIdle(browser);
     const text = qingHistory.map((turn) => turn.text).join("\n");
-    expect(text).toContain("前朝问答");
+    expect(text).not.toContain("前朝问答");
     expect(text).not.toContain("隋朝");
     expect(text).not.toContain("隋朝中间轮");
+    expect(book(browser).get("agent:ding")?.map((turn) => turn.text)).toEqual(["前朝问答", "隋朝中间轮"]);
   });
 
   it("任务卷结束后清掉；client 卷在没有活任务也没有标签时清掉，并复位选中会话", async () => {
@@ -311,23 +321,25 @@ describe("T82 同 client 并行任务不共享进行中的对话", () => {
     };
     const sui = browser.submitTask("写一段隋朝导言", { clientId: "ding" });
     await inside;
-    const taskKey = `agent:ding/${sui.taskId}`;
+    const taskKey = `page:agent-tab-1/task:${sui.taskId}`;
+    book(browser).set("agent:ding", [{ role: "user", text: "旧总卷" }]);
     browser.selectedSession = taskKey;
     browser.pruneDeadAgentChats();
     expect(book(browser).has(taskKey)).toBe(true);
     expect(browser.selectedSession).toBe(taskKey);
     release();
     await waitIdle(browser);
-    expect(book(browser).has(taskKey)).toBe(false);
+    expect(book(browser).has(taskKey)).toBe(true);
 
     browser.selectedSession = "agent:ding";
     browser.pruneDeadAgentChats();
     expect(book(browser).has("agent:ding")).toBe(true);
-    expect(browser.selectedSession).toBe("agent:ding");
 
     browser.tabs = new Map();
+    browser.taskPool.tasks.splice(0, browser.taskPool.tasks.length);
     browser.pruneDeadAgentChats();
-    expect(book(browser).has("agent:ding")).toBe(false);
+    expect(book(browser).has("agent:ding")).toBe(true);
+    expect(book(browser).has(taskKey)).toBe(true);
     expect(browser.selectedSession).toBe("user");
   });
 
@@ -339,12 +351,12 @@ describe("T82 同 client 并行任务不共享进行中的对话", () => {
         return { ok: true, text: "收尾" };
       },
     };
-    browser.submitTask("写一段隋朝导言", { clientId: "ding" });
+    const submitted = browser.submitTask("写一段隋朝导言", { clientId: "ding" });
     await waitIdle(browser);
-    const turns = book(browser).get("agent:ding") || [];
-    expect(turns.length).toBe(60);
-    expect(turns[turns.length - 1]?.text).toBe("收尾");
-    expect(turns.every((turn) => turn.task)).toBe(true);
+    const turns = book(browser).get(`page:agent-tab-1/task:${submitted.taskId}`) || [];
+    expect(book(browser).get("agent:ding") || []).toHaveLength(0);
+    expect(turns.some((turn) => turn.text === "第69轮")).toBe(true);
+    expect(turns.some((turn) => turn.text === "收尾")).toBe(true);
   });
 });
 

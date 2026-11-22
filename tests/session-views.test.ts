@@ -30,6 +30,7 @@ vi.mock("electron", () => ({
 import { SparkBrowser } from "../src/main/browser.js";
 import { TaskPool } from "../src/main/agent/task-pool.js";
 import { registerClientName, resetMcpSessions } from "../src/main/agent/mcp-sessions.js";
+import { taskSessionKey } from "../src/main/agent/session-key.js";
 
 afterEach(() => resetMcpSessions());
 
@@ -57,20 +58,18 @@ describe("T61 使用中只列当前", () => {
 
     expect(browser.sessionViews().map((item) => item.key)).toEqual(["user"]);
     expect(browser.selectedSession).toBe("user");
-    expect(browser.chatSessions.has("agent:a")).toBe(false);
-    expect(browser.chatSessions.has("agent:b")).toBe(false);
-    expect(browser.chatSessions.has("agent:c")).toBe(false);
+    expect(browser.chatSessions.has("agent:a")).toBe(true);
+    expect(browser.chatSessions.has("agent:b")).toBe(true);
+    expect(browser.chatSessions.has("agent:c")).toBe(true);
 
-    browser.chatSessions.set("agent:a", []);
-    browser.chatSessions.set("agent:b", []);
-    browser.chatSessions.set("agent:c", []);
+    browser.tabs.set("page-b", { id: "page-b" });
     browser.taskPool.start({
       id: "job",
-      tabId: "",
+      tabId: "page-b",
       title: "还在跑",
       lane: "background",
       clientId: "b",
     });
-    expect(browser.sessionViews().map((item) => item.key)).toEqual(["user", "agent:b"]);
+    expect(browser.sessionViews().map((item) => item.key)).toEqual(["user", taskSessionKey("page-b", "job")]);
   });
 });

@@ -1,4 +1,13 @@
 import { randomBytes } from "node:crypto";
+import {
+  acquireLease,
+  activeLeaseForTab,
+  activeLeasesForClient,
+  releaseLease,
+  resetPageLeases,
+  type PageLease,
+} from "./page-lease.js";
+import { canReusePage, type PageReuseSnapshot } from "./task-state.js";
 import { SIDEBAR_CLIENT_ID } from "./sidebar-tab.js";
 
 export const AGENT_COLORS = [
@@ -32,6 +41,7 @@ export function resetMcpSessions(): void {
   owners.clear();
   tabSeats.clear();
   nextSeat = 1;
+  resetPageLeases();
 }
 
 /** 接入顺序，从 1 起。没登记过返回 undefined。 */
@@ -130,9 +140,9 @@ export function clientTabId(clientId: string): string | undefined {
   return sessions.get(String(clientId || "").trim())?.tabId;
 }
 
-const LIVE_TAB_STATES = new Set(["running", "queued", "waiting_human"]);
+const BLOCKING_TAB_STATES = new Set(["running", "queued", "waiting_human", "failed", "done", "stopped"]);
 
-/** 只有本 client 自己的活任务占着这张标签才算忙。别人占着不算。 */
+/** 任一 client 的未释放任务或有效租约都算忙。不再把「别人占着」排除在外。 */
 export function candidateTabBusy(input: {
   clientId: string;
   candidateTabId: string;
@@ -140,8 +150,9 @@ export function candidateTabBusy(input: {
 }): boolean {
   const tabId = String(input.candidateTabId || "").trim();
   if (!tabId) return false;
+  if (activeLeaseForTab(tabId)) return true;
   return input.live.some(
-    (task) => task.clientId === input.clientId && task.tabId === tabId && LIVE_TAB_STATES.has(String(task.state || "")),
+    (task) => task.tabId === tabId && BLOCKING_TAB_STATES.has(String(task.state || "")),
   );
 }
 
@@ -171,32 +182,157 @@ export function issueClientId(): string {
   return randomBytes(4).toString("hex").slice(0, 6);
 }
 
-/**
- * 有 clientId 时，不带 tabId 的操作落在该 client 最近的标签上。
- * 还没有就新建标签。侧栏是人自己在对话框里派活，新标签切到前台给人看；
- * 其余 client 不抢用户当前页。
- * 没有 clientId 时保持旧行为：显式 tabId 照传，否则 undefined（当前激活标签）。
- */
-export function bindClientTab(opts: {
+export type PageOccupancy = {
+  openTask?: boolean;
+  agentOwned?: boolean;
+};
+
+export type AllocateRequest = {
+  /** task：新任务默认新开页。address：已有页只核对所有权，不重复占用。 */
+  intent?: "task" | "address";
   clientId?: string;
   tabId?: string;
+  taskId?: string;
+  envId?: string;
+  /** 原任务续跑。必须 taskId、tabId、clientId 同时对上。 */
+  resume?: boolean;
   knownTabIds: string[];
   createAgentTab: (activate?: boolean) => string;
-  /** 候选标签正被本 client 另一个活任务占着。别的 client 占着时调用方传 false。 */
+  occupancy?: (tabId: string) => PageOccupancy;
+  /** 旧参数。占用判断改看租约，不再使用。 */
   candidateBusy?: boolean;
-}): string | undefined {
+};
+
+export type AllocateResult =
+  | { ok: true; tabId: string; leaseId: string; created: boolean }
+  | { ok: false; error: "tab_busy" };
+
+function ownerClientId(tabId: string): string {
+  const owner = owners.get(tabId);
+  return owner ? String(owner) : "";
+}
+
+function pageCanBeTaken(tabId: string, occupancy?: (tabId: string) => PageOccupancy): boolean {
+  const lease = activeLeaseForTab(tabId);
+  const owner = ownerClientId(tabId);
+  const extra = occupancy?.(tabId);
+  const snapshot: PageReuseSnapshot = {
+    hasAgent: Boolean(lease || owner || extra?.agentOwned),
+    hasOpenTask: Boolean(lease || extra?.openTask),
+    leaseActive: Boolean(lease),
+    released: !lease,
+    idle: !lease && !owner && !extra?.agentOwned && !extra?.openTask,
+  };
+  return canReusePage(snapshot);
+}
+
+function knownTab(tabId: string, known: string[]): boolean {
+  return known.includes(tabId);
+}
+
+function hold(clientId: string, tabId: string, taskId: string, envId?: string): AllocateResult {
+  const acquired = acquireLease({ tabId, taskId, clientId, envId });
+  if (!acquired.ok) return acquired;
+  rememberClientTab(clientId, tabId);
+  return { ok: true, tabId, leaseId: acquired.lease.leaseId, created: false };
+}
+
+/**
+ * 新任务才占用。已经属于自己的页面只核对，不重新占用，也不报 tab_busy。
+ * 没指定页面的新任务一律新开，不拿最近页，也不拿用户当前页。
+ */
+export function allocateClientTab(opts: AllocateRequest): AllocateResult {
+  const clientId = String(opts.clientId || "").trim();
   const explicit = String(opts.tabId || "").trim();
-  if (!opts.clientId) return explicit || undefined;
-  if (explicit) {
-    rememberClientTab(opts.clientId, explicit);
-    return explicit;
+  const intent = opts.intent || "address";
+  const taskId = String(opts.taskId || "").trim();
+  if (!clientId) return { ok: true, tabId: explicit, leaseId: "", created: false };
+
+  if (intent === "task" && opts.resume) {
+    if (!explicit || !taskId || !knownTab(explicit, opts.knownTabIds)) return { ok: false, error: "tab_busy" };
+    const lease = activeLeaseForTab(explicit);
+    if (!lease || lease.clientId !== clientId || lease.taskId !== taskId) return { ok: false, error: "tab_busy" };
+    rememberClientTab(clientId, explicit);
+    return { ok: true, tabId: explicit, leaseId: lease.leaseId, created: false };
   }
-  const current = sessions.get(opts.clientId)?.tabId;
-  if (current && opts.knownTabIds.includes(current) && !opts.candidateBusy) return current;
-  const activate = opts.clientId === SIDEBAR_CLIENT_ID;
-  const created = opts.createAgentTab(activate);
-  rememberClientTab(opts.clientId, created);
-  return created;
+
+  if (explicit) {
+    const lease = activeLeaseForTab(explicit);
+    if (lease) {
+      const sameTask = !taskId || lease.taskId === taskId;
+      if (lease.clientId === clientId && (intent === "address" || sameTask)) {
+        rememberClientTab(clientId, explicit);
+        return { ok: true, tabId: explicit, leaseId: lease.leaseId, created: false };
+      }
+      return { ok: false, error: "tab_busy" };
+    }
+    const owner = ownerClientId(explicit);
+    if (intent === "address" && owner === clientId) {
+      rememberClientTab(clientId, explicit);
+      return { ok: true, tabId: explicit, leaseId: "", created: false };
+    }
+    if (!knownTab(explicit, opts.knownTabIds) || !pageCanBeTaken(explicit, opts.occupancy)) {
+      return { ok: false, error: "tab_busy" };
+    }
+    return hold(clientId, explicit, taskId || `open:${explicit}`, opts.envId);
+  }
+
+  if (intent === "address") {
+    const mine = activeLeasesForClient(clientId)
+      .filter((lease) => knownTab(lease.tabId, opts.knownTabIds))
+      .sort((a, b) => b.boundAt - a.boundAt);
+    const recentLease = mine[0];
+    if (recentLease) {
+      rememberClientTab(clientId, recentLease.tabId);
+      return { ok: true, tabId: recentLease.tabId, leaseId: recentLease.leaseId, created: false };
+    }
+    const recent = sessions.get(clientId)?.tabId || "";
+    if (recent && knownTab(recent, opts.knownTabIds) && ownerClientId(recent) === clientId) {
+      const foreign = activeLeaseForTab(recent);
+      if (!foreign || foreign.clientId === clientId) {
+        rememberClientTab(clientId, recent);
+        return { ok: true, tabId: recent, leaseId: foreign?.leaseId || "", created: false };
+      }
+    }
+  }
+
+  const created = opts.createAgentTab(clientId === SIDEBAR_CLIENT_ID);
+  const createdId = String(created || "").trim();
+  if (!createdId) return { ok: false, error: "tab_busy" };
+  const acquired = acquireLease({
+    tabId: createdId,
+    taskId: taskId || `open:${createdId}`,
+    clientId,
+    envId: opts.envId,
+  });
+  if (!acquired.ok) return acquired;
+  rememberClientTab(clientId, createdId);
+  return { ok: true, tabId: createdId, leaseId: acquired.lease.leaseId, created: true };
+}
+
+/** 兼容旧调用。抢占失败时返回 undefined，需要稳定错误码时用 allocateClientTab。 */
+export function bindClientTab(opts: AllocateRequest): string | undefined {
+  const result = allocateClientTab(opts);
+  if (!result.ok) return undefined;
+  return result.tabId || undefined;
+}
+
+/** 释放这一页的租约，并清掉这一页的归属。同一 Agent 的其他页不动。 */
+export function releaseClientLease(
+  ref: { leaseId?: string; tabId?: string; taskId?: string },
+  reason: string,
+): { ok: true; already: boolean; lease: PageLease } | { ok: false; error: "lease_missing" } {
+  const result = releaseLease(ref, reason);
+  if (!result.ok || result.already) return result;
+  const tabId = result.lease.tabId;
+  owners.delete(tabId);
+  tabSeats.delete(tabId);
+  const session = sessions.get(result.lease.clientId);
+  if (session?.tabId === tabId) {
+    const another = [...owners.entries()].find(([, owner]) => owner === result.lease.clientId)?.[0];
+    session.tabId = another;
+  }
+  return result;
 }
 
 export function listClientSessions(): ClientSession[] {

@@ -274,7 +274,7 @@ export async function uploadFile(selector, file, tabId, expect) {
   const gated = await gateTool("upload", tabId, expect);
   if (typeof gated === "string") return gated;
   const picked = selector && typeof selector === "object" ? selector : { selector };
-  const args = { files: [file], tabId: gated.tabId };
+  const args = { files: Array.isArray(file) ? file : [file], tabId: gated.tabId };
   if (picked.ref) args.ref = picked.ref;
   if (picked.selector) args.selector = picked.selector;
   return call("upload", args);

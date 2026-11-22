@@ -20,54 +20,46 @@ function loadFn(name: string) {
   throw new Error(`unclosed ${name}`);
 }
 
-describe("T53 页面归属条", () => {
-  it("横幅高度从页面洞里扣掉，隐藏时原样返回", () => {
+describe("页面侧栏状态区", () => {
+  it("旧横幅高度不再从页面洞里扣掉", () => {
     const holeRectWithBanner = loadFn("holeRectWithBanner") as (
       rect: { left: number; top: number; width: number; height: number },
       bannerH: number,
     ) => { x: number; y: number; width: number; height: number };
     const rect = { left: 0, top: 76, width: 900, height: 700 };
     expect(holeRectWithBanner(rect, 0)).toEqual({ x: 0, y: 76, width: 900, height: 700 });
-    expect(holeRectWithBanner(rect, 32)).toEqual({ x: 0, y: 108, width: 900, height: 668 });
+    expect(holeRectWithBanner(rect, 32)).toEqual({ x: 0, y: 76, width: 900, height: 700 });
     expect(holeRectWithBanner({ left: 4, top: 80, width: 200, height: 100 }, 500)).toEqual({
       x: 4,
-      y: 100,
+      y: 80,
       width: 200,
-      height: 80,
+      height: 100,
     });
   });
 
-  it("四种状态的横幅文案", () => {
-    const agentBannerText = loadFn("agentBannerText") as (tab: Record<string, unknown>) => string;
-    expect(agentBannerText({ agentName: "Agent 甲", agentSeat: 1, agentState: "running", agentRound: 3 })).toBe(
-      "1号工位正在办公 · Agent 甲 · 第 3 轮 · 正在读页",
-    );
-    expect(agentBannerText({ agentName: "Agent 甲", agentSeat: 1, agentState: "waiting_human" })).toBe(
-      "1号工位等你拍板 · Agent 甲 · 需要登录",
-    );
-    expect(agentBannerText({ agentName: "Agent 甲", agentSeat: 1, agentState: "queued" })).toBe(
-      "1号工位排队候场 · Agent 甲",
-    );
-    expect(agentBannerText({ agentName: "Agent 甲", agentSeat: 1, agentState: "done" })).toBe(
-      "1号工位已下班 · Agent 甲 · 页面已休眠",
-    );
-    expect(agentBannerText({ agentName: "侧栏", agentSeat: 0, agentState: "running", agentRound: 1 })).toBe(
-      "侧栏工位正在办公 · 侧栏 · 第 1 轮 · 正在读页",
-    );
-    expect(agentBannerText({ agentName: "侧栏", agentSeat: 0, agentState: "done" })).toBe(
-      "侧栏工位已下班 · 侧栏 · 页面已休眠",
-    );
-  });
-
-  it("使用中行贴在侧栏滚动区顶部", () => {
+  it("状态区贴在侧栏顶部，页面洞里不再放旧横幅", () => {
     const shell = readFileSync(join(process.cwd(), "src/renderer/shell.html"), "utf8");
-    const css = shell.slice(shell.indexOf(".agent-roster {"), shell.indexOf(".agent-roster[hidden]"));
-    expect(css).toContain("position: sticky;");
-    expect(css).toContain("top: 0;");
-    expect(css).toContain("z-index: 1;");
-    expect(css).toContain("background: var(--side);");
-    expect(shell).toContain(".agent-roster[hidden] { display: none; }");
-    expect(shell).toContain("function renderAgentRoster");
+    const hole = shell.slice(shell.indexOf('id="pageHole"'), shell.indexOf('<aside class="sidebar'));
+    expect(hole).not.toContain('id="agentBanner"');
+    const sideAt = shell.indexOf('<aside class="sidebar');
+    const statusAt = shell.indexOf('id="pageStatus"');
+    const threadAt = shell.indexOf('<div class="thread">');
+    expect(statusAt).toBeGreaterThan(sideAt);
+    expect(threadAt).toBeGreaterThan(statusAt);
+    expect(shell.slice(sideAt, threadAt)).toContain("静止／无 Agent");
+    expect(shell).toContain('.page-status[data-tone="green"]');
+    expect(shell).toContain('.page-status[data-tone="red"]');
+    expect(shell).toContain('.page-status[data-tone="yellow"]');
+    expect(shell).toContain('.page-status[data-tone="gray"]');
+    const report = shell.slice(shell.indexOf("reportHole = () =>"), shell.indexOf("if (typeof ResizeObserver"));
+    expect(report).not.toContain("agentBanner");
+    expect(report).not.toContain("offsetHeight");
+    const chrome = shell.slice(shell.indexOf("function renderChrome"), shell.indexOf("function navigateFromBar"));
+    expect(chrome).not.toContain("agentColor");
+    const status = shell.slice(shell.indexOf("function renderPageStatus"), shell.indexOf("function renderCommandRoom"));
+    expect(status).toContain("dataset.tone");
+    expect(status).not.toContain("agentColor");
+    expect(status).not.toContain("正在努力");
   });
 
   it("顶栏高度和网格没被改", () => {
@@ -76,6 +68,5 @@ describe("T53 页面归属条", () => {
     expect(browser).toContain("const CHROME_H = 76;");
     expect(shell).toContain("grid-template-rows: env(titlebar-area-height, 36px) 40px 1fr;");
     expect(shell).not.toContain("insertCSS");
-    expect(shell).toContain('console.log("[banner]"');
   });
 });

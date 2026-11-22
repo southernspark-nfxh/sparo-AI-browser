@@ -4,6 +4,23 @@
 > 通过只看 `%APPDATA%\sparo-store\` 底账。侧栏看起来像成了，不算。
 > 2026-10-27 这一轮没有打开 Sparo 窗口重跑 G1–G8，也没有重打包。单测覆盖写在每条下面。实机栏留空，跑完把结果写进本文件，不要只改聊天记录。
 
+## 1.00 指挥室红线（2026-11-19）
+
+开发窗自动化可以核对分配、颜色、租约、会话和恢复。它不能代替安装包，也不能代替人在窗口里看真实页面。
+
+本轮没有打包，没有复测安装包 G1、G2、G3，没有重启隔离开发实例，也没有核对 `%APPDATA%\sparo-store` 里的真实底账。下面标「未跑」的，不能写成通过。
+
+| 红线 | 开发窗自动化 | 实机 / 安装包 |
+|---|---|---|
+| 1–5 开页、防抢占、空闲复用、独占 | `tests/multi-agent-combo.test.ts`、`tests/page-lease.test.ts`、`tests/agent-tab-busy.test.ts` | 未跑 |
+| 6–10 四色与三处一致 | `tests/task-projection.test.ts`、`tests/task-intervention.test.ts`、`tests/task-lifecycle.test.ts` | 未跑 |
+| 11–14 结果、双提醒、回原页、不抢前台 | `tests/task-attention.test.ts`、`tests/command-room-multiwindow.test.ts` | 未跑 |
+| 15–16 会话隔离、步骤不刷总指挥 | `tests/page-session-routing.test.ts`、`tests/task-projection.test.ts`、`tests/cross-page-task.test.ts` | 未跑 |
+| 重启恢复 | `tests/task-recovery.test.ts`（隔离临时目录，不是进程重启） | 未跑 |
+| G1 打开微博、G2 近三天微博、G3 阅读页后采集 | 各条下面的单测不断言窗口和文档真的出现 | 安装包未跑 |
+
+任务恢复账在 `%APPDATA%\sparo-store\agent-task-summaries.json`。`schema: 1` 的行才是 1.00 恢复记录。聊天仍看 `chat-memory.json`。侧栏看起来完成，不算。
+
 底账：
 
 | 文件 | 是什么 |
@@ -11,6 +28,7 @@
 | `%APPDATA%\sparo-store\missions.jsonl` | 一行一个 JSON。`op` 为 `open` / `turn` / `close` |
 | `%APPDATA%\sparo-store\chat-memory.json` | 侧栏最近 40 句，数组，元素有 `role` 和 `text` |
 | `%APPDATA%\sparo-store\reports\` | 报告页文件 |
+| `%APPDATA%\sparo-store\agent-task-summaries.json` | 任务恢复账。只有 `schema: 1` 的行会在重启时收回任务池 |
 
 共用核对（先跑这段，再看每条的期望）：
 

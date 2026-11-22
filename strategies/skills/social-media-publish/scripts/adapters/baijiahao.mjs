@@ -55,7 +55,7 @@ async function modalText(ctx) {
 }
 
 /** 等图片模态框显示「上传成功」并且真的摆上屏幕，再点确认。 */
-async function waitUploaded(ctx, beforeText) {
+async function waitUploaded(ctx, beforeText, expected = 1) {
   const deadline = Date.now() + 20000;
   while (Date.now() <= deadline) {
     const read = await page(
@@ -76,7 +76,7 @@ async function waitUploaded(ctx, beforeText) {
     if (/上传失败/.test(text)) return fail("UPLOAD_FAILED", { text }, "百家号图片弹层报上传失败");
     const matched = text.match(/(\d+)\s*张\s*上传(?:成功|完成)/);
     const count = matched ? Number(matched[1]) : 0;
-    if (count >= 1 && text !== beforeText) {
+    if (count >= expected && text !== beforeText) {
       const enabled = await page(
         ctx,
         "(() => { const mod = document.querySelector('.cheetah-ui-pro-image-modal'); const btn = mod && mod.querySelector('.cheetah-modal-footer button.cheetah-btn-primary'); if (!btn) return JSON.stringify({ btnDisabled: true }); const disabled = !!btn.disabled || btn.getAttribute('aria-disabled') === 'true' || /disabled/.test(String(btn.className)); return JSON.stringify({ btnDisabled: disabled }); })()",
@@ -86,7 +86,7 @@ async function waitUploaded(ctx, beforeText) {
     }
     await sleep(500);
   }
-  return fail("UPLOAD_UNCONFIRMED", "", "上传张数未到 1 或确认按钮仍不可用");
+  return fail("UPLOAD_UNCONFIRMED", { expected }, "上传张数未到 " + expected + " 或确认按钮仍不可用");
 }
 
 /** 上一张图确认后，弹层有时缩成只剩「取消 / 确认」并挡住下一次上传。这种空壳先关掉。 */
@@ -344,104 +344,121 @@ export const baijiahao = {
     let html = live.detail?.html || ctx.bodyHtmlLive || withImageSlots(ctx.bodyHtml, ctx.images.length);
     const seen = live.detail?.marks || [];
     const pending = new Set(seen.length || !html.includes("@@IMG") ? seen : html.match(/@@IMG\d+@@/g) || []);
+    const pendingItems = [];
     for (let index = 0; index < ctx.images.length; index++) {
       const mark = "@@IMG" + (index + 1) + "@@";
       if (!pending.has(mark)) continue;
-      const file = ctx.images[index];
-      const cleared = await dismissStaleImageModal(ctx);
-      if (!cleared.ok) return cleared;
-      const beforeSrcs = await readImageSrcs(ctx);
-      const beforeModal = await modalText(ctx);
-      // 刚进编辑页时工具栏还没渲染，先等插图入口出现，别急着点
-      let entry = false;
-      for (let wait = 0; wait < 12 && !entry; wait++) {
-        entry = await page(
-          ctx,
-          "(() => { const el = document.querySelector('.edui-for-insertimage'); if (!el) return JSON.stringify({ ok: false }); const r = el.getBoundingClientRect(); return JSON.stringify({ ok: r.width > 0 && r.height > 0 }); })()",
-        ).then((r) => !!r.value?.ok);
-        if (!entry) await sleep(400);
-      }
-      if (!entry) return fail("IMAGE_ENTRY_MISSING", file, "工具栏一直没渲染出插图入口");
-      // 续跑时弹窗可能已经开着，不能再点工具栏把它关掉。
-      const probeImageModal = async () =>
-        page(
-          ctx,
-          "(() => {" +
-            "const el = document.querySelector('.cheetah-ui-pro-image-modal');" +
-            "const r = el ? el.getBoundingClientRect() : null;" +
-            "const open = !!r && r.width > 0 && r.height > 0;" +
-            "const hasImage = !!(el && el.querySelector('input[type=file][accept*=image]'));" +
-            "return JSON.stringify({ open, hasImage });" +
-            "})()",
-        );
-      let popped = await probeImageModal();
-      if (popped.stop) return popped.stop;
-      if (!popped.value?.open) {
-        // 后台标签里 UEditor 保有焦点时，弹窗会被遮罩立刻关掉；先失焦再真实点击。
-        await page(ctx, "(() => { const ed = window.UE_V2?.instants?.ueditorInstant0; if (ed?.body) ed.body.blur(); return JSON.stringify({ ok: true }); })()");
-        const opened = await click(".edui-for-insertimage .edui-icon", ctx.tabId);
-        if (!/"ok"\s*:\s*true/.test(String(opened))) {
-          console.error("[baijiahao] image entry click:", String(opened).slice(0, 200));
-        }
-        for (let wait = 0; wait < 10 && !popped.value?.open; wait++) {
-          await sleep(500);
-          popped = await probeImageModal();
-          if (popped.stop) return popped.stop;
-        }
-      }
-      if (!popped.value?.open) {
-        // 实测兜底：隐藏标签的真实点击偶发不触发回调，按平台事件序列补一次。
-        const fired = await page(
-          ctx,
-          "(() => {" +
-            "const ed = window.UE_V2?.instants?.ueditorInstant0;" +
-            "const icon = document.querySelector('.edui-for-insertimage .edui-icon');" +
-            "if (!icon) return JSON.stringify({ ok: false });" +
-            "if (ed?.body) ed.body.blur();" +
-            "const r = icon.getBoundingClientRect();" +
-            "const o = { bubbles: true, cancelable: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0 };" +
-            "icon.dispatchEvent(new MouseEvent('mousedown', o));" +
-            "icon.dispatchEvent(new MouseEvent('mouseup', o));" +
-            "icon.dispatchEvent(new MouseEvent('click', o));" +
-            "return JSON.stringify({ ok: true });" +
-            "})()",
-        );
-        if (fired.stop) return fired.stop;
-        for (let wait = 0; wait < 10 && !popped.value?.open; wait++) {
-          await sleep(500);
-          popped = await probeImageModal();
-          if (popped.stop) return popped.stop;
-        }
-      }
-      if (!popped.value?.open) return fail("IMAGE_MODAL_MISSING", popped.value, "百家号插图弹窗没有打开");
-      const blocked = await guard(ctx);
-      if (blocked) return blocked;
-      // 只认图片模态框里的 image input，避免抓到视频上传框
-      const uploaded = await uploadPicked(ctx, file, "", true);
-      if (!uploaded.ok) return uploaded;
-      const ready = await waitUploaded(ctx, beforeModal);
-      if (!ready.ok) return ready;
-      const confirmed = await confirmImageModal(ctx);
-      if (!confirmed.ok) return confirmed;
-      // 确认后正文里必须多出一张图，才算这次插入成功
-      let src = "";
-      const deadline = Date.now() + 10000;
-      while (Date.now() <= deadline) {
-        const srcs = await readImageSrcs(ctx);
-        src = srcs.find((item) => !beforeSrcs.includes(item)) || "";
-        // 同一张图再传一次时，图床会给出已经出现过的地址，张数增加就算这张成功。
-        if (!src && srcs.length > beforeSrcs.length) src = srcs[srcs.length - 1];
-        if (src) break;
-        await sleep(500);
-      }
-      if (!src) return fail("IMAGES_UNREAD", file, "确认后正文没有出现新图片");
-      html = html.replace(mark, '<img src="' + src.replace(/"/g, "") + '">');
-      const rewritten = await setUeContent(ctx, html);
-      if (!rewritten.ok) return rewritten;
-      ctx.bodyHtmlLive = html;
+      pendingItems.push({ mark, file: ctx.images[index] });
     }
+    if (!pendingItems.length) {
+      ctx.imageCount = ctx.images.length;
+      return pass({ count: ctx.imageCount, resumed: true });
+    }
+    const cleared = await dismissStaleImageModal(ctx);
+    if (!cleared.ok) return cleared;
+    const beforeSrcs = await readImageSrcs(ctx);
+    const beforeModal = await modalText(ctx);
+    // 刚进编辑页时工具栏还没渲染，先等插图入口出现，别急着点
+    let entry = false;
+    for (let wait = 0; wait < 12 && !entry; wait++) {
+      entry = await page(
+        ctx,
+        "(() => { const el = document.querySelector('.edui-for-insertimage'); if (!el) return JSON.stringify({ ok: false }); const r = el.getBoundingClientRect(); return JSON.stringify({ ok: r.width > 0 && r.height > 0 }); })()",
+      ).then((r) => !!r.value?.ok);
+      if (!entry) await sleep(400);
+    }
+    if (!entry) return fail("IMAGE_ENTRY_MISSING", pendingItems.map((item) => item.file), "工具栏一直没渲染出插图入口");
+    // 续跑时弹窗可能已经开着，不能再点工具栏把它关掉。
+    const probeImageModal = async () =>
+      page(
+        ctx,
+        "(() => {" +
+          "const el = document.querySelector('.cheetah-ui-pro-image-modal');" +
+          "const r = el ? el.getBoundingClientRect() : null;" +
+          "const open = !!r && r.width > 0 && r.height > 0;" +
+          "const hasImage = !!(el && el.querySelector('input[type=file][accept*=image]'));" +
+          "return JSON.stringify({ open, hasImage });" +
+          "})()",
+      );
+    let popped = await probeImageModal();
+    if (popped.stop) return popped.stop;
+    if (!popped.value?.open) {
+      // 后台标签里 UEditor 保有焦点时，弹窗会被遮罩立刻关掉；先失焦再真实点击。
+      await page(ctx, "(() => { const ed = window.UE_V2?.instants?.ueditorInstant0; if (ed?.body) ed.body.blur(); return JSON.stringify({ ok: true }); })()");
+      const opened = await click(".edui-for-insertimage .edui-icon", ctx.tabId);
+      if (!/"ok"\s*:\s*true/.test(String(opened))) {
+        console.error("[baijiahao] image entry click:", String(opened).slice(0, 200));
+      }
+      for (let wait = 0; wait < 10 && !popped.value?.open; wait++) {
+        await sleep(500);
+        popped = await probeImageModal();
+        if (popped.stop) return popped.stop;
+      }
+    }
+    if (!popped.value?.open) {
+      // 实测兜底：隐藏标签的真实点击偶发不触发回调，按平台事件序列补一次。
+      const fired = await page(
+        ctx,
+        "(() => {" +
+          "const ed = window.UE_V2?.instants?.ueditorInstant0;" +
+          "const icon = document.querySelector('.edui-for-insertimage .edui-icon');" +
+          "if (!icon) return JSON.stringify({ ok: false });" +
+          "if (ed?.body) ed.body.blur();" +
+          "const r = icon.getBoundingClientRect();" +
+          "const o = { bubbles: true, cancelable: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0 };" +
+          "icon.dispatchEvent(new MouseEvent('mousedown', o));" +
+          "icon.dispatchEvent(new MouseEvent('mouseup', o));" +
+          "icon.dispatchEvent(new MouseEvent('click', o));" +
+          "return JSON.stringify({ ok: true });" +
+          "})()",
+      );
+      if (fired.stop) return fired.stop;
+      for (let wait = 0; wait < 10 && !popped.value?.open; wait++) {
+        await sleep(500);
+        popped = await probeImageModal();
+        if (popped.stop) return popped.stop;
+      }
+    }
+    if (!popped.value?.open) return fail("IMAGE_MODAL_MISSING", popped.value, "百家号插图弹窗没有打开");
+    const blocked = await guard(ctx);
+    if (blocked) return blocked;
+    // 一次弹窗上传本条全部待补图片，避免第二张起弹窗无法重开。
+    const uploaded = await uploadPicked(ctx, pendingItems.map((item) => item.file), "", true);
+    if (!uploaded.ok) return uploaded;
+    const ready = await waitUploaded(ctx, beforeModal, pendingItems.length);
+    if (!ready.ok) return ready;
+    const confirmed = await confirmImageModal(ctx);
+    if (!confirmed.ok) return confirmed;
+    // 用前后 src 的多重集差集取新增图片，重复图床 URL 也能正确计数。
+    let added = [];
+    const deadline = Date.now() + 15000;
+    while (Date.now() <= deadline) {
+      const srcs = await readImageSrcs(ctx);
+      const remaining = new Map();
+      for (const src of beforeSrcs) remaining.set(src, (remaining.get(src) || 0) + 1);
+      added = [];
+      for (const src of srcs) {
+        const count = remaining.get(src) || 0;
+        if (count > 0) remaining.set(src, count - 1);
+        else added.push(src);
+      }
+      if (added.length >= pendingItems.length) {
+        added = added.slice(0, pendingItems.length);
+        break;
+      }
+      await sleep(500);
+    }
+    if (added.length !== pendingItems.length) {
+      return fail("IMAGES_UNREAD", { expected: pendingItems.length, actual: added.length }, "确认后正文新增图片张数不足");
+    }
+    for (let index = 0; index < pendingItems.length; index++) {
+      html = html.replace(pendingItems[index].mark, '<img src="' + added[index].replace(/"/g, "") + '">');
+    }
+    const rewritten = await setUeContent(ctx, html);
+    if (!rewritten.ok) return rewritten;
+    ctx.bodyHtmlLive = html;
     ctx.imageCount = ctx.images.length;
-    return pass({ count: ctx.imageCount });
+    return pass({ count: ctx.imageCount, uploaded: pendingItems.length });
   },
 
   async setCover(ctx) {
@@ -857,6 +874,8 @@ async function assertPublishReady(ctx) {
   if (ctx.images.length && state.images !== ctx.images.length) return fail("IMAGE_COUNT_MISMATCH", state, "正文图片张数和文件数不一致");
   if (state.coverImgs !== 1 || !state.singleOn) return fail("COVER_REQUIRED", state, "封面不是单图");
   if (!state.aiFound || state.aiChecked) return fail("OPTIONS_MISMATCH", state, "采用AI生成内容不是未勾选");
+  // 从 publishOrSchedule 续跑时不会经过 insertImages，也要留下真实图片数供 verify 登记。
+  ctx.imageCount = state.images;
   return pass(state);
 }
 

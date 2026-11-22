@@ -46,6 +46,8 @@ describe("当前页账号环境", () => {
     expect(line).toContain("禁止回默认登录态");
     expect(prompt).toContain(line);
     expect(systemPrompt("https://example.com", "例", "step")).not.toContain("禁止回默认登录态");
+    expect(systemPrompt("https://www.zhihu.com", "知乎", "auto")).toContain("需要我帮你总结吗？");
+    expect(systemPrompt("https://www.zhihu.com", "知乎", "auto")).toContain("这不是「要不要继续」");
   });
 
   it("名册带上 id，对不上或还剩多个环境时不替用户挑", () => {

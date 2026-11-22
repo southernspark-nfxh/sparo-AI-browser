@@ -7,8 +7,8 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import type { ToolHandlers } from "./tools/index.js";
 import { listNotes } from "./agent/notes.js";
 import { laneForText } from "./agent/task-class.js";
-import { backgroundPoolDecision, bindClientTab, claimTabForClient, issueClientId } from "./agent/mcp-sessions.js";
-import { bindForWrite as requireWriteTab, switchTabWithoutClient } from "./agent/tab-guard.js";
+import { allocateClientTab, backgroundPoolDecision, issueClientId } from "./agent/mcp-sessions.js";
+import { bindForWrite as requireWriteTab, refuseWaitingWrite, switchTabWithoutClient } from "./agent/tab-guard.js";
 import { agentInstructions, registerSparoPrompt } from "./agent/agent-guide.js";
 import {
   applyCors,
@@ -86,16 +86,31 @@ function registerSkillsPrompt(server: McpServer, handlers: ToolHandlers): void {
 }
 
 function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpScope): void {
-  const bind = (tabId?: string) =>
-    scope
-      ? bindClientTab({
-          clientId: scope.clientId,
-          tabId,
-          knownTabIds: scope.tabIds(),
-          createAgentTab: scope.createAgentTab,
-        })
-      : tabId;
-  const bindForWrite = (tool: string, tabId?: string): string => requireWriteTab(tool, bind(tabId));
+  const bind = (tabId?: string) => {
+    if (!scope) return tabId;
+    const result = allocateClientTab({
+      intent: "address",
+      clientId: scope.clientId,
+      tabId,
+      knownTabIds: scope.tabIds(),
+      createAgentTab: scope.createAgentTab,
+    });
+    if (!result.ok) throw Object.assign(new Error("tab_busy"), { code: "tab_busy" });
+    return result.tabId || undefined;
+  };
+  const claimFresh = (tabId?: string) => {
+    if (!scope?.clientId || !tabId) return;
+    const known = scope.tabIds();
+    allocateClientTab({
+      intent: "task",
+      clientId: scope.clientId,
+      tabId,
+      taskId: `open:${tabId}`,
+      knownTabIds: known.includes(tabId) ? known : [...known, tabId],
+      createAgentTab: () => tabId,
+    });
+  };
+  const bindForWrite = (tool: string, tabId?: string): string => bindMcpWrite(tool, bind(tabId));
   const tabIdField = z.string().optional().describe("可选标签。带 clientId 时省略则落在该 client 自己的标签，不抢用户当前页。");
   server.tool(
     "sparo_info",
@@ -118,7 +133,7 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
       if (envId && !tabId) {
         const r = await handlers.navigate(url, undefined, envId);
         const made = (r as { data?: { tabId?: string } }).data?.tabId;
-        if (scope?.clientId && made) claimTabForClient(scope.clientId, made);
+        claimFresh(made);
         return textResult(r);
       }
       return textResult(await handlers.navigate(url, bindForWrite("navigate", tabId), envId));
@@ -673,7 +688,7 @@ function registerTools(server: McpServer, handlers: ToolHandlers, scope?: McpSco
       // 环境标签开出来后认领给该 client，后续 click/fill/execute 才停在这个账号里。
       if (envId && scope?.clientId) {
         const made = (r as { data?: { id?: string } }).data?.id;
-        if (made) claimTabForClient(scope.clientId, made);
+        claimFresh(made);
       }
       return textResult(r);
     },
@@ -952,6 +967,14 @@ async function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
     error.statusCode = 400;
     throw error;
   }
+}
+
+/** 写类 MCP 工具的统一入口：先解析标签，再拦黄色等待。拦下就不调用 handler。 */
+export function bindMcpWrite(tool: string, resolvedTabId: string | undefined): string {
+  const tabId = requireWriteTab(tool, resolvedTabId);
+  const gate = refuseWaitingWrite(tool, tabId);
+  if (!gate.ok) throw Object.assign(new Error(gate.message), { code: "waiting_human" });
+  return tabId;
 }
 
 export async function startMcpServer(handlers: ToolHandlers): Promise<{

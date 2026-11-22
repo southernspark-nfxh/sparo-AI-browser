@@ -118,15 +118,16 @@ describe("TaskPool", () => {
     const finished = pool.finish("b");
     expect(finished?.state).toBe("done");
     expect(finished?.step).toBe("完成");
+    expect(pool.tasks.find((task) => task.id === "b")?.state).toBe("done");
     expect(pool.runningBackground()).toBe(2);
     const next = pool.promoteNext();
     expect(next?.id).toBe("d");
     expect(pool.runningBackground()).toBe(3);
     expect(pool.tasks.find((task) => task.id === "e")?.step).toBe("排队中（第 1 位）");
-    expect(pool.tasks.some((task) => task.id === "b")).toBe(false);
+    expect(pool.tasks.find((task) => task.id === "b")?.state).toBe("done");
   });
 
-  it("visible 只留进行中、排队和等人，完成失败马上拿走", () => {
+  it("完成和失败留在池里，关闭才退出活动投影", () => {
     const pool = new TaskPool();
     pool.start({ id: "run", tabId: "1", title: "跑", lane: "foreground" });
     pool.enqueue({ id: "q", tabId: "", title: "排", lane: "background" });
@@ -139,8 +140,11 @@ describe("TaskPool", () => {
     pool.start({ id: "bad", tabId: "4", title: "败", lane: "background" });
     const failed = pool.finish("bad", "failed");
     expect(failed?.state).toBe("failed");
-    expect(pool.visible().map((task) => task.id)).toEqual(["run", "q", "w"]);
-    expect(pool.visible().some((task) => task.state === "done" || task.state === "failed")).toBe(false);
+    expect(pool.visible().map((task) => task.id)).toEqual(["run", "q", "w", "old", "bad"]);
+    expect(pool.visible().some((task) => task.state === "done" || task.state === "failed")).toBe(true);
+    pool.close("old");
+    pool.close("bad");
+    expect(pool.visible().some((task) => task.id === "old" || task.id === "bad")).toBe(false);
     pool.dismiss("w");
     expect(pool.visible().map((task) => task.id)).toEqual(["run", "q"]);
     expect(pool.tasks.some((task) => task.id === "w")).toBe(false);

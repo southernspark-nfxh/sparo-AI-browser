@@ -32,6 +32,7 @@ vi.mock("electron", () => ({
 
 import { SparkBrowser } from "../src/main/browser.js";
 import { FreeSoul } from "../src/main/agent/free-soul.js";
+import { TaskPool } from "../src/main/agent/task-pool.js";
 import { appendMissionEvent, recoveryLine, replayMissions, sidebarOffersRecovery } from "../src/main/agent/mission-journal.js";
 import type { ActiveMission } from "../src/main/agent/runtime.js";
 import { questionFor } from "../src/main/learning/help.js";
@@ -57,6 +58,7 @@ type Harness = SparkBrowser & {
   tabs: Map<string, unknown>;
   activeTabId: string;
   pendingRecovery: unknown;
+  taskPool: TaskPool;
   configDir: () => string;
   pushSidebarState: () => void;
   pushChromeState: () => void;
@@ -132,23 +134,18 @@ describe("新核心运行时旧学习系统不插话", () => {
   });
 });
 
-describe("运行中的新消息打断当前执行", () => {
-  it("运行中第二条消息触发 abort 且 pendingChat 续跑", async () => {
+describe("运行中的新一句不叠到忙页", () => {
+  it("运行中第二条消息不打断，也不续跑", async () => {
     let calls = 0;
-    const fetchImpl: typeof fetch = (_url, init) =>
-      new Promise((resolve, reject) => {
+    let releaseFirst: (value: Response) => void = () => undefined;
+    const fetchImpl: typeof fetch = () =>
+      new Promise((resolve) => {
         calls += 1;
         if (calls === 1) {
-          const fail = () => {
-            const error = new Error("The operation was aborted");
-            error.name = "AbortError";
-            reject(error);
-          };
-          if (init?.signal?.aborted) fail();
-          else init?.signal?.addEventListener("abort", fail, { once: true });
+          releaseFirst = resolve;
           return;
         }
-        resolve(new Response(JSON.stringify({ choices: [{ message: { content: "改去看标题。" } }] }), {
+        resolve(new Response(JSON.stringify({ choices: [{ message: { content: "不该跑第二条" } }] }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         }));
@@ -166,17 +163,39 @@ describe("运行中的新消息打断当前执行", () => {
     const first = browser.handleChat("先打开微博");
     await new Promise((resolve) => setTimeout(resolve, 20));
     const second = await browser.handleChat("改去看标题");
-    expect(second.ok).toBe(true);
-    expect(second.message).toContain("已记下");
-    const interrupted = await first;
-    expect(interrupted.ok).toBe(true);
-    expect(interrupted.message).toContain("任务被用户打断");
-    expect(interrupted.message).not.toContain("执行失败");
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(second.ok).toBe(false);
+    expect(second.message).toContain("还有任务在进行");
+    expect(calls).toBe(1);
+    releaseFirst(new Response(JSON.stringify({ choices: [{ message: { content: "第一句还在做。" } }] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    const finished = await first;
+    expect(finished.ok).toBe(true);
+    expect(finished.message).toContain("第一句还在做");
+    expect(finished.message).not.toContain("任务被用户打断");
     const texts = browser.chatLog.map((turn) => turn.text);
     expect(texts.some((text) => text.includes("改去看标题"))).toBe(true);
-    expect(texts.some((text) => text.includes("任务被用户打断"))).toBe(true);
-    expect((browser as unknown as { pendingChat: unknown }).pendingChat).toBeNull();
+    expect(texts.some((text) => text.includes("还有任务在进行"))).toBe(true);
+    expect(texts.join("\n")).not.toContain("不该跑第二条");
+  });
+
+  it("眼前这一页已有进行中的任务时，新的一句不另开", async () => {
+    const browser = harness();
+    browser.taskPool = new TaskPool();
+    browser.taskPool.start({ id: "job", tabId: "t", title: "天气", lane: "background" });
+    let runs = 0;
+    (browser as unknown as { freeSoul: { run: () => Promise<{ ok: boolean; text: string }> } }).freeSoul = {
+      run: async () => {
+        runs += 1;
+        return { ok: true, text: "不该跑" };
+      },
+    };
+    const second = await browser.handleChat("另外再把标题写一行");
+    expect(second.ok).toBe(false);
+    expect(second.message).toContain("还有任务在进行");
+    expect(runs).toBe(0);
+    expect(browser.taskPool.tasks.find((task) => task.id === "job")?.state).toBe("running");
   });
 });
 
@@ -237,8 +256,8 @@ describe("未关任务的只读恢复预览", () => {
   });
 });
 
-describe("执行中的新消息排队", () => {
-  it("两条都留在聊天里，结束后只自动跑最新一条", async () => {
+describe("执行中的新消息不排队", () => {
+  it("运行中的后两句被拒绝，结束后不自动接着跑", async () => {
     const browser = harness();
     const ran: string[] = [];
     let releaseFirst: (value: { ok: boolean; text: string }) => void = () => undefined;
@@ -260,14 +279,20 @@ describe("执行中的新消息排队", () => {
 
     const first = browser.handleChat("写回答");
     await vi.waitFor(() => expect(ran).toEqual(["写回答"]));
-    await browser.handleChat("继续");
-    await browser.handleChat("改去微博");
-    expect(browser.chatLog.map((turn) => turn.text)).toEqual(["写回答", "继续", "改去微博"]);
+    const second = await browser.handleChat("继续");
+    const third = await browser.handleChat("改去微博");
+    expect(second.ok).toBe(false);
+    expect(third.ok).toBe(false);
+    expect(second.message).toContain("还有任务在进行");
     releaseFirst({ ok: true, text: "第一轮完" });
     await first;
-    await vi.waitFor(() => expect(ran).toEqual(["写回答", "改去微博"]));
-    expect(browser.chatLog.filter((turn) => turn.text === "继续")).toHaveLength(1);
-    expect(browser.chatLog.filter((turn) => turn.text === "改去微博")).toHaveLength(1);
-    expect(browser.chatLog.map((turn) => turn.text).join("")).not.toContain("上一个任务还在执行");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(ran).toEqual(["写回答"]);
+    const texts = browser.chatLog.map((turn) => turn.text);
+    expect(texts).toContain("写回答");
+    expect(texts).toContain("继续");
+    expect(texts).toContain("改去微博");
+    expect(texts.filter((text) => text.includes("还有任务在进行"))).toHaveLength(2);
+    expect(texts.join("")).not.toContain("第二轮完");
   });
 });

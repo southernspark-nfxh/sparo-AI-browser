@@ -31,6 +31,7 @@ vi.mock("electron", () => ({
 }));
 
 import { SparkBrowser } from "../src/main/browser.js";
+import { pageSessionKey, taskSessionKey } from "../src/main/agent/session-key.js";
 import { TaskPool } from "../src/main/agent/task-pool.js";
 import { resetMcpSessions } from "../src/main/agent/mcp-sessions.js";
 
@@ -74,7 +75,8 @@ function harness() {
   browser.beginCloudTaskIfNeeded = async () => undefined;
   browser.getUrl = () => "https://example.com";
   browser.getTitle = () => "页";
-  browser.listTabs = () => ({ tabs: [{ id: "user-tab" }] });
+  browser.tabs = new Map([["user-tab", { id: "user-tab", title: "用户", url: "about:blank", view: null, lastActiveAt: 1 }]]);
+  browser.listTabs = () => ({ tabs: [...browser.tabs.values()] });
   browser.switchTab = (id: string) => {
     browser.activeTabId = id;
   };
@@ -82,7 +84,9 @@ function harness() {
   let n = 0;
   browser.createAgentTab = () => {
     n += 1;
-    return n === 1 ? "tab-jia" : "tab-yi";
+    const id = n === 1 ? "tab-jia" : "tab-yi";
+    browser.tabs.set(id, { id, title: id, url: "https://example.com", view: null, lastActiveAt: 1 });
+    return id;
   };
   browser.freeSoul = { run: () => new Promise(() => undefined) };
   return browser;
@@ -99,12 +103,12 @@ describe("T54 分身面板", () => {
     const opened = browser.focusTask(jia.taskId);
     expect(opened.ok).toBe(true);
     expect(opened.activeId).toBe("tab-jia");
-    expect(opened.selectedSession).toBe("agent:jia");
+    expect(opened.selectedSession).toBe(taskSessionKey("tab-jia", jia.taskId));
     const jiaPayload = browser.getSidebarPayload() as {
       selectedSession: string;
       chat: Array<{ text: string }>;
     };
-    expect(jiaPayload.selectedSession).toBe("agent:jia");
+    expect(jiaPayload.selectedSession).toBe(taskSessionKey("tab-jia", jia.taskId));
     expect(jiaPayload.chat.map((turn) => turn.text).join("\n")).toContain("甲的话");
     expect(jiaPayload.chat.map((turn) => turn.text).join("\n")).not.toContain("乙的话");
     expect(jiaPayload.chat.map((turn) => turn.text).join("\n")).not.toContain("用户的话");
@@ -113,8 +117,9 @@ describe("T54 分身面板", () => {
     browser.selectSession("user");
     const userPayload = browser.getSidebarPayload() as { selectedSession: string; chat: Array<{ text: string }> };
     expect(browser.activeTabId).toBe("user-tab");
-    expect(userPayload.selectedSession).toBe("user");
+    expect(userPayload.selectedSession).toBe(pageSessionKey("user-tab"));
     expect(userPayload.chat.map((turn) => turn.text)).toEqual(["用户的话"]);
+    expect(userPayload.chat.map((turn) => turn.text).join("\n")).not.toContain("甲的话");
     expect(yi.taskId).toBeTruthy();
   });
 

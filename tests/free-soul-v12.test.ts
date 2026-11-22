@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FreeSoul } from "../src/main/agent/free-soul.js";
 
-const NOTICE = "任务继续中；可随时停止或发新指令调整";
+const NOTICE = "任务继续中；要换一件事先点停止";
 
 function config(fetchImpl: typeof fetch) {
   return {

@@ -119,7 +119,7 @@ describe("T66 工位横幅", () => {
     expect(agent?.agentName).toBe("视觉验收员");
     const views = browser.sessionViews();
     expect(views.find((item) => item.key === "user")?.seat).toBeUndefined();
-    expect(views.find((item) => item.key === "agent:jia")?.seat).toBe(1);
+    expect(views.find((item) => item.key === "page:agent-1")?.seat).toBe(1);
   });
 
   it("同一 client 的工位号不变，后接入的递增", () => {

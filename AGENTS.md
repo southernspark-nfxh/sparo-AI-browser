@@ -29,7 +29,7 @@ Tagline: *独立 Agent 浏览器 — 自己接单自己干，安全边界内自�
 **称呼：** 对人、对界面、对模型说「技能」。不要说「妙招」。工具名仍是 `match_skill` / `run_skill`。店小秘采集箱上品前编辑用技能 `dxm-crawl-prep`。
 
 数据在 `%APPDATA%\sparo-store`。MCP：`http://127.0.0.1:3921`。  
-当前安装包：`release\Sparo-Setup-1.0.0.exe`。包名、字节数、SHA-256、G1–G3 结果与遗留项见 [docs/PRODUCT-TASKBOOK.md](./docs/PRODUCT-TASKBOOK.md)。  
+当前安装包：`release\Sparo-Setup-1.1.1122.exe`。包名、字节数、SHA-256、G1–G3 结果与遗留项见 [docs/PRODUCT-TASKBOOK.md](./docs/PRODUCT-TASKBOOK.md)。  
 Agent 能力全景、工作模式、安全边界见 [docs/AGENTS.md](./docs/AGENTS.md)。
 云端模型走独立代理服务（本仓库不含密钥）。**不要**把云端 Key 写进客户端。  
 不要改 `docs/listings/`（提审前另做一轮）。主进程不热更。安装包不会自动更新。

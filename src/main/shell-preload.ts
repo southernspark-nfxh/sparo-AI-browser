@@ -29,6 +29,13 @@ contextBridge.exposeInMainWorld("sparkShell", {
   selectSession: (key: string) => ipcRenderer.invoke("spark:select-session", key),
   focusTask: (taskId: string) => ipcRenderer.invoke("spark:focus-task", taskId),
   stopTask: (taskId: string) => ipcRenderer.invoke("spark:stop-task", taskId),
+  acceptTask: (taskId: string, pageDisposition?: "keep" | "close") =>
+    ipcRenderer.invoke("spark:accept-task", taskId, pageDisposition),
+  closeTask: (taskId: string, pageDisposition?: "keep" | "close") =>
+    ipcRenderer.invoke("spark:close-task", taskId, pageDisposition),
+  resumeTask: (taskId: string) => ipcRenderer.invoke("spark:resume-task", taskId),
+  ackTask: (taskId: string) => ipcRenderer.invoke("spark:ack-task", taskId),
+  taskViewed: (taskId: string, visible?: boolean) => ipcRenderer.invoke("spark:task-viewed", taskId, visible),
   requestChatFull: () => ipcRenderer.invoke("spark:chat-resync"),
   reorderTabs: (fromId: string, toId: string) =>
     ipcRenderer.invoke("spark:reorder-tabs", fromId, toId),

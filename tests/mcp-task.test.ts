@@ -34,7 +34,6 @@ import { SparkBrowser } from "../src/main/browser.js";
 import { MCP_HANDOFF_HINT } from "../src/main/mcp-server.js";
 import { createToolHandlers } from "../src/main/tools/index.js";
 
-const INTERRUPTED = "（任务被用户打断，未完成的步骤不做宣称。已做的操作以工具记录为准。）";
 const dirs: string[] = [];
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -91,9 +90,10 @@ describe("MCP 异步任务", () => {
     expect(got.elapsedMs).toBeGreaterThanOrEqual(0);
   });
 
-  it("执行中再提交为 queued，被打断的那条变为 interrupted", async () => {
+  it("执行中再提交被拒绝，原来的那条继续跑", async () => {
     let runs = 0;
     let markReady: () => void = () => undefined;
+    let releaseFirst: (value: { ok: boolean; text: string }) => void = () => undefined;
     const ready = new Promise<void>((resolve) => {
       markReady = resolve;
     });
@@ -102,24 +102,24 @@ describe("MCP 异步任务", () => {
       if (runs === 1) {
         markReady();
         return new Promise((resolve) => {
-          input.signal?.addEventListener("abort", () => {
-            resolve({ ok: true, text: INTERRUPTED, interrupted: true });
-          }, { once: true });
+          releaseFirst = resolve;
+          input.onRound?.(1);
         });
       }
-      input.onRound?.(2);
-      return Promise.resolve({ ok: true, text: "第二条做完了" });
+      return Promise.resolve({ ok: true, text: "不该跑第二条" });
     });
     const first = browser.submitTask("第一条");
     expect(first.status).toBe("running");
     await ready;
     const second = browser.submitTask("第二条");
-    expect(second.status).toBe("queued");
-    await vi.waitFor(() => expect(browser.getTask(first.taskId).status).toBe("interrupted"));
-    expect(browser.getTask(first.taskId).lastAssistant).toContain("未完成");
-    await vi.waitFor(() => expect(browser.getTask(second.taskId).status).toBe("done"));
-    expect(browser.getTask(second.taskId).lastAssistant).toContain("第二条做完了");
-    expect(browser.getTask(second.taskId).rounds).toBe(2);
+    expect(second.status).toBe("failed");
+    expect(second.error).toBe("tab_busy");
+    expect(second.message).toContain("还有任务在进行");
+    expect(runs).toBe(1);
+    expect(browser.getTask(second.taskId).status).toBe("unknown");
+    releaseFirst({ ok: true, text: "第一条做完了" });
+    await vi.waitFor(() => expect(browser.getTask(first.taskId).status).toBe("done"));
+    expect(browser.getTask(first.taskId).lastAssistant).toContain("第一条做完了");
   });
 
   it("不存在的 taskId 返回 unknown", () => {
@@ -127,14 +127,27 @@ describe("MCP 异步任务", () => {
     expect(browser.getTask("missing").status).toBe("unknown");
   });
 
-  it("任务表只留最近 10 条", () => {
-    const browser = harness(() => new Promise(() => undefined));
-    const ids = [browser.submitTask("t0").taskId];
-    for (let i = 1; i <= 11; i += 1) ids.push(browser.submitTask(`t${i}`).taskId);
+  it("任务表只留最近 10 条", async () => {
+    const pending: Array<(value: { ok: boolean; text: string }) => void> = [];
+    const browser = harness(
+      () =>
+        new Promise((resolve) => {
+          pending.push(resolve);
+        }),
+    );
+    const ids: string[] = [];
+    for (let i = 0; i <= 11; i += 1) {
+      const submitted = browser.submitTask(`t${i}`);
+      ids.push(submitted.taskId);
+      expect(submitted.status).toBe("running");
+      await vi.waitUntil(() => pending.length === i + 1);
+      pending[i]!({ ok: true, text: "好" });
+      await vi.waitFor(() => expect(browser.getTask(submitted.taskId).status).toBe("done"));
+    }
     expect(browser.getTask(ids[0]!).status).toBe("unknown");
     expect(browser.getTask(ids[1]!).status).toBe("unknown");
-    expect(browser.getTask(ids[2]!).status).toBe("queued");
-    expect(browser.getTask(ids[11]!).status).toBe("queued");
+    expect(browser.getTask(ids[2]!).status).toBe("done");
+    expect(browser.getTask(ids[11]!).status).toBe("done");
   });
 
   it("sidebar_chat 仍等待侧栏回执", async () => {

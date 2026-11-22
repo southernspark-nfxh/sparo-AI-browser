@@ -2,10 +2,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   bindClientTab,
   candidateTabBusy,
-  clientTabId,
   ensureSidebarClient,
   ownerForTab,
   registerClientName,
+  releaseClientLease,
   resetMcpSessions,
   seatForClient,
   seatForTab,
@@ -14,46 +14,36 @@ import {
 afterEach(() => resetMcpSessions());
 
 describe("T80 同一 agent 的活任务各用各的标签", () => {
-  it("活任务占着当前标签就另开，结束后复用，不开第三张", () => {
+  it("每个新任务都另开标签，未释放时不回到最近页", () => {
     registerClientName("ding", "丁");
     const known = ["user"];
     let seq = 0;
     const create = () => {
       seq += 1;
-      const id = seq === 1 ? "tab-x" : "tab-y";
+      const id = `tab-${seq}`;
       known.push(id);
       return id;
     };
-    const live: Array<{ clientId: string; tabId: string; state: string }> = [];
     const bind = () =>
       bindClientTab({
+        intent: "task",
         clientId: "ding",
+        taskId: `job-${seq + 1}`,
         knownTabIds: known,
         createAgentTab: create,
-        candidateBusy: candidateTabBusy({
-          clientId: "ding",
-          candidateTabId: clientTabId("ding") || "",
-          live,
-        }),
       });
 
     const first = bind();
-    expect(first).toBe("tab-x");
-    live.push({ clientId: "ding", tabId: "tab-x", state: "running" });
-
     const second = bind();
-    expect(second).toBe("tab-y");
-    expect(second).not.toBe(first);
-    expect(ownerForTab("tab-x")).toBe("agent:ding");
-    expect(ownerForTab("tab-y")).toBe("agent:ding");
-    expect(seatForTab("tab-x")).not.toBe(seatForTab("tab-y"));
-    expect(seatForClient("ding")).toBe(seatForTab("tab-x"));
-
-    live.length = 0;
-    const before = known.length;
     const third = bind();
-    expect(known.length).toBe(before);
-    expect(third === "tab-x" || third === "tab-y").toBe(true);
+    expect(first).toBe("tab-1");
+    expect(second).toBe("tab-2");
+    expect(third).toBe("tab-3");
+    expect(new Set([first, second, third]).size).toBe(3);
+    expect(ownerForTab("tab-1")).toBe("agent:ding");
+    expect(ownerForTab("tab-2")).toBe("agent:ding");
+    expect(seatForTab("tab-1")).not.toBe(seatForTab("tab-2"));
+    expect(seatForClient("ding")).toBe(seatForTab("tab-1"));
   });
 
   it("不同 client 各绑各的", () => {
@@ -78,27 +68,73 @@ describe("T80 同一 agent 的活任务各用各的标签", () => {
     expect(ownerForTab("yi-tab")).toBe("agent:yi");
   });
 
-  it("别的 client 占着候选标签时不新建", () => {
-    registerClientName("ding", "丁");
+  it("任何 client 的有效占用都禁止复用，显式抢页返回空", () => {
+    registerClientName("jia", "甲");
     bindClientTab({
-      clientId: "ding",
-      knownTabIds: ["user", "tab-x"],
+      intent: "task",
+      clientId: "jia",
+      taskId: "job-jia",
       tabId: "tab-x",
+      knownTabIds: ["user", "tab-x"],
       createAgentTab: () => "unused",
     });
-    const busy = candidateTabBusy({
+    expect(
+      candidateTabBusy({
+        clientId: "ding",
+        candidateTabId: "tab-x",
+        live: [],
+      }),
+    ).toBe(true);
+    expect(
+      candidateTabBusy({
+        clientId: "ding",
+        candidateTabId: "tab-y",
+        live: [{ clientId: "jia", tabId: "tab-y", state: "done" }],
+      }),
+    ).toBe(true);
+    const stolen = bindClientTab({
+      intent: "task",
       clientId: "ding",
-      candidateTabId: "tab-x",
-      live: [{ clientId: "jia", tabId: "tab-x", state: "running" }],
-    });
-    expect(busy).toBe(false);
-    const again = bindClientTab({
-      clientId: "ding",
+      taskId: "job-ding",
+      tabId: "tab-x",
       knownTabIds: ["user", "tab-x"],
-      createAgentTab: () => "should-not",
-      candidateBusy: busy,
+      createAgentTab: () => {
+        throw new Error("should-not");
+      },
+    });
+    expect(stolen).toBeUndefined();
+    expect(ownerForTab("tab-x")).toBe("agent:jia");
+    const fresh = bindClientTab({
+      intent: "task",
+      clientId: "ding",
+      taskId: "job-ding-2",
+      knownTabIds: ["user", "tab-x"],
+      createAgentTab: () => "tab-z",
+    });
+    expect(fresh).toBe("tab-z");
+  });
+
+  it("释放后的空闲页才能被显式复用", () => {
+    bindClientTab({
+      intent: "task",
+      clientId: "jia",
+      taskId: "job-jia",
+      tabId: "tab-x",
+      knownTabIds: ["user", "tab-x"],
+      createAgentTab: () => "unused",
+    });
+    releaseClientLease({ tabId: "tab-x" }, "accepted");
+    const again = bindClientTab({
+      intent: "task",
+      clientId: "yi",
+      taskId: "job-yi",
+      tabId: "tab-x",
+      knownTabIds: ["user", "tab-x"],
+      createAgentTab: () => "unused",
     });
     expect(again).toBe("tab-x");
+    expect(ownerForTab("tab-x")).toBe("agent:yi");
+    expect(ownerForTab("tab-z") ).toBe("user");
   });
 
   it("侧栏工位 0 不占甲的序号", () => {

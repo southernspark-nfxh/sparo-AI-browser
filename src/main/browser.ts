@@ -14,7 +14,7 @@ import {
   type MenuItemConstructorOptions,
   type WebContents,
 } from "electron";
-import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync, unlinkSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync, unlinkSync, rmSync } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -59,21 +59,35 @@ import { traceMainWindow } from "./focus-trace.js";
 import { laneForText, type TaskLane } from "./agent/task-class.js";
 import { formatFillFailure, formatLane, formatLearnSwallow } from "./agent/parallel-log.js";
 import { shouldSuspend as poolShouldSuspend, TaskPool, type PoolTask } from "./agent/task-pool.js";
+import { acquireLease, activeLeaseForTab, activeLeaseForTask } from "./agent/page-lease.js";
+import { parseCommandUtterance, resolveGroupTargets, runCommand, summarizeGroup, type CommandAction, type CommandPage, type TaskGroup } from "./agent/command-room.js";
+import { COMMAND_SESSION_KEY, isTaskSessionKey, pageSessionKey, taskSessionKey } from "./agent/session-key.js";
+import {
+  canTransition,
+  concreteStep,
+  projectPageSnapshot,
+  projectStatus,
+  type PageBinding,
+  type PageProjectionState,
+  type PageStatusSnapshot,
+  type PageTaskFact,
+  type StatusProjection,
+  type StatusSurface,
+} from "./agent/task-state.js";
 import {
   agentClientFromScope,
+  allocateClientTab,
   backgroundPoolDecision,
-  bindClientTab,
-  candidateTabBusy,
   claimTabForClient,
-  clientTabId,
   ensureSidebarClient,
+  releaseClientLease,
   listClientSessions,
   ownerForTab,
   registerClientName,
   seatForTab,
 } from "./agent/mcp-sessions.js";
-import { SIDEBAR_CLIENT_ID, sidebarToolNeedsPage } from "./agent/sidebar-tab.js";
-import { mayActivateTab, settleCreateActivate } from "./agent/tab-guard.js";
+import { SIDEBAR_CLIENT_ID, sidebarToolNeedsPage, visiblePageKeepsTurn } from "./agent/sidebar-tab.js";
+import { decideWrite, mayActivateTab, setWaitingWriteLookup, settleCreateActivate } from "./agent/tab-guard.js";
 import { capturesSince, ledgerCloseReason, reportSince, type LedgerClose } from "./agent/task-result.js";
 import type {
   ClickConfirm,
@@ -545,14 +559,16 @@ const SIDEBAR_W = 340;
 
 type TabInfo = {
   id: string;
+  /** command 是固定指挥室，不挂网页。缺省按普通网页。 */
+  kind?: "command" | "web";
   view: WebContentsView | null;
   title: string;
   url: string;
   envId?: string;
   discarded?: boolean;
   favIcon?: string;
-  /** 任务完成后休眠。标签栏用灰点标「已完成」，点一下再唤醒。 */
-  agentStatus?: "done";
+  /** 任务完成后休眠。done 才标「已完成」；stopped 是被打断，不能写成完成。 */
+  agentStatus?: "done" | "stopped";
   /** 这张标签正卡在 waiting_human。release 时不休眠。 */
   holdHuman?: boolean;
   lastActiveAt: number;
@@ -680,6 +696,21 @@ export function formatTabMemoryBoard(
   });
 }
 
+/**
+ * 规范状态的只读投影。颜色只走 task-state。
+ * 不把旧的 agentStatus / agentColor 翻译回来，旧界面仍读旧字段。
+ */
+export function readOnlyPageStatus(
+  state: PageProjectionState,
+  surface: StatusSurface = "sidebar",
+  binding?: PageBinding | null,
+): StatusProjection & { binding: PageBinding | null } {
+  return {
+    ...projectStatus(state, surface),
+    binding: binding != null && binding.releasedAt == null ? binding : null,
+  };
+}
+
 type TaskScope = {
   tabId: string;
   lane: TaskLane;
@@ -687,8 +718,9 @@ type TaskScope = {
   lastMission: ActiveMission | undefined;
   helpAsk: HelpAsk | null;
   cloudTaskId: string | undefined;
-  /** 对话落在哪一份历史。user 或 agent:<clientId>。T48 起消费。 */
+  /** 对话落在哪一份历史。页面任务用 page:<tabId>/task:<taskId>。 */
   chatKey: string;
+  clientId?: string;
 };
 
 type BackgroundJob = {
@@ -732,6 +764,45 @@ function namedSkillId(configDir: string, query: string): string | null {
 type StoredPrecheck = ReturnType<typeof buildPrecheckResult> & { draft: StudioDraft };
 const studioPrechecks = new Map<string, StoredPrecheck>();
 const studioConfirms = new Map<string, { ok: true; code: "ok"; message: string; envId: string; confirmationId: string; precheckId: string }>();
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function sameHostLabel(host: string): string {
+  if (host.includes("baijiahao")) return "百家号";
+  return host || "这个站";
+}
+
+/**
+ * Agent 同站开页。用户手动开的标签不在这张表里。
+ * navigate：已经有同站页就切回去。
+ * new_tab：同站已有两页时，再开就拒绝。
+ */
+export function decideSameHostOpen(
+  intent: "new_tab" | "navigate",
+  url: string,
+  tabs: Array<{ id: string; url?: string; agentOwned?: boolean; kind?: string }>,
+): { action: "allow" } | { action: "switch"; tabId: string } | { action: "refuse"; message: string } {
+  const host = hostOf(url);
+  if (!host) return { action: "allow" };
+  const mine = tabs.filter((tab) => tab.agentOwned && tab.kind !== "command" && hostOf(tab.url || "") === host);
+  if (intent === "navigate" && mine.length) {
+    const last = mine[mine.length - 1];
+    return last ? { action: "switch", tabId: last.id } : { action: "allow" };
+  }
+  if (intent === "new_tab" && mine.length >= 2) {
+    return {
+      action: "refuse",
+      message: `已经开了 ${mine.length} 个${sameHostLabel(host)}标签，请先看看现有的，或换别的入口`,
+    };
+  }
+  return { action: "allow" };
+}
 
 export class SparkBrowser {
   readonly window: BrowserWindow;
@@ -885,6 +956,13 @@ export class SparkBrowser {
   private fallbackAgentTabId = "";
   /** 这次侧栏任务要自己的标签。读当前页和划词时为假。 */
   private sidebarOwnTab = false;
+  /** 这一轮侧栏任务已经占用的页。下一句新任务清空，避免工具调用重复开页。 */
+  private sidebarBoundTab = "";
+  /**
+   * 这一轮里模型刚 new_tab / switch_tab / 切回同站页之后，读页和点击要跟着这一页。
+   * 不能再退回开工时的侧栏工位，否则标题是头条、正文仍是百度。
+   */
+  private pinnedToolTabId = "";
   private fallbackMission: ActiveMission | undefined;
   private fallbackLastMission: ActiveMission | undefined;
   private fallbackHelpAsk: HelpAsk | null = null;
@@ -1068,7 +1146,9 @@ export class SparkBrowser {
   }
 
   private sessionKey(): string {
-    return this.taskStore()?.chatKey || this.chatKeyFallback || "user";
+    const scoped = this.taskStore()?.chatKey;
+    if (scoped) return scoped;
+    return this.sessionKeyForTab(this.activeTabId || "") || this.chatKeyFallback || "user";
   }
 
   /** 60 处 this.chatLog.push 不用改：当前作用域决定写进哪一份。 */
@@ -1087,6 +1167,13 @@ export class SparkBrowser {
     this.chatBook().set(this.sessionKey(), list);
   }
 
+  /** 任务执行记录不落盘。人正在看的空闲页或指挥室会话才写入。 */
+  private chatTurnsToPersist(): ChatTurn[] {
+    const key = this.resolvedSession();
+    if (!key || isTaskSessionKey(key)) return this.userTurns();
+    return this.turnsFor(key);
+  }
+
   private userTurns(): ChatTurn[] {
     const book = this.chatBook();
     let list = book.get("user");
@@ -1101,52 +1188,56 @@ export class SparkBrowser {
     return this.chatBook().get(key) || [];
   }
 
+  /** 当前标签决定读写哪一份会话。不回退到上一张任务的选中项。 */
+  private sessionKeyForTab(tabId: string): string {
+    const id = String(tabId || "").trim();
+    if (!id) return "";
+    const tab = this.tabs?.get(id);
+    if (tab?.kind === "command") return COMMAND_SESSION_KEY;
+    const open = (this.taskPool?.tasks || []).filter((item) => item.tabId === id && item.state !== "closed");
+    const current =
+      open.find((item) => item.state === "running" || item.state === "queued" || item.state === "waiting_human") ||
+      open[0];
+    if (current) return taskSessionKey(id, current.id);
+    return pageSessionKey(id);
+  }
+
   private resolvedSession(): string {
-    if (this.selectedSession) return this.selectedSession;
-    const owner = ownerForTab(this.activeTabId || "");
-    return owner || "user";
+    return this.sessionKeyForTab(this.activeTabId || "") || "user";
   }
 
   selectSession(key: string): { ok: boolean; selectedSession: string } {
     const clean = String(key || "").trim();
-    this.selectedSession = clean === "user" || clean.startsWith("agent:") ? clean : "user";
+    const allowed =
+      clean === "user" ||
+      clean === "command" ||
+      clean.startsWith("agent:") ||
+      clean.startsWith("page:");
+    this.selectedSession = allowed ? clean : "user";
     this.pushSidebarState();
     return { ok: true, selectedSession: this.selectedSession };
   }
 
-  /** 点任务卡：切到那张标签，同时切到那个 agent 的对话。 */
+  /** 点任务卡：回到原标签和这份任务会话，不新开页面。 */
   focusTask(taskId: string): { ok: boolean; message?: string; selectedSession?: string; activeId?: string } {
     const card = (this.taskPool?.tasks || []).find((item) => item.id === taskId);
     if (!card) return { ok: false, message: "没有这张任务卡" };
-    this.selectedSession = card.clientId ? `agent:${card.clientId}` : "user";
-    if (card.tabId && typeof this.switchTab === "function") this.switchTab(card.tabId, { userAction: true });
-    else this.pushSidebarState();
-    return { ok: true, selectedSession: this.selectedSession, activeId: this.activeTabId };
+    this.selectedSession = card.tabId ? taskSessionKey(card.tabId, card.id) : "user";
+    const tab = card.tabId ? this.tabs?.get(card.tabId) : undefined;
+    if (card.tabId && tab && !this.pageEnvMismatch(card.id, tab) && typeof this.switchTab === "function") {
+      this.switchTab(card.tabId, { userAction: true });
+    } else this.pushSidebarState();
+    return { ok: true, selectedSession: this.selectedSession, activeId: card.tabId || this.activeTabId };
   }
 
-  /** 没有在跑、没有排队、没有等人、也没有打开的标签，就把这份对话丢掉。 */
+  /** 不再因为任务结束就删对话。旧总会话留着只读，选中项没有页面时回到「我」。 */
   private pruneDeadAgentChats(): void {
-    const pool = this.taskPool?.tasks || [];
-    const live = (state: string) => state === "running" || state === "queued" || state === "waiting_human";
-    for (const key of [...this.chatBook().keys()]) {
-      if (!key.startsWith("agent:")) continue;
-      const rest = key.slice("agent:".length);
-      const slash = rest.indexOf("/");
-      if (slash >= 0) {
-        const taskId = rest.slice(slash + 1);
-        const still = pool.some((task) => task.id === taskId && live(task.state));
-        if (still) continue;
-        this.chatBook().delete(key);
-        if (this.selectedSession === key) this.selectedSession = "user";
-        continue;
-      }
-      const clientId = rest;
-      const liveTask = pool.some((task) => task.clientId === clientId && live(task.state));
-      const openTab = [...(this.tabs?.keys() || [])].some((id) => ownerForTab(id) === key);
-      if (liveTask || openTab) continue;
-      this.chatBook().delete(key);
-      if (this.selectedSession === key) this.selectedSession = "user";
-    }
+    const selected = this.selectedSession || "";
+    if (!selected.startsWith("agent:") || selected.includes("/")) return;
+    const clientId = selected.slice("agent:".length);
+    const openTab = [...(this.tabs?.keys() || [])].some((id) => ownerForTab(id) === selected);
+    const live = (this.taskPool?.tasks || []).some((task) => task.clientId === clientId && task.state !== "closed");
+    if (!openTab && !live) this.selectedSession = "user";
   }
 
   private agentClientChatKey(clientId: string): string {
@@ -1167,26 +1258,10 @@ export class SparkBrowser {
     return ids;
   }
 
-  /**
-   * 开跑前从 client 卷拷最近 16 轮当种子。别的活任务标过的轮不带进来。
-   * 随后这卷的 push 会镜像回 client 卷，侧栏工位和下一句串行续聊都看那一份。
-   */
-  private seedAgentTaskChat(clientId: string, taskId: string): void {
-    const live = this.otherLiveTaskIds(clientId, taskId);
-    const source = this.turnsFor(this.agentClientChatKey(clientId));
-    const list: ChatTurn[] = source
-      .filter((turn) => !turn.task || !live.has(turn.task))
-      .slice(-16)
-      .map((turn) => ({ role: turn.role, text: turn.text }));
-    const raw = list.push.bind(list);
-    list.push = ((...items: ChatTurn[]) => {
-      for (const item of items) {
-        raw(item);
-        this.mirrorAgentTurn(clientId, taskId, item);
-      }
-      return list.length;
-    }) as ChatTurn[]["push"];
-    this.chatBook().set(this.agentTaskChatKey(clientId, taskId), list);
+  /** 新任务从空白会话开始，不复制 Agent 总会话，也不再镜像回去。 */
+  private ensureTaskChat(tabId: string, taskId: string): void {
+    const key = taskSessionKey(tabId, taskId);
+    if (!this.chatBook().has(key)) this.chatBook().set(key, []);
   }
 
   private mirrorAgentTurn(clientId: string, taskId: string, turn: ChatTurn): void {
@@ -1203,39 +1278,30 @@ export class SparkBrowser {
     if (client.length > 60) client.splice(0, client.length - 60);
   }
 
-  private dropAgentTaskChat(clientId: string, taskId: string): void {
-    const key = this.agentTaskChatKey(clientId, taskId);
-    this.chatBook().delete(key);
-    if (this.selectedSession === key) this.selectedSession = "user";
-  }
-
   private sessionViews(): Array<{ key: string; label: string; color: string; running: number; seat?: number }> {
     this.pruneDeadAgentChats();
-    const keys = new Set<string>(["user"]);
     const pool = this.taskPool?.tasks || [];
-    for (const task of pool) {
-      if (!task.clientId) continue;
-      if (task.state === "running" || task.state === "queued" || task.state === "waiting_human") {
-        keys.add(`agent:${task.clientId}`);
-      }
-    }
-    for (const id of this.tabs?.keys() || []) {
+    const views: Array<{ key: string; label: string; color: string; running: number; seat?: number }> = [
+      { key: "user", label: "我", color: "", running: 0 },
+    ];
+    const seen = new Set<string>(["user"]);
+    for (const [id, tab] of this.tabs || []) {
+      const key = this.sessionKeyForTab(id);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      const task = pool.find((item) => item.tabId === id && item.state !== "closed");
       const owner = ownerForTab(id);
-      if (owner.startsWith("agent:")) keys.add(owner);
-    }
-    const ordered = ["user", ...[...keys].filter((key) => key !== "user")];
-    return ordered.map((key) => {
-      const clientId = key.startsWith("agent:") ? key.slice("agent:".length) : "";
+      const clientId = task?.clientId || (owner.startsWith("agent:") ? owner.slice("agent:".length) : "");
       const session = clientId ? listClientSessions().find((item) => item.clientId === clientId) : undefined;
-      const running = clientId ? pool.filter((task) => task.clientId === clientId && task.state === "running").length : 0;
-      return {
+      views.push({
         key,
-        label: key === "user" ? "我" : session?.name || key.replace(/^agent:/, "Agent "),
-        color: session?.color || "",
-        running,
+        label: tab?.title || session?.name || key,
+        color: "",
+        running: task?.state === "running" ? 1 : 0,
         ...(session?.seat ? { seat: session.seat } : {}),
-      };
-    });
+      });
+    }
+    return views;
   }
 
   private chatRunningFlag = false;
@@ -1245,7 +1311,7 @@ export class SparkBrowser {
   private evictedTaskIds = new Set<string>();
   private mcpTasks: Array<{
     taskId: string;
-    status: "running" | "queued" | "done" | "interrupted" | "failed" | "pool_full";
+    status: "running" | "queued" | "done" | "interrupted" | "failed" | "stopped" | "pool_full" | "waiting_human";
     rounds: number;
     lastAssistant: string;
     startedAt: number;
@@ -1315,11 +1381,93 @@ export class SparkBrowser {
   private noteTaskStep(step: string): void {
     const scope = this.taskStore();
     const pool = this.taskPool;
-    if (!scope || !pool) return;
+    if (!scope?.tabId || !pool) return;
     const task = pool.tasks.find((item) => item.tabId === scope.tabId && item.state === "running");
     if (!task) return;
-    pool.setStep(task.id, step);
-    this.syncTaskChrome();
+    pool.setStep(task.id, concreteStep("running", step));
+    task.updatedAt = Date.now();
+    this.pushChromeState(false);
+    this.pushSidebarState(false);
+  }
+
+  private _taskAttention?: Map<string, { tabId: string; taskId: string; acked: boolean }>;
+  private get taskAttention(): Map<string, { tabId: string; taskId: string; acked: boolean }> {
+    return (this._taskAttention ??= new Map());
+  }
+
+  /** 同一 tabId 若已是另一个账号环境，就不能再算这张任务的页。 */
+  private pageEnvMismatch(taskId: string, tab: { envId?: string } | undefined): boolean {
+    if (!tab?.envId) return false;
+    const lease = activeLeaseForTask(taskId);
+    return Boolean(lease?.envId && lease.envId !== tab.envId);
+  }
+
+  /** 这一页的状态快照。listTabs、侧栏和指挥室都读它，不再各算各的。 */
+  private pageStatusFor(tabId: string): PageStatusSnapshot & { attention?: boolean; resultCard?: PoolTask["resultCard"] } {
+    const id = String(tabId || "");
+    try {
+      const tab = this.tabs?.get?.(id);
+      if (tab?.kind === "command") return this.decoratePageStatus(projectPageSnapshot({ tabId: id, tasks: [] }));
+      const tasks: PageTaskFact[] = (this.taskPool?.tasks || [])
+        .filter((item) => !(item.tabId === id && this.pageEnvMismatch(item.id, tab)))
+        .map((item) => ({
+        id: item.id,
+        tabId: item.tabId,
+        state: item.state,
+        step: item.step,
+        title: item.title,
+        clientId: item.clientId,
+        agentName: item.agentName,
+        lastLine: item.lastLine,
+        result: item.result,
+        updatedAt: item.updatedAt,
+      }));
+      const owner = ownerForTab(id);
+      const ownerClientId = owner.startsWith("agent:") ? owner.slice("agent:".length) : "";
+      const ownerName = ownerClientId
+        ? listClientSessions().find((item) => item.clientId === ownerClientId)?.name || ""
+        : "";
+      const found = activeLeaseForTab(id);
+      const lease = found
+        ? { clientId: found.clientId, taskId: found.taskId, releasedAt: found.releasedAt }
+        : null;
+      const foregroundOnThisTab = Boolean(
+        ownerClientId === SIDEBAR_CLIENT_ID && this.chatRunning && this.agentTabId === id,
+      );
+      const snap = projectPageSnapshot({
+        tabId: id,
+        tasks,
+        lease,
+        ownerClientId,
+        ownerName,
+        foregroundOnThisTab,
+        markedDone: tab?.agentStatus === "done",
+        markedStopped: tab?.agentStatus === "stopped",
+      });
+      const pooled = Boolean(snap.taskId && this.taskPool?.tasks?.some((item) => item.id === snap.taskId));
+      if (snap.taskId && !pooled && snap.state === "done" && !this.taskAttention.has(`${id}\n${snap.taskId}`)) {
+        this.taskAttention.set(`${id}\n${snap.taskId}`, { tabId: id, taskId: snap.taskId, acked: false });
+      }
+      return this.decoratePageStatus(snap);
+    } catch {
+      return this.decoratePageStatus(projectPageSnapshot({ tabId: id, tasks: [] }));
+    }
+  }
+
+  private decoratePageStatus(
+    snap: PageStatusSnapshot,
+  ): PageStatusSnapshot & { attention?: boolean; resultCard?: PoolTask["resultCard"] } {
+    const task = snap.taskId
+      ? this.taskPool?.tasks?.find((item) => item.id === snap.taskId && item.tabId === snap.tabId)
+      : undefined;
+    const mark = snap.taskId ? this.taskAttention.get(`${snap.tabId}\n${snap.taskId}`) : undefined;
+    return {
+      ...snap,
+      agentName: snap.state === "idle" ? "" : snap.agentName,
+      summary: task?.resultCard?.summary || snap.summary,
+      ...(task?.resultCard ? { resultCard: task.resultCard } : {}),
+      ...(mark && !mark.acked ? { attention: true } : {}),
+    };
   }
 
   /** Active page view — keeps existing tool code working. */
@@ -1335,6 +1483,7 @@ export class SparkBrowser {
   viewForTab(tabId: string): WebContentsView {
     const tab = this.tabs.get(tabId);
     if (!tab) throw new Error(`Tab not found: ${tabId}`);
+    if (tab.kind === "command") throw new Error("指挥室不是网页");
     // 视图对象还在、里面的渲染进程已经没了：这种标签不会自己好，先摘掉再重建。
     if (tab.view && this.pageViewIsDestroyed(tab.view)) this.dropDeadView(tab);
     if (!tab.view || tab.discarded) this.wakeTab(tab.id);
@@ -1348,19 +1497,38 @@ export class SparkBrowser {
     return this.createTab(target, activate, { agentOwned: true, clientId });
   }
 
+  /** 每扇窗口一个固定指挥室。不创建网页视图，也不能被任务占用。 */
+  ensureCommandRoom(winId = this.activeWinId || "main"): string {
+    const existing = [...this.tabs.values()].find((tab) => tab.kind === "command" && (tab.winId || "main") === winId);
+    if (existing) return existing.id;
+    const id = `command-${winId}`;
+    const tab: TabInfo = {
+      id,
+      kind: "command",
+      view: null,
+      title: "指挥室",
+      url: "",
+      lastActiveAt: Date.now(),
+      winId,
+    };
+    this.tabs.set(id, tab);
+    this.pinCommandTab();
+    return id;
+  }
+
   /**
    * 任务结束、报告已经落盘：休眠这张标签，释放渲染进程，标签栏留记录。
    * 还在 waiting_human 则不休眠，等人处理。用户正看着的标签也不休眠。
    * 点标签走 switchTab → wakeTab。
    */
-  releaseAgentTab(tabId: string): void {
+  releaseAgentTab(tabId: string, outcome: "done" | "stopped" = "done"): void {
     const tab = this.tabs.get(tabId);
     if (!tab) return;
     if (this.tabAwaitsHuman(tabId)) return;
     if (tabId === (this.activeTabs.get(tab?.winId || "main") || "")) return;
     const slept = this.discardTab(tabId);
     if (!slept && !tab.discarded) return;
-    tab.agentStatus = "done";
+    tab.agentStatus = outcome === "stopped" ? "stopped" : "done";
     this.layout();
     this.pushChromeState();
   }
@@ -1496,6 +1664,11 @@ export class SparkBrowser {
     } catch {
       this.savedTaskSummaries = [];
     }
+    try {
+      this.restoreWorkState();
+    } catch (error) {
+      console.warn("[task] restore failed", error instanceof Error ? error.message : error);
+    }
     this.offerMissionRecovery();
     this.win.on("resize", () => {
       this.rememberUserWindowBounds();
@@ -1548,6 +1721,7 @@ export class SparkBrowser {
     setTimeout(() => this.presentWindow(), 800);
     this.registerIpc();
     // 关窗即关完：重启永远从干净的新标签页开始，不再恢复上次的会话（2026-11-13 用户拍板）。
+    this.ensureCommandRoom();
     this.createTab(DEFAULT_URL, true, { userAction: true });
     this.memoryTimer = setInterval(() => this.autoDiscardIdleTabs(), 30_000);
     this.startChromeHoleWatch();
@@ -1801,7 +1975,7 @@ export class SparkBrowser {
    */
   discardTab(id: string): boolean {
     const tab = this.tabs.get(id);
-    if (!tab || tab.discarded || id === this.activeTabId) return false;
+    if (!tab || tab.kind === "command" || tab.discarded || id === this.activeTabId) return false;
     const view = tab.view;
     if (!view) {
       tab.discarded = true;
@@ -1842,7 +2016,7 @@ export class SparkBrowser {
 
   private wakeTab(id: string): void {
     const tab = this.tabs.get(id);
-    if (!tab) return;
+    if (!tab || tab.kind === "command") return;
     if (tab.view && this.pageViewIsDestroyed(tab.view)) this.dropDeadView(tab);
     if (tab.view && !tab.discarded) return;
     if (tab.view) {
@@ -2032,6 +2206,7 @@ export class SparkBrowser {
     const id = randomBytes(4).toString("hex");
     const clientId =
       opts?.clientId ||
+      this.taskStore()?.clientId ||
       agentClientFromScope(
         this.taskStore()?.chatKey,
         opts?.openerTabId ? ownerForTab(opts.openerTabId) : undefined,
@@ -2049,6 +2224,7 @@ export class SparkBrowser {
       winId,
     };
     this.tabs.set(id, tab);
+    this.pinCommandTab();
     if (clientId) {
       claimTabForClient(clientId, id);
       this.bindClientWindow(clientId, winId);
@@ -2097,6 +2273,7 @@ export class SparkBrowser {
       winId: this.activeWinId,
     };
     this.tabs.set(id, tab);
+    this.pinCommandTab();
     this.pinViewBeforeMount(view);
     this.winOf(this.activeWinId).contentView.addChildView(view);
     this.bindPageWebContents(tab);
@@ -2265,15 +2442,18 @@ export class SparkBrowser {
       envId?: string;
       discarded?: boolean;
       favIcon?: string;
-      agentStatus?: "done";
+      agentStatus?: "done" | "stopped";
+      kind?: "command" | "web";
       owner?: "user" | `agent:${string}`;
       agentName?: string;
       agentColor?: string;
       agentSeat?: number;
-      agentState?: "running" | "waiting_human" | "queued" | "done" | "idle";
+      agentState?: "running" | "waiting_human" | "queued" | "done" | "idle" | "failed" | "stopped";
       lastLine?: string;
       agentStep?: string;
       agentRound?: number;
+      statusTone?: string;
+      pageStatus?: PageStatusSnapshot;
     }>;
     activeId: string;
     url: string;
@@ -2286,37 +2466,19 @@ export class SparkBrowser {
     const wcLive = wc && !wc.isDestroyed() ? wc : undefined;
     return {
       tabs: [...this.tabs.values()].map((t) => {
+        const snap = this.pageStatusFor(t.id);
         const owner = ownerForTab(t.id);
         const clientId = owner.startsWith("agent:") ? owner.slice("agent:".length) : "";
         const session = clientId ? listClientSessions().find((item) => item.clientId === clientId) : undefined;
-        const poolTasks = this.taskPool?.tasks || [];
-        const onThisTab = clientId ? poolTasks.filter((item) => item.tabId === t.id) : [];
-        const onThisClient = clientId ? poolTasks.filter((item) => item.clientId === clientId) : [];
-        const related = onThisTab.length ? onThisTab : onThisClient;
-        const poolTask = related.find((item) => item.state === "running")
-          || related.find((item) => item.state === "waiting_human")
-          || related.find((item) => item.state === "queued");
+        const poolTask = snap.taskId
+          ? (this.taskPool?.tasks || []).find((item) => item.id === snap.taskId && item.tabId === t.id)
+          : undefined;
         const mcp = poolTask ? this.mcpTaskList().find((item) => item.taskId === poolTask.id) : undefined;
-        let agentState: "running" | "waiting_human" | "queued" | "done" | "idle" | undefined;
-        if (clientId) {
-          agentState = poolTask?.state === "waiting_human"
-            ? "waiting_human"
-            : poolTask?.state === "queued"
-              ? "queued"
-              : poolTask?.state === "running"
-                ? "running"
-                : t.agentStatus === "done"
-                  ? "done"
-                  : "idle";
-          if (
-            agentState === "idle" &&
-            clientId === SIDEBAR_CLIENT_ID &&
-            this.chatRunning &&
-            this.agentTabId === t.id
-          ) {
-            agentState = "running";
-          }
-        }
+        const agentState = clientId
+          ? snap.state === "closed" || snap.state === "idle"
+            ? "idle"
+            : snap.state
+          : undefined;
         return {
           id: t.id,
           title: t.title,
@@ -2324,18 +2486,21 @@ export class SparkBrowser {
             t.url ||
             (t.view && !t.view.webContents.isDestroyed() ? t.view.webContents.getURL() : ""),
           envId: t.envId,
-          discarded: Boolean(t.discarded || !t.view),
+          discarded: t.kind === "command" ? false : Boolean(t.discarded || !t.view),
           favIcon: t.favIcon || "",
           agentStatus: t.agentStatus === "done" ? "done" : undefined,
+          kind: t.kind === "command" ? "command" : "web",
           owner,
+          statusTone: snap.tone,
+          pageStatus: snap,
           ...(clientId
             ? {
-                agentName: session?.name || poolTask?.agentName,
+                agentName: snap.agentName || session?.name || poolTask?.agentName,
                 agentColor: session?.color || poolTask?.color,
                 agentSeat: seatForTab(t.id) ?? session?.seat,
                 agentState,
                 lastLine: poolTask?.lastLine,
-                agentStep: poolTask?.step,
+                agentStep: snap.state === "idle" ? undefined : snap.step,
                 agentRound: mcp?.rounds,
               }
             : {}),
@@ -2560,6 +2725,33 @@ export class SparkBrowser {
   closeTab(id: string): ToolResult {
     const tab = this.tabs.get(id);
     if (!tab) return { ok: false, message: `Tab not found: ${id}` };
+    if (tab.kind === "command") return { ok: false, message: "指挥室不能关闭" };
+    const task = (this.taskPool?.tasks || []).find((item) => item.tabId === id && item.state !== "closed");
+    if (task && (task.state === "running" || task.state === "queued" || task.state === "waiting_human")) {
+      return { ok: false, message: "任务还在进行，请先停止" };
+    }
+    if (task && (task.state === "done" || task.state === "failed" || task.state === "stopped")) {
+      return this.closeTask(task.id, "close");
+    }
+    const lease = activeLeaseForTab(id);
+    if (lease) releaseClientLease({ leaseId: lease.leaseId }, "tab_closed");
+    return this.destroyTab(id);
+  }
+
+  /** 这一页上的提醒全部清掉，避免关页后还写进恢复账。 */
+  private clearTabAttention(tabId: string): void {
+    const id = String(tabId || "");
+    if (!id) return;
+    for (const [key, mark] of [...this.taskAttention]) {
+      if (mark.tabId === id) this.taskAttention.delete(key);
+    }
+  }
+
+  /** 真正摘掉标签。调用前必须已经处理完任务和租约。 */
+  destroyTab(id: string): ToolResult {
+    const tab = this.tabs.get(id);
+    if (!tab) return { ok: false, message: `Tab not found: ${id}` };
+    this.clearTabAttention(id);
     delete tab.agentStatus;
     let closedUrl = tab.url || "about:blank";
     try {
@@ -2812,6 +3004,23 @@ export class SparkBrowser {
     win.webContents.on("unresponsive", () => use(() => this.onShellUnresponsive()));
   }
 
+  /** 页没了就不能继续跑。先停活任务，再摘标签。 */
+  private stopTasksOnTabs(tabIds: string[]): void {
+    const ids = new Set(tabIds);
+    const live = (this.taskPool?.tasks || []).filter(
+      (task) =>
+        Boolean(task.tabId && ids.has(task.tabId)) &&
+        (task.state === "running" || task.state === "queued" || task.state === "waiting_human"),
+    );
+    for (const task of live) {
+      try {
+        this.stopAgentTask(task.id);
+      } catch {
+        /* 停失败也要继续收口，不能留下还在跑的无页任务 */
+      }
+    }
+  }
+
   /** 关窗口：把这扇窗口名下的标签一起释放，别把别人的窗口带走。 */
   private closeWindow(winId: string): void {
     this.wins.delete(winId);
@@ -2831,8 +3040,11 @@ export class SparkBrowser {
     for (const [client, bound] of this.clientWindows) {
       if (bound === winId) this.clientWindows.delete(client);
     }
+    const closing = [...this.tabs.values()].filter((tab) => (tab.winId || "main") === winId).map((tab) => tab.id);
+    this.stopTasksOnTabs(closing);
     for (const [id, tab] of [...this.tabs]) {
       if ((tab.winId || "main") !== winId) continue;
+      this.clearTabAttention(id);
       this.tabs.delete(id);
       try {
         tab.view?.webContents.close();
@@ -3549,11 +3761,29 @@ export class SparkBrowser {
     return this.newTab(last.url);
   }
 
+  /** 指挥室永远排在最左，新标签和拖动都不能把它挤走。 */
+  private pinCommandTab(): void {
+    if (!this.tabs || typeof this.tabs.entries !== "function") return;
+    const entries = [...this.tabs.entries()];
+    const command = entries.filter(([, tab]) => tab?.kind === "command");
+    if (!command.length) return;
+    const rest = entries.filter(([, tab]) => tab?.kind !== "command");
+    const next = new Map<string, TabInfo>();
+    for (const [id, tab] of [...command, ...rest]) next.set(id, tab);
+    this.tabs = next;
+  }
+
   reorderTabs(fromId: string, toId: string): ToolResult {
     const from = String(fromId || "");
     const to = String(toId || "");
     if (!from || !to || from === to) {
       return { ok: true, message: "tabs unchanged", data: this.listTabs() };
+    }
+    const fromTab = this.tabs.get(from);
+    const toTab = this.tabs.get(to);
+    if (fromTab?.kind === "command" || toTab?.kind === "command") {
+      this.pinCommandTab();
+      return { ok: true, message: "指挥室位置固定", data: this.listTabs() };
     }
     const ids = [...this.tabs.keys()];
     const fromIndex = ids.indexOf(from);
@@ -4753,6 +4983,17 @@ export class SparkBrowser {
     handle("spark:select-session", async (_e, key: string) => this.selectSession(String(key || "")));
     handle("spark:focus-task", async (_e, id: string) => this.focusTask(String(id || "")));
     handle("spark:stop-task", async (_e, id: string) => this.stopAgentTask(String(id || "")));
+    handle("spark:accept-task", async (_e, id: string, disposition?: string) =>
+      this.acceptTask(String(id || ""), disposition === "close" ? "close" : "keep"),
+    );
+    handle("spark:close-task", async (_e, id: string, disposition?: string) =>
+      this.closeTask(String(id || ""), disposition === "keep" ? "keep" : "close"),
+    );
+    handle("spark:resume-task", async (_e, id: string) => this.resumeTask(String(id || "")));
+    handle("spark:ack-task", async (_e, id: string) => this.ackTask(String(id || "")));
+    handle("spark:task-viewed", async (_e, id: string, visible?: boolean) =>
+      this.noteTaskViewed(String(id || ""), visible === true),
+    );
     handle("spark:chat-resync", async () => {
       this.requestChatFull();
       return { ok: true };
@@ -5540,6 +5781,8 @@ export class SparkBrowser {
     const live = wc && !wc.isDestroyed() ? wc : undefined;
     return {
       tabs: own,
+      overview: this.commandOverview(),
+      groups: this.taskGroupViews(),
       activeId,
       url: live ? live.getURL() : tab?.url || "",
       canGoBack: Boolean(live && this.navCanGoBack(live)),
@@ -5548,10 +5791,22 @@ export class SparkBrowser {
     };
   }
 
-  /** 100ms 节流。setStep 每轮都推，合并成一次全量重绘，最后一次状态不会丢。 */
-  private pushChromeState(): void {
+  /**
+   * 普通步骤 100ms 合并成一次。状态转换立刻推，并清掉还没发出的步骤拍，
+   * 避免终态被后到的旧步骤盖掉。推送只读当前快照，不切标签、不抢焦点。
+   */
+  private pushChromeState(immediate = false): void {
+    this.pinCommandTab();
     if (!this.liveWins().length) return;
     this.ensurePushMeter().chromeReq += 1;
+    if (immediate) {
+      if (this.chromePushTimer) {
+        clearTimeout(this.chromePushTimer);
+        this.chromePushTimer = null;
+      }
+      this.flushChromeState();
+      return;
+    }
     if (this.chromePushTimer) return;
     this.chromePushTimer = setTimeout(() => {
       this.chromePushTimer = null;
@@ -5596,19 +5851,38 @@ export class SparkBrowser {
     return out;
   }
 
-  /** 任务池状态变了就推壳层，并请壳层重报页面洞。 */
+  /** 任务状态变了就立刻推壳层和侧栏，并请壳层重报页面洞。 */
   private syncTaskChrome(): void {
-    this.pushChromeState();
+    this.pushChromeState(true);
+    this.pushSidebarState(true);
     this.requestHoleReport();
+    if (this.canPersistWork()) {
+      try {
+        this.persistWorkState();
+      } catch {
+        /* 落盘失败不挡状态推送 */
+      }
+    }
   }
 
-  private pushSidebarState(): void {
-    if (!this.win || this.win.isDestroyed() || this.win.webContents.isDestroyed()) return;
+  private pushSidebarState(immediate = false): void {
+    const win = this.win;
+    if (!win || typeof win.isDestroyed !== "function" || win.isDestroyed()) return;
+    if (win.webContents?.isDestroyed?.()) return;
     this.ensurePushMeter().sidebarReq += 1;
     try {
-      saveChatMemory(this.configDir(), this.userTurns());
+      saveChatMemory(this.configDir(), this.chatTurnsToPersist());
     } catch {
       /* 落盘失败不影响推送 */
+    }
+    if (immediate) {
+      if (this.sidebarTimer) {
+        clearTimeout(this.sidebarTimer);
+        this.sidebarTimer = null;
+      }
+      this.sidebarQueued = false;
+      this.flushSidebarState();
+      return;
     }
     this.sidebarQueued = true;
     if (this.sidebarTimer) return;
@@ -5651,10 +5925,13 @@ export class SparkBrowser {
       // 对话是一份，所有窗口都要收到；地址/标题只属于自己那扇窗口。
       for (const [winId, win] of wins) {
         const tid = this.activeTabs.get(winId) || "";
+        const selectedSession = this.sessionKeyForTab(tid) || "user";
+        const pageStatus = this.pageStatusFor(tid);
+        const chat = winId === this.activeWinId ? null : this.chatFrame(selectedSession, true);
         const own =
           winId === this.activeWinId
-            ? payload
-            : { ...payload, url: this.getUrl(tid), title: this.getTitle(tid) };
+            ? { ...payload, pageStatus }
+            : { ...payload, ...chat, selectedSession, pageStatus, url: this.getUrl(tid), title: this.getTitle(tid) };
         this.ensurePushMeter().sidebarBytes += totalBytes;
         win.webContents.send("spark:sidebar-state", own);
       }
@@ -5672,20 +5949,20 @@ export class SparkBrowser {
    */
   private pushSidebarFallback(wins: Array<[string, BrowserWindow]>): void {
     try {
-      const selectedSession = this.resolvedSession();
-      const chat = this.chatFrame(selectedSession, true);
-      const payload = {
-        ...chat,
-        selectedSession,
-        locale: this.settings.locale,
-        paused: this.paused,
-        chatRunning: Boolean(this.chatRunningFlag),
-        sidebarTaskId: this.sidebarTaskIdForShell(),
-        degraded: true,
-      };
-      for (const [, win] of wins) {
+      for (const [winId, win] of wins) {
         if (!win || win.isDestroyed()) continue;
-        win.webContents.send("spark:sidebar-state", payload);
+        const tid = this.activeTabs.get(winId) || "";
+        const selectedSession = this.sessionKeyForTab(tid) || "user";
+        const chat = this.chatFrame(selectedSession, true);
+        win.webContents.send("spark:sidebar-state", {
+          ...chat,
+          selectedSession,
+          locale: this.settings.locale,
+          paused: this.paused,
+          chatRunning: Boolean(this.chatRunningFlag),
+          sidebarTaskId: this.sidebarTaskIdForShell(),
+          degraded: true,
+        });
       }
       this.noteSidebarMessages();
     } catch (fallbackError) {
@@ -5852,7 +6129,13 @@ export class SparkBrowser {
         })),
       ),
       plan: safeValue(() => this.sidebarPlan(), null),
-      tasks: safeList(() => this.taskPool.visible()),
+      tasks: safeList(() =>
+        this.taskPool.visible().map((task) => {
+          const projected = projectStatus(task.state);
+          return { ...task, tone: projected.tone, label: projected.label };
+        }),
+      ),
+      pageStatus: this.pageStatusFor(this.activeTabId || ""),
     };
   }
 
@@ -6109,6 +6392,14 @@ export class SparkBrowser {
         message: id ? `没有这个标签页：${id}` : `没有匹配「${match}」的标签页`,
       };
     }
+    this.pinToolTab(target.id);
+    if (this.viewingCommandRoom()) {
+      return {
+        ok: true,
+        message: `后续读取改到：${target.title || target.url || target.id}。人留在指挥室。`,
+        data: { id: target.id, url: target.url, title: target.title },
+      };
+    }
     const switched = this.switchTab(target.id, { userAction: true });
     if (!switched.ok) return switched;
     return {
@@ -6190,6 +6481,7 @@ export class SparkBrowser {
     if (!env) return { ok: false, message: `env ${envId} not found` };
     stopEnvProxy(envId);
     const envTabs = [...this.tabs.values()].filter((t) => t.envId === envId).map((t) => t.id);
+    this.stopTasksOnTabs(envTabs);
     for (const id of envTabs) this.closeTab(id);
     // 先清存储、后删配置（R2 加固）：清失败就不删配置并如实回执，
     // 避免「名册里已经没了、分区 Cookie 还在」的残留——那时界面上开不回这个号。
@@ -7243,8 +7535,17 @@ export class SparkBrowser {
    */
   private ensureSidebarWorkTab(): string {
     ensureSidebarClient();
-    const tabId = this.bindAgentTab(SIDEBAR_CLIENT_ID) || "";
-    if (!tabId) return "";
+    if (this.sidebarBoundTab) {
+      const again = this.bindAgentTab(SIDEBAR_CLIENT_ID, "", { intent: "address", tabId: this.sidebarBoundTab });
+      if (again.ok && again.tabId) return this.presentSidebarTab(again.tabId);
+    }
+    const bound = this.bindAgentTab(SIDEBAR_CLIENT_ID, `sidebar:${randomBytes(4).toString("hex")}`, { intent: "task" });
+    if (!bound.ok || !bound.tabId) return "";
+    this.sidebarBoundTab = bound.tabId;
+    return this.presentSidebarTab(bound.tabId);
+  }
+
+  private presentSidebarTab(tabId: string): string {
     const tab = this.tabs?.get(tabId);
     if (tab?.agentStatus === "done") delete tab.agentStatus;
     this.agentTabId = tabId;
@@ -7253,7 +7554,8 @@ export class SparkBrowser {
     if (
       !this.sidebarTabShownForTurn &&
       this.taskStore()?.lane !== "background" &&
-      !this.windowIsMinimized()
+      !this.windowIsMinimized() &&
+      !this.viewingCommandRoom()
     ) {
       this.sidebarTabShownForTurn = true;
       if (tabId !== this.activeTabId) this.switchTab(tabId, { userAction: true });
@@ -7272,6 +7574,7 @@ export class SparkBrowser {
   /** 人在前台发话、窗口没最小化时，环境页要摆到眼前。后台车道不抢用户正在看的页。 */
   private envOpenShowsPage(): boolean {
     if (this.taskStore()?.lane === "background") return false;
+    if (this.viewingCommandRoom()) return false;
     try {
       return !this.windowIsMinimized();
     } catch {
@@ -7313,6 +7616,11 @@ export class SparkBrowser {
     }
     const scope = this.taskStore();
     if (scope) scope.tabId = envTabId;
+    const envClient =
+      agentClientFromScope(scope?.chatKey) || (this.sidebarOwnTab ? SIDEBAR_CLIENT_ID : "");
+    if (envClient) {
+      this.bindAgentTab(envClient, `env:${envTabId}`, { intent: "task", tabId: envTabId });
+    }
     if (show) this.sidebarTabShownForTurn = true;
     const result = await this.watchPageTool(
       "navigate",
@@ -7347,10 +7655,23 @@ export class SparkBrowser {
     return String(tabEnvId || "").trim();
   }
 
-  /** MCP 作用域里的标签优先。侧栏开站才在需要页面时绑定自己的工位。 */
+  /** 本轮后续 page_text / 点击跟着这一页，不再钉在开工时的工位上。指挥室不能当网页。 */
+  private pinToolTab(tabId: string): void {
+    const id = String(tabId || "").trim();
+    if (!id || !this.tabs?.has?.(id)) return;
+    const tab = this.tabs.get(id);
+    if (!tab || tab.kind === "command") return;
+    this.pinnedToolTabId = id;
+    const scope = this.taskStore();
+    if (scope) scope.tabId = id;
+  }
+
+  /** MCP 作用域里的标签优先。刚切过或新开的页其次。侧栏开站才在需要页面时绑定自己的工位。 */
   private resolveToolTab(needsPage: boolean): string {
     const scope = this.taskStore();
     if (scope?.tabId) return scope.tabId;
+    const pin = String(this.pinnedToolTabId || "").trim();
+    if (pin && this.tabs?.has?.(pin) && this.tabs.get(pin)?.kind !== "command") return pin;
     if (needsPage && this.sidebarOwnTab) {
       const bound = this.ensureSidebarWorkTab();
       if (bound) return bound;
@@ -7358,20 +7679,50 @@ export class SparkBrowser {
     return this.fallbackAgentTabId || this.activeTabId || "";
   }
 
+  /** 这个 Agent 已经打开的网页。用户自己开的页不算。 */
+  private agentOwnedTabs(): Array<{ id: string; url: string; agentOwned: boolean; kind?: string }> {
+    return [...(this.tabs?.values?.() || [])].map((tab) => ({
+      id: tab.id,
+      url: tab.url || "",
+      agentOwned: tab.agentOwned === true,
+      kind: tab.kind,
+    }));
+  }
+
+  /**
+   * 同站开页守卫，只拦 Agent。
+   * navigate 发现本任务已经开过这个站，就切回那一页。
+   * new_tab 允许再开一页，第三次起拒绝。
+   */
+  private sameHostOpenDecision(intent: "new_tab" | "navigate", url: string) {
+    return decideSameHostOpen(intent, url, this.agentOwnedTabs());
+  }
+
   /** 新核心只暴露通用浏览原语；路线和下一步全由模型决定。 */
   private async runCoreTool(
     name: FreeSoulToolName,
     args: Record<string, unknown>,
   ): Promise<ToolResult> {
+    const held = this.agentActionBlocked(name, this.resolveToolTab(false));
+    if (held) return held;
     if (name === "navigate") {
+      const reuse = this.sameHostOpenDecision("navigate", String(args.url || ""));
+      if (reuse.action === "switch") {
+        this.pinToolTab(reuse.tabId);
+        if (!this.viewingCommandRoom() && typeof this.switchTab === "function") this.switchTab(reuse.tabId);
+        return this.navigate(String(args.url || ""), { tabId: reuse.tabId });
+      }
       const inEnv = await this.navigateInEnv(args);
       if (inEnv) return inEnv;
     }
     if (name === "new_tab") {
       const url = String(args.url || "").trim();
       if (!/^https?:\/\//i.test(url)) return { ok: false, message: "new_tab 需要完整 URL" };
+      const gate = this.sameHostOpenDecision("new_tab", url);
+      if (gate.action === "refuse") return { ok: false, message: gate.message };
       const before = this.activeTabId;
       const id = this.createTab(url, false, { agentOwned: true });
+      this.pinToolTab(id);
       if (before && this.activeTabId !== before && typeof this.switchTab === "function") {
         this.switchTab(before, { userAction: true });
       }
@@ -7518,6 +7869,8 @@ export class SparkBrowser {
     args: Record<string, unknown>,
   ): Promise<ToolResult> {
     const tabId = this.resolveToolTab(sidebarToolNeedsPage(name));
+    const held = this.agentActionBlocked(name, tabId);
+    if (held) return held;
     switch (name) {
       case "navigate":
         return this.watchPageTool("navigate", { ...args, tabId }, () =>
@@ -8416,10 +8769,12 @@ export class SparkBrowser {
           current = { ...current, brainPlan: focusPlanOnStep(current.brainPlan, thought.next) };
           this.activeMission = current;
         }
-        this.chatLog.push({
-          role: "assistant",
-          text: `正在做 ${i + 1}/… ${thought.next.label}。${thought.why}`,
-        });
+        if (this.sessionKey() !== COMMAND_SESSION_KEY) {
+          this.chatLog.push({
+            role: "assistant",
+            text: `正在做 ${i + 1}/… ${thought.next.label}。${thought.why}`,
+          });
+        }
         this.noteTaskStep(`正在做 ${thought.next.label}`);
         this.pushSidebarState();
         ran.push(thought.next);
@@ -9111,6 +9466,184 @@ export class SparkBrowser {
     });
   }
 
+  private canPersistWork(): boolean {
+    try {
+      const dir = this.configDir();
+      return typeof dir === "string" && dir.length > 0 && dir !== process.cwd();
+    } catch {
+      return false;
+    }
+  }
+
+  /** 把池里的任务、租约、提醒和父组写进现有任务摘要。不另建一份任务状态。 */
+  persistWorkState(): void {
+    if (!this.canPersistWork()) return;
+    const dir = this.configDir();
+    const previous = readTaskSummaries(dir) as Array<TaskSummary & { schema?: number }>;
+    const legacy = previous.filter((row) => row.schema !== 1);
+    this.backupLegacySummaries(dir, legacy.length > 0);
+    const records = (this.taskPool?.tasks || [])
+      .filter((task) => task.state !== "closed")
+      .map((task) => {
+        const tab = task.tabId ? this.tabs?.get(task.tabId) : undefined;
+        const lease = activeLeaseForTask(task.id);
+        const attention = task.tabId ? this.taskAttention.get(`${task.tabId}\n${task.id}`) : undefined;
+        const group = task.groupId ? this.taskGroups.find((item) => item.groupId === task.groupId) : undefined;
+        return {
+          schema: 1,
+          taskId: task.id,
+          goal: task.origin?.input || task.title,
+          status: task.state,
+          lastStep: task.step,
+          at: task.updatedAt || Date.now(),
+          clientId: task.clientId,
+          tabId: task.tabId,
+          url: tab?.url || "",
+          envId: tab?.envId || lease?.envId || "",
+          winId: tab?.winId || "",
+          title: task.title,
+          agentName: task.agentName,
+          groupId: task.groupId,
+          groupTitle: group?.title,
+          groupCreatedAt: group?.createdAt,
+          humanReason: task.humanReason,
+          origin: task.origin,
+          verification: task.verification,
+          resultCard: task.resultCard,
+          attention: Boolean(attention && !attention.acked),
+          leaseActive: Boolean(lease && lease.releasedAt == null),
+          failureStep: task.failureStep,
+          advice: task.advice,
+          lastLine: task.lastLine,
+        };
+      });
+    const cap = 40;
+    const keptRecords = records.slice(-(cap - Math.min(legacy.length, cap)));
+    const keptLegacy = legacy.slice(-(cap - keptRecords.length));
+    const merged = [...keptLegacy, ...keptRecords];
+    writeTaskSummaries(dir, merged);
+    this.savedTaskSummaries = merged;
+  }
+
+  /** 旧摘要没有 schema。第一次改写成恢复账本前留一份，避免旧记录被盖掉。 */
+  private backupLegacySummaries(dir: string, needed: boolean): void {
+    if (!needed) return;
+    const from = join(dir, "agent-task-summaries.json");
+    const bak = join(dir, "agent-task-summaries.bak.json");
+    if (!existsSync(from) || existsSync(bak)) return;
+    try {
+      copyFileSync(from, bak);
+    } catch {
+      /* 备份失败不挡这次写入 */
+    }
+  }
+
+  /**
+   * 重启后把摘要收回任务池。
+   * 排队和进行中改成失败，不自动接着跑。等人的保持黄色。原 tabId 不改派。
+   */
+  restoreWorkState(): { restored: number } {
+    if (!this.canPersistWork()) return { restored: 0 };
+    const saved = readTaskSummaries(this.configDir()) as Array<Record<string, unknown>>;
+    let restored = 0;
+    const groups = new Map<string, { title: string; at: number; ids: string[] }>();
+    for (const row of saved) {
+      if (!row || row.schema !== 1 || typeof row.taskId !== "string") continue;
+      if ((this.taskPool?.tasks || []).some((task) => task.id === row.taskId)) continue;
+      const savedState = String(row.status || "");
+      let state = savedState;
+      let step = String(row.lastStep || "");
+      let lastLine = String(row.lastLine || "");
+      if (savedState === "queued" || savedState === "running") {
+        state = "failed";
+        step = "应用中断";
+        lastLine = "应用中断，需原任务恢复";
+      }
+      const tabId = String(row.tabId || "");
+      const envId = String(row.envId || "");
+      const pageBack = this.reuseSavedTab(row);
+      if (!pageBack && (savedState === "waiting_human" || savedState === "queued" || savedState === "running")) {
+        state = "failed";
+        step = "原页面恢复不了";
+        lastLine = "原页面恢复不了，没有改派到别的页";
+      }
+      const task: PoolTask = {
+        id: row.taskId,
+        tabId,
+        title: String(row.title || row.goal || "任务"),
+        lane: "background",
+        state: state as PoolTask["state"],
+        step,
+        clientId: typeof row.clientId === "string" ? row.clientId : undefined,
+        agentName: typeof row.agentName === "string" ? row.agentName : undefined,
+        lastLine,
+        groupId: typeof row.groupId === "string" ? row.groupId : undefined,
+        humanReason: typeof row.humanReason === "string" ? row.humanReason : undefined,
+        origin: row.origin as PoolTask["origin"],
+        verification: row.verification as PoolTask["verification"],
+        resultCard: state === "done" ? (row.resultCard as PoolTask["resultCard"]) : undefined,
+        failureStep: state === "failed" ? String(row.failureStep || step) : undefined,
+        advice: typeof row.advice === "string" ? row.advice : undefined,
+        updatedAt: Number(row.at) || Date.now(),
+      };
+      this.taskPool.tasks.push(task);
+      if (row.leaseActive !== false && tabId && task.clientId) {
+        acquireLease({
+          tabId,
+          taskId: task.id,
+          clientId: task.clientId,
+          envId: envId || undefined,
+        });
+      }
+      const tab = tabId ? this.tabs?.get(tabId) : undefined;
+      if (state === "waiting_human" && tab) tab.holdHuman = true;
+      if (row.attention === true && tabId) {
+        this.taskAttention.set(`${tabId}\n${task.id}`, { tabId, taskId: task.id, acked: false });
+      }
+      if (typeof row.groupId === "string" && row.groupId) {
+        const bucket = groups.get(row.groupId) || {
+          title: String(row.groupTitle || "跨页任务"),
+          at: Number(row.groupCreatedAt) || Number(row.at) || Date.now(),
+          ids: [],
+        };
+        bucket.ids.push(task.id);
+        groups.set(row.groupId, bucket);
+      }
+      restored += 1;
+    }
+    for (const [groupId, group] of groups) {
+      if (this.taskGroups.some((item) => item.groupId === groupId)) continue;
+      this.taskGroups.push({ groupId, title: group.title, childTaskIds: group.ids, createdAt: group.at });
+    }
+    return { restored };
+  }
+
+  /** 原页还在或能按原 id 挂回来才算恢复。不新开页，也不换 tabId。 */
+  private reuseSavedTab(row: Record<string, unknown>): boolean {
+    const tabId = String(row.tabId || "");
+    if (!tabId || !this.tabs) return false;
+    const envId = String(row.envId || "");
+    const existing = this.tabs.get(tabId);
+    if (existing) {
+      if (envId && existing.envId && existing.envId !== envId) return false;
+      return true;
+    }
+    const url = String(row.url || "");
+    if (!url) return false;
+    this.tabs.set(tabId, {
+      id: tabId,
+      title: String(row.title || url),
+      url,
+      envId: envId || undefined,
+      winId: String(row.winId || "main"),
+      kind: "web",
+      view: null,
+      discarded: true,
+      lastActiveAt: Date.now(),
+    });
+    return true;
+  }
+
   private offerMissionRecovery(): void {
     let pending: RestoredMission[] = [];
     try {
@@ -9167,10 +9700,14 @@ export class SparkBrowser {
     text: string,
     images?: string[],
     quotes?: unknown,
-    opts?: { alreadyLogged?: boolean },
+    opts?: { alreadyLogged?: boolean; continueHere?: boolean },
   ): Promise<ToolResult> {
     const clean = text.trim();
     if (!clean) return { ok: false, message: "请输入任务" };
+    if (this.commandSurface()) {
+      const action = parseCommandUtterance(clean);
+      if (action) return this.runCommandUtterance(clean, action, opts?.alreadyLogged === true);
+    }
     console.log(
       formatLane({
         path: "sidebar",
@@ -9184,22 +9721,32 @@ export class SparkBrowser {
     );
     const pics = sanitizeImageDataUrls(images);
     const cleanQuotes = normalizeQuotes(quotes);
-    if (this.chatRunning) {
+    if (this.chatRunning || this.activePageBusy()) {
+      const message = this.busyPageReply();
       this.chatLog.push(quotedUserTurn(text, cleanQuotes, pics));
-      this.pendingChat = { text: clean, images: pics, quotes: cleanQuotes };
-      this.activePiAbort?.abort();
+      this.chatLog.push({ role: "assistant", text: message });
       this.pushSidebarState();
-      return { ok: true, message: "已记下，当前任务汇报后接着做。" };
+      return { ok: false, message };
     }
 
-    const stayOnUser = !agentShouldOpenOwnSurface(clean, ownerForTab(this.activeTabId || ""), cleanQuotes);
+    const onVisibleWeb = !this.viewingCommandRoom();
+    const stayOnUser =
+      opts?.continueHere === true ||
+      !agentShouldOpenOwnSurface(clean, ownerForTab(this.activeTabId || ""), cleanQuotes) ||
+      (onVisibleWeb && visiblePageKeepsTurn(clean) && !wantsPublish(clean));
     const previousAgentTab = this.agentTabId;
+    this.pinnedToolTabId = "";
     this.sidebarOwnTab = !stayOnUser;
+    if (!stayOnUser) {
+      this.sidebarBoundTab = "";
+      this.sidebarTabShownForTurn = false;
+    }
     this.agentTabId = stayOnUser ? this.activeTabId || "" : "";
     if (!opts?.alreadyLogged) this.chatLog.push(quotedUserTurn(text, cleanQuotes, pics));
     this.chatRunning = true;
     this.claimQueuedMcpTask(clean);
     this.pushSidebarState();
+    let openedTabOutcome: "done" | "stopped" = "done";
 
     try {
       const soul = this.freeSoul;
@@ -9253,7 +9800,11 @@ export class SparkBrowser {
           this.lastRunTrace = trace;
         },
       }));
-      if (this.takeSidebarManualStop()) return { ok: false, message: "已手动停止" };
+      if (this.takeSidebarManualStop()) {
+        openedTabOutcome = "stopped";
+        return { ok: false, message: "已手动停止" };
+      }
+      if (result.interrupted) openedTabOutcome = "stopped";
       this.chatLog.push({ role: "assistant", text: result.text });
       this.finishMcpTask(result);
       return {
@@ -9262,7 +9813,10 @@ export class SparkBrowser {
         ...(result.awaitingConfirm ? { data: { awaitingConfirm: true } } : {}),
       };
     } catch (error) {
-      if (this.takeSidebarManualStop()) return { ok: false, message: "已手动停止" };
+      if (this.takeSidebarManualStop()) {
+        openedTabOutcome = "stopped";
+        return { ok: false, message: "已手动停止" };
+      }
       const message = `执行失败：${error instanceof Error ? error.message : String(error)}`;
       this.chatLog.push({ role: "assistant", text: message });
       this.finishMcpTask({ ok: false, text: message });
@@ -9274,19 +9828,22 @@ export class SparkBrowser {
       this.activePiAbort = null;
       if (this.cloudTaskId) void this.finishCloudTask();
       this.agentTabId = previousAgentTab;
-      if (ownTab && ownTab !== this.activeTabId) this.releaseAgentTab(ownTab);
+      if (ownTab && ownTab !== this.activeTabId) this.releaseAgentTab(ownTab, openedTabOutcome);
       this.chatRunning = false;
       this.pushSidebarState();
       const next = this.pendingChat;
       this.pendingChat = null;
-      if (next) void this.handleChat(next.text, next.images, next.quotes, { alreadyLogged: true });
+      if (next) {
+        this.chatLog.push({ role: "assistant", text: this.busyPageReply() });
+        this.pushSidebarState();
+      }
     }
   }
 
   submitTask(
     text: string,
-    opts?: { execMode?: "step" | "auto"; clientId?: string },
-  ): { taskId: string; status: "running" | "queued" | "pool_full" | "failed"; error?: "pool_full" | "no-model"; message?: string } {
+    opts?: { execMode?: "step" | "auto"; clientId?: string; tabId?: string },
+  ): { taskId: string; status: "running" | "queued" | "pool_full" | "failed"; error?: "pool_full" | "no-model" | "tab_busy"; message?: string } {
     const clean = text.trim();
     const task = {
       taskId: randomBytes(8).toString("hex"),
@@ -9297,16 +9854,19 @@ export class SparkBrowser {
       text: clean,
       execMode: opts?.execMode === "step" ? "step" as const : "auto" as const,
     };
-    if (opts?.clientId) return this.submitAgentTask(task, opts.clientId);
-    task.status = this.chatRunning ? "queued" : "running";
-    if (task.status === "running") this.activeMcpTaskId = task.taskId;
+    if (opts?.clientId) return this.submitAgentTask(task, opts.clientId, opts.tabId);
+    if (this.chatRunning || this.activePageBusy()) {
+      return { taskId: task.taskId, status: "failed", error: "tab_busy", message: this.busyPageReply() };
+    }
+    task.status = "running";
+    this.activeMcpTaskId = task.taskId;
     this.rememberMcpTask(task);
     void this.handleChat(clean);
     return { taskId: task.taskId, status: task.status };
   }
 
   getTask(taskId: string, clientId?: string): {
-    status: "running" | "queued" | "done" | "interrupted" | "failed" | "pool_full" | "unknown";
+    status: "running" | "queued" | "done" | "interrupted" | "failed" | "stopped" | "pool_full" | "waiting_human" | "unknown";
     rounds: number;
     lastAssistant: string;
     elapsedMs: number;
@@ -9332,7 +9892,7 @@ export class SparkBrowser {
       if (!saved || (saved.clientId && clientId && saved.clientId !== clientId)) {
         return { status: "unknown", rounds: 0, lastAssistant: "", elapsedMs: 0, window: this.mainWindowMode() };
       }
-      const status = saved.status === "done" || saved.status === "failed" || saved.status === "interrupted" || saved.status === "pool_full"
+      const status = saved.status === "done" || saved.status === "failed" || saved.status === "stopped" || saved.status === "interrupted" || saved.status === "pool_full"
         ? saved.status
         : "interrupted";
       return {
@@ -9343,8 +9903,15 @@ export class SparkBrowser {
         window: this.mainWindowMode(),
       };
     }
+    const poolState = this.taskPool?.tasks?.find((item) => item.id === task.taskId)?.state;
+    const pooled: "running" | "queued" | "done" | "interrupted" | "failed" | "stopped" | "pool_full" | "waiting_human" | "unknown" =
+      task.status === "interrupted"
+        ? "interrupted"
+        : poolState === "waiting_human" || poolState === "stopped" || poolState === "failed" || poolState === "done"
+          ? poolState
+          : task.status;
     const view = {
-      status: task.status,
+      status: pooled,
       rounds: task.rounds,
       lastAssistant: task.lastAssistant,
       elapsedMs: Date.now() - task.startedAt,
@@ -9551,6 +10118,291 @@ export class SparkBrowser {
     for (const controller of this.agentAbortByTask?.values() || []) controller.abort();
   }
 
+  acceptTask(taskId: string, pageDisposition: "keep" | "close" = "keep") {
+    return this.endBoundTask(taskId, "accepted", pageDisposition);
+  }
+
+  closeTask(taskId: string, pageDisposition: "keep" | "close" = "close") {
+    return this.endBoundTask(taskId, "closed", pageDisposition);
+  }
+
+  /**
+   * 原 client、原 task、原 tab 继续。
+   * 接的是 runAgentTask，不新建任务、不新开页。
+   */
+  resumeTask(taskId: string): { ok: boolean; message: string; tabId?: string } {
+    const task = this.taskPool?.tasks?.find((item) => item.id === taskId);
+    if (!task) return { ok: false, message: "没有这张任务" };
+    if (task.state === "running") return { ok: false, message: "任务已经在跑" };
+    if (!canTransition(task.state, "running", "resume")) {
+      return { ok: false, message: "只能恢复已停止、异常或等待人工的原任务" };
+    }
+    const lease = activeLeaseForTask(task.id);
+    if (!lease || lease.tabId !== task.tabId || lease.clientId !== String(task.clientId || "")) {
+      return { ok: false, message: "原页面绑定已经不在" };
+    }
+    const clientId = String(task.clientId || "");
+    task.state = "running";
+    task.step = "接着做";
+    task.updatedAt = Date.now();
+    task.notice = undefined;
+    const tab = task.tabId ? this.tabs?.get(task.tabId) : undefined;
+    if (tab) {
+      delete tab.agentStatus;
+      delete tab.holdHuman;
+    }
+    const record = this.mcpTaskForResume(task);
+    const origin = task.origin;
+    if (origin?.input) record.text = origin.input;
+    record.status = "running";
+    record.clientId = clientId;
+    const mission = this.taskPlans.get(task.id) || this.waitingMissions?.get(task.id);
+    if (!this.agentPoolIds) this.agentPoolIds = new Set();
+    this.agentPoolIds.add(task.id);
+    queueMicrotask(() => {
+      void this.runAgentTask(record, clientId, { chatKey: origin?.chatKey, mission }).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        const current = this.taskPool?.tasks?.find((item) => item.id === task.id);
+        if (!current || current.state !== "running") return;
+        this.noteTaskFailure(task.id, {
+          message,
+          advice: "原页恢复没有跑起来，可以再试一次或明确结束。",
+        });
+        this.finishPooledTask(task.id, "failed");
+        if (typeof this.syncTaskChrome === "function") this.syncTaskChrome();
+        if (typeof this.pushSidebarState === "function") this.pushSidebarState();
+      });
+    });
+    if (typeof this.syncTaskChrome === "function") this.syncTaskChrome();
+    if (typeof this.pushSidebarState === "function") this.pushSidebarState();
+    return { ok: true, message: "已恢复原任务", tabId: task.tabId };
+  }
+
+  private mcpTaskForResume(task: PoolTask): SparkBrowser["mcpTasks"][number] {
+    const found = this.mcpTaskList().find((item) => item.taskId === task.id);
+    if (found) return found;
+    const created: SparkBrowser["mcpTasks"][number] = {
+      taskId: task.id,
+      status: "running",
+      rounds: 0,
+      lastAssistant: task.lastLine || "",
+      startedAt: Date.now(),
+      text: task.title || "继续原任务",
+      clientId: task.clientId,
+    };
+    try {
+      this.rememberMcpTask(created);
+    } catch {
+      const list = this.mcpTaskList();
+      if (!list.some((item) => item.taskId === created.taskId)) list.push(created);
+    }
+    return this.mcpTaskList().find((item) => item.taskId === task.id) || created;
+  }
+
+  /** 进入黄色。原因写进本页、指挥室和总指挥；总指挥同一任务只报一次。 */
+  private markWaitingHuman(taskId: string, reason: string): void {
+    const task = this.taskPool?.tasks?.find((item) => item.id === taskId);
+    if (!task || task.state === "closed" || task.state === "stopped" || task.state === "done" || task.state === "failed") {
+      return;
+    }
+    const text = String(reason || "需要你处理").replace(/\s+/g, " ").trim().slice(0, 180) || "需要你处理";
+    const repeat = task.state === "waiting_human" && task.humanReason === text;
+    this.taskPool.suspend(taskId);
+    task.humanReason = text;
+    task.lastLine = text;
+    task.updatedAt = Date.now();
+    const waitingTab = task.tabId ? this.tabs?.get(task.tabId) : undefined;
+    if (waitingTab) waitingTab.holdHuman = true;
+    if (!repeat) {
+      const pageKey = task.tabId ? taskSessionKey(task.tabId, task.id) : "";
+      if (pageKey) this.appendChat(pageKey, text);
+    }
+    if (task.notice !== "human") {
+      this.appendChat(COMMAND_SESSION_KEY, `需要人工：${text}`);
+      task.notice = "human";
+    }
+    if (typeof this.syncTaskChrome === "function") this.syncTaskChrome();
+    if (typeof this.pushSidebarState === "function") this.pushSidebarState();
+  }
+
+  /** 进入红色。留下卡住的步骤、已试过的动作和建议，总指挥不重复报同一条。 */
+  private noteTaskFailure(
+    taskId: string,
+    detail: { step?: string; tried?: string; advice?: string; message: string },
+  ): void {
+    const task = this.taskPool?.tasks?.find((item) => item.id === taskId);
+    if (!task || task.state === "stopped" || task.state === "closed" || task.state === "done") return;
+    const message = String(detail.message || "执行失败").replace(/\s+/g, " ").trim().slice(0, 180) || "执行失败";
+    const step = String(detail.step || task.step || "卡住").replace(/\s+/g, " ").trim().slice(0, 48) || "卡住";
+    task.failureStep = step;
+    task.step = step;
+    task.lastLine = message;
+    task.advice = detail.advice || "停在当前页。可以原任务继续，或明确结束。";
+    if (detail.tried) task.attempts = [...(task.attempts || []), detail.tried].slice(-8);
+    if (task.notice !== "failed") {
+      this.appendChat(COMMAND_SESSION_KEY, `任务异常：${message}`);
+      task.notice = "failed";
+    }
+  }
+
+  /**
+   * 只有真实完成才出结果卡和双位置提醒。
+   * 未核验的完成口径改成红色，不报全部完成。这里不切页面、不拉窗口。
+   */
+  private sealTaskOutcome(taskId: string, outcome: "done" | "failed" | "stopped"): "done" | "failed" | "stopped" {
+    const task = this.taskPool?.tasks?.find((item) => item.id === taskId);
+    if (!task || task.state === "stopped" || task.state === "failed" || task.state === "closed") {
+      if (task?.state === "stopped" || task?.state === "failed") return task.state;
+      return outcome;
+    }
+    if (outcome !== "done") return outcome;
+    const receipt = task.verification;
+    const verified = Boolean(receipt?.ok && receipt.items.length > 0 && receipt.items.every((item) => item.ok));
+    if (!verified) {
+      const missed = (receipt?.items || []).filter((item) => !item.ok).map((item) => item.name);
+      this.noteTaskFailure(taskId, {
+        message: receipt ? "核验没有通过" : "没有核验回执",
+        tried: missed.join("、") || undefined,
+        advice: "不能当成全部完成。",
+      });
+      delete task.resultCard;
+      return "failed";
+    }
+    const mcp = this.mcpTaskList().find((item) => item.taskId === taskId);
+    const text = String(mcp?.lastAssistant || task.lastLine || "").trim();
+    const summary = (text || task.title || "已完成").slice(0, 180);
+    const outputs = [mcp?.reportUrl, ...(mcp?.captures || [])].filter((item): item is string => Boolean(item));
+    task.resultCard = {
+      status: "done",
+      summary,
+      tabId: task.tabId,
+      url: mcp?.finalUrl || "",
+      outputs,
+      unfinished: [],
+      needsAccept: true,
+      finishedAt: Date.now(),
+    };
+    task.result = summary;
+    if (task.tabId) {
+      this.taskAttention.set(`${task.tabId}\n${task.id}`, { tabId: task.tabId, taskId: task.id, acked: false });
+    }
+    if (task.notice !== "done") {
+      this.appendChat(COMMAND_SESSION_KEY, `已完成：${summary}`);
+      if (task.tabId) this.appendChat(taskSessionKey(task.tabId, task.id), summary);
+      task.notice = "done";
+    }
+    try {
+      this.flashTaskbarIfHidden();
+    } catch {
+      /* 没有窗口时不闪 */
+    }
+    return "done";
+  }
+
+  /** 知悉提醒。不验收，不解除绑定。 */
+  ackTask(taskId: string): { ok: boolean; message: string } {
+    const task = this.taskPool?.tasks?.find((item) => item.id === taskId);
+    if (!task?.tabId) {
+      const lease = activeLeaseForTask(taskId);
+      if (!lease?.tabId) return { ok: false, message: "没有这张任务" };
+      const key = `${lease.tabId}\n${taskId}`;
+      const mark = this.taskAttention.get(key) || { tabId: lease.tabId, taskId, acked: false };
+      mark.acked = true;
+      this.taskAttention.set(key, mark);
+      this.persistWorkState();
+      if (typeof this.syncTaskChrome === "function") this.syncTaskChrome();
+      if (typeof this.pushSidebarState === "function") this.pushSidebarState();
+      return { ok: true, message: "已知道" };
+    }
+    const mark = this.taskAttention.get(`${task.tabId}\n${task.id}`);
+    if (mark) mark.acked = true;
+    this.persistWorkState();
+    if (typeof this.syncTaskChrome === "function") this.syncTaskChrome();
+    if (typeof this.pushSidebarState === "function") this.pushSidebarState();
+    return { ok: true, message: "已知道" };
+  }
+
+  /** 人已经停在原页并且结果卡真的看得见，才消提醒。后台和最小化不算。 */
+  noteTaskViewed(taskId: string, visible: boolean): { ok: boolean; message: string } {
+    if (!visible) return { ok: false, message: "页面不在眼前" };
+    const task = this.taskPool?.tasks?.find((item) => item.id === taskId);
+    if (!task?.tabId) return { ok: false, message: "没有这张任务" };
+    const tab = this.tabs?.get(task.tabId);
+    const home = tab?.winId || this.activeWinId || "main";
+    const activeThere = this.activeTabs.get(home) || "";
+    const here = activeThere || (home === (this.activeWinId || "main") ? this.activeTabId || "" : "");
+    if (here !== task.tabId) return { ok: false, message: "不在原页面" };
+    return this.ackTask(taskId);
+  }
+
+  /** 黄色时拦住会改页面的自动动作。读页面、看状态仍然可以。 */
+  private agentActionBlocked(name: string, tabId: string): ToolResult | null {
+    const task = (this.taskPool?.tasks || []).find((item) => item.tabId === tabId && item.state === "waiting_human");
+    const gate = decideWrite(name, Boolean(task), task?.humanReason || task?.lastLine);
+    return gate.ok ? null : gate;
+  }
+
+  /** 记下核验回执。有一项没过，或一项都没有，就不算通过。 */
+  recordVerification(taskId: string, items: Array<{ name: string; ok: boolean }>): { ok: boolean; message: string } {
+    const task = this.taskPool?.tasks?.find((item) => item.id === taskId);
+    if (!task) return { ok: false, message: "没有这张任务" };
+    const clean = items
+      .map((item) => ({ name: String(item.name || "").replace(/\s+/g, " ").trim().slice(0, 40), ok: item.ok === true }))
+      .filter((item) => item.name);
+    const passed = clean.length > 0 && clean.every((item) => item.ok);
+    task.verification = { ok: passed, items: clean, at: Date.now() };
+    return { ok: passed, message: passed ? "已记录核验" : "核验没有通过" };
+  }
+
+  private endBoundTask(
+    taskId: string,
+    reason: "accepted" | "closed",
+    pageDisposition: "keep" | "close",
+  ): { ok: boolean; message: string; already?: boolean } {
+    const task = this.taskPool?.tasks?.find((item) => item.id === taskId);
+    if (!task) return { ok: false, message: "没有这张任务" };
+    if (task.state === "closed") return { ok: true, message: "已经结束", already: true };
+    if (reason === "accepted" && task.state !== "done") return { ok: false, message: "只有已完成的任务可以验收" };
+    if (task.state === "running" || task.state === "queued" || task.state === "waiting_human") {
+      return { ok: false, message: "请先停止任务" };
+    }
+    if (task.state !== "done" && task.state !== "failed" && task.state !== "stopped") {
+      return { ok: false, message: "这个任务还不能结束" };
+    }
+    const closed = this.taskPool.close(task.id);
+    this.noteGroupHeadline(task.id);
+    if (!closed || closed.state !== "closed") return { ok: false, message: "没能结束任务" };
+    if (task.tabId) this.taskAttention.delete(`${task.tabId}\n${task.id}`);
+    const released = releaseClientLease({ taskId: task.id }, reason);
+    if (!released.ok && task.tabId) releaseClientLease({ tabId: task.tabId }, reason);
+    const tab = task.tabId ? this.tabs?.get(task.tabId) : undefined;
+    if (tab) {
+      delete tab.agentStatus;
+      delete tab.holdHuman;
+      delete tab.agentOwned;
+    }
+    if (pageDisposition === "close" && task.tabId && this.tabs?.has(task.tabId)) return this.destroyTab(task.tabId);
+    if (typeof this.syncTaskChrome === "function") this.syncTaskChrome();
+    if (typeof this.pushSidebarState === "function") this.pushSidebarState();
+    return { ok: true, message: reason === "accepted" ? "已验收" : "已结束" };
+  }
+
+  /** 眼前这张网页还有没结束的任务。指挥室本身不算。 */
+  private activePageBusy(): boolean {
+    if (this.viewingCommandRoom()) return false;
+    const id = String(this.activeTabId || "");
+    if (!id) return false;
+    return (this.taskPool?.tasks || []).some(
+      (task) =>
+        task.tabId === id &&
+        (task.state === "running" || task.state === "queued" || task.state === "waiting_human"),
+    );
+  }
+
+  private busyPageReply(): string {
+    return "还有任务在进行，这一句没有派上去。先停止当前任务，或等它做完再发。";
+  }
+
   /** 停一张任务卡，或某个 client 名下还活着的任务。缺省停该 client 的全部。 */
   stopAgentTask(taskId?: string, clientId?: string): { ok: boolean; message: string; stopped: string[] } {
     const pool = this.taskPool?.tasks || [];
@@ -9564,8 +10416,9 @@ export class SparkBrowser {
       : client
         ? live.filter((task) => task.clientId === client)
         : live;
+    const failedNamed = id ? pool.filter((task) => task.id === id && task.state === "failed") : [];
     const sidebar = this.sidebarStopId(id, client);
-    if (!targets.length && !sidebar) return { ok: false, message: "没有可停止的任务", stopped: [] };
+    if (!targets.length && !failedNamed.length && !sidebar) return { ok: false, message: "没有可停止的任务", stopped: [] };
     if (!this.manualStopIds) this.manualStopIds = new Set();
     if (!this.agentQueue) this.agentQueue = [];
     if (!this.backgroundQueue) this.backgroundQueue = [];
@@ -9577,20 +10430,34 @@ export class SparkBrowser {
       this.appendChat(key, "已手动停止");
       const mcp = this.mcpTaskList().find((item) => item.taskId === card.id);
       if (mcp) {
-        mcp.status = "failed";
+        mcp.status = "stopped";
         mcp.lastAssistant = "已手动停止";
       }
       this.agentQueue = this.agentQueue.filter((job) => job.task.taskId !== card.id);
       this.backgroundQueue = this.backgroundQueue.filter((job) => job.id !== card.id);
       this.agentAbortByTask?.get(card.id)?.abort();
       if (card.lane === "foreground") this.activePiAbort?.abort();
-      this.taskPool?.finish?.(card.id, "failed");
+      this.finishPooledTask(card.id, "stopped");
       if (card.lane === "foreground") this.taskPool?.releaseForeground?.();
       const tab = card.tabId ? this.tabs?.get(card.tabId) : undefined;
       if (tab) tab.agentStatus = "done";
       stopped.push(card.id);
       console.log(`[task] stop ${card.id} state=${was}`);
     }
+    for (const card of failedNamed) {
+      const accepted = this.taskPool?.acceptManualStop?.(card.id);
+      if (!accepted) continue;
+      const key = card.clientId ? `agent:${card.clientId}` : "user";
+      this.appendChat(key, "已手动停止");
+      const mcp = this.mcpTaskList().find((item) => item.taskId === card.id);
+      if (mcp) {
+        mcp.status = "stopped";
+        mcp.lastAssistant = "已手动停止";
+      }
+      stopped.push(card.id);
+      console.log(`[task] stop ${card.id} state=failed`);
+    }
+    if (!stopped.length && !sidebar) return { ok: false, message: "没有可停止的任务", stopped: [] };
     if (sidebar) {
       this.stopLiveSidebar(sidebar);
       stopped.push(sidebar);
@@ -9645,24 +10512,24 @@ export class SparkBrowser {
       for (const task of this.mcpTaskList()) {
         if (task.clientId) continue;
         if (task.status !== "running" && task.status !== "queued") continue;
-        task.status = "failed";
+        task.status = "stopped";
         task.lastAssistant = "已手动停止";
       }
       this.activePiAbort?.abort();
-      this.appendChat("user", "已手动停止");
-      if (hadQueue) this.appendChat("user", "排队的消息也一并取消了");
+      this.appendChat(this.sessionKey(), "已手动停止");
+      if (hadQueue) this.appendChat(this.sessionKey(), "排队的消息也一并取消了");
       console.log(`[task] stop ${active || taskId} state=running`);
       return;
     }
     if (!record) return;
     const was = record.status;
-    record.status = "failed";
+    record.status = "stopped";
     record.lastAssistant = "已手动停止";
     if (this.pendingChat && this.pendingChat.text === record.text) {
       this.pendingChat = null;
-      this.appendChat("user", "排队的消息也一并取消了");
+      this.appendChat(this.sessionKey(), "排队的消息也一并取消了");
     }
-    this.appendChat("user", "已手动停止");
+    this.appendChat(this.sessionKey(), "已手动停止");
     console.log(`[task] stop ${taskId} state=${was}`);
   }
 
@@ -9699,6 +10566,13 @@ export class SparkBrowser {
   }
 
   private persistTaskSummary(task: (typeof this.mcpTasks)[number]): void {
+    if (
+      this.canPersistWork() &&
+      (this.taskPool?.tasks || []).some((item) => item.id === task.taskId && item.state !== "closed")
+    ) {
+      this.persistWorkState();
+      return;
+    }
     const summary: TaskSummary = {
       taskId: task.taskId,
       goal: task.text,
@@ -9708,7 +10582,17 @@ export class SparkBrowser {
       ...(task.clientId ? { clientId: task.clientId } : {}),
     };
     if (!this.savedTaskSummaries) this.savedTaskSummaries = [];
-    this.savedTaskSummaries = upsertTaskSummary(this.savedTaskSummaries, summary);
+    if (this.canPersistWork()) {
+      const disk = readTaskSummaries(this.configDir()) as Array<TaskSummary & { schema?: number }>;
+      const rich = disk.filter((row) => row.schema === 1);
+      const thin = upsertTaskSummary(
+        disk.filter((row) => row.schema !== 1),
+        summary,
+      );
+      this.savedTaskSummaries = [...rich, ...thin].slice(-40);
+    } else {
+      this.savedTaskSummaries = upsertTaskSummary(this.savedTaskSummaries, summary);
+    }
     try {
       writeTaskSummaries(this.configDir(), this.savedTaskSummaries);
     } catch {
@@ -9800,7 +10684,8 @@ export class SparkBrowser {
   private submitAgentTask(
     task: (typeof this.mcpTasks)[number],
     clientId: string,
-  ): { taskId: string; status: "running" | "queued" | "failed"; error?: "no-model"; message?: string } {
+    tabIdHint?: string,
+  ): { taskId: string; status: "running" | "queued" | "failed"; error?: "no-model" | "tab_busy"; message?: string } {
     if (!this.modelReady()) {
       console.log("[task] reject no-model");
       return {
@@ -9823,71 +10708,513 @@ export class SparkBrowser {
       }),
     );
     const before = this.activeTabId;
-    const tabId = this.bindAgentTab(clientId, task.taskId) || "";
-    const reused = tabId ? this.tabs?.get(tabId) : undefined;
-    if (reused) delete reused.agentStatus;
-    if (before && this.activeTabId !== before && typeof this.switchTab === "function") {
-      this.switchTab(before, { userAction: true });
-    }
-    const running = this.taskPool?.runningBackground?.() ?? 0;
-    const face = listClientSessions().find((item) => item.clientId === clientId) || registerClientName(clientId, "");
-    const card = {
-      id: task.taskId,
-      tabId,
-      title: task.text.slice(0, 28) || "任务",
-      lane: "background" as const,
-      clientId,
-      agentName: face.name,
-      color: face.color,
-    };
-    this.rememberMcpTask(task);
-    if (!this.agentPoolIds) this.agentPoolIds = new Set();
-    this.agentPoolIds.add(task.taskId);
-    if (!backgroundPoolDecision(running).ok) {
-      task.status = "queued";
-      this.taskPool?.enqueue?.(card);
-      this.agentJobs().push({ task, clientId });
-      this.syncTaskChrome();
-      return { taskId: task.taskId, status: "queued" };
-    }
-    this.taskPool?.start?.(card);
-    this.syncTaskChrome();
-    void this.runAgentTask(task, clientId);
-    return { taskId: task.taskId, status: "running" };
-  }
-
-  private bindAgentTab(clientId: string, taskId = ""): string | undefined {
-    if (typeof this.createAgentTab !== "function") return undefined;
-    const known = this.listTabs?.().tabs?.map((tab) => tab.id) ?? [];
-    const candidate = clientTabId(clientId) || "";
-    const live = (this.taskPool?.tasks || []).filter(
-      (item) => item.state === "running" || item.state === "queued" || item.state === "waiting_human",
-    );
-    const busy = Boolean(candidate) && candidateTabBusy({ clientId, candidateTabId: candidate, live });
-    const tabId = bindClientTab({
-      clientId,
-      knownTabIds: known,
-      createAgentTab: (activate = false) => this.createAgentTab(undefined, activate, clientId),
-      candidateBusy: busy,
+    const bound = this.bindAgentTab(clientId, task.taskId, {
+      intent: "task",
+      ...(tabIdHint ? { tabId: tabIdHint } : {}),
     });
-    if (tabId) this.bindClientWindow(clientId, this.tabs?.get(tabId)?.winId || this.activeWinId || "main");
-    const mode = tabId && candidate && tabId === candidate ? "reused" : "new";
-    console.log(`[agent-tab] client=${clientId} task=${taskId} bind=${tabId || ""} ${mode}`);
-    return tabId;
+    if (!bound.ok || !bound.tabId) {
+      return { taskId: task.taskId, status: "failed", error: "tab_busy", message: "tab_busy" };
+    }
+    const tabId = bound.tabId;
+    let committed = false;
+    try {
+      const reused = this.tabs?.get(tabId);
+      if (reused) delete reused.agentStatus;
+      if (before && this.activeTabId !== before && typeof this.switchTab === "function") {
+        this.switchTab(before, { userAction: true });
+      }
+      const running = this.taskPool?.runningBackground?.() ?? 0;
+      const face = listClientSessions().find((item) => item.clientId === clientId) || registerClientName(clientId, "");
+      const card = {
+        id: task.taskId,
+        tabId,
+        title: task.text.slice(0, 28) || "任务",
+        lane: "background" as const,
+        clientId,
+        agentName: face.name,
+        color: face.color,
+        leaseId: bound.leaseId,
+      };
+      this.rememberMcpTask(task);
+      if (!this.agentPoolIds) this.agentPoolIds = new Set();
+      this.agentPoolIds.add(task.taskId);
+      if (!backgroundPoolDecision(running).ok) {
+        task.status = "queued";
+        this.taskPool?.enqueue?.(card);
+        this.agentJobs().push({ task, clientId });
+        this.syncTaskChrome();
+        committed = true;
+        return { taskId: task.taskId, status: "queued" };
+      }
+      this.taskPool?.start?.(card);
+      this.syncTaskChrome();
+      committed = true;
+      void this.runAgentTask(task, clientId);
+      return { taskId: task.taskId, status: "running" };
+    } catch (error) {
+      if (!committed) releaseClientLease({ taskId: task.taskId }, "compensate");
+      throw error;
+    }
   }
 
-  private async runAgentTask(task: (typeof this.mcpTasks)[number], clientId: string): Promise<void> {
+  private pageOccupancy(tabId: string): { openTask: boolean; agentOwned: boolean } {
+    const tab = this.tabs?.get(tabId);
+    const openTask = (this.taskPool?.tasks || []).some((item) => item.tabId === tabId && item.state !== "closed");
+    return {
+      openTask,
+      agentOwned: Boolean(tab?.kind === "command" || tab?.agentOwned || tab?.agentStatus === "done" || tab?.holdHuman),
+    };
+  }
+
+  /** 指挥室总览只投影真实网页，数据来自标签、任务池和租约。 */
+  commandOverview(): Array<{
+    tabId: string;
+    title: string;
+    url: string;
+    taskId: string;
+    agentName: string;
+    state: string;
+    tone: string;
+    label: string;
+    step: string;
+    updatedAt: number;
+    summary: string;
+    taskTitle?: string;
+    attention?: boolean;
+    resultCard?: PoolTask["resultCard"];
+  }> {
+    const rows = [...this.tabs.values()]
+      .filter((tab) => tab.kind !== "command")
+      .map((tab) => {
+        const snap = this.pageStatusFor(tab.id);
+        return {
+          tabId: tab.id,
+          title: tab.title || tab.url || "未命名页面",
+          url: tab.url || "",
+          taskId: snap.taskId,
+          agentName: snap.agentName,
+          state: snap.state,
+          tone: snap.tone,
+          label: snap.label,
+          step: snap.step,
+          updatedAt: snap.updatedAt,
+          summary: snap.summary,
+          taskTitle: snap.title || "",
+          ...(snap.attention ? { attention: true } : {}),
+          ...(snap.resultCard ? { resultCard: snap.resultCard } : {}),
+        };
+      });
+    const seen = new Set(rows.map((row) => row.taskId).filter(Boolean));
+    for (const task of this.taskPool?.tasks || []) {
+      if (!task.tabId || task.state === "closed" || seen.has(task.id)) continue;
+      const tab = this.tabs?.get(task.tabId);
+      if (tab && !this.pageEnvMismatch(task.id, tab)) continue;
+      const snap = this.decoratePageStatus(
+        projectPageSnapshot({
+          tabId: task.tabId,
+          tasks: [
+            {
+              id: task.id,
+              tabId: task.tabId,
+              state: task.state,
+              step: task.step,
+              title: task.title,
+              clientId: task.clientId,
+              agentName: task.agentName,
+              lastLine: task.lastLine,
+              updatedAt: task.updatedAt,
+            },
+          ],
+        }),
+      );
+      rows.push({
+        tabId: task.tabId,
+        title: task.title || "未命名页面",
+        url: "",
+        taskId: task.id,
+        agentName: snap.state === "idle" ? "" : snap.agentName,
+        state: snap.state,
+        tone: snap.tone,
+        label: snap.label,
+        step: snap.step,
+        updatedAt: snap.updatedAt,
+        summary: snap.summary,
+        taskTitle: snap.title || task.title || "",
+        ...(snap.attention ? { attention: true } : {}),
+        ...(snap.resultCard ? { resultCard: snap.resultCard } : {}),
+      });
+      seen.add(task.id);
+    }
+    return rows;
+  }
+
+  private _taskGroups?: TaskGroup[];
+  /** 同一组上次写进总指挥的汇总签名。没变就不重复说。 */
+  private groupHeadlineSent?: Map<string, string>;
+  private get taskGroups(): TaskGroup[] {
+    return (this._taskGroups ??= []);
+  }
+  private _taskPlans?: Map<string, ActiveMission>;
+  private get taskPlans(): Map<string, ActiveMission> {
+    return (this._taskPlans ??= new Map());
+  }
+
+  /** 跨页父任务。不建网页，不拿租约。 */
+  createTaskGroup(title: string, childTaskIds: string[]): TaskGroup {
+    const group: TaskGroup = {
+      groupId: randomBytes(4).toString("hex"),
+      title: String(title || "跨页任务").slice(0, 40),
+      childTaskIds: [...childTaskIds],
+      createdAt: Date.now(),
+    };
+    for (const id of group.childTaskIds) {
+      const task = this.taskPool?.tasks?.find((item) => item.id === id);
+      if (task) task.groupId = group.groupId;
+    }
+    this.taskGroups.push(group);
+    return group;
+  }
+
+  taskGroupViews(): Array<TaskGroup & ReturnType<typeof summarizeGroup> & { children: CommandPage[] }> {
+    return this.taskGroups.map((group) => {
+      const children = group.childTaskIds.map((id) => {
+        const task = this.taskPool?.tasks?.find((item) => item.id === id);
+        const page = task?.tabId ? this.pageStatusFor(task.tabId) : undefined;
+        return {
+          id,
+          tabId: task?.tabId || "",
+          state: task?.state || "idle",
+          unfinished: task?.resultCard?.unfinished || (task?.state === "failed" ? [task.lastLine || "未完成"] : []),
+          attention: Boolean(page?.attention),
+        };
+      });
+      const pages: CommandPage[] = children.map((child) => {
+        const task = this.taskPool?.tasks?.find((item) => item.id === child.id);
+        return {
+          tabId: child.tabId,
+          title: task?.title || child.tabId,
+          taskId: child.id,
+          state: child.state,
+        };
+      });
+      return { ...group, ...summarizeGroup(children), children: pages };
+    });
+  }
+
+  /** 新建工位时要不要把它变成当前页。指挥室和最小化都不切。 */
+  private shouldShowWorkTab(requested: boolean): boolean {
+    if (!requested) return false;
+    if (this.viewingCommandRoom()) return false;
+    try {
+      if (this.windowIsMinimized()) return false;
+    } catch {
+      /* 没有窗口时不当成最小化 */
+    }
+    return true;
+  }
+
+  /** 人眼前是指挥室。这时候干活只改后续读取的那一页，不把总览切成网页。 */
+  private viewingCommandRoom(): boolean {
+    try {
+      return this.tabs?.get?.(this.activeTabId || "")?.kind === "command";
+    } catch {
+      return false;
+    }
+  }
+
+  /** 当前是不是指挥室。总指挥聊天里的控制句走这里，不另开一套执行器。 */
+  private commandSurface(): boolean {
+    try {
+      const tab = this.tabs?.get?.(this.activeTabId || "");
+      return tab?.kind === "command" || this.sessionKey() === COMMAND_SESSION_KEY;
+    } catch {
+      return false;
+    }
+  }
+
+  private runCommandUtterance(text: string, action: CommandAction, alreadyLogged: boolean): ToolResult {
+    if (!alreadyLogged) this.chatLog.push({ role: "user", text });
+    const result = this.commandAct(action);
+    const choices = !result.ok && result.choices?.length
+      ? `\n${result.choices.map((item) => `${item.title} · ${item.tabId}`).join("\n")}`
+      : "";
+    this.appendChat(COMMAND_SESSION_KEY, `${result.message}${choices}`);
+    if (typeof this.pushSidebarState === "function") this.pushSidebarState();
+    return { ok: result.ok, message: result.message, data: result };
+  }
+
+  /** 把黄色拦截接到 MCP 写工具入口。多个实例时后注册的生效，本进程只有一个浏览器。 */
+  installWriteGate(): void {
+    setWaitingWriteLookup((tabId) => {
+      const task = (this.taskPool?.tasks || []).find((item) => item.tabId === tabId && item.state === "waiting_human");
+      return task ? { waiting: true, reason: task.humanReason || task.lastLine } : { waiting: false };
+    });
+  }
+
+  /** 一组全部进入终态后，把各页已经读到的结果写成一份 HTML。 */
+  private writeGroupReport(
+    group: { groupId: string; title: string; childTaskIds: string[]; reportPath?: string },
+    headline: string,
+  ): string {
+    if (group.reportPath) return group.reportPath;
+    const sections = group.childTaskIds.map((id) => {
+      const task = this.taskPool?.tasks?.find((item) => item.id === id);
+      const tab = task?.tabId ? this.tabs?.get(task.tabId) : undefined;
+      const state = task?.state || "idle";
+      const body = String(task?.result || task?.lastLine || task?.step || "").trim() || "这一页没有留下可读结果。";
+      return {
+        title: task?.title || tab?.title || id,
+        state,
+        url: tab?.url || "",
+        body,
+      };
+    });
+    const esc = (value: string) =>
+      value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const html = [
+      "<!DOCTYPE html>",
+      '<html lang="zh-CN"><head><meta charset="utf-8">',
+      `<title>${esc(group.title || "任务结果")}</title>`,
+      "<style>body{font-family:Segoe UI,Microsoft YaHei,sans-serif;max-width:880px;margin:32px auto;padding:0 16px;color:#1c1915;background:#f7f4ee}h1{font-size:28px}section{border-top:1px solid #ddd;padding:16px 0}a{color:#8a3b12}.muted{color:#6b645c}</style>",
+      "</head><body>",
+      `<h1>${esc(group.title || "任务结果")}</h1>`,
+      `<p>${esc(headline)}</p>`,
+      ...sections.map(
+        (section) =>
+          `<section><h2>${esc(section.title)} · ${esc(section.state)}</h2>` +
+          (section.url ? `<p><a href="${esc(section.url)}">${esc(section.url)}</a></p>` : "") +
+          `<pre style="white-space:pre-wrap">${esc(section.body)}</pre></section>`,
+      ),
+      "</body></html>",
+    ].join("");
+    try {
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const doc = writeHtmlReport(this.configDir(), `group-${group.groupId}-${stamp}`, html, {
+        title: group.title || "任务结果",
+        kind: "research",
+      });
+      group.reportPath = doc.path;
+      return doc.path;
+    } catch {
+      return "";
+    }
+  }
+
+  /** 任务进入终态后，按组写一句汇总，并交出整组结果。签名没变就不重复写。未全部完成时不说「全部完成」。 */
+  private noteGroupHeadline(taskId: string): void {
+    const task = this.taskPool?.tasks?.find((item) => item.id === taskId);
+    const groupId = task?.groupId;
+    if (!groupId) return;
+    const view = this.taskGroupViews().find((item) => item.groupId === groupId);
+    if (!view) return;
+    const total = view.children.length;
+    const done = view.children.filter((child) => child.state === "done" || child.state === "closed").length;
+    const allTerminal = view.children.every((child) =>
+      child.state === "done" || child.state === "failed" || child.state === "stopped" || child.state === "closed",
+    );
+    if (!total || !allTerminal) return;
+    let headline = view.headline;
+    if (!view.allDone) headline = headline.replace(/全部完成/g, "").trim() || "未完成";
+    const signature = `${headline}|${done}/${total}`;
+    if (!this.groupHeadlineSent) this.groupHeadlineSent = new Map();
+    if (this.groupHeadlineSent.get(groupId) === signature) return;
+    this.groupHeadlineSent.set(groupId, signature);
+    const stored = this.taskGroups.find((item) => item.groupId === groupId);
+    const reportPath = stored ? this.writeGroupReport(stored, headline) : "";
+    const line = reportPath ? `${headline}\n看结果：${reportPath}` : headline;
+    this.appendChat(COMMAND_SESSION_KEY, line);
+    if (typeof this.pushChromeState === "function") this.pushChromeState();
+    if (typeof this.pushSidebarState === "function") this.pushSidebarState();
+  }
+
+  private finishPooledTask(id: string, state: "done" | "failed" | "stopped"): void {
+    const before = this.taskPool?.tasks?.find((item) => item.id === id);
+    const detail = String(before?.lastLine || before?.failureStep || "").trim();
+    this.taskPool?.finish?.(id, state);
+    const task = this.taskPool?.tasks?.find((item) => item.id === id);
+    if (task && (task.state === "done" || task.state === "failed" || task.state === "stopped")) {
+      const label = task.state === "done" ? "已完成" : task.state === "failed" ? "已失败" : "已停止";
+      const previous = String(task.step || "").trim();
+      if (!task.lastLine && detail && detail !== "进行中" && detail !== "排队中") task.lastLine = detail;
+      else if (!task.lastLine && previous && previous !== label && previous !== "进行中" && previous !== "完成" && previous !== "失败") {
+        task.lastLine = previous;
+      }
+      task.step = label;
+    }
+    this.noteGroupHeadline(id);
+  }
+
+  /** 中途有一页没派上：停掉已经派出去的，不建组。 */
+  private stopPartialDispatch(
+    started: Array<{ id: string; title: string }>,
+    failedTitle: string,
+    reason?: string,
+  ): string {
+    for (const item of started) this.stopAgentTask(item.id);
+    const who = failedTitle || "有一页";
+    const why = String(reason || "").trim();
+    if (why) {
+      if (!started.length) return `${who}没派上：${why}`;
+      return `${who}没派上：${why}。已派出的是${started.map((item) => item.title).join("、")}，这些已停止。`;
+    }
+    if (!started.length) return `${who}没派上。还没有页面派出去。`;
+    return `${who}没派上。已派出的是${started.map((item) => item.title).join("、")}，这些已停止。`;
+  }
+
+  /** 多目标分派：空闲同名页复用，没有就开新页。全部派成后才建父组。父组不占网页。 */
+  private dispatchTaskGroup(action: Extract<CommandAction, { type: "dispatch-many" }>): ReturnType<typeof runCommand> {
+    const pages = this.commandPages();
+    const resolved = resolveGroupTargets(pages, action.items);
+    if (!resolved.ok) return resolved.result;
+    const started: Array<{ id: string; title: string }> = [];
+    for (const target of resolved.targets) {
+      let tabId = target.tabId;
+      if (!tabId) {
+        let created = "";
+        try {
+          created = typeof this.createAgentTab === "function" ? this.createAgentTab(target.url, false) : "";
+        } catch {
+          created = "";
+        }
+        if (!created) {
+          return { ok: false, code: "blocked", message: this.stopPartialDispatch(started, target.title) };
+        }
+        tabId = created;
+        const tab = this.tabs?.get(tabId);
+        if (tab) {
+          tab.title = target.title;
+          if (target.url) tab.url = target.url;
+          if (!activeLeaseForTab(tabId)) delete tab.agentOwned;
+        }
+      }
+      const submitted = this.submitTask(target.text, { tabId, clientId: "command" });
+      if (submitted.status === "failed" || !submitted.taskId) {
+        return {
+          ok: false,
+          code: submitted.error === "tab_busy" ? "tab_busy" : "blocked",
+          message: this.stopPartialDispatch(started, target.title, submitted.message),
+        };
+      }
+      started.push({ id: submitted.taskId, title: target.title });
+    }
+    const group = this.createTaskGroup(action.title, started.map((item) => item.id));
+    return { ok: true, message: `已拆成 ${started.length} 个页面任务`, taskId: group.groupId };
+  }
+
+  private commandPages(): CommandPage[] {
+    return [...(this.tabs?.values?.() || [])]
+      .filter((tab) => tab.kind !== "command")
+      .map((tab) => {
+        const snap = this.pageStatusFor(tab.id);
+        return {
+          tabId: tab.id,
+          title: tab.title || snap.title || tab.url || "未命名页面",
+          taskId: snap.taskId,
+          state: snap.state,
+        };
+      });
+  }
+
+  /** 总指挥的一条结构化命令。含糊时只返回候选。 */
+  commandAct(action: CommandAction): ReturnType<typeof runCommand> {
+    if (action.type === "dispatch-many") return this.dispatchTaskGroup(action);
+    const pages = this.commandPages();
+    return runCommand(action, pages, {
+      openTab: (url) => {
+        if (typeof this.createAgentTab !== "function") return { ok: false, message: "开不了新页面" };
+        const tabId = this.createAgentTab(url, false);
+        return { ok: Boolean(tabId), tabId, message: tabId ? "已打开新页面" : "开不了新页面" };
+      },
+      focusTask: (taskId) => {
+        const focused = this.focusTask(taskId);
+        return { ok: focused.ok, tabId: focused.activeId, message: focused.message || "已回到原页面" };
+      },
+      switchTab: (tabId) => {
+        const switched = this.switchTab(tabId, { userAction: true });
+        return { ok: switched.ok, message: switched.message };
+      },
+      dispatch: (tabId, text) => {
+        const submitted = this.submitTask(text, { tabId, clientId: "command" });
+        return {
+          ok: submitted.status !== "failed",
+          taskId: submitted.taskId,
+          error: submitted.error,
+          message: submitted.message || submitted.status,
+        };
+      },
+      stopTask: (taskId) => {
+        const stopped = this.stopAgentTask(taskId);
+        return { ok: stopped.ok, message: stopped.message };
+      },
+      resumeTask: (taskId) => this.resumeTask(taskId),
+      closeTask: (taskId) => {
+        const task = this.taskPool?.tasks?.find((item) => item.id === taskId);
+        if (task && (task.state === "running" || task.state === "queued" || task.state === "waiting_human")) {
+          const stopped = this.stopAgentTask(taskId);
+          if (!stopped.ok) return { ok: false, message: stopped.message };
+        }
+        return this.closeTask(taskId, "close");
+      },
+      ackTask: (taskId) => this.ackTask(taskId),
+    });
+  }
+
+  private bindAgentTab(
+    clientId: string,
+    taskId = "",
+    opts?: { intent?: "task" | "address"; tabId?: string; resume?: boolean },
+  ): { ok: true; tabId: string; leaseId: string; created: boolean } | { ok: false; error: "tab_busy" } {
+    if (typeof this.createAgentTab !== "function") return { ok: false, error: "tab_busy" };
+    const known = this.listTabs?.().tabs?.map((tab) => tab.id) ?? [];
+    const explicit = String(opts?.tabId || "").trim();
+    const result = allocateClientTab({
+      intent: opts?.intent || "task",
+      clientId,
+      taskId,
+      tabId: explicit || undefined,
+      resume: opts?.resume,
+      envId: explicit ? this.tabs?.get(explicit)?.envId : undefined,
+      knownTabIds: known,
+      createAgentTab: (activate = false) =>
+        this.createAgentTab(undefined, this.shouldShowWorkTab(activate), clientId),
+      occupancy: (tabId) => this.pageOccupancy(tabId),
+    });
+    if (result.ok && result.tabId) {
+      this.bindClientWindow(clientId, this.tabs?.get(result.tabId)?.winId || this.activeWinId || "main");
+    }
+    const mode = !result.ok ? "busy" : result.created ? "new" : "owned";
+    console.log(`[agent-tab] client=${clientId} task=${taskId} bind=${result.ok ? result.tabId : ""} ${mode}`);
+    return result;
+  }
+
+  private async runAgentTask(
+    task: (typeof this.mcpTasks)[number],
+    clientId: string,
+    resume?: { chatKey?: string; mission?: ActiveMission },
+  ): Promise<void> {
     const before = this.activeTabId;
     const pooled = this.taskPool?.tasks?.find((item) => item.id === task.taskId);
     let tabId = pooled?.tabId || "";
-    if (!tabId) tabId = this.bindAgentTab(clientId, task.taskId) || "";
+    if (!tabId) {
+      const bound = this.bindAgentTab(clientId, task.taskId, { intent: "task" });
+      if (!bound.ok || !bound.tabId) {
+        this.settleMcpTask(task, { ok: false, text: "tab_busy" });
+        this.agentPoolIds?.delete(task.taskId);
+        this.finishPooledTask(task.taskId, "failed");
+        this.pumpAgent();
+        this.syncTaskChrome();
+        this.pushSidebarState();
+        return;
+      }
+      tabId = bound.tabId;
+    }
     if (before && this.activeTabId !== before && typeof this.switchTab === "function") {
       this.switchTab(before, { userAction: true });
     }
     if (!tabId) {
       this.settleMcpTask(task, { ok: false, text: "无法为这个 agent 创建独立标签。" });
       this.agentPoolIds?.delete(task.taskId);
-      this.taskPool?.finish?.(task.taskId, "failed");
+      this.finishPooledTask(task.taskId, "failed");
       this.pumpAgent();
       this.syncTaskChrome();
       this.pushSidebarState();
@@ -9904,7 +11231,7 @@ export class SparkBrowser {
     this.bindClientWindow(clientId, homeWin);
     const heldRender = this.engageBackgroundRender(clientId);
     try {
-      this.seedAgentTaskChat(clientId, task.taskId);
+      this.ensureTaskChat(tabId, task.taskId);
       // 并发时标签、计量、对话都走这份作用域，退出后自动回到用户当前页，不再手写还原 agentTabId。
       await this.runScoped(
         "background",
@@ -9926,12 +11253,13 @@ export class SparkBrowser {
             this.chatLog.push({ role: "user", text: task.text });
             const cloudTaskId = this.cloudTaskId;
             const pageEnv = this.pageEnv(tabId);
+            const chatKey = resume?.chatKey || taskSessionKey(tabId, task.taskId);
             const result = await this.freeSoul.run({
               input: task.text,
               url: this.getUrl(tabId),
               title: this.getTitle(tabId),
               locale: this.settings.locale,
-              history: this.turnsFor(this.agentTaskChatKey(clientId, task.taskId))
+              history: this.turnsFor(chatKey)
                 .slice(-12)
                 .map((turn) => ({ role: turn.role, text: turn.text.slice(0, 4000) })),
               signal: controller.signal,
@@ -9956,8 +11284,10 @@ export class SparkBrowser {
                 this.lastRunTrace = trace;
               },
             });
+            const receipt = (result as { verification?: { items?: Array<{ name: string; ok: boolean }> } }).verification;
+            if (receipt?.items) this.recordVerification(task.taskId, receipt.items);
             if (this.manualStopIds?.has(task.taskId)) {
-              task.status = "failed";
+              task.status = "stopped";
               task.lastAssistant = "已手动停止";
             } else {
               this.chatLog.push({ role: "assistant", text: result.text });
@@ -9972,8 +11302,9 @@ export class SparkBrowser {
             if (this.cloudTaskId) void this.finishCloudTask();
           }
           }),
-        undefined,
-        `agent:${clientId}/${task.taskId}`,
+        resume?.mission,
+        resume?.chatKey || taskSessionKey(tabId, task.taskId),
+        clientId,
       );
     } catch (error) {
       const message = `执行失败：${error instanceof Error ? error.message : String(error)}`;
@@ -9989,12 +11320,17 @@ export class SparkBrowser {
       const stopped = this.manualStopIds?.has(task.taskId) === true;
       this.manualStopIds?.delete(task.taskId);
       this.freeSoulRunning = this.chatRunningFlag || this.agentAborts.size > 0;
-      this.agentPoolIds?.delete(task.taskId);
+      const waiting = this.taskPool?.tasks?.find((item) => item.id === task.taskId)?.state === "waiting_human"
+        || task.status === "waiting_human";
+      if (!waiting) this.agentPoolIds?.delete(task.taskId);
       const finishedTab = tabId ? this.tabs?.get(tabId) : undefined;
-      if (finishedTab) finishedTab.agentStatus = "done";
+      if (finishedTab && !waiting) finishedTab.agentStatus = "done";
       const stillThere = this.taskPool?.tasks?.some((item) => item.id === task.taskId);
-      if (stillThere) this.taskPool?.finish?.(task.taskId, stopped || task.status === "failed" ? "failed" : "done");
-      this.dropAgentTaskChat(clientId, task.taskId);
+      if (stillThere && !waiting) {
+        const raw = stopped || task.status === "stopped" ? "stopped" : task.status === "failed" ? "failed" : "done";
+        const outcome = this.sealTaskOutcome(task.taskId, raw);
+        this.finishPooledTask(task.taskId, outcome);
+      }
       this.pumpAgent();
       this.syncTaskChrome();
       this.pushSidebarState();
@@ -10014,8 +11350,19 @@ export class SparkBrowser {
       this.persistTaskSummary(task);
       return;
     }
+    if (result.awaitingConfirm) {
+      task.status = "waiting_human";
+      task.closeReason = undefined;
+      this.markWaitingHuman(task.taskId, result.text || "需要你确认后才能继续");
+      this.persistTaskSummary(task);
+      return;
+    }
     if (!result.ok || !reason) {
       task.status = "failed";
+      this.noteTaskFailure(task.taskId, {
+        message: result.text,
+        advice: "停在当前页。可以原任务继续，或明确结束。",
+      });
       this.persistTaskSummary(task);
       return;
     }
@@ -10065,6 +11412,7 @@ export class SparkBrowser {
     work: () => Promise<T>,
     mission?: ActiveMission,
     chatKey?: string,
+    clientId?: string,
   ): Promise<T> {
     if (!this.taskScope || typeof this.taskScope.run !== "function") {
       this.taskScope = new AsyncLocalStorage<TaskScope>();
@@ -10077,6 +11425,7 @@ export class SparkBrowser {
       helpAsk: lane === "foreground" ? this.fallbackHelpAsk : null,
       cloudTaskId: undefined,
       chatKey: chatKey || "user",
+      clientId,
     };
     try {
       return await this.taskScope.run(scope, work);
@@ -10185,6 +11534,9 @@ export class SparkBrowser {
 
   private async runJob(card: PoolTask, job: BackgroundJob): Promise<ToolResult> {
     let result: ToolResult;
+    const pinnedKey = card.tabId ? taskSessionKey(card.tabId, card.id) : "user";
+    card.origin = { chatKey: pinnedKey, input: job.text };
+    if (job.mission) this.taskPlans.set(card.id, job.mission);
     try {
       result = await this.runScoped(
         card.lane,
@@ -10193,13 +11545,15 @@ export class SparkBrowser {
           const out = await this.handleChatJob(job.text, job.images, job.quotes, card.tabId);
           if (this.shouldSuspend(out)) {
             if (this.activeMission) this.waitingMissions.set(card.id, this.activeMission);
-            this.taskPool.suspend(card.id);
-            this.syncTaskChrome();
+            const live = this.activeMission || job.mission;
+            if (live) this.taskPlans.set(card.id, live);
+            this.markWaitingHuman(card.id, String(out.message || "需要你处理"));
           }
           return out;
         },
         job.mission,
-        "user",
+        pinnedKey,
+        card.clientId,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -10209,7 +11563,7 @@ export class SparkBrowser {
     const suspended = this.taskPool.tasks.find((task) => task.id === card.id)?.state === "waiting_human";
     if (!suspended) {
       this.waitingMissions.delete(card.id);
-      this.taskPool.finish(card.id, result.ok ? "done" : "failed");
+      this.finishPooledTask(card.id, this.sealTaskOutcome(card.id, result.ok ? "done" : "failed"));
       this.syncTaskChrome();
       if (card.lane === "background" && card.tabId) this.releaseAgentTab(card.tabId);
     }
@@ -10231,7 +11585,7 @@ export class SparkBrowser {
       if (!next) return;
       const idx = this.backgroundQueue.findIndex((job) => job.id === next.id);
       if (idx < 0) {
-        this.taskPool.finish(next.id, "failed");
+        this.finishPooledTask(next.id, "failed");
         continue;
       }
       const [job] = this.backgroundQueue.splice(idx, 1);
@@ -12029,6 +13383,8 @@ export class SparkBrowser {
     script: string,
     opts?: { frame?: number | string; tabId?: string; awaitPromise?: boolean; timeoutMs?: number },
   ): Promise<ToolResult & { data?: { result: unknown; error?: string } }> {
+    const held = this.agentActionBlocked("execute", opts?.tabId || this.activeTabId || "");
+    if (held) return held as ToolResult & { data?: { result: unknown; error?: string } };
     const tabId = opts?.tabId;
     const awaitPromise = opts?.awaitPromise === true;
     const expression = buildExecuteExpression(script, awaitPromise);
@@ -12211,6 +13567,8 @@ export class SparkBrowser {
     files: string[],
   tabId?: string,
   ): Promise<ToolResult> {
+    const held = this.agentActionBlocked("upload", tabId || this.activeTabId || "");
+    if (held) return held;
     const blocked = this.assertNotPaused();
     if (blocked) return blocked;
     if (!files.length) {
@@ -13717,6 +15075,8 @@ export class SparkBrowser {
     opts?: { asHuman?: boolean; tabId?: string; envId?: string },
   ): Promise<NavigateConfirm | ToolResult> {
     let tabId = opts?.tabId;
+    const targetTab = this.tabs?.get(tabId || this.activeTabId);
+    if (targetTab?.kind === "command") return { ok: false, message: "指挥室不能打开网页" };
     if (opts?.envId) {
       // 传了别的标签（普通页或另一个环境）也必须在目标环境里另开一张：
       // 否则 envId 被忽略，导航落在共用标签上，账号就串了。
@@ -13943,6 +15303,8 @@ export class SparkBrowser {
     /** Prefer caret (right edge) click for split dropdown buttons */
     caret?: boolean;
   }, tabId?: string): Promise<ClickConfirm | ToolResult> {
+    const held = this.agentActionBlocked("click", tabId || this.activeTabId || "");
+    if (held) return held;
     const blocked = this.assertNotPaused();
     if (blocked) return blocked;
     if (!target.ref && !target.selector) {
@@ -14171,6 +15533,8 @@ export class SparkBrowser {
     value: string,
   tabId?: string,
   ): Promise<FillConfirm | ToolResult> {
+    const held = this.agentActionBlocked("fill", tabId || this.activeTabId || "");
+    if (held) return held;
     const blocked = this.assertNotPaused();
     if (blocked) return blocked;
     if (!target.ref && !target.selector) {
@@ -14591,6 +15955,7 @@ export function getBrowser(): SparkBrowser {
 export function createBrowser(): SparkBrowser {
   if (singleton) return singleton;
   singleton = new SparkBrowser();
+  singleton.installWriteGate();
   return singleton;
 }
 

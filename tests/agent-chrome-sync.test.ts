@@ -34,6 +34,7 @@ vi.mock("electron", () => ({
 import { SparkBrowser } from "../src/main/browser.js";
 import { TaskPool } from "../src/main/agent/task-pool.js";
 import { resetMcpSessions } from "../src/main/agent/mcp-sessions.js";
+import { activeLeaseForTab } from "../src/main/agent/page-lease.js";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -81,8 +82,10 @@ function harness() {
   browser.getUrl = () => "https://example.com";
   browser.getTitle = () => "页";
   browser.configDir = () => dir;
+  let seq = 0;
   browser.createAgentTab = () => {
-    const id = "agent-1";
+    seq += 1;
+    const id = `agent-${seq}`;
     if (!browser.tabs.has(id)) {
       browser.tabs.set(id, { id, title: "任务页", url: "https://example.com", view: dead });
     }
@@ -94,6 +97,17 @@ function harness() {
 function agentState(browser: ReturnType<typeof harness>): string | undefined {
   const listed = browser.listTabs();
   return listed.tabs.find((tab) => tab.id === "agent-1")?.agentState;
+}
+
+function sameProjection(browser: ReturnType<typeof harness>, id: string) {
+  const tab = browser.listTabs().tabs.find((item) => item.id === id);
+  const row = browser.commandOverview().find((item) => item.tabId === id);
+  expect(tab?.pageStatus?.state).toBe(row?.state);
+  expect(tab?.pageStatus?.tone).toBe(row?.tone);
+  expect(tab?.pageStatus?.step).toBe(row?.step);
+  expect(tab?.pageStatus?.agentName).toBe(row?.agentName);
+  expect(tab?.pageStatus?.updatedAt).toBe(row?.updatedAt);
+  return tab?.pageStatus;
 }
 
 describe("T58 任务状态推到壳层", () => {
@@ -116,22 +130,30 @@ describe("T58 任务状态推到壳层", () => {
     const submitted = browser.submitTask("读维基", { clientId: "jia" });
     expect(submitted.status).toBe("queued");
     expect(browser.taskPool.tasks.find((task) => task.id === submitted.taskId)?.tabId).toBe("agent-1");
+    expect(activeLeaseForTab("agent-1")?.clientId).toBe("jia");
     expect(agentState(browser)).toBe("queued");
+    expect(sameProjection(browser, "agent-1")?.tone).toBe("green");
 
     browser.taskPool.finish("fill-0");
     browser.pumpAgent();
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(agentState(browser)).toBe("running");
+    expect(sameProjection(browser, "agent-1")?.tone).toBe("green");
 
-    release({ ok: true, text: "做完了" });
+    release({
+      ok: true,
+      text: "做完了",
+      verification: { ok: true, items: [{ name: "结果", ok: true }] },
+    });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(agentState(browser)).toBe("done");
+    expect(sameProjection(browser, "agent-1")?.tone).toBe("gray");
     expect(pushes).toBeGreaterThanOrEqual(3);
   });
 });
 
 describe("T59 完成后还留着完成态", () => {
-  it("结束后是 done，再派变成 running，关掉就清空", async () => {
+  it("待验收时新任务另开页，原页租约仍在", async () => {
     const browser = harness();
     let release: (value: { ok: boolean; text: string }) => void = () => undefined;
     let started: () => void = () => undefined;
@@ -152,9 +174,8 @@ describe("T59 完成后还留着完成态", () => {
     await startedP;
     release({ ok: true, text: "做完了" });
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(agentState(browser)).toBe("done");
-    const tab = browser.tabs.get("agent-1");
-    expect(tab?.agentStatus).toBe("done");
+    expect(browser.tabs.get("agent-1")?.agentStatus).toBe("done");
+    expect(activeLeaseForTab("agent-1")?.clientId).toBe("jia");
 
     browser.freeSoul = {
       run: () => new Promise(() => undefined),
@@ -162,13 +183,11 @@ describe("T59 完成后还留着完成态", () => {
     const second = browser.submitTask("第二件", { clientId: "jia" });
     expect(second.status).toBe("running");
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(agentState(browser)).toBe("running");
-    expect(tab?.agentStatus).toBeUndefined();
-
-    if (tab) tab.view = undefined as unknown as TabStub["view"];
-    (browser as unknown as { layout: () => void }).layout = () => undefined;
-    browser.closeTab("agent-1");
-    expect(tab?.agentStatus).toBeUndefined();
-    expect(browser.listTabs().tabs.some((item) => item.id === "agent-1")).toBe(false);
+    const secondTab = browser.taskPool.tasks.find((task) => task.id === second.taskId)?.tabId;
+    expect(secondTab).toBe("agent-2");
+    expect(activeLeaseForTab("agent-1")).toBeTruthy();
+    expect(activeLeaseForTab("agent-2")?.taskId).toBe(second.taskId);
+    expect(browser.activeTabId).toBe("user-tab");
+    expect(browser.tabs.get("agent-1")?.agentStatus).toBe("done");
   });
 });

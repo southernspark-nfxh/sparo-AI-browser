@@ -2,6 +2,7 @@
  * Sparo browser agent: understand the user's goal, then pick a capability.
  * User chat is not a raw dump into the model — local routing decides site/tool first.
  */
+import { sidebarStaysOnUserTab } from "./sidebar-tab.js";
 import { parseTravelQuery, type TravelQuery } from "./travel.js";
 import { parseTripPlan, type TripPlan } from "./trip-plan.js";
 import { parseMission, type Mission } from "./mission.js";
@@ -220,24 +221,50 @@ export function wantsReply(text: string): boolean {
   return /一键回复|帮我回|回复客户|回留言|回评论|客服回复|自动回复/i.test(text);
 }
 
-const STAY_ON_FRONT_RE =
-  /总结当前页|读这一页|读这页|这一页|这是什么网站|当前页|这个页面|本页|这页|当前窗口|这个窗口|就用这个窗口/;
-
 /**
- * 用户没指定要用眼前这扇，且当前是用户自己的前台标签时，另开标签，不征用。
- * 划词、当前页、当前窗口仍留在眼前。已经在 agent 标签上、又没点名眼前这一页时，也走自己的工位。
+ * 没划词、也没点明眼前这一页时，另开侧栏工位，不改用户正在看的地址。
+ * 说了「新窗口 / 另开一扇 / 再开一扇」时，即使句子里带了当前页，也另开。
+ * 点名眼前这一页的词表在 sidebarStaysOnUserTab，侧栏发话走这里。
  */
 export function agentShouldOpenOwnSurface(
   text: string,
-  activeOwner: string,
+  _activeOwner: string,
   quotes?: Array<{ text?: string }> | null,
 ): boolean {
   if (quotes && quotes.length > 0) return false;
   const raw = String(text || "");
   if (/新窗口|另开一扇|再开一扇/.test(raw)) return true;
-  if (STAY_ON_FRONT_RE.test(raw)) return false;
-  if (activeOwner === "user" || !String(activeOwner || "").trim()) return true;
+  if (sidebarStaysOnUserTab(raw)) return false;
   return true;
+}
+
+/** 查看数据，但没说要总结。打开页面后要问一句，不能只切过去就停。 */
+export function viewDataNeedsAsk(text: string): boolean {
+  const raw = String(text || "").trim();
+  if (!raw) return false;
+  if (/总结|整理|列出来|读出来|汇报|摘出来|写成|做成/.test(raw)) return false;
+  const look = /查看|看看|看一下|看下/.test(raw);
+  const aboutData = /数据/.test(raw) || /最近|最新|近期/.test(raw);
+  return look && aboutData;
+}
+
+export function summaryOfferLine(title: string): string {
+  const name = String(title || "").replace(/\s+/g, " ").trim() || "这个页面";
+  return `已经打开了《${name}》。需要我帮你总结吗？`;
+}
+
+/** 已经写成总结，或已经问过，就不再补这一句。 */
+export function finishViewDataReply(userText: string, reply: string, title: string): string {
+  const text = String(reply || "").trim();
+  if (!viewDataNeedsAsk(userText)) return text;
+  if (/需要我帮你总结吗|要不要总结|要我总结/.test(text)) return text;
+  if (/总结/.test(text) && text.length > 20) return text;
+  const line = summaryOfferLine(title);
+  return text ? `${text}\n\n${line}` : line;
+}
+
+export function viewDataPauseHint(title: string): string {
+  return `这一页已经打开。用户只说了查看，没有要求总结。不要再点筛选、翻页或换数据页。下一句只问：${summaryOfferLine(title)}`;
 }
 
 export function wantsSummarize(text: string): boolean {

@@ -76,13 +76,65 @@ describe("T73 停止卡住的任务", () => {
     expect(stopped.ok).toBe(true);
     expect(stopped.stopped).toEqual(["job"]);
     expect(controller.signal.aborted).toBe(true);
-    expect(browser.taskPool.tasks.some((task) => task.id === "job")).toBe(false);
-    expect(browser.mcpTasks[0]?.status).toBe("failed");
+    expect(browser.taskPool.tasks.find((task) => task.id === "job")?.state).toBe("stopped");
+    expect(browser.mcpTasks[0]?.status).toBe("stopped");
     expect(browser.chatSessions.get("agent:jia")?.some((turn) => turn.text === "已手动停止")).toBe(true);
     expect(browser.tabs.get("agent-1")?.agentStatus).toBe("done");
 
     const again = browser.stopAgentTask("job");
     expect(again.ok).toBe(false);
+  });
+
+  it("已经失败的页被点名停掉后变成已停止，标签还在", () => {
+    const browser = Object.create(SparkBrowser.prototype) as SparkBrowser & {
+      taskPool: TaskPool;
+      tabs: Map<string, { id: string; agentStatus?: "done" }>;
+      mcpTasks: Array<{ taskId: string; status: string; lastAssistant: string; text: string; clientId?: string }>;
+      chatSessions: Map<string, Array<{ role: string; text: string }>>;
+      pumpAgent: () => void;
+      syncTaskChrome: () => void;
+      pushSidebarState: () => void;
+    };
+    browser.taskPool = new TaskPool();
+    browser.tabs = new Map([["jd", { id: "jd" }]]);
+    browser.mcpTasks = [
+      { taskId: "job-jd", status: "failed", lastAssistant: "没有核验回执", text: "查京东", clientId: "command" },
+    ];
+    browser.chatSessions = new Map();
+    browser.pumpAgent = () => undefined;
+    browser.syncTaskChrome = () => undefined;
+    browser.pushSidebarState = () => undefined;
+    browser.taskPool.start({
+      id: "job-jd",
+      tabId: "jd",
+      title: "京东-欢迎登录",
+      lane: "background",
+      clientId: "command",
+    });
+    browser.taskPool.finish("job-jd", "failed");
+    const page = browser.tabs.get("jd");
+
+    const stopped = browser.stopAgentTask("job-jd");
+    expect(stopped.ok).toBe(true);
+    expect(stopped.stopped).toEqual(["job-jd"]);
+    expect(browser.taskPool.tasks.find((task) => task.id === "job-jd")?.state).toBe("stopped");
+    expect(browser.taskPool.tasks.find((task) => task.id === "job-jd")?.step).toBe("已停止");
+    expect(browser.tabs.get("jd")).toBe(page);
+    expect(browser.tabs.get("jd")?.agentStatus).toBeUndefined();
+    expect(browser.mcpTasks[0]?.status).toBe("stopped");
+    expect(browser.chatSessions.get("agent:command")?.some((turn) => turn.text === "已手动停止")).toBe(true);
+
+    expect(browser.stopAgentTask("job-jd").ok).toBe(false);
+
+    browser.taskPool.start({
+      id: "job-done",
+      tabId: "jd",
+      title: "已完成的页",
+      lane: "background",
+    });
+    browser.taskPool.finish("job-done", "done");
+    expect(browser.stopAgentTask("job-done").ok).toBe(false);
+    expect(browser.taskPool.tasks.find((task) => task.id === "job-done")?.state).toBe("done");
 
     const html = readFileSync(join(process.cwd(), "src/renderer/shell.html"), "utf8");
     expect(html).toContain('stop.textContent = "停止"');

@@ -109,10 +109,14 @@ describe("T52 标签归属", () => {
       agentName: "Agent 甲",
       color: "#2f6feb",
     });
-    const child = browser.listTabs().tabs.find((tab) => tab.id === "agent-2");
+    const tabs = browser.listTabs().tabs;
+    const child = tabs.find((tab) => tab.id === "agent-2");
+    const parent = tabs.find((tab) => tab.id === "agent-1");
     expect(child?.owner).toBe("agent:jia");
-    expect(child?.agentState).toBe("running");
-    expect(child?.agentName).toBe("Agent 甲");
+    expect(child?.agentState).toBe("idle");
+    expect(child?.agentStep).toBeUndefined();
+    expect(parent?.agentState).toBe("running");
+    expect(parent?.agentName).toBe("Agent 甲");
   });
 
   it("色点只写在 agent 标签的渲染分支里", () => {

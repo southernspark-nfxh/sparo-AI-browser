@@ -29,12 +29,15 @@ vi.mock("electron", () => ({
 
 import { SparkBrowser } from "../src/main/browser.js";
 import { ownerForTab, registerClientName, resetMcpSessions } from "../src/main/agent/mcp-sessions.js";
-import { sidebarStaysOnUserTab } from "../src/main/agent/sidebar-tab.js";
+import { pageSessionKey } from "../src/main/agent/session-key.js";
+import { agentShouldOpenOwnSurface } from "../src/main/agent/intent-router.js";
+import { sidebarStaysOnUserTab, visiblePageKeepsTurn } from "../src/main/agent/sidebar-tab.js";
 
 type Tab = {
   id: string;
   url: string;
   title: string;
+  kind?: string;
   discarded?: boolean;
   agentStatus?: "done";
 };
@@ -80,8 +83,9 @@ function harness(): Harness & { created: () => number; navTabs: string[]; pageTa
   let created = 0;
   browser.createAgentTab = () => {
     created += 1;
-    if (!tabs.has("tab-b")) tabs.set("tab-b", { id: "tab-b", url: "about:blank", title: "新标签" });
-    return "tab-b";
+    const id = `tab-${String.fromCharCode(97 + created)}`;
+    if (!tabs.has(id)) tabs.set(id, { id, url: "about:blank", title: "新标签" });
+    return id;
   };
   browser.navigate = async (url: string, opts?: { tabId?: string }) => {
     navTabs.push(opts?.tabId || "");
@@ -141,9 +145,11 @@ describe("T78 侧栏开站不征用当前标签", () => {
       },
     };
     await browser.handleChat("再打开宋朝条目");
-    expect(browser.created()).toBe(1);
-    expect(browser.navTabs.at(-1)).toBe("tab-b");
-    expect(browser.activeTabId).toBe("tab-b");
+    expect(browser.created()).toBe(2);
+    expect(browser.navTabs.at(-1)).toBe("tab-c");
+    expect(browser.activeTabId).toBe("tab-c");
+    expect(ownerForTab("tab-b")).toBe("agent:sidebar");
+    expect(ownerForTab("tab-c")).toBe("agent:sidebar");
     expect(browser.tabs.get("tab-a")?.url).toBe("https://www.baidu.com");
 
     const other = registerClientName("job-1");
@@ -174,6 +180,60 @@ describe("T78 侧栏开站不征用当前标签", () => {
     expect(browser.activeTabId).toBe("tab-a");
   });
 
+  it("在微博页问社会新闻关注度，不另开百度", async () => {
+    const browser = harness();
+    const page = browser.tabs.get("tab-a");
+    if (page) {
+      page.url = "https://s.weibo.com/top/summary?cate=socialevent";
+      page.title = "微博热搜";
+    }
+    browser.pageText = async (tabId?: string) => {
+      browser.pageTabs.push(tabId || "");
+      return { ok: true, message: "page_text", data: { text: "社会热搜", length: 4 } };
+    };
+    browser.freeSoul = {
+      run: async () => {
+        await browser.runAgentTool("page_text", {});
+        return { ok: true, text: "热度最高的是第一条。" };
+      },
+    };
+    await browser.handleChat("哪些社会新闻的关注度最高呢");
+    expect(browser.created()).toBe(0);
+    expect(browser.pageTabs).toEqual(["tab-a"]);
+    expect(browser.activeTabId).toBe("tab-a");
+  });
+
+  it("「当前的页面什么意思」留在用户正在看的页上读，不另开百度", async () => {
+    const browser = harness();
+    const steam = browser.tabs.get("tab-a");
+    if (steam) {
+      steam.url = "https://partner.steampowered.com/apps/landing";
+      steam.title = "Steamworks";
+    }
+    let seenUrl = "";
+    browser.pageText = async (tabId?: string) => {
+      browser.pageTabs.push(tabId || "");
+      return { ok: true, message: "page_text", data: { text: "Steamworks", length: 10 } };
+    };
+    browser.freeSoul = {
+      run: async (input: { url?: string }) => {
+        seenUrl = String(input.url || "");
+        await browser.runAgentTool("page_text", {});
+        return { ok: true, text: "这是 Steamworks 后台。" };
+      },
+    };
+
+    await browser.handleChat("当前的页面什么意思");
+
+    expect(browser.created()).toBe(0);
+    expect(browser.activeTabId).toBe("tab-a");
+    expect(browser.pageTabs).toEqual(["tab-a"]);
+    expect(seenUrl).toContain("partner.steampowered.com");
+    const book = (browser as unknown as { chatBook: () => Map<string, Array<{ role: string; text: string }>> }).chatBook();
+    const user = book.get(pageSessionKey("tab-a")) || [];
+    expect(user.some((turn) => turn.role === "assistant" && turn.text.includes("Steamworks"))).toBe(true);
+  });
+
   it("page_text 不传 tabId 仍读用户当前标签", async () => {
     const browser = harness();
     delete (browser as unknown as { pageText?: unknown }).pageText;
@@ -189,6 +249,81 @@ describe("T78 侧栏开站不征用当前标签", () => {
     const result = await browser.pageText();
     expect(seen[0]).toBe("tab-a");
     expect(result.ok).toBe(true);
+  });
+
+  it("切到头条和百家号之后，page_text 读那一页，不再读开工时的百度页", async () => {
+    const browser = harness();
+    browser.tabs.set("toutiao", {
+      id: "toutiao",
+      url: "https://www.toutiao.com/",
+      title: "今日头条",
+    });
+    browser.tabs.set("bjh", {
+      id: "bjh",
+      url: "https://baijiahao.baidu.com/builder/theme/bjh/login",
+      title: "百家号",
+    });
+    browser.switchTab = (id: string) => {
+      if (!browser.tabs.has(id)) return { ok: false, message: "missing" };
+      browser.activeTabId = id;
+      return { ok: true, message: "switched" };
+    };
+    browser.pageText = async (tabId?: string) => {
+      browser.pageTabs.push(tabId || "");
+      const title = browser.tabs.get(tabId || "")?.title || "";
+      return { ok: true, message: "page_text", data: { text: title, length: title.length } };
+    };
+    browser.freeSoul = {
+      run: async () => {
+        await browser.runCoreTool("switch_tab", { id: "toutiao" });
+        await browser.runCoreTool("page_text", {});
+        await browser.runCoreTool("get_url", {});
+        await browser.runCoreTool("switch_tab", { match: "百家号" });
+        await browser.runCoreTool("page_text", {});
+        return { ok: true, text: "读完了" };
+      },
+    };
+
+    await browser.handleChat("打开头条和百家号");
+
+    expect(browser.created()).toBe(0);
+    expect(browser.pageTabs).toEqual(["toutiao", "bjh"]);
+  });
+
+  it("人在指挥室时，切页和读正文不把总览切走", async () => {
+    const browser = harness();
+    browser.tabs.set("command-main", { id: "command-main", url: "", title: "指挥室", kind: "command" });
+    browser.activeTabId = "command-main";
+    browser.tabs.set("toutiao", {
+      id: "toutiao",
+      url: "https://www.toutiao.com/",
+      title: "今日头条",
+    });
+    const shown: boolean[] = [];
+    const openTab = browser.createAgentTab.bind(browser);
+    browser.createAgentTab = ((url?: string, activate?: boolean) => {
+      shown.push(activate === true);
+      return openTab(url, activate);
+    }) as typeof browser.createAgentTab;
+    browser.pageText = async (tabId?: string) => {
+      browser.pageTabs.push(tabId || "");
+      return { ok: true, message: "page_text", data: { text: "头条正文", length: 4 } };
+    };
+    browser.freeSoul = {
+      run: async () => {
+        await browser.runCoreTool("page_text", {});
+        await browser.runCoreTool("switch_tab", { id: "toutiao" });
+        await browser.runCoreTool("page_text", {});
+        return { ok: true, text: "读完了" };
+      },
+    };
+
+    await browser.handleChat("打开头条");
+
+    expect(browser.activeTabId).toBe("command-main");
+    expect(shown.includes(true)).toBe(false);
+    expect(browser.pageTabs[browser.pageTabs.length - 1]).toBe("toutiao");
+    expect(browser.pageTabs.at(-1)).not.toBe("command-main");
   });
 
   it("MCP 作用域里的标签不被侧栏工位抢走", async () => {
@@ -209,5 +344,17 @@ describe("T78 侧栏开站不征用当前标签", () => {
     expect(sidebarStaysOnUserTab("总结当前页", [])).toBe(true);
     expect(sidebarStaysOnUserTab("填这页的表", [])).toBe(true);
     expect(sidebarStaysOnUserTab("帮我看看", [{ text: "划词" }])).toBe(true);
+    expect(sidebarStaysOnUserTab("当前的页面什么意思", [])).toBe(true);
+    expect(sidebarStaysOnUserTab("当前这个网页是什么意思，帮我解释一下这个外国网页", [])).toBe(true);
+    expect(sidebarStaysOnUserTab("解释一下这个网页", [])).toBe(true);
+    expect(sidebarStaysOnUserTab("这个网站上卖的是什么", [])).toBe(true);
+    expect(sidebarStaysOnUserTab("打开微博", [])).toBe(false);
+    expect(agentShouldOpenOwnSurface("当前的页面什么意思", "user")).toBe(false);
+    expect(agentShouldOpenOwnSurface("当前这个网页是什么意思", "user")).toBe(false);
+    expect(agentShouldOpenOwnSurface("解释一下这个外国网页", "user")).toBe(false);
+    expect(agentShouldOpenOwnSurface("另开一扇看这个页面", "user")).toBe(true);
+    expect(agentShouldOpenOwnSurface("打开维基百科唐朝条目", "user")).toBe(true);
+    expect(visiblePageKeepsTurn("哪些社会新闻的关注度最高呢")).toBe(true);
+    expect(visiblePageKeepsTurn("打开微博")).toBe(false);
   });
 });

@@ -3,11 +3,24 @@
  * waiting_human 挂起，不占并发名额。
  */
 import type { TaskLane } from "./task-class.js";
+import { canTransition, type TaskLifecycleState } from "./task-state.js";
 
 /** 同时在跑的后台任务上限。写死，不做用户设置。 */
 export const TASK_POOL_LIMIT = 3;
 
-export type TaskCardState = "running" | "queued" | "waiting_human" | "done" | "failed";
+/** 规范生命周期。finish() 只落执行结果，不把记录从池里删掉。 */
+export type TaskCardState = TaskLifecycleState;
+
+export type TaskResultCard = {
+  status: "done";
+  summary: string;
+  tabId: string;
+  url: string;
+  outputs: string[];
+  unfinished: string[];
+  needsAccept: boolean;
+  finishedAt: number;
+};
 
 export type PoolTask = {
   id: string;
@@ -18,8 +31,27 @@ export type PoolTask = {
   step: string;
   clientId?: string;
   agentName?: string;
+  /** 旧身份色。T01 起不得再拿它做状态色。 */
   color?: string;
   lastLine?: string;
+  result?: string;
+  updatedAt?: number;
+  leaseId?: string;
+  /** 跨页父任务编号。父任务本身不在这张卡上占页。 */
+  groupId?: string;
+  /** 这张任务原来的整句和会话。恢复时用它，不用截断标题。 */
+  origin?: { chatKey: string; input: string };
+  /** 结构化核验回执。没有通过的回执，不能出完成卡。 */
+  verification?: { ok: boolean; items: Array<{ name: string; ok: boolean }>; at: number };
+  /** 黄色人工的具体原因。 */
+  humanReason?: string;
+  /** 红色异常卡住的那一步。finish 不会把它改成空泛的「失败」。 */
+  failureStep?: string;
+  attempts?: string[];
+  advice?: string;
+  /** 总指挥聊天已经报过的种类，避免同一件事反复刷。 */
+  notice?: "human" | "failed" | "done";
+  resultCard?: TaskResultCard;
 };
 
 export type TaskCardView = {
@@ -33,6 +65,18 @@ export type TaskCardView = {
   agentName?: string;
   color?: string;
   lastLine?: string;
+  result?: string;
+  updatedAt?: number;
+  leaseId?: string;
+  groupId?: string;
+  origin?: { chatKey: string; input: string };
+  verification?: { ok: boolean; items: Array<{ name: string; ok: boolean }>; at: number };
+  humanReason?: string;
+  failureStep?: string;
+  attempts?: string[];
+  advice?: string;
+  notice?: "human" | "failed" | "done";
+  resultCard?: TaskResultCard;
 };
 
 export class TaskPool {
@@ -137,13 +181,45 @@ export class TaskPool {
     task.step = step.replace(/\s+/g, " ").trim().slice(0, 48);
   }
 
-  finish(id: string, state: "done" | "failed" = "done"): PoolTask | undefined {
-    const index = this.tasks.findIndex((item) => item.id === id);
-    if (index < 0) return undefined;
-    const [task] = this.tasks.splice(index, 1);
+  finish(id: string, state: "done" | "failed" | "stopped" = "done"): PoolTask | undefined {
+    const task = this.tasks.find((item) => item.id === id);
+    if (!task || task.state === "closed") return task;
+    // 停止和异常已经落账。迟到的完成回调不能再改成完成。
+    if (task.state === "stopped" || task.state === "failed") return task;
+    if (task.state === "done" && state !== "done") return task;
     task.state = state;
-    task.step = state === "done" ? "完成" : "失败";
+    task.step =
+      state === "failed" && task.failureStep
+        ? task.failureStep
+        : state === "done"
+          ? "完成"
+          : state === "stopped"
+            ? "已停止"
+            : "失败";
+    task.updatedAt = Date.now();
     this.renumberQueue();
+    return task;
+  }
+
+  /** 人点名停掉一张已经失败的卡。改成已停止，记录和页面都留着。 */
+  acceptManualStop(id: string): PoolTask | undefined {
+    const task = this.tasks.find((item) => item.id === id);
+    if (!task || !canTransition(task.state, "stopped", "stop") || task.state !== "failed") return undefined;
+    task.state = "stopped";
+    task.step = "已停止";
+    task.updatedAt = Date.now();
+    this.renumberQueue();
+    return task;
+  }
+
+  /** 明确结束。运行中的任务不能直接归档。 */
+  close(id: string): PoolTask | undefined {
+    const task = this.tasks.find((item) => item.id === id);
+    if (!task || task.state === "closed") return task;
+    if (task.state === "running" || task.state === "queued" || task.state === "waiting_human") return undefined;
+    task.state = "closed";
+    task.step = "已结束";
+    task.updatedAt = Date.now();
     return task;
   }
 
@@ -177,19 +253,34 @@ export class TaskPool {
 
   visible(): TaskCardView[] {
     return this.tasks
-      .filter((task) => task.state === "running" || task.state === "queued" || task.state === "waiting_human")
-      .map((task) => ({
-        id: task.id,
-        tabId: task.tabId,
-        title: task.title,
-        lane: task.lane,
-        state: task.state,
-        step: task.step,
-        clientId: task.clientId,
-        agentName: task.agentName,
-        color: task.color,
-        lastLine: task.lastLine,
-      }));
+      .filter((task) => task.state !== "closed")
+      .map((task) => {
+        const view: TaskCardView = {
+          id: task.id,
+          tabId: task.tabId,
+          title: task.title,
+          lane: task.lane,
+          state: task.state,
+          step: task.step,
+          clientId: task.clientId,
+          agentName: task.agentName,
+          color: task.color,
+          lastLine: task.lastLine,
+        };
+        if (task.result != null) view.result = task.result;
+        if (task.updatedAt != null) view.updatedAt = task.updatedAt;
+        if (task.leaseId != null) view.leaseId = task.leaseId;
+        if (task.groupId != null) view.groupId = task.groupId;
+        if (task.origin != null) view.origin = task.origin;
+        if (task.verification != null) view.verification = task.verification;
+        if (task.humanReason != null) view.humanReason = task.humanReason;
+        if (task.failureStep != null) view.failureStep = task.failureStep;
+        if (task.attempts != null) view.attempts = task.attempts;
+        if (task.advice != null) view.advice = task.advice;
+        if (task.notice != null) view.notice = task.notice;
+        if (task.resultCard != null) view.resultCard = task.resultCard;
+        return view;
+      });
   }
 }
 

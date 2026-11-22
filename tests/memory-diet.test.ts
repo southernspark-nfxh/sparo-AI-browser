@@ -173,6 +173,14 @@ describe("releaseAgentTab", () => {
     expect(tab.view).not.toBeNull();
   });
 
+  it("被打断的页休眠后记成已停止，不记成已完成", () => {
+    const { browser } = harness();
+    browser.releaseAgentTab("job", "stopped");
+    const tab = browser.tabs.get("job");
+    expect(tab?.discarded).toBe(true);
+    expect(tab?.agentStatus).toBe("stopped");
+  });
+
   it("leaves the tab the user is looking at awake", () => {
     const { browser } = harness();
     browser.releaseAgentTab("active");

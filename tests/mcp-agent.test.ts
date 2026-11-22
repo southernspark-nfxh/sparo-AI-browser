@@ -34,11 +34,13 @@ vi.mock("electron", () => ({
 
 import { SparkBrowser } from "../src/main/browser.js";
 import { TaskPool } from "../src/main/agent/task-pool.js";
+import { resetMcpSessions } from "../src/main/agent/mcp-sessions.js";
 import { agentInstructions, registerSparoPrompt, SPARO_AGENT_GUIDE } from "../src/main/agent/agent-guide.js";
 import { saveShotBytes } from "../src/main/captures.js";
 
 const dirs: string[] = [];
 afterEach(() => {
+  resetMcpSessions();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -76,7 +78,11 @@ function harness(run: (input: RunInput) => Promise<{ ok: boolean; text: string; 
   browser.getUrl = (tabId?: string) => (tabId && tabId !== "user-tab" ? "https://weibo.com/123" : "https://weibo.com");
   browser.getTitle = () => "微博";
   browser.listTabs = () => ({ tabs: [{ id: "user-tab" }] });
-  browser.createAgentTab = () => "agent-tab";
+  let tabSeq = 0;
+  browser.createAgentTab = () => {
+    tabSeq += 1;
+    return `agent-tab-${tabSeq}`;
+  };
   browser.switchTab = () => undefined;
   browser.configDir = () => dir;
   browser.freeSoul = { run };
@@ -160,7 +166,7 @@ describe("submit_task 给 Agent", () => {
       });
       mkdirSync(join(dir, "reports"));
       writeFileSync(join(dir, "reports", "note.html"), "<p>报告</p>");
-      return { ok: true, text: "微博已发出" };
+      return { ok: true, text: "微博已发出", verification: { items: [{ name: "发出", ok: true }] } };
     });
     const submitted = browser.submitTask("发一条带图微博", { clientId: "ab12cd" });
     expect(submitted.status).toBe("running");
